@@ -11,6 +11,7 @@ Telegram Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestra
 
 ## Features
 - **Conversational Scheduling**: Create Google Calendar events via natural language (infers dates and times).
+- **Voice Commands**: Send voice messages via Telegram, transcribed automatically using the Groq Whisper API.
 - **Calendar Querying & Summarization**: Ask "What do I have tomorrow?" to retrieve and naturally summarize events.
 - **Event Modifications**: Update or delete events with a built-in safety confirmation flow to prevent accidental data loss.
 - **Multi-turn Execution**: Capable of recursive reasoning, such as fetching events and then acting upon the retrieved list in a single user turn.
@@ -24,6 +25,7 @@ Telegram Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestra
 - [ngrok](https://ngrok.com/) (for local Telegram webhook development)
 - Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
 - Gemini API Key (from [Google AI Studio](https://aistudio.google.com/))
+- Groq API Key (from [GroqCloud](https://console.groq.com/))
 - Google Cloud OAuth credentials (for Calendar API)
 
 ## Quick Start
@@ -95,6 +97,7 @@ internal/
   models/           # Shared domain types
   broker/           # RabbitMQ publisher/consumer
   telegram/         # Telegram Bot API client
+  audio/            # Groq Whisper API client for voice processing
   llm/              # Gemini API client + tool definitions
   calendar/         # Google Calendar API + OAuth
   state/            # Redis state management
