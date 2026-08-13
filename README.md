@@ -14,6 +14,7 @@ Telegram Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestra
 - **Calendar Querying & Summarization**: Ask "What do I have tomorrow?" to retrieve and naturally summarize events.
 - **Event Modifications**: Update or delete events with a built-in safety confirmation flow to prevent accidental data loss.
 - **Multi-turn Execution**: Capable of recursive reasoning, such as fetching events and then acting upon the retrieved list in a single user turn.
+- **Audit Logging**: Asynchronously logs all user requests, LLM responses, and executed actions to a database.
 - **Microservice Architecture**: Decoupled ingestion and execution layers connected via RabbitMQ.
 
 ## Prerequisites
@@ -64,6 +65,7 @@ Telegram Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestra
 | Orchestrator | 8081 | LLM reasoning + Calendar execution + OAuth |
 | RabbitMQ | 5672 | Message broker |
 | Redis | 6379 | Conversation state + OAuth tokens |
+| Database | 5432 | Audit logging storage (PostgreSQL) |
 
 ## Project Structure
 
@@ -79,6 +81,7 @@ internal/
   llm/              # Gemini API client + tool definitions
   calendar/         # Google Calendar API + OAuth
   state/            # Redis state management
+  db/               # Database client for audit logging
   orchestrator/     # Core reasoning engine
 ```
 
