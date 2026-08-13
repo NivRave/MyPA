@@ -28,6 +28,31 @@ Telegram Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestra
 
 ## Quick Start
 
+### Running with Docker (Recommended)
+
+1. **Clone and configure:**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your API keys and tokens
+   ```
+
+2. **Start all services:**
+   ```bash
+   docker-compose up -d
+   ```
+
+3. **Expose the Proxy via ngrok:**
+   ```bash
+   ngrok http 8000 --url https://your-ngrok-url.ngrok-free.dev
+   ```
+
+4. **Set Telegram webhook:**
+   ```bash
+   curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=<NGROK_URL>/webhook/telegram"
+   ```
+
+### Running Locally (Development)
+
 1. **Clone and configure:**
    ```bash
    cp .env.example .env
@@ -36,25 +61,17 @@ Telegram Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestra
 
 2. **Start infrastructure:**
    ```bash
-   docker-compose up rabbitmq redis
+   docker-compose up rabbitmq redis postgres pgadmin
    ```
 
-3. **Run services (development):**
+3. **Run services:**
    ```bash
    go run ./cmd/gateway
    go run ./cmd/orchestrator
    go run ./cmd/proxy
    ```
 
-4. **Expose the Proxy via ngrok:**
-   ```bash
-   ngrok http 8000 --url https://your-ngrok-url.ngrok-free.dev
-   ```
-
-5. **Set Telegram webhook:**
-   ```bash
-   curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=<NGROK_URL>/webhook/telegram"
-   ```
+4. **Expose and set webhook:** Follow steps 3 & 4 from the Docker instructions above.
 
 ## Services
 
