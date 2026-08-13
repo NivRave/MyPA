@@ -25,6 +25,7 @@ type Message struct {
 
 // CalendarEvent represents a calendar event to be created.
 type CalendarEvent struct {
+	ID          string `json:"id,omitempty"`
 	Title       string `json:"title"`
 	StartTime   string `json:"start_time"`   // ISO 8601
 	EndTime     string `json:"end_time"`     // ISO 8601

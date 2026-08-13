@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/nivik/mypa/internal/broker"
@@ -13,6 +14,8 @@ import (
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/nivik/mypa/internal/telegram"
+
+	"google.golang.org/genai"
 )
 
 // Engine is the core orchestrator that connects all components.
@@ -78,10 +81,10 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 	}
 
 	if pending != nil {
-		// Is the user confirming? (Simple naive check for now, can be LLM-powered later)
-		text := msg.Text
-		isConfirm := text == "yes" || text == "Yes" || text == "y" || text == "confirm" || text == "do it"
-		isCancel := text == "no" || text == "No" || text == "n" || text == "cancel" || text == "stop"
+		// Is the user confirming?
+		text := strings.ToLower(strings.TrimSpace(msg.Text))
+		isConfirm := text == "yes" || text == "y" || text == "confirm" || text == "do it"
+		isCancel := text == "no" || text == "n" || text == "cancel" || text == "stop"
 
 		if isCancel {
 			_ = e.store.ClearPendingAction(ctx, msg.UserID)
@@ -90,26 +93,24 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		}
 
 		if isConfirm {
-			_ = e.tg.SendMessage(ctx, msg.ChatID, "⏳ Creating event...")
+			actionMsg := "⏳ Processing..."
+			if pending.Action == "create_calendar_event" {
+				actionMsg = "⏳ Creating event..."
+			} else if pending.Action == "update_calendar_event" {
+				actionMsg = "⏳ Updating event..."
+			} else if pending.Action == "delete_calendar_event" {
+				actionMsg = "⏳ Deleting event..."
+			}
+			_ = e.tg.SendMessage(ctx, msg.ChatID, actionMsg)
 			
-			// Grab OAuth token
-			tokenBytes, err := e.store.GetOAuthToken(ctx, msg.UserID)
-			if err != nil || tokenBytes == nil {
-				_ = e.store.ClearPendingAction(ctx, msg.UserID)
-				return e.tg.SendMessage(ctx, msg.ChatID, "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again.")
-			}
-
-			token, err := calendar.DecodeToken(tokenBytes)
-			if err != nil {
-				_ = e.store.ClearPendingAction(ctx, msg.UserID)
-				return e.tg.SendMessage(ctx, msg.ChatID, "⚠️ Your Google connection expired or is invalid. Please send /connect again.")
-			}
-
 			// Create Calendar Client
-			ts := e.oauth.TokenSource(ctx, token)
-			calClient, err := calendar.NewClient(ctx, ts)
+			calClient, err := e.getCalendarClient(ctx, msg.UserID)
 			if err != nil {
-				return fmt.Errorf("failed to create calendar client: %w", err)
+				_ = e.store.ClearPendingAction(ctx, msg.UserID)
+				if err.Error() == "unauthorized" {
+					return e.tg.SendMessage(ctx, msg.ChatID, "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again.")
+				}
+				return e.tg.SendMessage(ctx, msg.ChatID, "⚠️ Your Google connection expired or is invalid. Please send /connect again.")
 			}
 
 			// Execute Action
@@ -123,6 +124,24 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 				_ = e.store.ClearPendingAction(ctx, msg.UserID)
 				successMsg := fmt.Sprintf("✅ **Event Created Successfully!**\n\n[View Event](%s)", link)
 				return e.tg.SendMessage(ctx, msg.ChatID, successMsg)
+			} else if pending.Action == "update_calendar_event" {
+				err := calClient.UpdateEvent(ctx, pending.Event.ID, pending.Event)
+				if err != nil {
+					_ = e.tg.SendMessage(ctx, msg.ChatID, "❌ Failed to update event: "+err.Error())
+					return fmt.Errorf("failed to update event: %w", err)
+				}
+				
+				_ = e.store.ClearPendingAction(ctx, msg.UserID)
+				return e.tg.SendMessage(ctx, msg.ChatID, "✅ **Event Updated Successfully!**")
+			} else if pending.Action == "delete_calendar_event" {
+				err := calClient.DeleteEvent(ctx, pending.Event.ID)
+				if err != nil {
+					_ = e.tg.SendMessage(ctx, msg.ChatID, "❌ Failed to delete event: "+err.Error())
+					return fmt.Errorf("failed to delete event: %w", err)
+				}
+				
+				_ = e.store.ClearPendingAction(ctx, msg.UserID)
+				return e.tg.SendMessage(ctx, msg.ChatID, "✅ **Event Deleted Successfully!**")
 			}
 		}
 
@@ -142,6 +161,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		"You are an omnipresent personal assistant. Your job is to help the user manage their time and tasks. "+
 		"The current date and time is %s. The user's timezone is %s (assume this timezone for relative dates). "+
 		"If the user asks to schedule a meeting, block time, or create an event, you MUST use the create_calendar_event tool. "+
+		"If the user asks to change or update an event, use update_calendar_event. If they ask to cancel or delete an event, use delete_calendar_event. "+
 		"Do not ask for confirmation if they provided enough details (title, start, end).",
 		time.Now().Format(time.RFC1123), e.timezone,
 	)
@@ -156,40 +176,16 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 	var replyText string
 
 	if resp.ToolCall != nil {
-		slog.Info("llm requested tool call", "tool", resp.ToolCall.Name)
-		
-		if resp.ToolCall.Name == "create_calendar_event" {
-			// Extract args
-			argsJSON, _ := json.Marshal(resp.ToolCall.Args)
-			var event models.CalendarEvent
-			if err := json.Unmarshal(argsJSON, &event); err != nil {
-				return fmt.Errorf("failed to parse tool arguments into event: %w", err)
-			}
-
-			// Store Pending Action
-			pendingAction := models.PendingAction{
-				UserID:    msg.UserID,
-				ChatID:    msg.ChatID,
-				Action:    "create_calendar_event",
-				Event:     event,
-				CreatedAt: time.Now(),
-			}
-
-			if err := e.store.SetPendingAction(ctx, msg.UserID, pendingAction); err != nil {
-				return fmt.Errorf("failed to save pending action: %w", err)
-			}
-
-			replyText = fmt.Sprintf("🗓️ **Proposal:** I will create an event titled '%s' from %s to %s.\n\nReply **yes** to confirm or **cancel** to abort.", 
-				event.Title, event.StartTime, event.EndTime)
-		} else {
-			replyText = "⚠️ LLM tried to call an unknown tool."
-		}
+		replyText, _ = e.handleToolCall(ctx, msg, history, systemPrompt, resp.ToolCall)
 	} else {
 		// Normal text response
 		replyText = resp.Text
 	}
 
 	// 6. Send reply to Telegram
+	if strings.TrimSpace(replyText) == "" {
+		replyText = "⚠️ Sorry, I didn't get a response from the AI. Please try again."
+	}
 	if err := e.tg.SendMessage(ctx, msg.ChatID, replyText); err != nil {
 		return fmt.Errorf("failed to send telegram message: %w", err)
 	}
@@ -199,4 +195,107 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 	_ = e.store.AppendChatHistory(ctx, msg.UserID, models.ChatMessage{Role: "assistant", Content: replyText})
 
 	return nil
+}
+
+func (e *Engine) getCalendarClient(ctx context.Context, userID string) (*calendar.Client, error) {
+	tokenBytes, err := e.store.GetOAuthToken(ctx, userID)
+	if err != nil || tokenBytes == nil {
+		return nil, fmt.Errorf("unauthorized")
+	}
+
+	token, err := calendar.DecodeToken(tokenBytes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid_token")
+	}
+
+	ts := e.oauth.TokenSource(ctx, token)
+	return calendar.NewClient(ctx, ts)
+}
+
+func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) (string, error) {
+	slog.Info("llm requested tool call", "tool", toolCall.Name)
+	
+	if toolCall.Name == "create_calendar_event" {
+		argsJSON, _ := json.Marshal(toolCall.Args)
+		var event models.CalendarEvent
+		if err := json.Unmarshal(argsJSON, &event); err != nil {
+			return "", fmt.Errorf("failed to parse tool arguments into event: %w", err)
+		}
+
+		pendingAction := models.PendingAction{
+			UserID:    msg.UserID,
+			ChatID:    msg.ChatID,
+			Action:    "create_calendar_event",
+			Event:     event,
+			CreatedAt: time.Now(),
+		}
+
+		if err := e.store.SetPendingAction(ctx, msg.UserID, pendingAction); err != nil {
+			return "", fmt.Errorf("failed to save pending action: %w", err)
+		}
+
+		return fmt.Sprintf("🗓️ **Proposal:** I will create an event titled '%s' from %s to %s.\n\nReply **yes** to confirm or **cancel** to abort.", event.Title, event.StartTime, event.EndTime), nil
+	} else if toolCall.Name == "update_calendar_event" || toolCall.Name == "delete_calendar_event" {
+		argsJSON, _ := json.Marshal(toolCall.Args)
+		var event models.CalendarEvent
+		if err := json.Unmarshal(argsJSON, &event); err != nil {
+			return "", fmt.Errorf("failed to parse tool arguments into event: %w", err)
+		}
+
+		pendingAction := models.PendingAction{
+			UserID:    msg.UserID,
+			ChatID:    msg.ChatID,
+			Action:    toolCall.Name,
+			Event:     event,
+			CreatedAt: time.Now(),
+		}
+
+		if err := e.store.SetPendingAction(ctx, msg.UserID, pendingAction); err != nil {
+			return "", fmt.Errorf("failed to save pending action: %w", err)
+		}
+
+		if toolCall.Name == "update_calendar_event" {
+			return fmt.Sprintf("🗓️ **Proposal:** I will update the event '%s'.\n\nReply **yes** to confirm or **cancel** to abort.", event.Title), nil
+		}
+		return "🗓️ **Proposal:** I will delete the event.\n\nReply **yes** to confirm or **cancel** to abort.", nil
+	} else if toolCall.Name == "list_calendar_events" {
+		calClient, err := e.getCalendarClient(ctx, msg.UserID)
+		if err != nil {
+			if err.Error() == "unauthorized" {
+				return "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again.", nil
+			}
+			return "⚠️ Your Google connection expired or is invalid. Please send /connect again.", nil
+		}
+
+		argsJSON, _ := json.Marshal(toolCall.Args)
+		var args struct {
+			TimeMin string `json:"time_min"`
+			TimeMax string `json:"time_max"`
+			Query   string `json:"query"`
+		}
+		_ = json.Unmarshal(argsJSON, &args)
+
+		events, err := calClient.ListEvents(ctx, args.TimeMin, args.TimeMax, args.Query)
+		if err != nil {
+			return "❌ Failed to fetch calendar events: " + err.Error(), nil
+		}
+
+		eventsJSON, _ := json.Marshal(events)
+		summaryPrompt := fmt.Sprintf("Here are the calendar events I found:\n%s\nPlease fulfill the user's request using this information.", string(eventsJSON))
+		
+		extendedHistory := append(history, models.ChatMessage{Role: "user", Content: msg.Text})
+		
+		summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, summaryPrompt)
+		if err != nil {
+			return "❌ Failed to process events: " + err.Error(), nil
+		}
+		
+		if summaryResp.ToolCall != nil {
+			// Recursively handle the next tool call (e.g. LLM decides to delete an event it just found)
+			return e.handleToolCall(ctx, msg, extendedHistory, systemPrompt, summaryResp.ToolCall)
+		}
+		return summaryResp.Text, nil
+	}
+
+	return "⚠️ LLM tried to call an unknown tool.", nil
 }

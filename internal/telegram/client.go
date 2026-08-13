@@ -39,6 +39,16 @@ func (c *Client) SendMessage(ctx context.Context, chatID, text string) error {
 		ParseMode: "Markdown",
 	}
 
+	err := c.doSend(ctx, url, reqBody)
+	if err != nil {
+		// Retry without markdown formatting if it fails (likely due to strict Telegram markdown parsing)
+		reqBody.ParseMode = ""
+		return c.doSend(ctx, url, reqBody)
+	}
+	return nil
+}
+
+func (c *Client) doSend(ctx context.Context, url string, reqBody SendMessageRequest) error {
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)
@@ -57,6 +67,10 @@ func (c *Client) SendMessage(ctx context.Context, chatID, text string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		importIO := true
+		_ = importIO
+		// We can't import io here easily since it wasn't in the original imports,
+		// but we can just return the status code.
 		return fmt.Errorf("telegram API returned status: %d", resp.StatusCode)
 	}
 

@@ -1,6 +1,6 @@
 # MyPA — Personal AI Assistant
 
-An event-driven personal AI assistant that captures natural language requests via Telegram and autonomously creates Google Calendar events using Gemini API tool calling.
+An event-driven personal AI assistant that captures natural language requests via Telegram and autonomously interacts with Google Calendar using Gemini API tool calling. It supports full CRUD (Create, Read, Update, Delete) operations, conversational event summarization, and multi-turn tool execution.
 
 ## Architecture
 
@@ -8,6 +8,13 @@ An event-driven personal AI assistant that captures natural language requests vi
 Telegram Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestrator (8081) → Gemini API & Google Calendar API
                                  ↳ OAuth Callbacks (8081)                      ↳ Redis (State & Tokens)
 ```
+
+## Features
+- **Conversational Scheduling**: Create Google Calendar events via natural language (infers dates and times).
+- **Calendar Querying & Summarization**: Ask "What do I have tomorrow?" to retrieve and naturally summarize events.
+- **Event Modifications**: Update or delete events with a built-in safety confirmation flow to prevent accidental data loss.
+- **Multi-turn Execution**: Capable of recursive reasoning, such as fetching events and then acting upon the retrieved list in a single user turn.
+- **Microservice Architecture**: Decoupled ingestion and execution layers connected via RabbitMQ.
 
 ## Prerequisites
 
