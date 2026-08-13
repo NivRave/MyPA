@@ -258,7 +258,8 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		"If the user asks to schedule a meeting, block time, or create an event, you MUST use the create_calendar_event tool. "+
 		"If the user asks to change or update an event, use update_calendar_event. If they ask to cancel or delete an event, use delete_calendar_event. "+
 		"Do not ask for confirmation if they provided enough details (title, start, end). "+
-		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference.",
+		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference. "+
+		"IMPORTANT: The user is in Israel. The week starts on Sunday and ends on Thursday (Friday and Saturday are the weekend). When reasoning about 'next week' or 'this week', start the week on Sunday.",
 		time.Now().Format(time.RFC1123), e.timezone,
 	)
 
