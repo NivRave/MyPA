@@ -137,6 +137,25 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 
 		// Replace the empty text with the transcribed text so the LLM processes it normally
 		msg.Text = transcribedText
+	} else if msg.Source == "whatsapp" && msg.MediaURL != "" {
+		// Handle Twilio Voice Messages
+		audioData, err := e.tw.DownloadMedia(ctx, msg.MediaURL)
+		if err != nil {
+			_ = e.sendMessage(ctx, msg, "❌ Failed to download WhatsApp voice message.")
+			return fmt.Errorf("failed to download twilio media: %w", err)
+		}
+
+		transcribedText, err := e.audio.TranscribeAudio(ctx, audioData, "voice.ogg")
+		if err != nil {
+			_ = e.sendMessage(ctx, msg, "❌ Failed to transcribe WhatsApp audio.")
+			return fmt.Errorf("failed to transcribe twilio media: %w", err)
+		}
+
+		// Notify user of transcription
+		_ = e.sendMessage(ctx, msg, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
+
+		// Replace the empty text with the transcribed text so the LLM processes it normally
+		msg.Text = transcribedText
 	}
 
 	// 1. Check if there's a pending action waiting for confirmation

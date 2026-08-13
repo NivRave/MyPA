@@ -58,3 +58,26 @@ func (c *Client) SendMessage(ctx context.Context, to string, text string) error 
 
 	return nil
 }
+
+// DownloadMedia downloads a media file securely from Twilio using HTTP Basic Auth.
+func (c *Client) DownloadMedia(ctx context.Context, mediaURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", mediaURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	req.SetBasicAuth(c.cfg.AccountSID, c.cfg.AuthToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("downloading media: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("twilio API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return io.ReadAll(resp.Body)
+}
