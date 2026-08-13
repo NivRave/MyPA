@@ -1,0 +1,9 @@
+# MyPA Default Configuration
+# Secrets should be set via environment variables (see .env.example)
+
+server:
+  gateway_port: 8080
+  orchestrator_port: 8081
+
+gemini:
+  model: gemini-2.5-flash
