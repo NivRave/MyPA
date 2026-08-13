@@ -4,9 +4,10 @@ An event-driven personal AI assistant that captures natural language requests vi
 
 ## Architecture
 
-```
+```text
 Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestrator (8081) → Gemini API & Google Calendar API
                                  ↳ OAuth Callbacks (8081)                      ↳ Redis (State & Tokens)
+                                                                               ↳ PostgreSQL (Audit Logs & Vector Memory)
 ```
 
 ## Features
@@ -25,7 +26,7 @@ Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → 
 
 The features listed above comprise the **V1 Minimum Viable Product (MVP)**. The V1 core engine is fully built, containerized, and production-ready, effectively serving as an intelligent calendar and scheduling assistant.
 
-We have officially transitioned to **Season 2** development for future enhancements (like infinite semantic memory, proactive daily briefings, and new API integrations like Gmail/Todoist). 
+We are currently in **Season 2** development. We have successfully rolled out infinite semantic memory and proactive daily briefings, and are now gearing up for new API integrations (like Gmail/Todoist) and cloud CI/CD deployment.
 
 👉 **See the [ROADMAP.md](ROADMAP.md) for the full list of planned future features.**
 
@@ -60,7 +61,7 @@ We have officially transitioned to **Season 2** development for future enhanceme
    ngrok http 8000 --url https://your-ngrok-url.ngrok-free.dev
    ```
 
-5. **Set Webhooks:**
+4. **Set Webhooks:**
    - **Telegram:**
      ```bash
      curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=<NGROK_URL>/webhook/telegram"
@@ -116,7 +117,8 @@ internal/
   llm/              # Gemini API client + tool definitions
   calendar/         # Google Calendar API + OAuth
   state/            # Redis state management
-  db/               # Database client for audit logging
+  db/               # Database client for audit logging and memory
+  scheduler/        # Cron jobs and background proactive messaging
   orchestrator/     # Core reasoning engine
 ```
 
