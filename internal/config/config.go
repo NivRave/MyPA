@@ -16,6 +16,7 @@ type Config struct {
 	Redis    RedisConfig    `mapstructure:"redis"`
 	Gemini   GeminiConfig   `mapstructure:"gemini"`
 	Google   GoogleConfig   `mapstructure:"google"`
+	Groq     GroqConfig     `mapstructure:"groq"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -52,6 +53,11 @@ type GoogleConfig struct {
 	ClientID     string `mapstructure:"client_id"`
 	ClientSecret string `mapstructure:"client_secret"`
 	RedirectURL  string `mapstructure:"redirect_url"`
+}
+
+// GroqConfig holds Groq API settings.
+type GroqConfig struct {
+	APIKey string `mapstructure:"api_key"`
 }
 
 // Load reads configuration from config file and environment variables.
@@ -98,6 +104,7 @@ func Load() (*Config, error) {
 		"GOOGLE_CLIENT_ID":      "google.client_id",
 		"GOOGLE_CLIENT_SECRET":  "google.client_secret",
 		"GOOGLE_REDIRECT_URL":   "google.redirect_url",
+		"GROQ_API_KEY":          "groq.api_key",
 	}
 
 	for envKey, configKey := range envBindings {

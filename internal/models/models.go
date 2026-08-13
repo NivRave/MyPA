@@ -16,6 +16,9 @@ type Message struct {
 	// Text is the message content.
 	Text string `json:"text"`
 
+	// VoiceFileID holds the Telegram file ID if the message is a voice note.
+	VoiceFileID string `json:"voice_file_id,omitempty"`
+
 	// Source identifies the originating platform (e.g., "telegram").
 	Source string `json:"source"`
 

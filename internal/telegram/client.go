@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -67,12 +68,68 @@ func (c *Client) doSend(ctx context.Context, url string, reqBody SendMessageRequ
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		importIO := true
-		_ = importIO
-		// We can't import io here easily since it wasn't in the original imports,
-		// but we can just return the status code.
-		return fmt.Errorf("telegram API returned status: %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("telegram API returned status: %d, body: %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil
+}
+
+// GetFile retrieves file metadata (including file_path) from Telegram.
+func (c *Client) GetFile(ctx context.Context, fileID string) (string, error) {
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/getFile?file_id=%s", c.token, fileID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create getFile request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to execute getFile request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("getFile returned status: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Ok     bool `json:"ok"`
+		Result struct {
+			FilePath string `json:"file_path"`
+		} `json:"result"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode getFile response: %w", err)
+	}
+
+	if !result.Ok || result.Result.FilePath == "" {
+		return "", fmt.Errorf("failed to get file path")
+	}
+
+	return result.Result.FilePath, nil
+}
+
+// DownloadFile downloads the raw bytes of a file from Telegram.
+func (c *Client) DownloadFile(ctx context.Context, filePath string) ([]byte, error) {
+	url := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", c.token, filePath)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create download request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download file returned status: %d", resp.StatusCode)
+	}
+
+	return io.ReadAll(resp.Body)
 }

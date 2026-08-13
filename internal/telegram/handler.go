@@ -21,6 +21,14 @@ type Message struct {
 	Chat      *Chat  `json:"chat,omitempty"`
 	Date      int64  `json:"date"`
 	Text      string `json:"text,omitempty"`
+	Voice     *Voice `json:"voice,omitempty"`
+}
+
+// Voice represents a Telegram Voice object.
+type Voice struct {
+	FileID   string `json:"file_id"`
+	Duration int    `json:"duration"`
+	MimeType string `json:"mime_type,omitempty"`
 }
 
 // User represents a Telegram User object.
@@ -41,17 +49,30 @@ func ParseUpdate(body []byte) (*models.Message, error) {
 		return nil, fmt.Errorf("failed to decode telegram update: %w", err)
 	}
 
-	// We only care about text messages for now (ignore edits, callbacks, etc.)
-	if update.Message == nil || update.Message.Text == "" {
+	// We care about text messages or voice messages
+	if update.Message == nil {
 		return nil, nil // Not an error, just something we ignore
 	}
 
+	isText := update.Message.Text != ""
+	isVoice := update.Message.Voice != nil
+
+	if !isText && !isVoice {
+		return nil, nil
+	}
+
+	var voiceFileID string
+	if isVoice {
+		voiceFileID = update.Message.Voice.FileID
+	}
+
 	return &models.Message{
-		ID:        fmt.Sprintf("%d", update.Message.MessageID),
-		UserID:    fmt.Sprintf("%d", update.Message.From.ID),
-		ChatID:    fmt.Sprintf("%d", update.Message.Chat.ID),
-		Text:      update.Message.Text,
-		Source:    "telegram",
-		Timestamp: time.Unix(update.Message.Date, 0),
+		ID:          fmt.Sprintf("%d", update.Message.MessageID),
+		UserID:      fmt.Sprintf("%d", update.Message.From.ID),
+		ChatID:      fmt.Sprintf("%d", update.Message.Chat.ID),
+		Text:        update.Message.Text,
+		VoiceFileID: voiceFileID,
+		Source:      "telegram",
+		Timestamp:   time.Unix(update.Message.Date, 0),
 	}, nil
 }

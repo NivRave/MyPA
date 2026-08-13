@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nivik/mypa/internal/audio"
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/llm"
@@ -25,17 +26,19 @@ type Engine struct {
 	llm      *llm.Client
 	tg       *telegram.Client
 	oauth    *calendar.OAuthConfig
+	audio    *audio.Client
 	timezone string
 }
 
 // NewEngine initializes the orchestrator engine.
-func NewEngine(consumer *broker.Consumer, store *state.Store, llm *llm.Client, tg *telegram.Client, oauth *calendar.OAuthConfig, timezone string) *Engine {
+func NewEngine(consumer *broker.Consumer, store *state.Store, llm *llm.Client, tg *telegram.Client, oauth *calendar.OAuthConfig, audioClient *audio.Client, timezone string) *Engine {
 	return &Engine{
 		consumer: consumer,
 		store:    store,
 		llm:      llm,
 		tg:       tg,
 		oauth:    oauth,
+		audio:    audioClient,
 		timezone: timezone,
 	}
 }
@@ -72,6 +75,33 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		url := e.oauth.AuthCodeURL(msg.UserID)
 		reply := fmt.Sprintf("🔗 [Click here to connect your Google Calendar](%s)", url)
 		return e.tg.SendMessage(ctx, msg.ChatID, reply)
+	}
+
+	// 0. Intercept and transcribe Voice Messages
+	if msg.VoiceFileID != "" {
+		filePath, err := e.tg.GetFile(ctx, msg.VoiceFileID)
+		if err != nil {
+			_ = e.tg.SendMessage(ctx, msg.ChatID, "❌ Failed to retrieve voice message metadata.")
+			return fmt.Errorf("failed to get file path: %w", err)
+		}
+
+		audioData, err := e.tg.DownloadFile(ctx, filePath)
+		if err != nil {
+			_ = e.tg.SendMessage(ctx, msg.ChatID, "❌ Failed to download voice message.")
+			return fmt.Errorf("failed to download audio: %w", err)
+		}
+
+		transcribedText, err := e.audio.TranscribeAudio(ctx, audioData, "voice.ogg")
+		if err != nil {
+			_ = e.tg.SendMessage(ctx, msg.ChatID, "❌ Failed to transcribe audio.")
+			return fmt.Errorf("failed to transcribe: %w", err)
+		}
+
+		// Notify user of transcription
+		_ = e.tg.SendMessage(ctx, msg.ChatID, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
+
+		// Replace the empty text with the transcribed text so the LLM processes it normally
+		msg.Text = transcribedText
 	}
 
 	// 1. Check if there's a pending action waiting for confirmation

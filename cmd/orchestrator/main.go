@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nivik/mypa/internal/audio"
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/config"
@@ -71,8 +72,11 @@ func main() {
 	// 5. Initialize OAuth Config
 	oauthCfg := calendar.NewOAuthConfig(&cfg.Google)
 
-	// 6. Initialize Engine
-	engine := orchestrator.NewEngine(consumer, store, llmClient, tgClient, oauthCfg, cfg.Server.DefaultTimezone)
+	// 6. Initialize Groq Audio Client
+	audioClient := audio.NewClient(cfg.Groq.APIKey)
+
+	// 7. Initialize Engine
+	engine := orchestrator.NewEngine(consumer, store, llmClient, tgClient, oauthCfg, audioClient, cfg.Server.DefaultTimezone)
 
 	// Run engine in a goroutine
 	go func() {
