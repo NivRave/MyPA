@@ -7,6 +7,10 @@ services:
       - "8080:8080"
     env_file:
       - .env
+    environment:
+      - RABBITMQ_URL=amqp://mypa:mypa_dev@rabbitmq:5672/
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgres://mypa:mypa_password@postgres:5432/mypa?sslmode=disable
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -22,24 +26,33 @@ services:
       - "8081:8081"
     env_file:
       - .env
+    environment:
+      - RABBITMQ_URL=amqp://mypa:mypa_dev@rabbitmq:5672/
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgres://mypa:mypa_password@postgres:5432/mypa?sslmode=disable
     depends_on:
-      proxy:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  proxy:
     build:
       context: .
       dockerfile: Dockerfile.proxy
     ports:
       - "8000:8000"
+    environment:
+      - GATEWAY_URL=http://gateway:8080
+      - ORCHESTRATOR_URL=http://orchestrator:8081
     depends_on:
       gateway:
         condition: service_started
       orchestrator:
         condition: service_started
-    restart: unless-stopped
-
-  rabbitmq:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     restart: unless-stopped
 
   rabbitmq:
@@ -73,6 +86,36 @@ services:
       retries: 5
     restart: unless-stopped
 
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: mypa
+      POSTGRES_PASSWORD: mypa_password
+      POSTGRES_DB: mypa
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mypa -d mypa"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@mypa.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   rabbitmq_data:
   redis_data:
+  postgres_data:

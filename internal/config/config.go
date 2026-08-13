@@ -14,6 +14,7 @@ type Config struct {
 	Telegram TelegramConfig `mapstructure:"telegram"`
 	RabbitMQ RabbitMQConfig `mapstructure:"rabbitmq"`
 	Redis    RedisConfig    `mapstructure:"redis"`
+	Database DatabaseConfig `mapstructure:"database"`
 	Gemini   GeminiConfig   `mapstructure:"gemini"`
 	Google   GoogleConfig   `mapstructure:"google"`
 	Groq     GroqConfig     `mapstructure:"groq"`
@@ -39,6 +40,11 @@ type RabbitMQConfig struct {
 
 // RedisConfig holds Redis connection settings.
 type RedisConfig struct {
+	URL string `mapstructure:"url"`
+}
+
+// DatabaseConfig holds PostgreSQL connection settings.
+type DatabaseConfig struct {
 	URL string `mapstructure:"url"`
 }
 
@@ -99,6 +105,7 @@ func Load() (*Config, error) {
 		"TELEGRAM_WEBHOOK_URL":  "telegram.webhook_url",
 		"RABBITMQ_URL":          "rabbitmq.url",
 		"REDIS_URL":             "redis.url",
+		"DATABASE_URL":          "database.url",
 		"GEMINI_API_KEY":        "gemini.api_key",
 		"GEMINI_MODEL":          "gemini.model",
 		"GOOGLE_CLIENT_ID":      "google.client_id",

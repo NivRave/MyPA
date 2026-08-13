@@ -11,6 +11,7 @@ import (
 	"github.com/nivik/mypa/internal/audio"
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
+	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
@@ -23,6 +24,7 @@ import (
 type Engine struct {
 	consumer *broker.Consumer
 	store    *state.Store
+	db       *db.Client
 	llm      *llm.Client
 	tg       *telegram.Client
 	oauth    *calendar.OAuthConfig
@@ -31,10 +33,11 @@ type Engine struct {
 }
 
 // NewEngine initializes the orchestrator engine.
-func NewEngine(consumer *broker.Consumer, store *state.Store, llm *llm.Client, tg *telegram.Client, oauth *calendar.OAuthConfig, audioClient *audio.Client, timezone string) *Engine {
+func NewEngine(consumer *broker.Consumer, store *state.Store, dbClient *db.Client, llm *llm.Client, tg *telegram.Client, oauth *calendar.OAuthConfig, audioClient *audio.Client, timezone string) *Engine {
 	return &Engine{
 		consumer: consumer,
 		store:    store,
+		db:       dbClient,
 		llm:      llm,
 		tg:       tg,
 		oauth:    oauth,
@@ -70,11 +73,33 @@ func (e *Engine) Start(ctx context.Context) error {
 func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 	slog.Info("processing message", "user_id", msg.UserID, "text", msg.Text)
 
+	var actionTaken string
+	var llmResponse string
+
+	defer func() {
+		// Log the interaction asynchronously
+		go func(msgText string) {
+			err := e.db.LogInteraction(models.AuditLog{
+				UserID:      msg.UserID,
+				ChatID:      msg.ChatID,
+				Source:      msg.Source,
+				UserMessage: msgText,
+				LLMResponse: llmResponse,
+				ActionTaken: actionTaken,
+				CreatedAt:   time.Now(),
+			})
+			if err != nil {
+				slog.Error("failed to save audit log", "error", err)
+			}
+		}(msg.Text) // Pass msg.Text in case it gets mutated (like voice transcription)
+	}()
+
 	// Check for commands
 	if msg.Text == "/connect" {
 		url := e.oauth.AuthCodeURL(msg.UserID)
-		reply := fmt.Sprintf("🔗 [Click here to connect your Google Calendar](%s)", url)
-		return e.tg.SendMessage(ctx, msg.ChatID, reply)
+		llmResponse = fmt.Sprintf("🔗 [Click here to connect your Google Calendar](%s)", url)
+		actionTaken = "connect_command"
+		return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
 	}
 
 	// 0. Intercept and transcribe Voice Messages
@@ -118,8 +143,9 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 
 		if isCancel {
 			_ = e.store.ClearPendingAction(ctx, msg.UserID)
-			_ = e.tg.SendMessage(ctx, msg.ChatID, "❌ Action canceled.")
-			return nil
+			llmResponse = "❌ Action canceled."
+			actionTaken = "cancel_pending_action"
+			return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
 		}
 
 		if isConfirm {
@@ -133,14 +159,18 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 			}
 			_ = e.tg.SendMessage(ctx, msg.ChatID, actionMsg)
 			
+			actionTaken = "confirm_" + pending.Action
+
 			// Create Calendar Client
 			calClient, err := e.getCalendarClient(ctx, msg.UserID)
 			if err != nil {
 				_ = e.store.ClearPendingAction(ctx, msg.UserID)
 				if err.Error() == "unauthorized" {
-					return e.tg.SendMessage(ctx, msg.ChatID, "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again.")
+					llmResponse = "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again."
+					return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
 				}
-				return e.tg.SendMessage(ctx, msg.ChatID, "⚠️ Your Google connection expired or is invalid. Please send /connect again.")
+				llmResponse = "⚠️ Your Google connection expired or is invalid. Please send /connect again."
+				return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
 			}
 
 			// Execute Action
@@ -152,17 +182,19 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 				}
 				
 				_ = e.store.ClearPendingAction(ctx, msg.UserID)
-				successMsg := fmt.Sprintf("✅ **Event Created Successfully!**\n\n[View Event](%s)", link)
-				return e.tg.SendMessage(ctx, msg.ChatID, successMsg)
+				llmResponse = fmt.Sprintf("✅ **Event Created Successfully!**\n\n[View Event](%s)", link)
+				return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
 			} else if pending.Action == "update_calendar_event" {
 				err := calClient.UpdateEvent(ctx, pending.Event.ID, pending.Event)
 				if err != nil {
-					_ = e.tg.SendMessage(ctx, msg.ChatID, "❌ Failed to update event: "+err.Error())
+					llmResponse = "❌ Failed to update event: " + err.Error()
+					_ = e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
 					return fmt.Errorf("failed to update event: %w", err)
 				}
 				
 				_ = e.store.ClearPendingAction(ctx, msg.UserID)
-				return e.tg.SendMessage(ctx, msg.ChatID, "✅ **Event Updated Successfully!**")
+				llmResponse = "✅ **Event Updated Successfully!**"
+				return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
 			} else if pending.Action == "delete_calendar_event" {
 				err := calClient.DeleteEvent(ctx, pending.Event.ID)
 				if err != nil {
@@ -171,13 +203,16 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 				}
 				
 				_ = e.store.ClearPendingAction(ctx, msg.UserID)
-				return e.tg.SendMessage(ctx, msg.ChatID, "✅ **Event Deleted Successfully!**")
+				llmResponse = "✅ **Event Deleted Successfully!**"
+				return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
 			}
 		}
 
 		// If it's not a clear yes/no, we can clear the action and process it as a normal message,
 		// or just tell them to confirm or cancel. Let's force confirm/cancel for safety.
-		return e.tg.SendMessage(ctx, msg.ChatID, "⚠️ You have a pending action. Please reply 'yes' to confirm, or 'cancel' to abort.")
+		llmResponse = "⚠️ You have a pending action. Please reply 'yes' to confirm, or 'cancel' to abort."
+		actionTaken = "prompt_confirm"
+		return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
 	}
 
 	// 2. Fetch conversation history
@@ -206,9 +241,11 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 	var replyText string
 
 	if resp.ToolCall != nil {
+		actionTaken = resp.ToolCall.Name
 		replyText, _ = e.handleToolCall(ctx, msg, history, systemPrompt, resp.ToolCall)
 	} else {
 		// Normal text response
+		actionTaken = "none"
 		replyText = resp.Text
 	}
 
@@ -216,6 +253,8 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 	if strings.TrimSpace(replyText) == "" {
 		replyText = "⚠️ Sorry, I didn't get a response from the AI. Please try again."
 	}
+	llmResponse = replyText
+	
 	if err := e.tg.SendMessage(ctx, msg.ChatID, replyText); err != nil {
 		return fmt.Errorf("failed to send telegram message: %w", err)
 	}

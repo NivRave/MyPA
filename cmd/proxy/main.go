@@ -15,9 +15,18 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
-	// Define backend targets
-	gatewayURL, _ := url.Parse("http://localhost:8080")
-	orchestratorURL, _ := url.Parse("http://localhost:8081")
+	// Define backend targets (configurable via env for Docker compatibility)
+	gatewayStr := os.Getenv("GATEWAY_URL")
+	if gatewayStr == "" {
+		gatewayStr = "http://localhost:8080"
+	}
+	orchestratorStr := os.Getenv("ORCHESTRATOR_URL")
+	if orchestratorStr == "" {
+		orchestratorStr = "http://localhost:8081"
+	}
+
+	gatewayURL, _ := url.Parse(gatewayStr)
+	orchestratorURL, _ := url.Parse(orchestratorStr)
 
 	// Create reverse proxies
 	gatewayProxy := httputil.NewSingleHostReverseProxy(gatewayURL)

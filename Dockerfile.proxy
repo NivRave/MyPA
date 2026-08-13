@@ -1,0 +1,19 @@
+FROM golang:1.26-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the proxy service
+RUN go build -o /proxy ./cmd/proxy
+
+# Expose port
+EXPOSE 8000
+
+# Run the proxy
+CMD ["/proxy"]

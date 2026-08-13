@@ -59,3 +59,15 @@ type ChatMessage struct {
 	Role    string `json:"role"` // "user" or "assistant"
 	Content string `json:"content"`
 }
+
+// AuditLog represents a single interaction logged to the database.
+type AuditLog struct {
+	ID          uint      `json:"id" gorm:"primarykey"`
+	UserID      string    `json:"user_id" gorm:"index"`
+	ChatID      string    `json:"chat_id"`
+	Source      string    `json:"source"`
+	UserMessage string    `json:"user_message"`
+	LLMResponse string    `json:"llm_response"`
+	ActionTaken string    `json:"action_taken"`
+	CreatedAt   time.Time `json:"created_at"`
+}

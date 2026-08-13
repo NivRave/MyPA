@@ -30,15 +30,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize RabbitMQ publisher
-	amqpURL := cfg.RabbitMQ.URL
-	if amqpURL == "" {
-		amqpURL = "amqp://mypa:mypa_dev@localhost:5672/"
+	// Initialize RabbitMQ Publisher with retry
+	var pub *broker.Publisher
+	for i := 0; i < 5; i++ {
+		pub, err = broker.NewPublisher(cfg.RabbitMQ.URL, "telegram.inbound")
+		if err == nil {
+			break
+		}
+		slog.Warn("failed to initialize rabbitmq publisher, retrying...", "attempt", i+1, "error", err)
+		time.Sleep(2 * time.Second)
 	}
-
-	pub, err := broker.NewPublisher(amqpURL, "telegram.inbound")
 	if err != nil {
-		slog.Error("failed to initialize rabbitmq publisher", "error", err)
+		slog.Error("failed to initialize rabbitmq publisher after retries", "error", err)
 		os.Exit(1)
 	}
 	defer pub.Close()

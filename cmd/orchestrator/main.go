@@ -14,6 +14,7 @@ import (
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/config"
+	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"github.com/nivik/mypa/internal/state"
@@ -35,26 +36,34 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 1. Initialize Redis Store
-	redisURL := cfg.Redis.URL
-	if redisURL == "" {
-		redisURL = "redis://localhost:6379/0"
+	// 4. Initialize Redis
+	var store *state.Store
+	for i := 0; i < 5; i++ {
+		store, err = state.NewStore(cfg.Redis.URL)
+		if err == nil {
+			break
+		}
+		slog.Warn("failed to initialize redis store, retrying...", "attempt", i+1, "error", err)
+		time.Sleep(2 * time.Second)
 	}
-	store, err := state.NewStore(redisURL)
 	if err != nil {
-		slog.Error("failed to initialize redis store", "error", err)
+		slog.Error("failed to initialize redis store after retries", "error", err)
 		os.Exit(1)
 	}
 	defer store.Close()
 
-	// 2. Initialize RabbitMQ Consumer
-	amqpURL := cfg.RabbitMQ.URL
-	if amqpURL == "" {
-		amqpURL = "amqp://mypa:mypa_dev@localhost:5672/"
+	// 5. Initialize RabbitMQ Consumer
+	var consumer *broker.Consumer
+	for i := 0; i < 5; i++ {
+		consumer, err = broker.NewConsumer(cfg.RabbitMQ.URL, "telegram.inbound")
+		if err == nil {
+			break
+		}
+		slog.Warn("failed to initialize rabbitmq consumer, retrying...", "attempt", i+1, "error", err)
+		time.Sleep(2 * time.Second)
 	}
-	consumer, err := broker.NewConsumer(amqpURL, "telegram.inbound")
 	if err != nil {
-		slog.Error("failed to initialize rabbitmq consumer", "error", err)
+		slog.Error("failed to initialize rabbitmq consumer after retries", "error", err)
 		os.Exit(1)
 	}
 	defer consumer.Close()
@@ -75,8 +84,27 @@ func main() {
 	// 6. Initialize Groq Audio Client
 	audioClient := audio.NewClient(cfg.Groq.APIKey)
 
-	// 7. Initialize Engine
-	engine := orchestrator.NewEngine(consumer, store, llmClient, tgClient, oauthCfg, audioClient, cfg.Server.DefaultTimezone)
+	// 7. Initialize Database Client
+	dbURL := cfg.Database.URL
+	if dbURL == "" {
+		dbURL = "postgres://mypa:mypa_password@postgres:5432/mypa?sslmode=disable"
+	}
+	var dbClient *db.Client
+	for i := 0; i < 5; i++ {
+		dbClient, err = db.NewClient(dbURL)
+		if err == nil {
+			break
+		}
+		slog.Warn("failed to initialize database, retrying...", "attempt", i+1, "error", err)
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		slog.Error("failed to initialize database after retries", "error", err)
+		os.Exit(1)
+	}
+
+	// 8. Initialize Engine
+	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, oauthCfg, audioClient, cfg.Server.DefaultTimezone)
 
 	// Run engine in a goroutine
 	go func() {
