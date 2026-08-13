@@ -19,6 +19,7 @@ import (
 	"github.com/nivik/mypa/internal/orchestrator"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/nivik/mypa/internal/telegram"
+	"github.com/nivik/mypa/internal/twilio"
 )
 
 func main() {
@@ -103,8 +104,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 8. Initialize Engine
-	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, oauthCfg, audioClient, cfg.Server.DefaultTimezone)
+	// 8. Initialize Twilio Client
+	twilioClient := twilio.NewClient(cfg.Twilio)
+
+	// 9. Initialize Engine
+	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, audioClient, cfg.Server.DefaultTimezone)
 
 	// Run engine in a goroutine
 	go func() {

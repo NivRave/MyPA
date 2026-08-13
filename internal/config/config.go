@@ -18,6 +18,7 @@ type Config struct {
 	Gemini   GeminiConfig   `mapstructure:"gemini"`
 	Google   GoogleConfig   `mapstructure:"google"`
 	Groq     GroqConfig     `mapstructure:"groq"`
+	Twilio   TwilioConfig   `mapstructure:"twilio"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -66,6 +67,13 @@ type GroqConfig struct {
 	APIKey string `mapstructure:"api_key"`
 }
 
+// TwilioConfig holds Twilio WhatsApp API settings.
+type TwilioConfig struct {
+	AccountSID string `mapstructure:"account_sid"`
+	AuthToken  string `mapstructure:"auth_token"`
+	FromNumber string `mapstructure:"from_number"` // e.g., "whatsapp:+14155238886"
+}
+
 // Load reads configuration from config file and environment variables.
 func Load() (*Config, error) {
 	// Load .env file if it exists so Viper can read the env vars
@@ -112,6 +120,9 @@ func Load() (*Config, error) {
 		"GOOGLE_CLIENT_SECRET":  "google.client_secret",
 		"GOOGLE_REDIRECT_URL":   "google.redirect_url",
 		"GROQ_API_KEY":          "groq.api_key",
+		"TWILIO_ACCOUNT_SID":    "twilio.account_sid",
+		"TWILIO_AUTH_TOKEN":     "twilio.auth_token",
+		"TWILIO_FROM_NUMBER":    "twilio.from_number",
 	}
 
 	for envKey, configKey := range envBindings {

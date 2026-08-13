@@ -16,6 +16,7 @@ import (
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/nivik/mypa/internal/telegram"
+	"github.com/nivik/mypa/internal/twilio"
 
 	"google.golang.org/genai"
 )
@@ -27,19 +28,21 @@ type Engine struct {
 	db       *db.Client
 	llm      *llm.Client
 	tg       *telegram.Client
+	tw       *twilio.Client
 	oauth    *calendar.OAuthConfig
 	audio    *audio.Client
 	timezone string
 }
 
 // NewEngine initializes the orchestrator engine.
-func NewEngine(consumer *broker.Consumer, store *state.Store, dbClient *db.Client, llm *llm.Client, tg *telegram.Client, oauth *calendar.OAuthConfig, audioClient *audio.Client, timezone string) *Engine {
+func NewEngine(consumer *broker.Consumer, store *state.Store, dbClient *db.Client, llm *llm.Client, tg *telegram.Client, tw *twilio.Client, oauth *calendar.OAuthConfig, audioClient *audio.Client, timezone string) *Engine {
 	return &Engine{
 		consumer: consumer,
 		store:    store,
 		db:       dbClient,
 		llm:      llm,
 		tg:       tg,
+		tw:       tw,
 		oauth:    oauth,
 		audio:    audioClient,
 		timezone: timezone,
@@ -59,7 +62,7 @@ func (e *Engine) Start(ctx context.Context) error {
 			slog.Error("failed to process message", "message_id", msg.ID, "error", err)
 			
 			// Try to notify the user of the error
-			_ = e.tg.SendMessage(msgCtx, msg.ChatID, "⚠️ Sorry, I encountered an internal error while processing your request.")
+			_ = e.sendMessage(msgCtx, msg, "⚠️ Sorry, I encountered an internal error while processing your request.")
 			
 			// We return nil here so the broker ACKs the message. 
 			// We don't want poison pills to crash the consumer loop indefinitely.
@@ -68,6 +71,13 @@ func (e *Engine) Start(ctx context.Context) error {
 		
 		return nil
 	})
+}
+
+func (e *Engine) sendMessage(ctx context.Context, msg models.Message, text string) error {
+	if msg.Source == "whatsapp" {
+		return e.tw.SendMessage(ctx, msg.UserID, text)
+	}
+	return e.tg.SendMessage(ctx, msg.ChatID, text)
 }
 
 func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
@@ -99,31 +109,31 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		url := e.oauth.AuthCodeURL(msg.UserID)
 		llmResponse = fmt.Sprintf("🔗 [Click here to connect your Google Calendar](%s)", url)
 		actionTaken = "connect_command"
-		return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
+		return e.sendMessage(ctx, msg, llmResponse)
 	}
 
 	// 0. Intercept and transcribe Voice Messages
 	if msg.VoiceFileID != "" {
 		filePath, err := e.tg.GetFile(ctx, msg.VoiceFileID)
 		if err != nil {
-			_ = e.tg.SendMessage(ctx, msg.ChatID, "❌ Failed to retrieve voice message metadata.")
+			_ = e.sendMessage(ctx, msg, "❌ Failed to retrieve voice message metadata.")
 			return fmt.Errorf("failed to get file path: %w", err)
 		}
 
 		audioData, err := e.tg.DownloadFile(ctx, filePath)
 		if err != nil {
-			_ = e.tg.SendMessage(ctx, msg.ChatID, "❌ Failed to download voice message.")
+			_ = e.sendMessage(ctx, msg, "❌ Failed to download voice message.")
 			return fmt.Errorf("failed to download audio: %w", err)
 		}
 
 		transcribedText, err := e.audio.TranscribeAudio(ctx, audioData, "voice.ogg")
 		if err != nil {
-			_ = e.tg.SendMessage(ctx, msg.ChatID, "❌ Failed to transcribe audio.")
+			_ = e.sendMessage(ctx, msg, "❌ Failed to transcribe audio.")
 			return fmt.Errorf("failed to transcribe: %w", err)
 		}
 
 		// Notify user of transcription
-		_ = e.tg.SendMessage(ctx, msg.ChatID, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
+		_ = e.sendMessage(ctx, msg, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
 
 		// Replace the empty text with the transcribed text so the LLM processes it normally
 		msg.Text = transcribedText
@@ -145,7 +155,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 			_ = e.store.ClearPendingAction(ctx, msg.UserID)
 			llmResponse = "❌ Action canceled."
 			actionTaken = "cancel_pending_action"
-			return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
+			return e.sendMessage(ctx, msg, llmResponse)
 		}
 
 		if isConfirm {
@@ -157,7 +167,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 			} else if pending.Action == "delete_calendar_event" {
 				actionMsg = "⏳ Deleting event..."
 			}
-			_ = e.tg.SendMessage(ctx, msg.ChatID, actionMsg)
+			_ = e.sendMessage(ctx, msg, actionMsg)
 			
 			actionTaken = "confirm_" + pending.Action
 
@@ -167,44 +177,44 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 				_ = e.store.ClearPendingAction(ctx, msg.UserID)
 				if err.Error() == "unauthorized" {
 					llmResponse = "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again."
-					return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
+					return e.sendMessage(ctx, msg, llmResponse)
 				}
 				llmResponse = "⚠️ Your Google connection expired or is invalid. Please send /connect again."
-				return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
+				return e.sendMessage(ctx, msg, llmResponse)
 			}
 
 			// Execute Action
 			if pending.Action == "create_calendar_event" {
 				link, err := calClient.CreateEvent(ctx, pending.Event)
 				if err != nil {
-					_ = e.tg.SendMessage(ctx, msg.ChatID, "❌ Failed to create event: "+err.Error())
+					_ = e.sendMessage(ctx, msg, "❌ Failed to create event: "+err.Error())
 					return fmt.Errorf("failed to create event: %w", err)
 				}
 				
 				_ = e.store.ClearPendingAction(ctx, msg.UserID)
 				llmResponse = fmt.Sprintf("✅ **Event Created Successfully!**\n\n[View Event](%s)", link)
-				return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
+				return e.sendMessage(ctx, msg, llmResponse)
 			} else if pending.Action == "update_calendar_event" {
 				err := calClient.UpdateEvent(ctx, pending.Event.ID, pending.Event)
 				if err != nil {
 					llmResponse = "❌ Failed to update event: " + err.Error()
-					_ = e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
+					_ = e.sendMessage(ctx, msg, llmResponse)
 					return fmt.Errorf("failed to update event: %w", err)
 				}
 				
 				_ = e.store.ClearPendingAction(ctx, msg.UserID)
 				llmResponse = "✅ **Event Updated Successfully!**"
-				return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
+				return e.sendMessage(ctx, msg, llmResponse)
 			} else if pending.Action == "delete_calendar_event" {
 				err := calClient.DeleteEvent(ctx, pending.Event.ID)
 				if err != nil {
-					_ = e.tg.SendMessage(ctx, msg.ChatID, "❌ Failed to delete event: "+err.Error())
+					_ = e.sendMessage(ctx, msg, "❌ Failed to delete event: "+err.Error())
 					return fmt.Errorf("failed to delete event: %w", err)
 				}
 				
 				_ = e.store.ClearPendingAction(ctx, msg.UserID)
 				llmResponse = "✅ **Event Deleted Successfully!**"
-				return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
+				return e.sendMessage(ctx, msg, llmResponse)
 			}
 		}
 
@@ -212,7 +222,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		// or just tell them to confirm or cancel. Let's force confirm/cancel for safety.
 		llmResponse = "⚠️ You have a pending action. Please reply 'yes' to confirm, or 'cancel' to abort."
 		actionTaken = "prompt_confirm"
-		return e.tg.SendMessage(ctx, msg.ChatID, llmResponse)
+		return e.sendMessage(ctx, msg, llmResponse)
 	}
 
 	// 2. Fetch conversation history
@@ -255,8 +265,8 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 	}
 	llmResponse = replyText
 	
-	if err := e.tg.SendMessage(ctx, msg.ChatID, replyText); err != nil {
-		return fmt.Errorf("failed to send telegram message: %w", err)
+	if err := e.sendMessage(ctx, msg, replyText); err != nil {
+		return fmt.Errorf("failed to send reply message: %w", err)
 	}
 
 	// 7. Update conversation history

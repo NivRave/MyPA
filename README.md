@@ -5,13 +5,14 @@ An event-driven personal AI assistant that captures natural language requests vi
 ## Architecture
 
 ```
-Telegram Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestrator (8081) → Gemini API & Google Calendar API
+Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestrator (8081) → Gemini API & Google Calendar API
                                  ↳ OAuth Callbacks (8081)                      ↳ Redis (State & Tokens)
 ```
 
 ## Features
+- **Multi-Channel Support**: Available on both Telegram and WhatsApp (via Twilio API).
 - **Conversational Scheduling**: Create Google Calendar events via natural language (infers dates and times).
-- **Voice Commands**: Send voice messages via Telegram, transcribed automatically using the Groq Whisper API.
+- **Voice Commands**: Send voice messages via Telegram or WhatsApp, transcribed automatically using the Groq Whisper API.
 - **Calendar Querying & Summarization**: Ask "What do I have tomorrow?" to retrieve and naturally summarize events.
 - **Event Modifications**: Update or delete events with a built-in safety confirmation flow to prevent accidental data loss.
 - **Multi-turn Execution**: Capable of recursive reasoning, such as fetching events and then acting upon the retrieved list in a single user turn.
@@ -24,6 +25,7 @@ Telegram Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestra
 - [Docker & Docker Compose](https://docs.docker.com/get-docker/)
 - [ngrok](https://ngrok.com/) (for local Telegram webhook development)
 - Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
+- Twilio Account SID & Auth Token (for WhatsApp integration)
 - Gemini API Key (from [Google AI Studio](https://aistudio.google.com/))
 - Groq API Key (from [GroqCloud](https://console.groq.com/))
 - Google Cloud OAuth credentials (for Calendar API)
@@ -48,10 +50,12 @@ Telegram Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestra
    ngrok http 8000 --url https://your-ngrok-url.ngrok-free.dev
    ```
 
-4. **Set Telegram webhook:**
-   ```bash
-   curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=<NGROK_URL>/webhook/telegram"
-   ```
+5. **Set Webhooks:**
+   - **Telegram:**
+     ```bash
+     curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=<NGROK_URL>/webhook/telegram"
+     ```
+   - **WhatsApp:** Paste `<NGROK_URL>/webhook/twilio` into your Twilio WhatsApp Sandbox settings.
 
 ### Running Locally (Development)
 
@@ -97,6 +101,7 @@ internal/
   models/           # Shared domain types
   broker/           # RabbitMQ publisher/consumer
   telegram/         # Telegram Bot API client
+  twilio/           # Twilio API client and webhook handler (WhatsApp)
   audio/            # Groq Whisper API client for voice processing
   llm/              # Gemini API client + tool definitions
   calendar/         # Google Calendar API + OAuth

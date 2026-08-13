@@ -16,6 +16,7 @@ import (
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/telegram"
+	"github.com/nivik/mypa/internal/twilio"
 )
 
 func main() {
@@ -59,7 +60,11 @@ func main() {
 		w.Write([]byte("OK"))
 	})
 
-	// Webhook endpoint
+	// Twilio Webhook
+	twHandler := twilio.NewHandler(pub)
+	r.Post("/webhook/twilio", twHandler.HandleWebhook)
+
+	// Telegram Webhook
 	r.Post("/webhook/telegram", func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {

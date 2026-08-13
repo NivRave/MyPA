@@ -35,9 +35,8 @@ func main() {
 	// Create mux router
 	mux := http.NewServeMux()
 
-	// Route based on path prefix
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/webhook/telegram") {
+		if strings.HasPrefix(r.URL.Path, "/webhook/telegram") || strings.HasPrefix(r.URL.Path, "/webhook/twilio") {
 			slog.Info("proxying to gateway", "path", r.URL.Path)
 			gatewayProxy.ServeHTTP(w, r)
 			return

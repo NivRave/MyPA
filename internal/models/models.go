@@ -18,6 +18,10 @@ type Message struct {
 
 	// VoiceFileID holds the Telegram file ID if the message is a voice note.
 	VoiceFileID string `json:"voice_file_id,omitempty"`
+	// AudioFileID is a generic field for audio identifiers.
+	AudioFileID string `json:"audio_file_id,omitempty"`
+	// MediaURL is used for external media links (e.g., WhatsApp voice notes).
+	MediaURL string `json:"media_url,omitempty"`
 
 	// Source identifies the originating platform (e.g., "telegram").
 	Source string `json:"source"`
