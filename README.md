@@ -77,4 +77,4 @@ internal/
 
 ## License
 
-Private
+[MIT License](LICENSE)
