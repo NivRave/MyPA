@@ -19,6 +19,14 @@ Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → 
 - **Audit Logging**: Asynchronously logs all user requests, LLM responses, and executed actions to a database.
 - **Microservice Architecture**: Decoupled ingestion and execution layers connected via RabbitMQ.
 
+## V1 (MVP) vs Future Roadmap
+
+The features listed above comprise the **V1 Minimum Viable Product (MVP)**. The V1 core engine is fully built, containerized, and production-ready, effectively serving as an intelligent calendar and scheduling assistant.
+
+We have officially transitioned to **Season 2** development for future enhancements (like infinite semantic memory, proactive daily briefings, and new API integrations like Gmail/Todoist). 
+
+👉 **See the [ROADMAP.md](ROADMAP.md) for the full list of planned future features.**
+
 ## Prerequisites
 
 - [Go 1.24+](https://go.dev/dl/)
