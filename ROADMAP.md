@@ -3,8 +3,7 @@
 ## Git Branching Strategy
 We have transitioned to a structured branching workflow to ensure stability:
 - **`master` branch:** Production-ready, stable code only.
-- **`test` branch:** Staging environment for testing integrated features before they go to master.
-- **`dev` branch:** The active development branch where new features are built.
+- **`dev` branch:** The active development branch where new features are built and tested.
 
 ## Planned Features
 
