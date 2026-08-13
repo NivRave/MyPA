@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/nivik/mypa/internal/models"
+	"github.com/pgvector/pgvector-go"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -25,8 +26,13 @@ func NewClient(dsn string) (*Client, error) {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Auto-migrate the AuditLog schema
-	if err := db.AutoMigrate(&models.AuditLog{}); err != nil {
+	// Ensure pgvector extension exists
+	if err := db.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error; err != nil {
+		return nil, fmt.Errorf("failed to create vector extension: %w", err)
+	}
+
+	// Auto-migrate schemas
+	if err := db.AutoMigrate(&models.AuditLog{}, &models.Memory{}); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
@@ -42,4 +48,38 @@ func (c *Client) LogInteraction(log models.AuditLog) error {
 		return fmt.Errorf("failed to insert audit log: %w", result.Error)
 	}
 	return nil
+}
+
+// SaveMemory stores a semantic memory fact and its vector embedding.
+func (c *Client) SaveMemory(memory models.Memory) error {
+	result := c.DB.Create(&memory)
+	if result.Error != nil {
+		return fmt.Errorf("failed to insert memory: %w", result.Error)
+	}
+	return nil
+}
+
+// SearchMemories finds the most relevant memories using cosine distance.
+func (c *Client) SearchMemories(userID string, embedding pgvector.Vector, limit int) ([]models.Memory, error) {
+	var memories []models.Memory
+	// <=> is the cosine distance operator in pgvector
+	result := c.DB.Where("user_id = ?", userID).
+		Order(gorm.Expr("embedding <=> ?", embedding)).
+		Limit(limit).
+		Find(&memories)
+	
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to search memories: %w", result.Error)
+	}
+	return memories, nil
+}
+
+// GetUniqueUsers returns a list of unique user IDs from the audit logs.
+func (c *Client) GetUniqueUsers() ([]string, error) {
+	var userIDs []string
+	result := c.DB.Model(&models.AuditLog{}).Distinct("user_id").Pluck("user_id", &userIDs)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get unique users: %w", result.Error)
+	}
+	return userIDs, nil
 }

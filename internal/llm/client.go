@@ -102,3 +102,22 @@ func (c *Client) Chat(ctx context.Context, systemInstruction string, history []m
 		Text: part.Text,
 	}, nil
 }
+
+// GenerateEmbedding generates a vector embedding for the given text.
+func (c *Client) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
+	// Use gemini-embedding-001 model
+	contents := []*genai.Content{
+		{Parts: []*genai.Part{genai.NewPartFromText(text)}},
+	}
+	resp, err := c.genaiClient.Models.EmbedContent(ctx, "gemini-embedding-001", contents, nil)
+	
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate embedding: %w", err)
+	}
+
+	if len(resp.Embeddings) == 0 {
+		return nil, fmt.Errorf("no embeddings returned")
+	}
+
+	return resp.Embeddings[0].Values, nil
+}

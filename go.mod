@@ -5,8 +5,10 @@ go 1.26.4
 require (
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/joho/godotenv v1.5.1
+	github.com/pgvector/pgvector-go v0.4.1
 	github.com/rabbitmq/amqp091-go v1.13.0
 	github.com/redis/go-redis/v9 v9.22.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/oauth2 v0.36.0

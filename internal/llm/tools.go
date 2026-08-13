@@ -105,5 +105,19 @@ var CalendarEventTool = &genai.Tool{
 				Required: []string{"id"},
 			},
 		},
+		{
+			Name:        "remember_fact",
+			Description: "Saves a personal fact, preference, or important detail about the user into long-term memory so you can recall it in future conversations.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"fact": {
+						Type:        genai.TypeString,
+						Description: "The exact fact or preference to remember (e.g. 'The user is vegan', 'The user's wife is named Sarah', 'The user prefers meetings in the afternoon').",
+					},
+				},
+				Required: []string{"fact"},
+			},
+		},
 	},
 }

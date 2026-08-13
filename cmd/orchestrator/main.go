@@ -17,6 +17,7 @@ import (
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/scheduler"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/nivik/mypa/internal/telegram"
 	"github.com/nivik/mypa/internal/twilio"
@@ -109,6 +110,10 @@ func main() {
 
 	// 9. Initialize Engine
 	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, audioClient, cfg.Server.DefaultTimezone)
+
+	// Start Cron jobs
+	c := scheduler.StartCronJobs(engine)
+	defer c.Stop()
 
 	// Run engine in a goroutine
 	go func() {

@@ -17,6 +17,7 @@ import (
 	"github.com/nivik/mypa/internal/state"
 	"github.com/nivik/mypa/internal/telegram"
 	"github.com/nivik/mypa/internal/twilio"
+	"github.com/pgvector/pgvector-go"
 
 	"google.golang.org/genai"
 )
@@ -256,9 +257,23 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		"The current date and time is %s. The user's timezone is %s (assume this timezone for relative dates). "+
 		"If the user asks to schedule a meeting, block time, or create an event, you MUST use the create_calendar_event tool. "+
 		"If the user asks to change or update an event, use update_calendar_event. If they ask to cancel or delete an event, use delete_calendar_event. "+
-		"Do not ask for confirmation if they provided enough details (title, start, end).",
+		"Do not ask for confirmation if they provided enough details (title, start, end). "+
+		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference.",
 		time.Now().Format(time.RFC1123), e.timezone,
 	)
+
+	// Search long-term semantic memory
+	embedding, err := e.llm.GenerateEmbedding(ctx, msg.Text)
+	if err == nil && len(embedding) > 0 {
+		memories, _ := e.db.SearchMemories(msg.UserID, pgvector.NewVector(embedding), 5)
+		if len(memories) > 0 {
+			var facts []string
+			for _, m := range memories {
+				facts = append(facts, "- "+m.Fact)
+			}
+			systemPrompt += "\n\nRelevant facts about the user from past conversations:\n" + strings.Join(facts, "\n")
+		}
+	}
 
 	// 4. Call LLM
 	resp, err := e.llm.Chat(ctx, systemPrompt, history, msg.Text)
@@ -393,7 +408,76 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			return e.handleToolCall(ctx, msg, extendedHistory, systemPrompt, summaryResp.ToolCall)
 		}
 		return summaryResp.Text, nil
+	} else if toolCall.Name == "remember_fact" {
+		argsJSON, _ := json.Marshal(toolCall.Args)
+		var args struct {
+			Fact string `json:"fact"`
+		}
+		_ = json.Unmarshal(argsJSON, &args)
+
+		embedding, err := e.llm.GenerateEmbedding(ctx, args.Fact)
+		if err != nil {
+			slog.Error("failed to generate embedding for fact", "error", err)
+			return "❌ Failed to save memory (embedding error).", nil
+		}
+
+		err = e.db.SaveMemory(models.Memory{
+			UserID:    msg.UserID,
+			Fact:      args.Fact,
+			Embedding: pgvector.NewVector(embedding),
+			CreatedAt: time.Now(),
+		})
+		if err != nil {
+			slog.Error("failed to save memory to db", "error", err)
+			return "❌ Failed to save memory to database.", nil
+		}
+		return "✅ Got it! I've saved that to my long-term memory.", nil
 	}
 
 	return "⚠️ LLM tried to call an unknown tool.", nil
+}
+
+// BroadcastProactiveMessage sends a scheduled prompt to all known users.
+func (e *Engine) BroadcastProactiveMessage(ctx context.Context, promptText string) {
+	slog.Info("broadcasting proactive message to all users")
+
+	userIDs, err := e.db.GetUniqueUsers()
+	if err != nil {
+		slog.Error("failed to get unique users for broadcast", "error", err)
+		return
+	}
+
+	for _, userID := range userIDs {
+		// Mock a message object to pass into processMessage
+		// We'll treat this as a system-triggered prompt that we feed into the LLM on behalf of the user
+		
+		// To properly send the message, we need a valid chat ID and source.
+		// We'll just look up the most recent audit log to find the user's preferred platform/chat ID.
+		var log models.AuditLog
+		e.db.DB.Where("user_id = ?", userID).Order("created_at desc").First(&log)
+
+		if log.Source == "" {
+			continue // Should not happen, but safeguard
+		}
+
+		msg := models.Message{
+			ID:     fmt.Sprintf("cron-%d", time.Now().Unix()),
+			ChatID: log.ChatID,
+			UserID: userID,
+			Text:   promptText,
+			Source: log.Source, // "telegram" or "whatsapp"
+		}
+
+		// Run in a separate goroutine so one user doesn't block another
+		go func(m models.Message) {
+			// Create a background context specifically for this broadcast
+			bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+
+			slog.Info("sending proactive message", "user_id", m.UserID)
+			if err := e.processMessage(bgCtx, m); err != nil {
+				slog.Error("failed to process proactive message", "user", m.UserID, "error", err)
+			}
+		}(msg)
+	}
 }

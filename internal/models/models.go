@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"github.com/pgvector/pgvector-go"
+)
 
 // Message represents a normalized incoming message from any channel.
 type Message struct {
@@ -74,4 +78,13 @@ type AuditLog struct {
 	LLMResponse string    `json:"llm_response"`
 	ActionTaken string    `json:"action_taken"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+// Memory represents a long-term fact or preference about a user.
+type Memory struct {
+	ID        uint            `json:"id" gorm:"primarykey"`
+	UserID    string          `json:"user_id" gorm:"index"`
+	Fact      string          `json:"fact"`
+	Embedding pgvector.Vector `json:"embedding" gorm:"type:vector(3072)"`
+	CreatedAt time.Time       `json:"created_at"`
 }
