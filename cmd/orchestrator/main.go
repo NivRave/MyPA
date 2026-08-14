@@ -92,7 +92,8 @@ func main() {
 	// 7. Initialize Database Client
 	dbURL := cfg.Database.URL
 	if dbURL == "" {
-		dbURL = "postgres://mypa:mypa_password@postgres:5432/mypa?sslmode=disable"
+		slog.Error("DATABASE_URL is required")
+		os.Exit(1)
 	}
 	var dbClient *db.Client
 	for i := 0; i < 5; i++ {
@@ -193,6 +194,7 @@ func main() {
 	cancel()
 	_ = srv.Shutdown(context.Background())
 
-	// Give components a moment to finish current processing
-	time.Sleep(1 * time.Second)
+	// Wait for engine background tasks
+	engine.Wait()
+	slog.Info("orchestrator shutdown complete")
 }

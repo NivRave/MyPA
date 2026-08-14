@@ -15,7 +15,7 @@ func TestPublishConsumeRoundTrip(t *testing.T) {
 	// Skip if no RabbitMQ running locally
 	amqpURL := os.Getenv("RABBITMQ_URL")
 	if amqpURL == "" {
-		amqpURL = "amqp://mypa:mypa_dev@localhost:5672/"
+		t.Skip("RABBITMQ_URL is not set, skipping test")
 	}
 
 	queueName := "test.telegram.inbound"

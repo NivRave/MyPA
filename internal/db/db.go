@@ -83,3 +83,13 @@ func (c *Client) GetUniqueUsers() ([]string, error) {
 	}
 	return userIDs, nil
 }
+
+// GetLastAuditLogForUser returns the most recent audit log for a given user.
+func (c *Client) GetLastAuditLogForUser(userID string) (*models.AuditLog, error) {
+	var log models.AuditLog
+	result := c.DB.Where("user_id = ?", userID).Order("created_at desc").First(&log)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get last audit log: %w", result.Error)
+	}
+	return &log, nil
+}

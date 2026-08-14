@@ -6,21 +6,15 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/nivik/mypa/internal/audio"
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
-	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/gmail"
-	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
-	"github.com/nivik/mypa/internal/tasks"
-	"github.com/nivik/mypa/internal/tavily"
-	"github.com/nivik/mypa/internal/telegram"
-	"github.com/nivik/mypa/internal/twilio"
 	"github.com/pgvector/pgvector-go"
+	"golang.org/x/oauth2"
 
 	"google.golang.org/genai"
 )
@@ -29,34 +23,36 @@ import (
 type Engine struct {
 	consumer    *broker.Consumer
 	store       *state.Store
-	db          *db.Client
-	llm         *llm.Client
-	tgClient    *telegram.Client
-	twClient    *twilio.Client
-	audioClient *audio.Client
+	db          DBClient
+	llm         LLMClient
+	tgClient    TelegramClient
+	twClient    TwilioClient
+	audioClient AudioClient
 	oauthCfg     *calendar.OAuthConfig
-	gmailClient  *gmail.Client
-	tasksClient  *tasks.Client
-	tavilyClient *tavily.Client
+	gmailClient  GmailClient
+	tasksClient  TasksClient
+	tavilyClient TavilyClient
+	calendarFactory func(context.Context, string) (CalendarClient, error)
 	timezone     string
+	wg           sync.WaitGroup
 }
 
 // NewEngine initializes the orchestrator engine.
 func NewEngine(
 	cons *broker.Consumer,
 	store *state.Store,
-	db *db.Client,
-	llm *llm.Client,
-	tg *telegram.Client,
-	tw *twilio.Client,
+	db DBClient,
+	llm LLMClient,
+	tg TelegramClient,
+	tw TwilioClient,
 	oauth *calendar.OAuthConfig,
-	gmailC *gmail.Client,
-	tasksC *tasks.Client,
-	tavilyC *tavily.Client,
-	audio *audio.Client,
+	gmailC GmailClient,
+	tasksC TasksClient,
+	tavilyC TavilyClient,
+	audio AudioClient,
 	tz string,
 ) *Engine {
-	return &Engine{
+	e := &Engine{
 		consumer:    cons,
 		store:       store,
 		db:          db,
@@ -70,6 +66,23 @@ func NewEngine(
 		audioClient:  audio,
 		timezone:     tz,
 	}
+
+	e.calendarFactory = func(ctx context.Context, userID string) (CalendarClient, error) {
+		tokenBytes, err := e.store.GetOAuthToken(ctx, userID)
+		if err != nil || tokenBytes == nil {
+			return nil, fmt.Errorf("unauthorized")
+		}
+
+		var tok oauth2.Token
+		if err := json.Unmarshal(tokenBytes, &tok); err != nil {
+			return nil, fmt.Errorf("unauthorized")
+		}
+
+		ts := e.oauthCfg.TokenSource(ctx, &tok)
+		return calendar.NewClient(ctx, ts)
+	}
+
+	return e
 }
 
 // Start begins consuming messages and processing them.
@@ -96,6 +109,12 @@ func (e *Engine) Start(ctx context.Context) error {
 	})
 }
 
+// Wait blocks until all background tasks finish.
+func (e *Engine) Wait() {
+	e.wg.Wait()
+}
+
+// sendMessage sends a text message to the user, breaking it into smaller chunks if necessary to avoid platform limits.
 func (e *Engine) sendMessage(ctx context.Context, msg models.Message, text string) error {
 	// Chunk message to avoid hitting Twilio's 1600 character limit or Telegram limits.
 	const chunkSize = 1500
@@ -132,6 +151,8 @@ func (e *Engine) sendMessage(ctx context.Context, msg models.Message, text strin
 	return nil
 }
 
+// processMessage is the main entry point for handling an incoming user message.
+// It orchestrates transcription, command handling, confirmation flows, and LLM reasoning.
 func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 	slog.Info("processing message", "user_id", msg.UserID, "text", msg.Text)
 
@@ -139,8 +160,10 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 	var llmResponse string
 
 	defer func() {
+		e.wg.Add(1)
 		// Log the interaction asynchronously
 		go func(msgText string) {
+			defer e.wg.Done()
 			err := e.db.LogInteraction(models.AuditLog{
 				UserID:      msg.UserID,
 				ChatID:      msg.ChatID,
@@ -151,7 +174,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 				CreatedAt:   time.Now(),
 			})
 			if err != nil {
-				slog.Error("failed to save audit log", "error", err)
+				slog.Error("failed to save audit log", "error", fmt.Errorf("LogInteraction error: %w", err))
 			}
 		}(msg.Text) // Pass msg.Text in case it gets mutated (like voice transcription)
 	}()
@@ -243,7 +266,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 			actionTaken = "confirm_" + pending.Action
 
 			// Create Calendar Client
-			calClient, err := e.getCalendarClient(ctx, msg.UserID)
+			calClient, err := e.calendarFactory(ctx, msg.UserID)
 			if err != nil {
 				_ = e.store.ClearPendingAction(ctx, msg.UserID)
 				if err.Error() == "unauthorized" {
@@ -428,7 +451,7 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 		}
 		return "🗓️ **Proposal:** I will delete the event.\n\nReply **yes** to confirm or **cancel** to abort.", nil
 	} else if toolCall.Name == "list_calendar_events" {
-		calClient, err := e.getCalendarClient(ctx, msg.UserID)
+		calClient, err := e.calendarFactory(ctx, msg.UserID)
 		if err != nil {
 			if err.Error() == "unauthorized" {
 				return "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again.", nil
@@ -641,8 +664,11 @@ func (e *Engine) BroadcastProactiveMessage(ctx context.Context, promptText strin
 		
 		// To properly send the message, we need a valid chat ID and source.
 		// We'll just look up the most recent audit log to find the user's preferred platform/chat ID.
-		var log models.AuditLog
-		e.db.DB.Where("user_id = ?", userID).Order("created_at desc").First(&log)
+		log, err := e.db.GetLastAuditLogForUser(userID)
+		if err != nil || log == nil {
+			slog.Warn("failed to get last audit log for user", "user_id", userID, "error", err)
+			continue
+		}
 
 		if log.Source == "" {
 			continue // Should not happen, but safeguard

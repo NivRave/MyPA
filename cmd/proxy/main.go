@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/nivik/mypa/internal/config"
 )
 
 func main() {
@@ -15,14 +17,22 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
-	// Define backend targets (configurable via env for Docker compatibility)
-	gatewayStr := os.Getenv("GATEWAY_URL")
-	if gatewayStr == "" {
-		gatewayStr = "http://localhost:8080"
+	// Load config
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
 	}
-	orchestratorStr := os.Getenv("ORCHESTRATOR_URL")
+
+	gatewayStr := cfg.Server.GatewayURL
+	if gatewayStr == "" {
+		slog.Error("GATEWAY_URL is required")
+		os.Exit(1)
+	}
+	orchestratorStr := cfg.Server.OrchestratorURL
 	if orchestratorStr == "" {
-		orchestratorStr = "http://localhost:8081"
+		slog.Error("ORCHESTRATOR_URL is required")
+		os.Exit(1)
 	}
 
 	gatewayURL, _ := url.Parse(gatewayStr)
@@ -52,8 +62,8 @@ func main() {
 		http.Error(w, "Not found", http.StatusNotFound)
 	})
 
-	// Start server on port 8000
-	port := 8000
+	// Start server
+	port := cfg.Server.ProxyPort
 	slog.Info("unified API gateway starting", "port", port)
 	
 	addr := fmt.Sprintf(":%d", port)

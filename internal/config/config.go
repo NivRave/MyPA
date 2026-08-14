@@ -26,6 +26,9 @@ type Config struct {
 type ServerConfig struct {
 	GatewayPort      int    `mapstructure:"gateway_port"`
 	OrchestratorPort int    `mapstructure:"orchestrator_port"`
+	ProxyPort        int    `mapstructure:"proxy_port"`
+	GatewayURL       string `mapstructure:"gateway_url"`
+	OrchestratorURL  string `mapstructure:"orchestrator_url"`
 	DefaultTimezone  string `mapstructure:"default_timezone"`
 }
 
@@ -89,6 +92,7 @@ func Load() (*Config, error) {
 	// Defaults
 	v.SetDefault("server.gateway_port", 8080)
 	v.SetDefault("server.orchestrator_port", 8081)
+	v.SetDefault("server.proxy_port", 8000)
 	v.SetDefault("server.default_timezone", "UTC")
 	v.SetDefault("gemini.model", "gemini-2.5-flash")
 
@@ -114,6 +118,8 @@ func Load() (*Config, error) {
 	// Explicit env var bindings (maps FLAT env vars to nested config keys)
 	envBindings := map[string]string{
 		"DEFAULT_TIMEZONE":      "server.default_timezone",
+		"GATEWAY_URL":           "server.gateway_url",
+		"ORCHESTRATOR_URL":      "server.orchestrator_url",
 		"TELEGRAM_BOT_TOKEN":    "telegram.bot_token",
 		"TELEGRAM_WEBHOOK_URL":  "telegram.webhook_url",
 		"RABBITMQ_URL":          "rabbitmq.url",

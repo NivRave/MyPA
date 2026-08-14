@@ -94,6 +94,28 @@ We are currently in **Season 2** development. We have successfully rolled out in
 
 4. **Expose and set webhook:** Follow steps 3 & 4 from the Docker instructions above.
 
+## Testing
+
+The project utilizes robust unit and End-to-End (E2E) testing. E2E tests use [Testcontainers](https://golang.testcontainers.org/) to spin up ephemeral infrastructure (e.g., RabbitMQ).
+
+**Prerequisites for E2E tests:**
+- Docker must be running.
+
+**Run all tests (Unit + E2E):**
+```bash
+go test -v ./...
+```
+
+**Run Unit tests only:**
+```bash
+go test -v ./internal/...
+```
+
+**Run E2E tests only:**
+```bash
+go test -v ./tests/...
+```
+
 ## Services
 
 | Service | Port | Description |

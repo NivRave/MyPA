@@ -8,9 +8,9 @@ services:
     env_file:
       - .env
     environment:
-      - RABBITMQ_URL=amqp://mypa:mypa_dev@rabbitmq:5672/
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgres://mypa:mypa_password@postgres:5432/mypa?sslmode=disable
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - REDIS_URL=${REDIS_URL}
+      - DATABASE_URL=${DATABASE_URL}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -27,9 +27,9 @@ services:
     env_file:
       - .env
     environment:
-      - RABBITMQ_URL=amqp://mypa:mypa_dev@rabbitmq:5672/
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgres://mypa:mypa_password@postgres:5432/mypa?sslmode=disable
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - REDIS_URL=${REDIS_URL}
+      - DATABASE_URL=${DATABASE_URL}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -61,8 +61,8 @@ services:
       - "5672:5672"
       - "15672:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: mypa
-      RABBITMQ_DEFAULT_PASS: mypa_dev
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-mypa}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-mypa_dev}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
@@ -89,9 +89,9 @@ services:
   postgres:
     image: pgvector/pgvector:pg15
     environment:
-      POSTGRES_USER: mypa
-      POSTGRES_PASSWORD: mypa_password
-      POSTGRES_DB: mypa
+      POSTGRES_USER: ${POSTGRES_USER:-mypa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mypa_password}
+      POSTGRES_DB: ${POSTGRES_DB:-mypa}
     ports:
       - "5432:5432"
     volumes:
@@ -106,8 +106,8 @@ services:
   pgadmin:
     image: dpage/pgadmin4
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@mypa.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@mypa.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
     ports:
       - "5050:80"
     depends_on:
