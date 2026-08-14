@@ -119,5 +119,37 @@ var CalendarEventTool = &genai.Tool{
 				Required: []string{"fact"},
 			},
 		},
+		{
+			Name:        "read_email",
+			Description: "Reads the contents of a specific email by its ID.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"message_id": {
+						Type:        genai.TypeString,
+						Description: "The ID of the email to read.",
+					},
+				},
+				Required: []string{"message_id"},
+			},
+		},
+		{
+			Name:        "draft_email_reply",
+			Description: "Drafts a reply to an email. Does not send it.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"message_id": {
+						Type:        genai.TypeString,
+						Description: "The ID of the email to reply to.",
+					},
+					"reply_text": {
+						Type:        genai.TypeString,
+						Description: "The body of the reply.",
+					},
+				},
+				Required: []string{"message_id", "reply_text"},
+			},
+		},
 	},
 }

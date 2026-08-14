@@ -15,6 +15,7 @@ import (
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/gmail"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"github.com/nivik/mypa/internal/scheduler"
@@ -108,8 +109,10 @@ func main() {
 	// 8. Initialize Twilio Client
 	twilioClient := twilio.NewClient(cfg.Twilio)
 
+	gmailClient := gmail.NewClient(oauthCfg, store)
+
 	// 9. Initialize Engine
-	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, audioClient, cfg.Server.DefaultTimezone)
+	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, audioClient, cfg.Server.DefaultTimezone)
 
 	// Start Cron jobs
 	c := scheduler.StartCronJobs(engine)

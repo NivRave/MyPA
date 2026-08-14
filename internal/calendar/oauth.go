@@ -9,6 +9,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/calendar/v3"
+	"google.golang.org/api/gmail/v1"
 )
 
 // OAuthConfig holds the OAuth2 configuration.
@@ -24,7 +25,7 @@ func NewOAuthConfig(cfg *config.GoogleConfig) *OAuthConfig {
 			ClientSecret: cfg.ClientSecret,
 			Endpoint:     google.Endpoint,
 			RedirectURL:  cfg.RedirectURL,
-			Scopes:       []string{calendar.CalendarEventsScope},
+			Scopes:       []string{calendar.CalendarEventsScope, gmail.GmailModifyScope},
 		},
 	}
 }

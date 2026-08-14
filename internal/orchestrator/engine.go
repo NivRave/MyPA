@@ -12,6 +12,7 @@ import (
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/gmail"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
@@ -24,29 +25,42 @@ import (
 
 // Engine is the core orchestrator that connects all components.
 type Engine struct {
-	consumer *broker.Consumer
-	store    *state.Store
-	db       *db.Client
-	llm      *llm.Client
-	tg       *telegram.Client
-	tw       *twilio.Client
-	oauth    *calendar.OAuthConfig
-	audio    *audio.Client
-	timezone string
+	consumer    *broker.Consumer
+	store       *state.Store
+	db          *db.Client
+	llm         *llm.Client
+	tgClient    *telegram.Client
+	twClient    *twilio.Client
+	audioClient *audio.Client
+	oauthCfg    *calendar.OAuthConfig
+	gmailClient *gmail.Client
+	timezone    string
 }
 
 // NewEngine initializes the orchestrator engine.
-func NewEngine(consumer *broker.Consumer, store *state.Store, dbClient *db.Client, llm *llm.Client, tg *telegram.Client, tw *twilio.Client, oauth *calendar.OAuthConfig, audioClient *audio.Client, timezone string) *Engine {
+func NewEngine(
+	cons *broker.Consumer,
+	store *state.Store,
+	db *db.Client,
+	llm *llm.Client,
+	tg *telegram.Client,
+	tw *twilio.Client,
+	oauth *calendar.OAuthConfig,
+	gmailC *gmail.Client,
+	audio *audio.Client,
+	tz string,
+) *Engine {
 	return &Engine{
-		consumer: consumer,
-		store:    store,
-		db:       dbClient,
-		llm:      llm,
-		tg:       tg,
-		tw:       tw,
-		oauth:    oauth,
-		audio:    audioClient,
-		timezone: timezone,
+		consumer:    cons,
+		store:       store,
+		db:          db,
+		llm:         llm,
+		tgClient:    tg,
+		twClient:    tw,
+		oauthCfg:    oauth,
+		gmailClient: gmailC,
+		audioClient: audio,
+		timezone:    tz,
 	}
 }
 
@@ -76,9 +90,9 @@ func (e *Engine) Start(ctx context.Context) error {
 
 func (e *Engine) sendMessage(ctx context.Context, msg models.Message, text string) error {
 	if msg.Source == "whatsapp" {
-		return e.tw.SendMessage(ctx, msg.UserID, text)
+		return e.twClient.SendMessage(ctx, msg.UserID, text)
 	}
-	return e.tg.SendMessage(ctx, msg.ChatID, text)
+	return e.tgClient.SendMessage(ctx, msg.ChatID, text)
 }
 
 func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
@@ -107,7 +121,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 
 	// Check for commands
 	if msg.Text == "/connect" {
-		url := e.oauth.AuthCodeURL(msg.UserID)
+		url := e.oauthCfg.AuthCodeURL(msg.UserID)
 		llmResponse = fmt.Sprintf("🔗 [Click here to connect your Google Calendar](%s)", url)
 		actionTaken = "connect_command"
 		return e.sendMessage(ctx, msg, llmResponse)
@@ -115,19 +129,19 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 
 	// 0. Intercept and transcribe Voice Messages
 	if msg.VoiceFileID != "" {
-		filePath, err := e.tg.GetFile(ctx, msg.VoiceFileID)
+		filePath, err := e.tgClient.GetFile(ctx, msg.VoiceFileID)
 		if err != nil {
 			_ = e.sendMessage(ctx, msg, "❌ Failed to retrieve voice message metadata.")
 			return fmt.Errorf("failed to get file path: %w", err)
 		}
 
-		audioData, err := e.tg.DownloadFile(ctx, filePath)
+		audioData, err := e.tgClient.DownloadFile(ctx, filePath)
 		if err != nil {
 			_ = e.sendMessage(ctx, msg, "❌ Failed to download voice message.")
 			return fmt.Errorf("failed to download audio: %w", err)
 		}
 
-		transcribedText, err := e.audio.TranscribeAudio(ctx, audioData, "voice.ogg")
+		transcribedText, err := e.audioClient.TranscribeAudio(ctx, audioData, "voice.ogg")
 		if err != nil {
 			_ = e.sendMessage(ctx, msg, "❌ Failed to transcribe audio.")
 			return fmt.Errorf("failed to transcribe: %w", err)
@@ -140,13 +154,13 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		msg.Text = transcribedText
 	} else if msg.Source == "whatsapp" && msg.MediaURL != "" {
 		// Handle Twilio Voice Messages
-		audioData, err := e.tw.DownloadMedia(ctx, msg.MediaURL)
+		audioData, err := e.twClient.DownloadMedia(ctx, msg.MediaURL)
 		if err != nil {
 			_ = e.sendMessage(ctx, msg, "❌ Failed to download WhatsApp voice message.")
 			return fmt.Errorf("failed to download twilio media: %w", err)
 		}
 
-		transcribedText, err := e.audio.TranscribeAudio(ctx, audioData, "voice.ogg")
+		transcribedText, err := e.audioClient.TranscribeAudio(ctx, audioData, "voice.ogg")
 		if err != nil {
 			_ = e.sendMessage(ctx, msg, "❌ Failed to transcribe WhatsApp audio.")
 			return fmt.Errorf("failed to transcribe twilio media: %w", err)
@@ -259,6 +273,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		"If the user asks to change or update an event, use update_calendar_event. If they ask to cancel or delete an event, use delete_calendar_event. "+
 		"Do not ask for confirmation if they provided enough details (title, start, end). "+
 		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference. "+
+		"If the user asks to check their emails, use the list_unread_emails tool. "+
 		"IMPORTANT: The user is in Israel. The week starts on Sunday and ends on Thursday (Friday and Saturday are the weekend). When reasoning about 'next week' or 'this week', start the week on Sunday.",
 		time.Now().Format(time.RFC1123), e.timezone,
 	)
@@ -322,7 +337,7 @@ func (e *Engine) getCalendarClient(ctx context.Context, userID string) (*calenda
 		return nil, fmt.Errorf("invalid_token")
 	}
 
-	ts := e.oauth.TokenSource(ctx, token)
+	ts := e.oauthCfg.TokenSource(ctx, token)
 	return calendar.NewClient(ctx, ts)
 }
 
@@ -433,6 +448,53 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			return "❌ Failed to save memory to database.", nil
 		}
 		return "✅ Got it! I've saved that to my long-term memory.", nil
+	} else if toolCall.Name == "list_unread_emails" {
+		maxResults := int64(5)
+		if val, ok := toolCall.Args["max_results"]; ok {
+			maxResults = int64(val.(float64))
+		}
+
+		slog.Info("executing list_unread_emails tool", "user", msg.UserID, "max_results", maxResults)
+		emails, err := e.gmailClient.ListUnreadEmails(ctx, msg.UserID, maxResults)
+		if err != nil {
+			slog.Error("list_unread_emails failed", "error", err)
+			return fmt.Sprintf("Error checking emails: %v", err), nil
+		}
+		
+		if len(emails) == 0 {
+			return "You have no unread emails.", nil
+		}
+		
+		res, _ := json.Marshal(emails)
+		return string(res), nil
+	} else if toolCall.Name == "read_email" {
+		messageID, ok := toolCall.Args["message_id"].(string)
+		if !ok {
+			return "Missing message_id parameter", nil
+		}
+
+		slog.Info("executing read_email tool", "user", msg.UserID, "message_id", messageID)
+		body, err := e.gmailClient.ReadEmail(ctx, msg.UserID, messageID)
+		if err != nil {
+			slog.Error("read_email failed", "error", err)
+			return fmt.Sprintf("Error reading email: %v", err), nil
+		}
+		return body, nil
+	} else if toolCall.Name == "draft_email_reply" {
+		messageID, okID := toolCall.Args["message_id"].(string)
+		replyText, okText := toolCall.Args["reply_text"].(string)
+		
+		if !okID || !okText {
+			return "Missing message_id or reply_text parameters", nil
+		}
+
+		slog.Info("executing draft_email_reply tool", "user", msg.UserID, "message_id", messageID)
+		err := e.gmailClient.DraftReply(ctx, msg.UserID, messageID, replyText)
+		if err != nil {
+			slog.Error("draft_email_reply failed", "error", err)
+			return fmt.Sprintf("Error drafting reply: %v", err), nil
+		}
+		return "Draft created successfully! The user can review it in their Gmail app.", nil
 	}
 
 	return "⚠️ LLM tried to call an unknown tool.", nil

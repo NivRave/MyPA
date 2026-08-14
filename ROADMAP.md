@@ -18,11 +18,9 @@ We have transitioned to a structured branching workflow to ensure stability:
 - **Mechanism:** At a designated time (e.g., 8:00 AM), the bot pulls calendar events and weather, formulates a summary via LLM, and dispatches a message via Telegram or WhatsApp.
 
 ### Phase 16: Extended Tool Integrations
-- **Goal:** Expand the assistant's capabilities beyond calendar management.
-- **Implementation:**
-  - **Gmail API:** Read and summarize unread emails, draft replies.
-  - **Task Management:** Integrate with Todoist, Notion, or Trello.
-  - **Web Search:** Give the LLM a web-browsing tool for real-time information retrieval.
+- [x] **Phase 16a: Gmail API Integration**: Let the LLM read unread emails and draft replies on the user's behalf.
+- [ ] **Phase 16b: Google Tasks Integration**: Build functionality to create and manage the user's Google Tasks.
+- [ ] **Phase 16c: Web Search Integration (Tavily)**: Grant the LLM the ability to search the web for real-time answers.
 
 ### Phase 17: Cloud Deployment & CI/CD
 - **Goal:** Move from local development to a 24/7 cloud environment.
