@@ -17,6 +17,7 @@ import (
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/nivik/mypa/internal/tasks"
+	"github.com/nivik/mypa/internal/tavily"
 	"github.com/nivik/mypa/internal/telegram"
 	"github.com/nivik/mypa/internal/twilio"
 	"github.com/pgvector/pgvector-go"
@@ -33,10 +34,11 @@ type Engine struct {
 	tgClient    *telegram.Client
 	twClient    *twilio.Client
 	audioClient *audio.Client
-	oauthCfg    *calendar.OAuthConfig
-	gmailClient *gmail.Client
-	tasksClient *tasks.Client
-	timezone    string
+	oauthCfg     *calendar.OAuthConfig
+	gmailClient  *gmail.Client
+	tasksClient  *tasks.Client
+	tavilyClient *tavily.Client
+	timezone     string
 }
 
 // NewEngine initializes the orchestrator engine.
@@ -50,6 +52,7 @@ func NewEngine(
 	oauth *calendar.OAuthConfig,
 	gmailC *gmail.Client,
 	tasksC *tasks.Client,
+	tavilyC *tavily.Client,
 	audio *audio.Client,
 	tz string,
 ) *Engine {
@@ -60,11 +63,12 @@ func NewEngine(
 		llm:         llm,
 		tgClient:    tg,
 		twClient:    tw,
-		oauthCfg:    oauth,
-		gmailClient: gmailC,
-		tasksClient: tasksC,
-		audioClient: audio,
-		timezone:    tz,
+		oauthCfg:     oauth,
+		gmailClient:  gmailC,
+		tasksClient:  tasksC,
+		tavilyClient: tavilyC,
+		audioClient:  audio,
+		timezone:     tz,
 	}
 }
 
@@ -305,6 +309,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		"If the user asks to schedule a meeting, block time, or create an event, you MUST use the create_calendar_event tool. "+
 		"If the user asks to change or update an event, use update_calendar_event. If they ask to cancel or delete an event, use delete_calendar_event. "+
 		"If the user asks to manage tasks, to-dos, or lists, use the Google Tasks tools (list_tasks, create_task, complete_task, delete_task). "+
+		"If the user asks about recent news, current events, or information you don't know, use the search_web tool to search the internet. "+
 		"Do not ask for confirmation if they provided enough details (title, start, end). "+
 		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference. "+
 		"If the user asks to check their emails, use the list_unread_emails tool. "+
@@ -599,6 +604,22 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			return fmt.Sprintf("Error deleting task: %v", err), nil
 		}
 		return "Task deleted successfully.", nil
+	} else if toolCall.Name == "search_web" {
+		query, ok := toolCall.Args["query"].(string)
+		if !ok {
+			return "Missing query parameter", nil
+		}
+
+		slog.Info("executing search_web tool", "user", msg.UserID, "query", query)
+		// Notify user that we are searching
+		_ = e.sendMessage(ctx, msg, "🔍 Searching the web...")
+
+		result, err := e.tavilyClient.Search(ctx, query)
+		if err != nil {
+			slog.Error("search_web failed", "error", err)
+			return fmt.Sprintf("Error searching the web: %v", err), nil
+		}
+		return result, nil
 	}
 
 	return "⚠️ LLM tried to call an unknown tool.", nil

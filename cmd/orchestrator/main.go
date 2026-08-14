@@ -21,6 +21,7 @@ import (
 	"github.com/nivik/mypa/internal/scheduler"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/nivik/mypa/internal/tasks"
+	"github.com/nivik/mypa/internal/tavily"
 	"github.com/nivik/mypa/internal/telegram"
 	"github.com/nivik/mypa/internal/twilio"
 )
@@ -112,9 +113,10 @@ func main() {
 
 	gmailClient := gmail.NewClient(oauthCfg, store)
 	tasksClient := tasks.NewClient(oauthCfg, store)
+	tavilyClient := tavily.NewClient(cfg.Tavily.APIKey)
 
 	// 9. Initialize Engine
-	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, audioClient, cfg.Server.DefaultTimezone)
+	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, tavilyClient, audioClient, cfg.Server.DefaultTimezone)
 
 	// Start Cron jobs
 	c := scheduler.StartCronJobs(engine)

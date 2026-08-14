@@ -5,5 +5,13 @@ server:
   gateway_port: 8080
   orchestrator_port: 8081
 
+google:
+  client_id: ""
+  client_secret: ""
+  redirect_url: "http://localhost:8080/oauth/callback"
+
+tavily:
+  api_key: ""
+
 gemini:
   model: gemini-2.5-flash

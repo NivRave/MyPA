@@ -19,6 +19,7 @@ type Config struct {
 	Google   GoogleConfig   `mapstructure:"google"`
 	Groq     GroqConfig     `mapstructure:"groq"`
 	Twilio   TwilioConfig   `mapstructure:"twilio"`
+	Tavily   TavilyConfig   `mapstructure:"tavily"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -60,6 +61,10 @@ type GoogleConfig struct {
 	ClientID     string `mapstructure:"client_id"`
 	ClientSecret string `mapstructure:"client_secret"`
 	RedirectURL  string `mapstructure:"redirect_url"`
+}
+
+type TavilyConfig struct {
+	APIKey string `mapstructure:"api_key"`
 }
 
 // GroqConfig holds Groq API settings.
