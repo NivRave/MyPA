@@ -13,6 +13,7 @@ Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → 
 ## Features
 - **Multi-Channel Support**: Available on both Telegram and WhatsApp (via Twilio API).
 - **Conversational Scheduling**: Create Google Calendar events via natural language (infers dates and times).
+- **Gmail Integration**: Ask the assistant to read your unread emails and draft replies directly from Telegram/WhatsApp.
 - **Semantic Memory**: Infinite, searchable long-term memory of past conversations and user preferences using PostgreSQL `pgvector`.
 - **Proactive Morning Briefings**: A background scheduler proactively wakes up and messages the user a summary of their daily schedule.
 - **Voice Commands**: Send voice messages via Telegram or WhatsApp, transcribed automatically using the Groq Whisper API.
