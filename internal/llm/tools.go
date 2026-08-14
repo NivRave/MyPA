@@ -164,5 +164,62 @@ var CalendarEventTool = &genai.Tool{
 				Required: []string{"message_id", "reply_text"},
 			},
 		},
+		{
+			Name:        "list_tasks",
+			Description: "Lists the user's pending Google Tasks from their default task list.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+			},
+		},
+		{
+			Name:        "create_task",
+			Description: "Creates a new task on the user's Google Tasks list.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"title": {
+						Type:        genai.TypeString,
+						Description: "The title of the task.",
+					},
+					"notes": {
+						Type:        genai.TypeString,
+						Description: "Optional additional notes for the task.",
+					},
+					"due": {
+						Type:        genai.TypeString,
+						Description: "Optional due date for the task in RFC 3339 format (e.g., '2023-10-01T00:00:00Z').",
+					},
+				},
+				Required: []string{"title"},
+			},
+		},
+		{
+			Name:        "complete_task",
+			Description: "Marks a task as completed in Google Tasks.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"task_id": {
+						Type:        genai.TypeString,
+						Description: "The ID of the task to complete.",
+					},
+				},
+				Required: []string{"task_id"},
+			},
+		},
+		{
+			Name:        "delete_task",
+			Description: "Deletes a task entirely from Google Tasks.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"task_id": {
+						Type:        genai.TypeString,
+						Description: "The ID of the task to delete.",
+					},
+				},
+				Required: []string{"task_id"},
+			},
+		},
 	},
 }

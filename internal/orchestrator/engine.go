@@ -16,6 +16,7 @@ import (
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
+	"github.com/nivik/mypa/internal/tasks"
 	"github.com/nivik/mypa/internal/telegram"
 	"github.com/nivik/mypa/internal/twilio"
 	"github.com/pgvector/pgvector-go"
@@ -34,6 +35,7 @@ type Engine struct {
 	audioClient *audio.Client
 	oauthCfg    *calendar.OAuthConfig
 	gmailClient *gmail.Client
+	tasksClient *tasks.Client
 	timezone    string
 }
 
@@ -47,6 +49,7 @@ func NewEngine(
 	tw *twilio.Client,
 	oauth *calendar.OAuthConfig,
 	gmailC *gmail.Client,
+	tasksC *tasks.Client,
 	audio *audio.Client,
 	tz string,
 ) *Engine {
@@ -59,6 +62,7 @@ func NewEngine(
 		twClient:    tw,
 		oauthCfg:    oauth,
 		gmailClient: gmailC,
+		tasksClient: tasksC,
 		audioClient: audio,
 		timezone:    tz,
 	}
@@ -300,10 +304,11 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		"The current date and time is %s. The user's timezone is %s (assume this timezone for relative dates). "+
 		"If the user asks to schedule a meeting, block time, or create an event, you MUST use the create_calendar_event tool. "+
 		"If the user asks to change or update an event, use update_calendar_event. If they ask to cancel or delete an event, use delete_calendar_event. "+
+		"If the user asks to manage tasks, to-dos, or lists, use the Google Tasks tools (list_tasks, create_task, complete_task, delete_task). "+
 		"Do not ask for confirmation if they provided enough details (title, start, end). "+
 		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference. "+
 		"If the user asks to check their emails, use the list_unread_emails tool. "+
-		"IMPORTANT: If a tool returns JSON or raw data (like list_unread_emails), you MUST summarize and format it into a clean, friendly, conversational response (e.g. using bullet points). NEVER output raw JSON to the user. "+
+		"IMPORTANT: If a tool returns JSON or raw data (like list_unread_emails or list_tasks), you MUST summarize and format it into a clean, friendly, conversational response (e.g. using bullet points). NEVER output raw JSON to the user. "+
 		"IMPORTANT: The user is in Israel. The week starts on Sunday and ends on Thursday (Friday and Saturday are the weekend). When reasoning about 'next week' or 'this week', start the week on Sunday.",
 		time.Now().Format(time.RFC1123), e.timezone,
 	)
@@ -525,6 +530,56 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			return fmt.Sprintf("Error drafting reply: %v", err), nil
 		}
 		return "Draft created successfully! The user can review it in their Gmail app.", nil
+	} else if toolCall.Name == "list_tasks" {
+		slog.Info("executing list_tasks tool", "user", msg.UserID)
+		tasks, err := e.tasksClient.ListTasks(ctx, msg.UserID)
+		if err != nil {
+			slog.Error("list_tasks failed", "error", err)
+			return fmt.Sprintf("Error listing tasks: %v", err), nil
+		}
+		if len(tasks) == 0 {
+			return "You have no tasks on your default list.", nil
+		}
+		res, _ := json.Marshal(tasks)
+		return string(res), nil
+	} else if toolCall.Name == "create_task" {
+		title, _ := toolCall.Args["title"].(string)
+		notes, _ := toolCall.Args["notes"].(string)
+		due, _ := toolCall.Args["due"].(string)
+
+		slog.Info("executing create_task tool", "user", msg.UserID, "title", title)
+		err := e.tasksClient.CreateTask(ctx, msg.UserID, title, notes, due)
+		if err != nil {
+			slog.Error("create_task failed", "error", err)
+			return fmt.Sprintf("Error creating task: %v", err), nil
+		}
+		return "Task created successfully.", nil
+	} else if toolCall.Name == "complete_task" {
+		taskID, ok := toolCall.Args["task_id"].(string)
+		if !ok {
+			return "Missing task_id parameter", nil
+		}
+
+		slog.Info("executing complete_task tool", "user", msg.UserID, "task_id", taskID)
+		err := e.tasksClient.CompleteTask(ctx, msg.UserID, taskID)
+		if err != nil {
+			slog.Error("complete_task failed", "error", err)
+			return fmt.Sprintf("Error completing task: %v", err), nil
+		}
+		return "Task marked as completed.", nil
+	} else if toolCall.Name == "delete_task" {
+		taskID, ok := toolCall.Args["task_id"].(string)
+		if !ok {
+			return "Missing task_id parameter", nil
+		}
+
+		slog.Info("executing delete_task tool", "user", msg.UserID, "task_id", taskID)
+		err := e.tasksClient.DeleteTask(ctx, msg.UserID, taskID)
+		if err != nil {
+			slog.Error("delete_task failed", "error", err)
+			return fmt.Sprintf("Error deleting task: %v", err), nil
+		}
+		return "Task deleted successfully.", nil
 	}
 
 	return "⚠️ LLM tried to call an unknown tool.", nil
