@@ -128,6 +128,7 @@ func Load() (*Config, error) {
 		"TWILIO_ACCOUNT_SID":    "twilio.account_sid",
 		"TWILIO_AUTH_TOKEN":     "twilio.auth_token",
 		"TWILIO_FROM_NUMBER":    "twilio.from_number",
+		"TAVILY_API_KEY":        "tavily.api_key",
 	}
 
 	for envKey, configKey := range envBindings {
