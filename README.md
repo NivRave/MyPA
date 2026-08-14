@@ -15,6 +15,7 @@ Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → 
 - **Conversational Scheduling**: Create Google Calendar events via natural language (infers dates and times).
 - **Gmail Integration**: Ask the assistant to read your unread emails and draft replies directly from Telegram/WhatsApp.
 - **Google Tasks Integration**: Create, complete, list, and delete Google Tasks effortlessly.
+- **Web Search**: Answer real-time questions and summarize current events via the Tavily Search API.
 - **Semantic Memory**: Infinite, searchable long-term memory of past conversations and user preferences using PostgreSQL `pgvector`.
 - **Proactive Morning Briefings**: A background scheduler proactively wakes up and messages the user a summary of their daily schedule.
 - **Voice Commands**: Send voice messages via Telegram or WhatsApp, transcribed automatically using the Groq Whisper API.
@@ -41,6 +42,7 @@ We are currently in **Season 2** development. We have successfully rolled out in
 - Twilio Account SID & Auth Token (for WhatsApp integration)
 - Gemini API Key (from [Google AI Studio](https://aistudio.google.com/))
 - Groq API Key (from [GroqCloud](https://console.groq.com/))
+- Tavily API Key (from [Tavily](https://tavily.com/))
 - Google Cloud OAuth credentials (for Calendar API)
 
 ## Quick Start
