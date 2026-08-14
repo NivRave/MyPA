@@ -120,6 +120,19 @@ var CalendarEventTool = &genai.Tool{
 			},
 		},
 		{
+			Name:        "list_unread_emails",
+			Description: "Lists the user's recent unread emails. Use this to check for new messages.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"max_results": {
+						Type:        genai.TypeInteger,
+						Description: "The maximum number of emails to fetch (default: 5).",
+					},
+				},
+			},
+		},
+		{
 			Name:        "read_email",
 			Description: "Reads the contents of a specific email by its ID.",
 			Parameters: &genai.Schema{
