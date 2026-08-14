@@ -89,10 +89,39 @@ func (e *Engine) Start(ctx context.Context) error {
 }
 
 func (e *Engine) sendMessage(ctx context.Context, msg models.Message, text string) error {
-	if msg.Source == "whatsapp" {
-		return e.twClient.SendMessage(ctx, msg.UserID, text)
+	// Chunk message to avoid hitting Twilio's 1600 character limit or Telegram limits.
+	const chunkSize = 1500
+	var err error
+
+	for len(text) > 0 {
+		var chunk string
+		if len(text) > chunkSize {
+			// Try to find a good breaking point (newline or space)
+			breakIndex := chunkSize
+			for i := chunkSize; i > chunkSize-100; i-- {
+				if text[i] == '\n' || text[i] == ' ' {
+					breakIndex = i
+					break
+				}
+			}
+			chunk = text[:breakIndex]
+			text = text[breakIndex:]
+		} else {
+			chunk = text
+			text = ""
+		}
+
+		if msg.Source == "whatsapp" {
+			err = e.twClient.SendMessage(ctx, msg.UserID, chunk)
+		} else {
+			err = e.tgClient.SendMessage(ctx, msg.ChatID, chunk)
+		}
+
+		if err != nil {
+			return err
+		}
 	}
-	return e.tgClient.SendMessage(ctx, msg.ChatID, text)
+	return nil
 }
 
 func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
