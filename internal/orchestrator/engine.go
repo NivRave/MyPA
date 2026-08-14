@@ -303,6 +303,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		"Do not ask for confirmation if they provided enough details (title, start, end). "+
 		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference. "+
 		"If the user asks to check their emails, use the list_unread_emails tool. "+
+		"IMPORTANT: If a tool returns JSON or raw data (like list_unread_emails), you MUST summarize and format it into a clean, friendly, conversational response (e.g. using bullet points). NEVER output raw JSON to the user. "+
 		"IMPORTANT: The user is in Israel. The week starts on Sunday and ends on Thursday (Friday and Saturday are the weekend). When reasoning about 'next week' or 'this week', start the week on Sunday.",
 		time.Now().Format(time.RFC1123), e.timezone,
 	)
