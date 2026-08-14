@@ -8,9 +8,9 @@ services:
     env_file:
       - .env
     environment:
-      - RABBITMQ_URL=${RABBITMQ_URL}
-      - REDIS_URL=${REDIS_URL}
-      - DATABASE_URL=${DATABASE_URL}
+      - RABBITMQ_URL=amqp://mypa:mypa_dev@rabbitmq:5672/
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgres://mypa:mypa_password@postgres:5432/mypa?sslmode=disable
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -27,9 +27,9 @@ services:
     env_file:
       - .env
     environment:
-      - RABBITMQ_URL=${RABBITMQ_URL}
-      - REDIS_URL=${REDIS_URL}
-      - DATABASE_URL=${DATABASE_URL}
+      - RABBITMQ_URL=amqp://mypa:mypa_dev@rabbitmq:5672/
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgres://mypa:mypa_password@postgres:5432/mypa?sslmode=disable
     depends_on:
       rabbitmq:
         condition: service_healthy

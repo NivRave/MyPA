@@ -12,12 +12,15 @@ import (
 // StartCronJobs initializes and starts background scheduling tasks.
 func StartCronJobs(engine *orchestrator.Engine) *cron.Cron {
 	// Set the timezone to the user's location (e.g. Asia/Jerusalem or UTC)
-	// We'll use Local or UTC, but since cron uses the server's local time by default,
-	// it's best to specify if we need a specific timezone. We'll just run it at 08:00 system time.
-	c := cron.New()
+	loc, err := time.LoadLocation("Asia/Jerusalem")
+	if err != nil {
+		slog.Warn("Failed to load timezone, using local time", "error", err)
+		loc = time.Local
+	}
+	c := cron.New(cron.WithLocation(loc))
 
 	// Every day at 8:00 AM
-	_, err := c.AddFunc("0 8 * * *", func() {
+	_, err = c.AddFunc("0 8 * * *", func() {
 		slog.Info("Cron triggered: Morning Briefing")
 		
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
