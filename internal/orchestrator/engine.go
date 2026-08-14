@@ -495,13 +495,16 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			slog.Error("list_unread_emails failed", "error", err)
 			return fmt.Sprintf("Error checking emails: %v", err), nil
 		}
-		
 		if len(emails) == 0 {
 			return "You have no unread emails.", nil
 		}
 		
-		res, _ := json.Marshal(emails)
-		return string(res), nil
+		var sb strings.Builder
+		sb.WriteString("📬 *Unread Emails:*\n\n")
+		for i, email := range emails {
+			sb.WriteString(fmt.Sprintf("%d. *From:* %s\n*Subject:* %s\n*Snippet:* %s\n\n", i+1, email.From, email.Subject, email.Snippet))
+		}
+		return sb.String(), nil
 	} else if toolCall.Name == "read_email" {
 		messageID, ok := toolCall.Args["message_id"].(string)
 		if !ok {
@@ -540,8 +543,24 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 		if len(tasks) == 0 {
 			return "You have no tasks on your default list.", nil
 		}
-		res, _ := json.Marshal(tasks)
-		return string(res), nil
+		
+		var sb strings.Builder
+		sb.WriteString("📝 *Your Tasks:*\n\n")
+		for _, t := range tasks {
+			dueStr := ""
+			if t.Due != "" {
+				// Parse and format due date if possible
+				if parsed, err := time.Parse(time.RFC3339, t.Due); err == nil {
+					dueStr = fmt.Sprintf(" (Due: %s)", parsed.Format("Jan 02"))
+				}
+			}
+			notesStr := ""
+			if t.Notes != "" {
+				notesStr = fmt.Sprintf("\n   _Notes: %s_", t.Notes)
+			}
+			sb.WriteString(fmt.Sprintf("- *%s*%s%s\n", t.Title, dueStr, notesStr))
+		}
+		return sb.String(), nil
 	} else if toolCall.Name == "create_task" {
 		title, _ := toolCall.Args["title"].(string)
 		notes, _ := toolCall.Args["notes"].(string)
