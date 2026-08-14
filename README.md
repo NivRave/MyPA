@@ -17,7 +17,7 @@ Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → 
 - **Google Tasks Integration**: Create, complete, list, and delete Google Tasks effortlessly.
 - **Web Search**: Answer real-time questions and summarize current events via the Tavily Search API.
 - **Semantic Memory**: Infinite, searchable long-term memory of past conversations and user preferences using PostgreSQL `pgvector`.
-- **Proactive Morning Briefings**: A background scheduler proactively wakes up and messages the user a summary of their daily schedule.
+- **Proactive Morning Briefings**: A background scheduler proactively wakes up and messages the user a summary of their daily schedule and pending TODO tasks.
 - **Voice Commands**: Send voice messages via Telegram or WhatsApp, transcribed automatically using the Groq Whisper API.
 - **Calendar Querying & Summarization**: Ask "What do I have tomorrow?" to retrieve and naturally summarize events.
 - **Event Modifications**: Update or delete events with a built-in safety confirmation flow to prevent accidental data loss.
