@@ -20,7 +20,7 @@ Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → 
 - **Proactive Morning Briefings**: A background scheduler proactively wakes up and messages the user a summary of their daily schedule and pending TODO tasks.
 - **Voice Commands**: Send voice messages via Telegram or WhatsApp, transcribed automatically using the Groq Whisper API.
 - **Calendar Querying & Summarization**: Ask "What do I have tomorrow?" to retrieve and naturally summarize events.
-- **Event Modifications**: Update or delete events with a built-in safety confirmation flow to prevent accidental data loss.
+- **Event Modifications**: Update or delete events easily through natural language.
 - **Multi-turn Execution**: Capable of recursive reasoning, such as fetching events and then acting upon the retrieved list in a single user turn.
 - **Audit Logging**: Asynchronously logs all user requests, LLM responses, and executed actions to a database.
 - **Microservice Architecture**: Decoupled ingestion and execution layers connected via RabbitMQ.
