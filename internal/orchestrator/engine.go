@@ -431,7 +431,16 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			recurringText = " recurring"
 		}
 
-		return fmt.Sprintf("🗓️ **Proposal:** I will create a%s event titled '%s' from %s to %s.\n\nReply **yes** to confirm or **cancel** to abort.", recurringText, event.Title, event.StartTime, event.EndTime), nil
+		startFmt := event.StartTime
+		if t, err := time.Parse(time.RFC3339, event.StartTime); err == nil {
+			startFmt = t.Format("Jan 2 at 15:04")
+		}
+		endFmt := event.EndTime
+		if t, err := time.Parse(time.RFC3339, event.EndTime); err == nil {
+			endFmt = t.Format("Jan 2 at 15:04")
+		}
+
+		return fmt.Sprintf("🗓️ **Proposal:** I will create a%s event titled '%s' from %s to %s.\n\nReply **yes** to confirm or **cancel** to abort.", recurringText, event.Title, startFmt, endFmt), nil
 	} else if toolCall.Name == "update_calendar_event" || toolCall.Name == "delete_calendar_event" {
 		argsJSON, _ := json.Marshal(toolCall.Args)
 		var event models.CalendarEvent
