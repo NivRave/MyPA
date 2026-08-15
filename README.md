@@ -25,11 +25,16 @@ Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → 
 - **Audit Logging**: Asynchronously logs all user requests, LLM responses, and executed actions to a database.
 - **Microservice Architecture**: Decoupled ingestion and execution layers connected via RabbitMQ.
 
-## V1 (MVP) vs Future Roadmap
+## V2 (Current Release)
 
-The features listed above comprise the **V1 Minimum Viable Product (MVP)**. The V1 core engine is fully built, containerized, and production-ready, effectively serving as an intelligent calendar and scheduling assistant.
+MyPA has officially reached **V2**! 
+While V1 (last commit: `c6a3882e63f4db695b345f2b57f2b9b672e9cbbf`) focused on building a robust core scheduling engine, V2 significantly expands the assistant's capabilities with:
 
-We are currently in **Season 2** development. We have successfully rolled out infinite semantic memory and proactive daily briefings, and are now gearing up for new API integrations (like Gmail/Todoist) and cloud CI/CD deployment.
+- **Semantic Memory & Proactive Briefings**: Long-term memory storage using `pgvector` and daily morning summaries of your schedule and pending tasks.
+- **Expanded Ecosystem Integrations**: Full support for Gmail (reading/drafting), Google Tasks (CRUD operations), and real-time Web Search via Tavily.
+- **Enhanced Core Capabilities**: Support for recurring calendar events and a streamlined UX that executes tasks immediately without requiring confirmation.
+
+The V2 engine is fully built, containerized, and production-ready.
 
 👉 **See the [ROADMAP.md](ROADMAP.md) for the full list of planned future features.**
 
