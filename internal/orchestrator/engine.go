@@ -426,7 +426,12 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			return "", fmt.Errorf("failed to save pending action: %w", err)
 		}
 
-		return fmt.Sprintf("🗓️ **Proposal:** I will create an event titled '%s' from %s to %s.\n\nReply **yes** to confirm or **cancel** to abort.", event.Title, event.StartTime, event.EndTime), nil
+		recurringText := ""
+		if len(event.Recurrence) > 0 {
+			recurringText = " recurring"
+		}
+
+		return fmt.Sprintf("🗓️ **Proposal:** I will create a%s event titled '%s' from %s to %s.\n\nReply **yes** to confirm or **cancel** to abort.", recurringText, event.Title, event.StartTime, event.EndTime), nil
 	} else if toolCall.Name == "update_calendar_event" || toolCall.Name == "delete_calendar_event" {
 		argsJSON, _ := json.Marshal(toolCall.Args)
 		var event models.CalendarEvent
@@ -447,7 +452,11 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 		}
 
 		if toolCall.Name == "update_calendar_event" {
-			return fmt.Sprintf("🗓️ **Proposal:** I will update the event '%s'.\n\nReply **yes** to confirm or **cancel** to abort.", event.Title), nil
+			recurringText := ""
+			if len(event.Recurrence) > 0 {
+				recurringText = " recurring"
+			}
+			return fmt.Sprintf("🗓️ **Proposal:** I will update the%s event '%s'.\n\nReply **yes** to confirm or **cancel** to abort.", recurringText, event.Title), nil
 		}
 		return "🗓️ **Proposal:** I will delete the event.\n\nReply **yes** to confirm or **cancel** to abort.", nil
 	} else if toolCall.Name == "list_calendar_events" {

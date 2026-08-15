@@ -32,6 +32,13 @@ var CalendarEventTool = &genai.Tool{
 						Type:        genai.TypeString,
 						Description: "The IANA timezone of the user (e.g. 'America/New_York'). MUST be provided based on the user's current context.",
 					},
+					"recurrence": {
+						Type:        genai.TypeArray,
+						Items: &genai.Schema{
+							Type: genai.TypeString,
+						},
+						Description: "Optional recurrence rules for repeating events. Must be an array of RFC 5545 RRULE strings. For example: ['RRULE:FREQ=WEEKLY;BYDAY=TU'] for every Tuesday.",
+					},
 				},
 				Required: []string{"title", "start_time", "end_time", "timezone"},
 			},
@@ -86,6 +93,13 @@ var CalendarEventTool = &genai.Tool{
 					"timezone": {
 						Type:        genai.TypeString,
 						Description: "The IANA timezone of the user (e.g. 'America/New_York').",
+					},
+					"recurrence": {
+						Type:        genai.TypeArray,
+						Items: &genai.Schema{
+							Type: genai.TypeString,
+						},
+						Description: "Optional recurrence rules for repeating events. Must be an array of RFC 5545 RRULE strings. For example: ['RRULE:FREQ=WEEKLY;BYDAY=TU'] for every Tuesday.",
 					},
 				},
 				Required: []string{"id"},
