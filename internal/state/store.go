@@ -86,49 +86,6 @@ func (s *Store) GetChatHistory(ctx context.Context, userID string) ([]models.Cha
 	return history, nil
 }
 
-// SetPendingAction stores a pending action for a user awaiting confirmation.
-func (s *Store) SetPendingAction(ctx context.Context, userID string, action models.PendingAction) error {
-	key := fmt.Sprintf("pending:%s", userID)
-
-	bytes, err := json.Marshal(action)
-	if err != nil {
-		return fmt.Errorf("failed to marshal pending action: %w", err)
-	}
-
-	// 5-minute TTL for pending actions
-	err = s.client.Set(ctx, key, bytes, 5*time.Minute).Err()
-	if err != nil {
-		return fmt.Errorf("failed to set pending action: %w", err)
-	}
-
-	return nil
-}
-
-// GetPendingAction retrieves a user's pending action, if any.
-func (s *Store) GetPendingAction(ctx context.Context, userID string) (*models.PendingAction, error) {
-	key := fmt.Sprintf("pending:%s", userID)
-
-	res, err := s.client.Get(ctx, key).Result()
-	if err == redis.Nil {
-		return nil, nil // No pending action
-	} else if err != nil {
-		return nil, fmt.Errorf("failed to get pending action: %w", err)
-	}
-
-	var action models.PendingAction
-	if err := json.Unmarshal([]byte(res), &action); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal pending action: %w", err)
-	}
-
-	return &action, nil
-}
-
-// ClearPendingAction removes a pending action.
-func (s *Store) ClearPendingAction(ctx context.Context, userID string) error {
-	key := fmt.Sprintf("pending:%s", userID)
-	return s.client.Del(ctx, key).Err()
-}
-
 // SetOAuthToken stores a Google OAuth2 token for a user.
 func (s *Store) SetOAuthToken(ctx context.Context, userID string, tokenBytes []byte) error {
 	key := fmt.Sprintf("token:%s", userID)

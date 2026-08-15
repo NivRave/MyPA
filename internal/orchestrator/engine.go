@@ -233,92 +233,6 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		msg.Text = transcribedText
 	}
 
-	// 1. Check if there's a pending action waiting for confirmation
-	pending, err := e.store.GetPendingAction(ctx, msg.UserID)
-	if err != nil {
-		return fmt.Errorf("failed to check pending action: %w", err)
-	}
-
-	if pending != nil {
-		// Is the user confirming?
-		text := strings.ToLower(strings.TrimSpace(msg.Text))
-		isConfirm := text == "yes" || text == "y" || text == "confirm" || text == "do it"
-		isCancel := text == "no" || text == "n" || text == "cancel" || text == "stop"
-
-		if isCancel {
-			_ = e.store.ClearPendingAction(ctx, msg.UserID)
-			llmResponse = "❌ Action canceled."
-			actionTaken = "cancel_pending_action"
-			return e.sendMessage(ctx, msg, llmResponse)
-		}
-
-		if isConfirm {
-			actionMsg := "⏳ Processing..."
-			if pending.Action == "create_calendar_event" {
-				actionMsg = "⏳ Creating event..."
-			} else if pending.Action == "update_calendar_event" {
-				actionMsg = "⏳ Updating event..."
-			} else if pending.Action == "delete_calendar_event" {
-				actionMsg = "⏳ Deleting event..."
-			}
-			_ = e.sendMessage(ctx, msg, actionMsg)
-			
-			actionTaken = "confirm_" + pending.Action
-
-			// Create Calendar Client
-			calClient, err := e.calendarFactory(ctx, msg.UserID)
-			if err != nil {
-				_ = e.store.ClearPendingAction(ctx, msg.UserID)
-				if err.Error() == "unauthorized" {
-					llmResponse = "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again."
-					return e.sendMessage(ctx, msg, llmResponse)
-				}
-				llmResponse = "⚠️ Your Google connection expired or is invalid. Please send /connect again."
-				return e.sendMessage(ctx, msg, llmResponse)
-			}
-
-			// Execute Action
-			if pending.Action == "create_calendar_event" {
-				link, err := calClient.CreateEvent(ctx, pending.Event)
-				if err != nil {
-					_ = e.sendMessage(ctx, msg, "❌ Failed to create event: "+err.Error())
-					return fmt.Errorf("failed to create event: %w", err)
-				}
-				
-				_ = e.store.ClearPendingAction(ctx, msg.UserID)
-				llmResponse = fmt.Sprintf("✅ **Event Created Successfully!**\n\n[View Event](%s)", link)
-				return e.sendMessage(ctx, msg, llmResponse)
-			} else if pending.Action == "update_calendar_event" {
-				err := calClient.UpdateEvent(ctx, pending.Event.ID, pending.Event)
-				if err != nil {
-					llmResponse = "❌ Failed to update event: " + err.Error()
-					_ = e.sendMessage(ctx, msg, llmResponse)
-					return fmt.Errorf("failed to update event: %w", err)
-				}
-				
-				_ = e.store.ClearPendingAction(ctx, msg.UserID)
-				llmResponse = "✅ **Event Updated Successfully!**"
-				return e.sendMessage(ctx, msg, llmResponse)
-			} else if pending.Action == "delete_calendar_event" {
-				err := calClient.DeleteEvent(ctx, pending.Event.ID)
-				if err != nil {
-					_ = e.sendMessage(ctx, msg, "❌ Failed to delete event: "+err.Error())
-					return fmt.Errorf("failed to delete event: %w", err)
-				}
-				
-				_ = e.store.ClearPendingAction(ctx, msg.UserID)
-				llmResponse = "✅ **Event Deleted Successfully!**"
-				return e.sendMessage(ctx, msg, llmResponse)
-			}
-		}
-
-		// If it's not a clear yes/no, we can clear the action and process it as a normal message,
-		// or just tell them to confirm or cancel. Let's force confirm/cancel for safety.
-		llmResponse = "⚠️ You have a pending action. Please reply 'yes' to confirm, or 'cancel' to abort."
-		actionTaken = "prompt_confirm"
-		return e.sendMessage(ctx, msg, llmResponse)
-	}
-
 	// 2. Fetch conversation history
 	history, err := e.store.GetChatHistory(ctx, msg.UserID)
 	if err != nil {
@@ -333,7 +247,6 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		"If the user asks to change or update an event, use update_calendar_event. If they ask to cancel or delete an event, use delete_calendar_event. "+
 		"If the user asks to manage tasks, to-dos, or lists, use the Google Tasks tools (list_tasks, create_task, complete_task, delete_task). "+
 		"If the user asks about recent news, current events, or information you don't know, use the search_web tool to search the internet. "+
-		"Do not ask for confirmation if they provided enough details (title, start, end). "+
 		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference. "+
 		"If the user asks to check their emails, use the list_unread_emails tool. "+
 		"IMPORTANT: If a tool returns JSON or raw data (like list_unread_emails or list_tasks), you MUST summarize and format it into a clean, friendly, conversational response (e.g. using bullet points). NEVER output raw JSON to the user. "+
@@ -414,42 +327,62 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			return "", fmt.Errorf("failed to parse tool arguments into event: %w", err)
 		}
 
-		pendingAction := models.PendingAction{
-			UserID:    msg.UserID,
-			ChatID:    msg.ChatID,
-			Action:    "create_calendar_event",
-			Event:     event,
-			CreatedAt: time.Now(),
+		calClient, err := e.calendarFactory(ctx, msg.UserID)
+		if err != nil {
+			if err.Error() == "unauthorized" {
+				return "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again.", nil
+			}
+			return "⚠️ Your Google connection expired or is invalid. Please send /connect again.", nil
 		}
 
-		if err := e.store.SetPendingAction(ctx, msg.UserID, pendingAction); err != nil {
-			return "", fmt.Errorf("failed to save pending action: %w", err)
+		link, err := calClient.CreateEvent(ctx, event)
+		if err != nil {
+			return "❌ Failed to create event: " + err.Error(), nil
 		}
-
-		return fmt.Sprintf("🗓️ **Proposal:** I will create an event titled '%s' from %s to %s.\n\nReply **yes** to confirm or **cancel** to abort.", event.Title, event.StartTime, event.EndTime), nil
-	} else if toolCall.Name == "update_calendar_event" || toolCall.Name == "delete_calendar_event" {
+		
+		return fmt.Sprintf("✅ **Event Created Successfully!**\n\n[View Event](%s)", link), nil
+	} else if toolCall.Name == "update_calendar_event" {
 		argsJSON, _ := json.Marshal(toolCall.Args)
 		var event models.CalendarEvent
 		if err := json.Unmarshal(argsJSON, &event); err != nil {
 			return "", fmt.Errorf("failed to parse tool arguments into event: %w", err)
 		}
 
-		pendingAction := models.PendingAction{
-			UserID:    msg.UserID,
-			ChatID:    msg.ChatID,
-			Action:    toolCall.Name,
-			Event:     event,
-			CreatedAt: time.Now(),
+		calClient, err := e.calendarFactory(ctx, msg.UserID)
+		if err != nil {
+			if err.Error() == "unauthorized" {
+				return "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again.", nil
+			}
+			return "⚠️ Your Google connection expired or is invalid. Please send /connect again.", nil
 		}
 
-		if err := e.store.SetPendingAction(ctx, msg.UserID, pendingAction); err != nil {
-			return "", fmt.Errorf("failed to save pending action: %w", err)
+		err = calClient.UpdateEvent(ctx, event.ID, event)
+		if err != nil {
+			return "❌ Failed to update event: " + err.Error(), nil
+		}
+		
+		return "✅ **Event Updated Successfully!**", nil
+	} else if toolCall.Name == "delete_calendar_event" {
+		argsJSON, _ := json.Marshal(toolCall.Args)
+		var event models.CalendarEvent
+		if err := json.Unmarshal(argsJSON, &event); err != nil {
+			return "", fmt.Errorf("failed to parse tool arguments into event: %w", err)
 		}
 
-		if toolCall.Name == "update_calendar_event" {
-			return fmt.Sprintf("🗓️ **Proposal:** I will update the event '%s'.\n\nReply **yes** to confirm or **cancel** to abort.", event.Title), nil
+		calClient, err := e.calendarFactory(ctx, msg.UserID)
+		if err != nil {
+			if err.Error() == "unauthorized" {
+				return "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again.", nil
+			}
+			return "⚠️ Your Google connection expired or is invalid. Please send /connect again.", nil
 		}
-		return "🗓️ **Proposal:** I will delete the event.\n\nReply **yes** to confirm or **cancel** to abort.", nil
+
+		err = calClient.DeleteEvent(ctx, event.ID)
+		if err != nil {
+			return "❌ Failed to delete event: " + err.Error(), nil
+		}
+		
+		return "✅ **Event Deleted Successfully!**", nil
 	} else if toolCall.Name == "list_calendar_events" {
 		calClient, err := e.calendarFactory(ctx, msg.UserID)
 		if err != nil {

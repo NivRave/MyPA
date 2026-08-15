@@ -12,24 +12,29 @@ Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → 
 
 ## Features
 - **Multi-Channel Support**: Available on both Telegram and WhatsApp (via Twilio API).
-- **Conversational Scheduling**: Create Google Calendar events via natural language (infers dates and times).
+- **Conversational Scheduling**: Create single or recurring Google Calendar events via natural language (infers dates, times, and recurrence rules).
 - **Gmail Integration**: Ask the assistant to read your unread emails and draft replies directly from Telegram/WhatsApp.
 - **Google Tasks Integration**: Create, complete, list, and delete Google Tasks effortlessly.
 - **Web Search**: Answer real-time questions and summarize current events via the Tavily Search API.
 - **Semantic Memory**: Infinite, searchable long-term memory of past conversations and user preferences using PostgreSQL `pgvector`.
-- **Proactive Morning Briefings**: A background scheduler proactively wakes up and messages the user a summary of their daily schedule.
+- **Proactive Morning Briefings**: A background scheduler proactively wakes up and messages the user a summary of their daily schedule and pending TODO tasks.
 - **Voice Commands**: Send voice messages via Telegram or WhatsApp, transcribed automatically using the Groq Whisper API.
 - **Calendar Querying & Summarization**: Ask "What do I have tomorrow?" to retrieve and naturally summarize events.
-- **Event Modifications**: Update or delete events with a built-in safety confirmation flow to prevent accidental data loss.
+- **Event Modifications**: Update or delete events easily through natural language.
 - **Multi-turn Execution**: Capable of recursive reasoning, such as fetching events and then acting upon the retrieved list in a single user turn.
 - **Audit Logging**: Asynchronously logs all user requests, LLM responses, and executed actions to a database.
 - **Microservice Architecture**: Decoupled ingestion and execution layers connected via RabbitMQ.
 
-## V1 (MVP) vs Future Roadmap
+## V2 (Current Release)
 
-The features listed above comprise the **V1 Minimum Viable Product (MVP)**. The V1 core engine is fully built, containerized, and production-ready, effectively serving as an intelligent calendar and scheduling assistant.
+MyPA has officially reached **V2**! 
+While V1 (last commit: `c6a3882e63f4db695b345f2b57f2b9b672e9cbbf`) focused on building a robust core scheduling engine, V2 significantly expands the assistant's capabilities with:
 
-We are currently in **Season 2** development. We have successfully rolled out infinite semantic memory and proactive daily briefings, and are now gearing up for new API integrations (like Gmail/Todoist) and cloud CI/CD deployment.
+- **Semantic Memory & Proactive Briefings**: Long-term memory storage using `pgvector` and daily morning summaries of your schedule and pending tasks.
+- **Expanded Ecosystem Integrations**: Full support for Gmail (reading/drafting), Google Tasks (CRUD operations), and real-time Web Search via Tavily.
+- **Enhanced Core Capabilities**: Support for recurring calendar events and a streamlined UX that executes tasks immediately without requiring confirmation.
+
+The V2 engine is fully built, containerized, and production-ready.
 
 👉 **See the [ROADMAP.md](ROADMAP.md) for the full list of planned future features.**
 

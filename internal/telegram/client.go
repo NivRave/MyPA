@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/nivik/mypa/internal/markdown"
 )
 
 // Client interacts with the Telegram Bot API.
@@ -34,16 +36,19 @@ type SendMessageRequest struct {
 func (c *Client) SendMessage(ctx context.Context, chatID, text string) error {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", c.token)
 
+	htmlText := markdown.ToTelegramHTML(text)
+
 	reqBody := SendMessageRequest{
 		ChatID:    chatID,
-		Text:      text,
-		ParseMode: "Markdown",
+		Text:      htmlText,
+		ParseMode: "HTML",
 	}
 
 	err := c.doSend(ctx, url, reqBody)
 	if err != nil {
-		// Retry without markdown formatting if it fails (likely due to strict Telegram markdown parsing)
+		// Retry without html formatting if it fails
 		reqBody.ParseMode = ""
+		reqBody.Text = text
 		return c.doSend(ctx, url, reqBody)
 	}
 	return nil

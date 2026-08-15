@@ -26,7 +26,7 @@ func StartCronJobs(engine *orchestrator.Engine) *cron.Cron {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
-		engine.BroadcastProactiveMessage(ctx, "Good morning! Please generate a brief summary of my schedule for today, wish me a good day, and remind me of any important upcoming events.")
+		engine.BroadcastProactiveMessage(ctx, "Good morning! Please generate a brief summary of my schedule for today, summarize my pending TODO tasks, wish me a good day, and remind me of any important upcoming events.")
 	})
 
 	if err != nil {

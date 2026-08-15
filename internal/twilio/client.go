@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/nivik/mypa/internal/config"
+	"github.com/nivik/mypa/internal/markdown"
 )
 
 // Client handles outgoing API requests to Twilio.
@@ -29,13 +30,15 @@ func NewClient(cfg config.TwilioConfig) *Client {
 func (c *Client) SendMessage(ctx context.Context, to string, text string) error {
 	apiURL := fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", c.cfg.AccountSID)
 
+	formattedText := markdown.ToWhatsApp(text)
+
 	data := url.Values{}
 	if !strings.HasPrefix(to, "whatsapp:") {
 		to = "whatsapp:" + to
 	}
 	data.Set("To", to)
 	data.Set("From", c.cfg.FromNumber)
-	data.Set("Body", text)
+	data.Set("Body", formattedText)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(data.Encode()))
 	if err != nil {

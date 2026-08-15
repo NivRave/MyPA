@@ -39,6 +39,7 @@ func (c *Client) CreateEvent(ctx context.Context, ev models.CalendarEvent) (stri
 			DateTime: ev.EndTime,
 			TimeZone: ev.Timezone,
 		},
+		Recurrence: ev.Recurrence,
 	}
 
 	// Insert the event into the user's "primary" calendar
@@ -102,6 +103,9 @@ func (c *Client) UpdateEvent(ctx context.Context, eventID string, ev models.Cale
 			DateTime: ev.EndTime,
 			TimeZone: ev.Timezone,
 		}
+	}
+	if len(ev.Recurrence) > 0 {
+		event.Recurrence = ev.Recurrence
 	}
 
 	_, err := c.svc.Events.Patch("primary", eventID, event).Context(ctx).Do()

@@ -36,31 +36,15 @@ type Message struct {
 
 // CalendarEvent represents a calendar event to be created.
 type CalendarEvent struct {
-	ID          string `json:"id,omitempty"`
-	Title       string `json:"title"`
-	StartTime   string `json:"start_time"`   // ISO 8601
-	EndTime     string `json:"end_time"`     // ISO 8601
-	Description string `json:"description,omitempty"`
-	Timezone    string `json:"timezone"`
+	ID          string   `json:"id,omitempty"`
+	Title       string   `json:"title"`
+	StartTime   string   `json:"start_time"`   // ISO 8601
+	EndTime     string   `json:"end_time"`     // ISO 8601
+	Description string   `json:"description,omitempty"`
+	Timezone    string   `json:"timezone"`
+	Recurrence  []string `json:"recurrence,omitempty"`
 }
 
-// PendingAction represents an action awaiting user confirmation.
-type PendingAction struct {
-	// UserID is the user who initiated the action.
-	UserID string `json:"user_id"`
-
-	// ChatID is the chat where the confirmation should be sent.
-	ChatID string `json:"chat_id"`
-
-	// Action is the type of action (e.g., "create_calendar_event").
-	Action string `json:"action"`
-
-	// Event holds the parsed calendar event details.
-	Event CalendarEvent `json:"event"`
-
-	// CreatedAt is when the pending action was created.
-	CreatedAt time.Time `json:"created_at"`
-}
 
 // ChatMessage represents a single message in conversation history.
 type ChatMessage struct {
