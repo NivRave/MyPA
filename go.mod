@@ -1,12 +1,12 @@
 module github.com/nivik/mypa
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/joho/godotenv v1.5.1
-	github.com/pgvector/pgvector-go v0.4.1
+	github.com/pgvector/pgvector-go v0.4.0
 	github.com/rabbitmq/amqp091-go v1.13.0
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/robfig/cron/v3 v3.0.1
