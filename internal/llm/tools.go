@@ -235,5 +235,23 @@ var CalendarEventTool = &genai.Tool{
 				Required: []string{"task_id"},
 			},
 		},
+		{
+			Name:        "schedule_reminder",
+			Description: "Schedules a proactive message to be sent to the user at a specific future time. Use this when the user explicitly asks to be reminded about something at a specific time (e.g. 'Remind me at 11:00').",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"message": {
+						Type:        genai.TypeString,
+						Description: "The reminder message to send.",
+					},
+					"due_time": {
+						Type:        genai.TypeString,
+						Description: "The exact time to send the reminder in ISO 8601 format (e.g. '2023-10-01T11:00:00Z').",
+					},
+				},
+				Required: []string{"message", "due_time"},
+			},
+		},
 	},
 }

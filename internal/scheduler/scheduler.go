@@ -29,6 +29,11 @@ func StartCronJobs(engine *orchestrator.Engine) *cron.Cron {
 		engine.BroadcastProactiveMessage(ctx, "Good morning! Please generate a brief summary of my schedule for today, summarize my pending TODO tasks, wish me a good day, and remind me of any important upcoming events.")
 	})
 
+	// Every minute, check for scheduled reminders
+	_, err = c.AddFunc("* * * * *", func() {
+		engine.CheckAndSendReminders()
+	})
+
 	if err != nil {
 		slog.Error("failed to add cron job", "error", err)
 	}

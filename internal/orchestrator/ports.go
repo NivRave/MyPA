@@ -65,6 +65,9 @@ type DBClient interface {
 	SearchMemories(userID string, embedding pgvector.Vector, limit int) ([]models.Memory, error)
 	GetUniqueUsers() ([]string, error)
 	GetLastAuditLogForUser(userID string) (*models.AuditLog, error)
+	SaveReminder(reminder models.ScheduledReminder) error
+	GetDueReminders() ([]models.ScheduledReminder, error)
+	MarkReminderSent(id uint) error
 }
 
 // TavilyClient defines the interface for web search.
