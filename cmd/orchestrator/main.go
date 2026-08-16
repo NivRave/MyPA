@@ -169,7 +169,7 @@ func main() {
 
 		// Tell the browser they can close the window
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte("<h1>Success!</h1><p>Google Calendar connected. You can close this window and return to Telegram.</p>"))
+		_, _ = w.Write([]byte("<h1>Success!</h1><p>Google Calendar connected. You can close this window and return to Telegram.</p>"))
 	})
 
 	serverAddr := fmt.Sprintf(":%d", cfg.Server.OrchestratorPort)

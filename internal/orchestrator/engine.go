@@ -303,20 +303,6 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 	return nil
 }
 
-func (e *Engine) getCalendarClient(ctx context.Context, userID string) (*calendar.Client, error) {
-	tokenBytes, err := e.store.GetOAuthToken(ctx, userID)
-	if err != nil || tokenBytes == nil {
-		return nil, fmt.Errorf("unauthorized")
-	}
-
-	token, err := calendar.DecodeToken(tokenBytes)
-	if err != nil {
-		return nil, fmt.Errorf("invalid_token")
-	}
-
-	ts := e.oauthCfg.TokenSource(ctx, token)
-	return calendar.NewClient(ctx, ts)
-}
 
 func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) (string, error) {
 	slog.Info("llm requested tool call", "tool", toolCall.Name)
