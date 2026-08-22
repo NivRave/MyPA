@@ -261,7 +261,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		"The current date and time is %s. The user's timezone is %s (assume this timezone for relative dates). "+
 		"If the user asks to schedule a meeting, block time, or create an event, you MUST use the create_calendar_event tool. "+
 		"If the user asks to change or update an event, use update_calendar_event. If they ask to cancel or delete an event, use delete_calendar_event. "+
-		"If the user asks to manage tasks, to-dos, or lists, use the Google Tasks tools (list_tasks, create_task, complete_task, delete_task). "+
+		"If the user asks to manage tasks, to-dos, or lists, use the Google Tasks tools (list_task_lists, create_task_list, list_tasks, create_task, complete_task, delete_task). You can manage multiple task lists. "+
 		"If the user asks about recent news, current events, or information you don't know, use the search_web tool to search the internet. "+
 		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference. "+
 		"If the user asks to check their emails, use the list_unread_emails tool. "+
@@ -511,15 +511,44 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			return fmt.Sprintf("Error drafting reply: %v", err), nil
 		}
 		return "Draft created successfully! The user can review it in their Gmail app.", nil
+	} else if toolCall.Name == "list_task_lists" {
+		slog.Info("executing list_task_lists tool", "user", msg.UserID)
+		lists, err := e.tasksClient.ListTaskLists(ctx, msg.UserID)
+		if err != nil {
+			slog.Error("list_task_lists failed", "error", err)
+			return fmt.Sprintf("Error listing task lists: %v", err), nil
+		}
+		if len(lists) == 0 {
+			return "You have no task lists.", nil
+		}
+		var sb strings.Builder
+		sb.WriteString("📋 *Your Task Lists:*\n\n")
+		for _, l := range lists {
+			sb.WriteString(fmt.Sprintf("- *%s* (ID: `%s`)\n", l.Title, l.Id))
+		}
+		return sb.String(), nil
+	} else if toolCall.Name == "create_task_list" {
+		title, ok := toolCall.Args["title"].(string)
+		if !ok {
+			return "Missing title parameter", nil
+		}
+		slog.Info("executing create_task_list tool", "user", msg.UserID, "title", title)
+		_, err := e.tasksClient.CreateTaskList(ctx, msg.UserID, title)
+		if err != nil {
+			slog.Error("create_task_list failed", "error", err)
+			return fmt.Sprintf("Error creating task list: %v", err), nil
+		}
+		return "Task list created successfully.", nil
 	} else if toolCall.Name == "list_tasks" {
 		slog.Info("executing list_tasks tool", "user", msg.UserID)
-		tasks, err := e.tasksClient.ListTasks(ctx, msg.UserID)
+		listID, _ := toolCall.Args["list_id"].(string)
+		tasks, err := e.tasksClient.ListTasks(ctx, msg.UserID, listID)
 		if err != nil {
 			slog.Error("list_tasks failed", "error", err)
 			return fmt.Sprintf("Error listing tasks: %v", err), nil
 		}
 		if len(tasks) == 0 {
-			return "You have no tasks on your default list.", nil
+			return "You have no tasks on this list.", nil
 		}
 		
 		var sb strings.Builder
@@ -540,38 +569,41 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 		}
 		return sb.String(), nil
 	} else if toolCall.Name == "create_task" {
+		listID, _ := toolCall.Args["list_id"].(string)
 		title, _ := toolCall.Args["title"].(string)
 		notes, _ := toolCall.Args["notes"].(string)
 		due, _ := toolCall.Args["due"].(string)
 
 		slog.Info("executing create_task tool", "user", msg.UserID, "title", title)
-		err := e.tasksClient.CreateTask(ctx, msg.UserID, title, notes, due)
+		err := e.tasksClient.CreateTask(ctx, msg.UserID, listID, title, notes, due)
 		if err != nil {
 			slog.Error("create_task failed", "error", err)
 			return fmt.Sprintf("Error creating task: %v", err), nil
 		}
 		return "Task created successfully.", nil
 	} else if toolCall.Name == "complete_task" {
+		listID, _ := toolCall.Args["list_id"].(string)
 		taskID, ok := toolCall.Args["task_id"].(string)
 		if !ok {
 			return "Missing task_id parameter", nil
 		}
 
 		slog.Info("executing complete_task tool", "user", msg.UserID, "task_id", taskID)
-		err := e.tasksClient.CompleteTask(ctx, msg.UserID, taskID)
+		err := e.tasksClient.CompleteTask(ctx, msg.UserID, listID, taskID)
 		if err != nil {
 			slog.Error("complete_task failed", "error", err)
 			return fmt.Sprintf("Error completing task: %v", err), nil
 		}
 		return "Task marked as completed.", nil
 	} else if toolCall.Name == "delete_task" {
+		listID, _ := toolCall.Args["list_id"].(string)
 		taskID, ok := toolCall.Args["task_id"].(string)
 		if !ok {
 			return "Missing task_id parameter", nil
 		}
 
 		slog.Info("executing delete_task tool", "user", msg.UserID, "task_id", taskID)
-		err := e.tasksClient.DeleteTask(ctx, msg.UserID, taskID)
+		err := e.tasksClient.DeleteTask(ctx, msg.UserID, listID, taskID)
 		if err != nil {
 			slog.Error("delete_task failed", "error", err)
 			return fmt.Sprintf("Error deleting task: %v", err), nil

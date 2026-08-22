@@ -179,18 +179,49 @@ var CalendarEventTool = &genai.Tool{
 			},
 		},
 		{
-			Name:        "list_tasks",
-			Description: "Lists the user's pending Google Tasks from their default task list.",
+			Name:        "list_task_lists",
+			Description: "Lists all of the user's available task lists (like 'Groceries', 'Default', etc.) and their IDs.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 			},
 		},
 		{
-			Name:        "create_task",
-			Description: "Creates a new task on the user's Google Tasks list.",
+			Name:        "create_task_list",
+			Description: "Creates a new task list.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
+					"title": {
+						Type:        genai.TypeString,
+						Description: "The title of the new task list.",
+					},
+				},
+				Required: []string{"title"},
+			},
+		},
+		{
+			Name:        "list_tasks",
+			Description: "Lists the user's pending Google Tasks from a specific task list.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"list_id": {
+						Type:        genai.TypeString,
+						Description: "Optional. The ID of the task list to fetch tasks from. If omitted, fetches from the default list.",
+					},
+				},
+			},
+		},
+		{
+			Name:        "create_task",
+			Description: "Creates a new task on a specific Google Tasks list.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"list_id": {
+						Type:        genai.TypeString,
+						Description: "Optional. The ID of the task list to create the task in. If omitted, uses the default list.",
+					},
 					"title": {
 						Type:        genai.TypeString,
 						Description: "The title of the task.",
@@ -213,6 +244,10 @@ var CalendarEventTool = &genai.Tool{
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
+					"list_id": {
+						Type:        genai.TypeString,
+						Description: "Optional. The ID of the task list containing the task. If omitted, uses the default list.",
+					},
 					"task_id": {
 						Type:        genai.TypeString,
 						Description: "The ID of the task to complete.",
@@ -227,6 +262,10 @@ var CalendarEventTool = &genai.Tool{
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
+					"list_id": {
+						Type:        genai.TypeString,
+						Description: "Optional. The ID of the task list containing the task. If omitted, uses the default list.",
+					},
 					"task_id": {
 						Type:        genai.TypeString,
 						Description: "The ID of the task to delete.",

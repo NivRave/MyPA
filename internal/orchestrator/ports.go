@@ -52,10 +52,12 @@ type GmailClient interface {
 
 // TasksClient defines the interface for Google Tasks.
 type TasksClient interface {
-	ListTasks(ctx context.Context, userID string) ([]*tasksapi.Task, error)
-	CreateTask(ctx context.Context, userID string, title, notes, due string) error
-	CompleteTask(ctx context.Context, userID string, taskID string) error
-	DeleteTask(ctx context.Context, userID string, taskID string) error
+	ListTaskLists(ctx context.Context, userID string) ([]*tasksapi.TaskList, error)
+	CreateTaskList(ctx context.Context, userID string, title string) (*tasksapi.TaskList, error)
+	ListTasks(ctx context.Context, userID string, listID string) ([]*tasksapi.Task, error)
+	CreateTask(ctx context.Context, userID string, listID string, title, notes, due string) error
+	CompleteTask(ctx context.Context, userID string, listID string, taskID string) error
+	DeleteTask(ctx context.Context, userID string, listID string, taskID string) error
 }
 
 // DBClient defines the interface for database operations.
