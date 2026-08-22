@@ -27,6 +27,8 @@ This document tracks upcoming features, technical debt, and future improvements 
    - For example: "I need to add to 'X' project a 'Y' feature" - beginning with just listing the need, later connecting to GitHub.
 6. **Granular Feature Configuration**
    - Add optional configuration settings so users can enable only the specific features they want to use.
+7. **Shopping List & General Lists Management**
+   - Add the ability to create, update, and manage various lists (e.g., shopping lists, packing lists) naturally through conversation.
 
 ### Suggested Quality of Life (QoL) Features
 1. **Automated Expense & Budget Tracking**: Categorize receipts from Gmail, calculate monthly spending against budgets, split shared expenses, and send financial summaries.

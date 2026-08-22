@@ -235,5 +235,19 @@ var CalendarEventTool = &genai.Tool{
 				Required: []string{"task_id"},
 			},
 		},
+		{
+			Name:        "fetch_webpage",
+			Description: "Fetches and returns the main article text content of a webpage. Use this when the user sends a link and wants you to read, summarize, or save it.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"url": {
+						Type:        genai.TypeString,
+						Description: "The full URL of the webpage to fetch.",
+					},
+				},
+				Required: []string{"url"},
+			},
+		},
 	},
 }

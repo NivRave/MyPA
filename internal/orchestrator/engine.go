@@ -11,7 +11,9 @@ import (
 
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
+	"github.com/nivik/mypa/internal/markdown"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/scraper"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/pgvector/pgvector-go"
 	"golang.org/x/oauth2"
@@ -116,6 +118,13 @@ func (e *Engine) Wait() {
 
 // sendMessage sends a text message to the user, breaking it into smaller chunks if necessary to avoid platform limits.
 func (e *Engine) sendMessage(ctx context.Context, msg models.Message, text string) error {
+	// Format text for the specific platform
+	if msg.Source == "whatsapp" {
+		text = markdown.ToWhatsApp(text)
+	} else if msg.Source == "telegram" {
+		text = markdown.ToTelegramHTML(text)
+	}
+
 	// Chunk message to avoid hitting Twilio's 1600 character limit or Telegram limits.
 	const chunkSize = 1500
 	var err error
@@ -123,16 +132,23 @@ func (e *Engine) sendMessage(ctx context.Context, msg models.Message, text strin
 	for len(text) > 0 {
 		var chunk string
 		if len(text) > chunkSize {
-			// Try to find a good breaking point (newline or space)
+			// Find a good breaking point
 			breakIndex := chunkSize
-			for i := chunkSize; i > chunkSize-100; i-- {
-				if text[i] == '\n' || text[i] == ' ' {
-					breakIndex = i
-					break
-				}
+			
+			// Look for natural breaks within the last few hundred characters of the chunk
+			searchSpace := text[:chunkSize]
+			if idx := strings.LastIndex(searchSpace, "\n\n"); idx > chunkSize-500 {
+				breakIndex = idx
+			} else if idx := strings.LastIndex(searchSpace, "\n"); idx > chunkSize-300 {
+				breakIndex = idx
+			} else if idx := strings.LastIndex(searchSpace, ". "); idx > chunkSize-200 {
+				breakIndex = idx + 1 // include the dot
+			} else if idx := strings.LastIndex(searchSpace, " "); idx > chunkSize-100 {
+				breakIndex = idx
 			}
-			chunk = text[:breakIndex]
-			text = text[breakIndex:]
+
+			chunk = strings.TrimSpace(text[:breakIndex])
+			text = strings.TrimSpace(text[breakIndex:])
 		} else {
 			chunk = text
 			text = ""
@@ -249,6 +265,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		"If the user asks about recent news, current events, or information you don't know, use the search_web tool to search the internet. "+
 		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference. "+
 		"If the user asks to check their emails, use the list_unread_emails tool. "+
+		"If the user shares a URL and asks you to save it for later, use the fetch_webpage tool to get a summary, and then use the create_task tool to add it to their Google Tasks with the summary in the notes. "+
 		"IMPORTANT: If a tool returns JSON or raw data (like list_unread_emails or list_tasks), you MUST summarize and format it into a clean, friendly, conversational response (e.g. using bullet points). NEVER output raw JSON to the user. "+
 		"IMPORTANT: The user is in Israel. The week starts on Sunday and ends on Thursday (Friday and Saturday are the weekend). When reasoning about 'next week' or 'this week', start the week on Sunday.",
 		time.Now().Format(time.RFC1123), e.timezone,
@@ -576,6 +593,36 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			return fmt.Sprintf("Error searching the web: %v", err), nil
 		}
 		return result, nil
+	} else if toolCall.Name == "fetch_webpage" {
+		url, ok := toolCall.Args["url"].(string)
+		if !ok {
+			return "Missing url parameter", nil
+		}
+
+		slog.Info("executing fetch_webpage tool", "user", msg.UserID, "url", url)
+		// Notify user that we are reading
+		_ = e.sendMessage(ctx, msg, "📖 Reading webpage...")
+
+		content, err := scraper.FetchAndExtractText(ctx, url)
+		if err != nil {
+			slog.Error("fetch_webpage failed", "error", err, "url", url)
+			return fmt.Sprintf("Error fetching webpage: %v", err), nil
+		}
+		
+		summaryPrompt := fmt.Sprintf("Here is the content of the webpage:\n\n%s\n\nPlease fulfill the user's original request using this information.\nIf they asked to save it for later, use the create_task tool.\nIf they asked for a summary, provide a comprehensive, detailed summary. Use explicit **bold** markdown (double asterisks) for all topics and section headers (do not use single asterisks).", content)
+		
+		extendedHistory := append(history, models.ChatMessage{Role: "user", Content: msg.Text})
+		
+		summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, summaryPrompt)
+		if err != nil {
+			return "❌ Failed to process webpage: " + err.Error(), nil
+		}
+		
+		if summaryResp.ToolCall != nil {
+			// Recursively handle the next tool call (e.g. LLM decides to create_task)
+			return e.handleToolCall(ctx, msg, extendedHistory, systemPrompt, summaryResp.ToolCall)
+		}
+		return summaryResp.Text, nil
 	}
 
 	return "⚠️ LLM tried to call an unknown tool.", nil
