@@ -36,7 +36,7 @@ While V1 (last commit: `c6a3882e63f4db695b345f2b57f2b9b672e9cbbf`) focused on bu
 
 The V2 engine is fully built, containerized, and production-ready.
 
-👉 **See the [ROADMAP.md](ROADMAP.md) for the full list of planned future features.**
+👉 **See the [ROADMAP.md](docs/ROADMAP.md) for the full list of planned future features.**
 
 ## Prerequisites
 
@@ -75,7 +75,7 @@ The V2 engine is fully built, containerized, and production-ready.
      ```bash
      curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=<NGROK_URL>/webhook/telegram"
      ```
-   - **WhatsApp:** Paste `<NGROK_URL>/webhook/twilio` into your Twilio WhatsApp Sandbox settings.
+   - **WhatsApp:** Paste `<NGROK_URL>/webhook/twilio` (e.g., `https://your-ngrok-url.ngrok-free.dev/webhook/twilio`) into your Twilio WhatsApp Sandbox settings.
 
 ### Running Locally (Development)
 
@@ -126,17 +126,17 @@ go test -v ./tests/...
 | Service | Port | Description |
 |---|---|---|
 | Proxy | 8000 | Unified API Gateway (routes to Gateway and Orchestrator) |
-| Gateway | 8080 | Telegram webhook ingestion |
-| Orchestrator | 8081 | LLM reasoning + Calendar execution + OAuth |
+| Gateway | 8080 | Telegram & WhatsApp webhook ingestion |
+| Orchestrator | 8081 | LLM reasoning + Calendar execution + OAuth + Background Scheduler |
 | RabbitMQ | 5672 | Message broker |
 | Redis | 6379 | Conversation state + OAuth tokens |
-| Database | 5432 | Audit logging storage (PostgreSQL) |
+| Database | 5432 | Audit logging & Semantic Memory storage (PostgreSQL) |
 
 ## Project Structure
 
 ```
 cmd/
-  gateway/          # Telegram webhook service
+  gateway/          # Telegram & WhatsApp webhook service
   orchestrator/     # LLM reasoning + execution service
 internal/
   config/           # Viper configuration
