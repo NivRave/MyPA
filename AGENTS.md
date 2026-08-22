@@ -19,3 +19,10 @@ After completing any feature development, bug fix, milestone, or major phase, yo
 
 ## 4. Documentation Maintenance
 - **README Updates**: Always verify if the `README.md` file needs to be updated as a result of the changes made. If the new feature, bug fix, or configuration alters how the project is used or set up, update the README accordingly.
+
+## 5. Release & Tagging Strategy
+- **Semantic Versioning**: When preparing a release or merging features to `master`, you MUST suggest and apply a Semantic Version tag.
+  - **PATCH (vX.X.1)**: For bug fixes, documentation updates, or minor adjustments.
+  - **MINOR (vX.1.0)**: For new, backward-compatible features.
+  - **MAJOR (v1.0.0)**: For massive architectural or breaking changes.
+- **Workflow**: Tags must only be applied to the `master` branch after a successful merge from `dev`. Never tag `dev` directly with production version numbers.

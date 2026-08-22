@@ -36,7 +36,7 @@ This document tracks upcoming features, technical debt, and future improvements 
 3. **Smart Scheduling & Contextual Time-Blocking**: Analyze workload to automatically block out "Deep Work" time and suggest rescheduling options for conflicts.
 4. **Unified "Universal Search"**: A single search command that spans Gmail, local files, WhatsApp history, and remote GitHub repositories.
 5. **Voice Note Processing & Meeting Summarization**: Transcribe WhatsApp voice notes, extract actionable tasks, create calendar events, and organize thoughts into the memory system.
-6. **"Read-It-Later" & Content Summarization**: Summarize forwarded articles/videos into key takeaways and include them in Morning Briefs or a learning database.
+6. ~~**"Read-It-Later" & Content Summarization**: Summarize forwarded articles/videos into key takeaways and include them in Morning Briefs or a learning database.~~ (Completed)
 7. **Geofenced Automations**: Trigger location-based actions (e.g., messaging a spouse when leaving work, or grocery reminders).
 8. **Health & Habit Check-ins**: Interactive WhatsApp messages to help build and track habits (water intake, workouts) based on optimal timing.
 9. **Smart Travel & Itinerary Builder**: Automatically build itineraries from booking confirmations, check weather, suggest packing lists, and look up local events.
@@ -48,7 +48,7 @@ This document tracks upcoming features, technical debt, and future improvements 
 
 - **Cloud Deployment & CI/CD**: Move from local development to a 24/7 cloud environment. Set up GitHub Actions for automated linting, testing, and deployment. Deploy the dockerized microservice stack to a cloud provider.
 - **Google Tasks: Multiple Lists**: Currently, the assistant only interfaces with the user's `@default` task list. Expand this to allow the assistant to list, switch between, and manage multiple Google Task lists.
-- **Improve Response Parsing (Markdown Conversion)**: Ensure LLM responses with complex formatting (like markdown bullet points or tables) translate cleanly across all messaging platforms (Telegram/WhatsApp). Consider building a robust markdown-to-platform-native parser.
+- ~~**Improve Response Parsing (Markdown Conversion)**: Ensure LLM responses with complex formatting (like markdown bullet points or tables) translate cleanly across all messaging platforms (Telegram/WhatsApp). Consider building a robust markdown-to-platform-native parser.~~ (Completed)
 - **Proxy Replacement**: Consider replacing the custom Go proxy service with an industry-standard ingress controller (e.g., Nginx, Traefik, or Caddy) to benefit from built-in rate limiting, SSL termination, and load balancing.
 - **API Documentation**: Generate Swagger/OpenAPI specifications or a Postman collection to clearly document the JSON payloads expected by the webhooks.
-- **Daily Blast Pending Tasks**: Add the pending TODO tasks in the daily blast.
+- ~~**Daily Blast Pending Tasks**: Add the pending TODO tasks in the daily blast.~~ (Completed)
