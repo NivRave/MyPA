@@ -42,27 +42,27 @@ func (c *Client) getService(ctx context.Context, userID string) (*gmailapi.Servi
 	return gmailapi.NewService(ctx, option.WithTokenSource(client))
 }
 
-// UnreadEmail represents a summarized email.
-type UnreadEmail struct {
+// EmailSummary represents a summarized email.
+type EmailSummary struct {
 	ID      string
 	From    string
 	Subject string
 	Snippet string
 }
 
-// ListUnreadEmails fetches up to a certain number of unread emails.
-func (c *Client) ListUnreadEmails(ctx context.Context, userID string, maxResults int64) ([]UnreadEmail, error) {
+// SearchEmails fetches up to a certain number of emails based on a query.
+func (c *Client) SearchEmails(ctx context.Context, userID string, query string, maxResults int64) ([]EmailSummary, error) {
 	srv, err := c.getService(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := srv.Users.Messages.List("me").Q("is:unread").MaxResults(maxResults).Do()
+	res, err := srv.Users.Messages.List("me").Q(query).MaxResults(maxResults).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list emails: %w", err)
 	}
 
-	var emails []UnreadEmail
+	var emails []EmailSummary
 	for _, m := range res.Messages {
 		msg, err := srv.Users.Messages.Get("me", m.Id).Format("metadata").MetadataHeaders("From", "Subject").Do()
 		if err != nil {
@@ -80,7 +80,7 @@ func (c *Client) ListUnreadEmails(ctx context.Context, userID string, maxResults
 			}
 		}
 
-		emails = append(emails, UnreadEmail{
+		emails = append(emails, EmailSummary{
 			ID:      msg.Id,
 			From:    from,
 			Subject: subject,
@@ -91,7 +91,7 @@ func (c *Client) ListUnreadEmails(ctx context.Context, userID string, maxResults
 	return emails, nil
 }
 
-// ReadEmail fetches the full body of an email.
+// ReadEmail fetches and decodes the full body of an email.
 func (c *Client) ReadEmail(ctx context.Context, userID, messageID string) (string, error) {
 	srv, err := c.getService(ctx, userID)
 	if err != nil {
@@ -103,7 +103,42 @@ func (c *Client) ReadEmail(ctx context.Context, userID, messageID string) (strin
 		return "", fmt.Errorf("failed to get email: %w", err)
 	}
 
-	return msg.Snippet, nil // Simplification for now, we'll return snippet since decoding full body can be complex.
+	body := decodeBody(msg.Payload)
+	if body == "" {
+		body = msg.Snippet // Fallback to snippet if body decoding fails
+	}
+	return body, nil
+}
+
+// decodeBody recursively extracts the plain text from the message parts.
+func decodeBody(part *gmailapi.MessagePart) string {
+	if part.Body != nil && part.Body.Data != "" {
+		data, err := b64.URLEncoding.DecodeString(part.Body.Data)
+		if err == nil {
+			// Prefer text/plain if we just look at the top level
+			if part.MimeType == "text/plain" || part.MimeType == "text/html" {
+				return string(data)
+			}
+		}
+	}
+
+	var textBody string
+	var htmlBody string
+	for _, subPart := range part.Parts {
+		decoded := decodeBody(subPart)
+		if subPart.MimeType == "text/plain" {
+			textBody += decoded
+		} else if subPart.MimeType == "text/html" {
+			htmlBody += decoded
+		} else if strings.HasPrefix(subPart.MimeType, "multipart/") {
+			textBody += decoded
+		}
+	}
+
+	if textBody != "" {
+		return textBody
+	}
+	return htmlBody
 }
 
 // DraftReply creates a draft reply to an email.
@@ -145,4 +180,73 @@ func (c *Client) DraftReply(ctx context.Context, userID, messageID, replyText st
 
 	_, err = srv.Users.Drafts.Create("me", draft).Do()
 	return err
+}
+
+// ArchiveEmail removes the INBOX label from an email.
+func (c *Client) ArchiveEmail(ctx context.Context, userID, messageID string) error {
+	srv, err := c.getService(ctx, userID)
+	if err != nil {
+		return err
+	}
+	req := &gmailapi.ModifyMessageRequest{
+		RemoveLabelIds: []string{"INBOX"},
+	}
+	_, err = srv.Users.Messages.Modify("me", messageID, req).Do()
+	return err
+}
+
+// SoftDeleteEmail moves an email to the Trash.
+func (c *Client) SoftDeleteEmail(ctx context.Context, userID, messageID string) error {
+	srv, err := c.getService(ctx, userID)
+	if err != nil {
+		return err
+	}
+	_, err = srv.Users.Messages.Trash("me", messageID).Do()
+	return err
+}
+
+// ListLabels returns a map of label names to their IDs.
+func (c *Client) ListLabels(ctx context.Context, userID string) (map[string]string, error) {
+	srv, err := c.getService(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	res, err := srv.Users.Labels.List("me").Do()
+	if err != nil {
+		return nil, err
+	}
+	labels := make(map[string]string)
+	for _, l := range res.Labels {
+		labels[l.Name] = l.Id
+	}
+	return labels, nil
+}
+
+// ApplyLabel applies a specific label to an email.
+func (c *Client) ApplyLabel(ctx context.Context, userID, messageID, labelID string) error {
+	srv, err := c.getService(ctx, userID)
+	if err != nil {
+		return err
+	}
+	req := &gmailapi.ModifyMessageRequest{
+		AddLabelIds: []string{labelID},
+	}
+	_, err = srv.Users.Messages.Modify("me", messageID, req).Do()
+	return err
+}
+
+// CreateLabel creates a new Gmail label and returns its ID.
+func (c *Client) CreateLabel(ctx context.Context, userID, labelName string) (string, error) {
+	srv, err := c.getService(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	label := &gmailapi.Label{
+		Name: labelName,
+	}
+	res, err := srv.Users.Labels.Create("me", label).Do()
+	if err != nil {
+		return "", err
+	}
+	return res.Id, nil
 }
