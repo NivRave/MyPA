@@ -20,7 +20,7 @@ func ToTelegramHTML(source string) string {
 	var buf bytes.Buffer
 	listDepth := 0
 
-	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		switch node := n.(type) {
 		case *ast.Text:
 			if entering {

@@ -28,9 +28,13 @@ Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → 
 ## V2 (Current Release)
 
 MyPA has officially reached **V2**! 
-While V1 (last commit: `c6a3882e63f4db695b345f2b57f2b9b672e9cbbf`) focused on building a robust core scheduling engine, V2 significantly expands the assistant's capabilities with:
+While V1 (last commit: `c6a3882e63f4db695b345f2b57f2b9b672e9cbbf`, tag: `v1.0.0`) focused on building a robust core scheduling engine, V2 significantly expands the assistant's capabilities. 
+
+The latest release (`v2.1.0`) includes:
 
 - **Semantic Memory & Proactive Briefings**: Long-term memory storage using `pgvector` and daily morning summaries of your schedule and pending tasks.
+- **Proactive Scheduled Reminders**: Ask the assistant to "Remind me at 11:00" and receive a push notification at the exact time.
+- **Multi-turn Conversational UX**: Tool data (like tasks and unread emails) are synthesized naturally in conversation rather than outputting rigid JSON.
 - **Expanded Ecosystem Integrations**: Full support for Gmail (reading/drafting), Google Tasks (CRUD operations), and real-time Web Search via Tavily.
 - **Enhanced Core Capabilities**: Support for recurring calendar events and a streamlined UX that executes tasks immediately without requiring confirmation.
 

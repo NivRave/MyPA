@@ -20,13 +20,18 @@ func StartCronJobs(engine *orchestrator.Engine) *cron.Cron {
 	c := cron.New(cron.WithLocation(loc))
 
 	// Every day at 8:00 AM
-	_, err = c.AddFunc("0 8 * * *", func() {
+	_, _ = c.AddFunc("0 8 * * *", func() {
 		slog.Info("Cron triggered: Morning Briefing")
 		
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
 		engine.BroadcastProactiveMessage(ctx, "Good morning! Please generate a brief summary of my schedule for today, summarize my pending TODO tasks, wish me a good day, and remind me of any important upcoming events.")
+	})
+
+	// Every minute, check for scheduled reminders
+	_, err = c.AddFunc("* * * * *", func() {
+		engine.CheckAndSendReminders()
 	})
 
 	if err != nil {

@@ -43,10 +43,7 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// Strip "whatsapp:" prefix if present for uniform UserID storage, or keep it?
 	// It's probably best to keep it so we can just send it back out exactly as is.
-	userID := from 
-	if strings.HasPrefix(userID, "whatsapp:") {
-		userID = strings.TrimPrefix(userID, "whatsapp:")
-	}
+	userID := strings.TrimPrefix(from, "whatsapp:")
 
 	msg := models.Message{
 		ID:        messageID,
