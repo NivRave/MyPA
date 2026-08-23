@@ -26,3 +26,12 @@ After completing any feature development, bug fix, milestone, or major phase, yo
   - **MINOR (vX.1.0)**: For new, backward-compatible features.
   - **MAJOR (v1.0.0)**: For massive architectural or breaking changes.
 - **Workflow**: Tags must only be applied to the `master` branch after a successful merge from `dev`. Never tag `dev` directly with production version numbers.
+
+## 6. Docker & Container Conventions
+- **Unified Dockerfile**: All Go services are built from a single multi-target `Dockerfile` in the project root. When adding a new service:
+  1. Add a `build-<service>` stage and a `<service>` runtime stage in `Dockerfile`.
+  2. Add the service to `docker-compose.yml` with `target: <service>`.
+  3. Use granular `COPY` (only `internal/`, `config/`, and `cmd/<service>/`) — never `COPY . .`.
+  4. Always include BuildKit cache mounts (`--mount=type=cache`) for `/go/pkg/mod` and `/root/.cache/go-build`.
+- **`.dockerignore`**: Keep `.dockerignore` up to date. Any new non-source directories or large files must be excluded.
+- **Healthchecks**: Infrastructure services must include `start_period` in healthchecks to avoid unnecessary startup delays.

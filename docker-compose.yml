@@ -2,7 +2,8 @@ services:
   gateway:
     build:
       context: .
-      dockerfile: Dockerfile.gateway
+      dockerfile: Dockerfile
+      target: gateway
     ports:
       - "8080:8080"
     env_file:
@@ -21,7 +22,8 @@ services:
   orchestrator:
     build:
       context: .
-      dockerfile: Dockerfile.orchestrator
+      dockerfile: Dockerfile
+      target: orchestrator
     ports:
       - "8081:8081"
     env_file:
@@ -42,7 +44,8 @@ services:
   proxy:
     build:
       context: .
-      dockerfile: Dockerfile.proxy
+      dockerfile: Dockerfile
+      target: proxy
     ports:
       - "8000:8000"
     environment:
@@ -67,8 +70,9 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
       test: rabbitmq-diagnostics -q ping
-      interval: 10s
+      interval: 5s
       timeout: 5s
+      start_period: 10s
       retries: 5
     restart: unless-stopped
 
@@ -81,8 +85,9 @@ services:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
+      start_period: 5s
       retries: 5
     restart: unless-stopped
 
@@ -98,8 +103,9 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mypa -d mypa"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
+      start_period: 10s
       retries: 5
     restart: unless-stopped
 
