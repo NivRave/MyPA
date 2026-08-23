@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/markdown"
@@ -33,10 +34,11 @@ type Engine struct {
 	oauthCfg     *calendar.OAuthConfig
 	gmailClient  GmailClient
 	tasksClient  TasksClient
-	tavilyClient TavilyClient
+	tavilyClient    TavilyClient
 	calendarFactory func(context.Context, string) (CalendarClient, error)
-	timezone     string
-	wg           sync.WaitGroup
+	timezone        string
+	publisher       EventPublisher
+	wg              sync.WaitGroup
 }
 
 // NewEngine initializes the orchestrator engine.
@@ -52,6 +54,7 @@ func NewEngine(
 	tasksC TasksClient,
 	tavilyC TavilyClient,
 	audio AudioClient,
+	pub EventPublisher,
 	tz string,
 ) *Engine {
 	e := &Engine{
@@ -66,6 +69,7 @@ func NewEngine(
 		tasksClient:  tasksC,
 		tavilyClient: tavilyC,
 		audioClient:  audio,
+		publisher:    pub,
 		timezone:     tz,
 	}
 
@@ -169,37 +173,52 @@ func (e *Engine) sendMessage(ctx context.Context, msg models.Message, text strin
 
 // processMessage is the main entry point for handling an incoming user message.
 // It orchestrates transcription, command handling, confirmation flows, and LLM reasoning.
-func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
+func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err error) {
 	slog.Info("processing message", "user_id", msg.UserID, "text", msg.Text)
 
-	var actionTaken string
 	var llmResponse string
+	sessionID := uuid.New().String()
+	startTime := time.Now()
 
 	defer func() {
 		e.wg.Add(1)
-		// Log the interaction asynchronously
-		go func(msgText string) {
+		// Publish the telemetry session asynchronously
+		go func(msgText string, errStr string) {
 			defer e.wg.Done()
-			err := e.db.LogInteraction(models.AuditLog{
-				UserID:      msg.UserID,
-				ChatID:      msg.ChatID,
-				Source:      msg.Source,
-				UserMessage: msgText,
-				LLMResponse: llmResponse,
-				ActionTaken: actionTaken,
-				CreatedAt:   time.Now(),
-			})
-			if err != nil {
-				slog.Error("failed to save audit log", "error", fmt.Errorf("LogInteraction error: %w", err))
+			status := "success"
+			if errStr != "" {
+				status = "failed"
 			}
-		}(msg.Text) // Pass msg.Text in case it gets mutated (like voice transcription)
+			
+			session := models.AuditSession{
+				ID:              sessionID,
+				UserID:          msg.UserID,
+				ChatID:          msg.ChatID,
+				Source:          msg.Source,
+				UserPrompt:      msgText,
+				FinalResponse:   llmResponse,
+				StartTime:       startTime,
+				EndTime:         time.Now(),
+				TotalDurationMs: time.Since(startTime).Milliseconds(),
+				Status:          status,
+			}
+			
+			pubErr := e.publisher.Publish(context.Background(), session)
+			if pubErr != nil {
+				slog.Error("failed to publish telemetry session", "error", pubErr)
+			}
+		}(msg.Text, func() string {
+			if err != nil {
+				return err.Error()
+			}
+			return ""
+		}())
 	}()
 
 	// Check for commands
 	if msg.Text == "/connect" {
 		url := e.oauthCfg.AuthCodeURL(msg.UserID)
 		llmResponse = fmt.Sprintf("🔗 [Click here to connect your Google Calendar](%s)", url)
-		actionTaken = "connect_command"
 		return e.sendMessage(ctx, msg, llmResponse)
 	}
 
@@ -294,15 +313,15 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 	var replyText string
 
 	if resp.ToolCall != nil {
-		actionTaken = resp.ToolCall.Name
+		// Generate AuditEvent for tool call?
+		// We can add this later, for now just skip assigning actionTaken
 		
 		// Initialize the loop history with the user's message
 		loopHistory := append(history, models.ChatMessage{Role: "user", Content: msg.Text})
 		
 		replyText, _ = e.handleToolCall(ctx, msg, loopHistory, systemPrompt, resp.ToolCall)
 	} else {
-		// Normal text response
-		actionTaken = "none"
+		// No tool call
 		replyText = resp.Text
 	}
 
@@ -747,10 +766,10 @@ func (e *Engine) BroadcastProactiveMessage(ctx context.Context, promptText strin
 		// We'll treat this as a system-triggered prompt that we feed into the LLM on behalf of the user
 		
 		// To properly send the message, we need a valid chat ID and source.
-		// We'll just look up the most recent audit log to find the user's preferred platform/chat ID.
-		log, err := e.db.GetLastAuditLogForUser(userID)
-		if err != nil || log == nil {
-			slog.Warn("failed to get last audit log for user", "user_id", userID, "error", err)
+		// We'll just look up the most recent audit session to find the user's preferred platform/chat ID.
+		log, err := e.db.GetLastAuditSessionForUser(userID)
+		if err != nil {
+			slog.Warn("failed to get last audit session for user", "user_id", userID, "error", err)
 			continue
 		}
 

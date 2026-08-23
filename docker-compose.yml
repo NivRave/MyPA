@@ -41,6 +41,22 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  audit-worker:
+    build:
+      context: .
+      target: audit-worker
+    env_file:
+      - .env
+    environment:
+      - RABBITMQ_URL=amqp://mypa:mypa_dev@rabbitmq:5672/
+      - DATABASE_URL=postgres://mypa:mypa_password@postgres:5432/mypa?sslmode=disable
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   proxy:
     build:
       context: .

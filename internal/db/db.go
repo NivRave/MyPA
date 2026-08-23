@@ -32,7 +32,7 @@ func NewClient(dsn string) (*Client, error) {
 	}
 
 	// Auto-migrate schemas
-	if err := db.AutoMigrate(&models.AuditLog{}, &models.Memory{}); err != nil {
+	if err := db.AutoMigrate(&models.AuditSession{}, &models.AuditEvent{}, &models.Memory{}); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
@@ -41,11 +41,20 @@ func NewClient(dsn string) (*Client, error) {
 	return &Client{DB: db}, nil
 }
 
-// LogInteraction saves a new audit log record to the database.
-func (c *Client) LogInteraction(log models.AuditLog) error {
-	result := c.DB.Create(&log)
+// InsertAuditSession saves a new audit session to the database.
+func (c *Client) InsertAuditSession(session models.AuditSession) error {
+	result := c.DB.Create(&session)
 	if result.Error != nil {
-		return fmt.Errorf("failed to insert audit log: %w", result.Error)
+		return fmt.Errorf("failed to insert audit session: %w", result.Error)
+	}
+	return nil
+}
+
+// InsertAuditEvent saves a new audit event to the database.
+func (c *Client) InsertAuditEvent(event models.AuditEvent) error {
+	result := c.DB.Create(&event)
+	if result.Error != nil {
+		return fmt.Errorf("failed to insert audit event: %w", result.Error)
 	}
 	return nil
 }
@@ -74,22 +83,22 @@ func (c *Client) SearchMemories(userID string, embedding pgvector.Vector, limit 
 	return memories, nil
 }
 
-// GetUniqueUsers returns a list of unique user IDs from the audit logs.
+// GetUniqueUsers returns a list of unique user IDs from the audit sessions.
 func (c *Client) GetUniqueUsers() ([]string, error) {
 	var userIDs []string
-	result := c.DB.Model(&models.AuditLog{}).Distinct("user_id").Pluck("user_id", &userIDs)
+	result := c.DB.Model(&models.AuditSession{}).Distinct("user_id").Pluck("user_id", &userIDs)
 	if result.Error != nil {
 		return nil, fmt.Errorf("failed to get unique users: %w", result.Error)
 	}
 	return userIDs, nil
 }
 
-// GetLastAuditLogForUser returns the most recent audit log for a given user.
-func (c *Client) GetLastAuditLogForUser(userID string) (*models.AuditLog, error) {
-	var log models.AuditLog
-	result := c.DB.Where("user_id = ?", userID).Order("created_at desc").First(&log)
+// GetLastAuditSessionForUser returns the most recent audit session for a given user.
+func (c *Client) GetLastAuditSessionForUser(userID string) (*models.AuditSession, error) {
+	var session models.AuditSession
+	result := c.DB.Where("user_id = ?", userID).Order("start_time desc").First(&session)
 	if result.Error != nil {
-		return nil, fmt.Errorf("failed to get last audit log: %w", result.Error)
+		return nil, fmt.Errorf("failed to get last audit session: %w", result.Error)
 	}
-	return &log, nil
+	return &session, nil
 }

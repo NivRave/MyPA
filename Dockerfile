@@ -51,3 +51,17 @@ COPY --from=build-proxy /proxy /proxy
 COPY config/config.yaml /config/config.yaml
 EXPOSE 8000
 ENTRYPOINT ["/proxy"]
+
+# ── Audit Worker ───────────────────────────────────────────────────
+FROM deps AS build-audit-worker
+COPY internal/ internal/
+COPY config/  config/
+COPY cmd/audit-worker/ cmd/audit-worker/
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -ldflags='-w -s' -o /audit-worker ./cmd/audit-worker
+
+FROM gcr.io/distroless/static-debian12 AS audit-worker
+COPY --from=build-audit-worker /audit-worker /audit-worker
+COPY config/config.yaml /config/config.yaml
+ENTRYPOINT ["/audit-worker"]

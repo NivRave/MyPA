@@ -116,8 +116,16 @@ func main() {
 	tasksClient := tasks.NewClient(oauthCfg, store)
 	tavilyClient := tavily.NewClient(cfg.Tavily.APIKey)
 
+	// 8.5 Initialize Telemetry Publisher
+	telemetryPublisher, err := broker.NewPublisher(cfg.RabbitMQ.URL, "audit.events")
+	if err != nil {
+		slog.Error("failed to initialize telemetry publisher", "error", err)
+		os.Exit(1)
+	}
+	defer telemetryPublisher.Close()
+
 	// 9. Initialize Engine
-	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, tavilyClient, audioClient, cfg.Server.DefaultTimezone)
+	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone)
 
 	// Start Cron jobs
 	c := scheduler.StartCronJobs(engine)

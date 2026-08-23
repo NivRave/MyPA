@@ -64,16 +64,35 @@ type FunctionResponse struct {
 	Response map[string]interface{} `json:"response"`
 }
 
-// AuditLog represents a single interaction logged to the database.
-type AuditLog struct {
-	ID          uint      `json:"id" gorm:"primarykey"`
-	UserID      string    `json:"user_id" gorm:"index"`
-	ChatID      string    `json:"chat_id"`
-	Source      string    `json:"source"`
-	UserMessage string    `json:"user_message"`
-	LLMResponse string    `json:"llm_response"`
-	ActionTaken string    `json:"action_taken"`
-	CreatedAt   time.Time `json:"created_at"`
+// AuditSession represents a complete user interaction session.
+type AuditSession struct {
+	ID              string    `json:"id" gorm:"primarykey;type:uuid"`
+	UserID          string    `json:"user_id" gorm:"index"`
+	ChatID          string    `json:"chat_id"`
+	Source          string    `json:"source"`
+	UserPrompt      string    `json:"user_prompt"`
+	FinalResponse   string    `json:"final_response"`
+	StartTime       time.Time `json:"start_time"`
+	EndTime         time.Time `json:"end_time"`
+	TotalDurationMs int64     `json:"total_duration_ms"`
+	TotalTokens     int       `json:"total_tokens"`
+	Status          string    `json:"status"` // "success" or "failed"
+}
+
+// AuditEvent represents a single action/span within a session.
+type AuditEvent struct {
+	ID               string    `json:"id" gorm:"primarykey;type:uuid"`
+	SessionID        string    `json:"session_id" gorm:"index"`
+	EventType        string    `json:"event_type"` // e.g., "llm_inference", "tool_execution"
+	ActionName       string    `json:"action_name"`
+	RequestPayload   string    `json:"request_payload" gorm:"type:jsonb"`
+	ResponsePayload  string    `json:"response_payload" gorm:"type:jsonb"`
+	ErrorMessage     string    `json:"error_message"`
+	StartTime        time.Time `json:"start_time"`
+	EndTime          time.Time `json:"end_time"`
+	DurationMs       int64     `json:"duration_ms"`
+	PromptTokens     int       `json:"prompt_tokens"`
+	CompletionTokens int       `json:"completion_tokens"`
 }
 
 // Memory represents a long-term fact or preference about a user.
