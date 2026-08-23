@@ -44,16 +44,53 @@ func (c *Client) getService(ctx context.Context, userID string) (*tasksapi.Servi
 	return srv, nil
 }
 
-// ListTasks fetches the user's tasks from the default list.
-func (c *Client) ListTasks(ctx context.Context, userID string) ([]*tasksapi.Task, error) {
+// ListTaskLists fetches all the user's task lists.
+func (c *Client) ListTaskLists(ctx context.Context, userID string) ([]*tasksapi.TaskList, error) {
 	srv, err := c.getService(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Fetch tasks from the "@default" list
+	res, err := srv.Tasklists.List().Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list task lists: %w", err)
+	}
+
+	return res.Items, nil
+}
+
+// CreateTaskList creates a new task list.
+func (c *Client) CreateTaskList(ctx context.Context, userID, title string) (*tasksapi.TaskList, error) {
+	srv, err := c.getService(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	taskList := &tasksapi.TaskList{
+		Title: title,
+	}
+
+	res, err := srv.Tasklists.Insert(taskList).Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create task list: %w", err)
+	}
+	return res, nil
+}
+
+// ListTasks fetches the user's tasks from the specified list (defaults to "@default").
+func (c *Client) ListTasks(ctx context.Context, userID, listID string) ([]*tasksapi.Task, error) {
+	srv, err := c.getService(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	if listID == "" {
+		listID = "@default"
+	}
+
+	// Fetch tasks from the specified list
 	// ShowHidden = true to optionally see completed if desired, but default is false
-	res, err := srv.Tasks.List("@default").ShowHidden(false).Do()
+	res, err := srv.Tasks.List(listID).ShowHidden(false).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tasks: %w", err)
 	}
@@ -61,8 +98,8 @@ func (c *Client) ListTasks(ctx context.Context, userID string) ([]*tasksapi.Task
 	return res.Items, nil
 }
 
-// CreateTask adds a new task to the default list.
-func (c *Client) CreateTask(ctx context.Context, userID, title, notes, due string) error {
+// CreateTask adds a new task to the specified list.
+func (c *Client) CreateTask(ctx context.Context, userID, listID, title, notes, due string) error {
 	srv, err := c.getService(ctx, userID)
 	if err != nil {
 		return err
@@ -78,34 +115,46 @@ func (c *Client) CreateTask(ctx context.Context, userID, title, notes, due strin
 		task.Due = due
 	}
 
-	_, err = srv.Tasks.Insert("@default", task).Do()
+	if listID == "" {
+		listID = "@default"
+	}
+
+	_, err = srv.Tasks.Insert(listID, task).Do()
 	return err
 }
 
-// CompleteTask marks a task as completed.
-func (c *Client) CompleteTask(ctx context.Context, userID, taskID string) error {
+// CompleteTask marks a task as completed in the specified list.
+func (c *Client) CompleteTask(ctx context.Context, userID, listID, taskID string) error {
 	srv, err := c.getService(ctx, userID)
 	if err != nil {
 		return err
 	}
 
-	task, err := srv.Tasks.Get("@default", taskID).Do()
+	if listID == "" {
+		listID = "@default"
+	}
+
+	task, err := srv.Tasks.Get(listID, taskID).Do()
 	if err != nil {
 		return fmt.Errorf("failed to fetch task to complete: %w", err)
 	}
 
 	task.Status = "completed"
-	_, err = srv.Tasks.Update("@default", task.Id, task).Do()
+	_, err = srv.Tasks.Update(listID, task.Id, task).Do()
 	return err
 }
 
-// DeleteTask removes a task entirely from the list.
-func (c *Client) DeleteTask(ctx context.Context, userID, taskID string) error {
+// DeleteTask removes a task entirely from the specified list.
+func (c *Client) DeleteTask(ctx context.Context, userID, listID, taskID string) error {
 	srv, err := c.getService(ctx, userID)
 	if err != nil {
 		return err
 	}
 
-	err = srv.Tasks.Delete("@default", taskID).Do()
+	if listID == "" {
+		listID = "@default"
+	}
+
+	err = srv.Tasks.Delete(listID, taskID).Do()
 	return err
 }

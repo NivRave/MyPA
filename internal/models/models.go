@@ -48,8 +48,20 @@ type CalendarEvent struct {
 
 // ChatMessage represents a single message in conversation history.
 type ChatMessage struct {
-	Role    string `json:"role"` // "user" or "assistant"
-	Content string `json:"content"`
+	Role          string            `json:"role"` // "user", "assistant", or "function"
+	Content       string            `json:"content,omitempty"`
+	ToolCall      *FunctionCall     `json:"tool_call,omitempty"`
+	ToolResponse  *FunctionResponse `json:"tool_response,omitempty"`
+}
+
+type FunctionCall struct {
+	Name string                 `json:"name"`
+	Args map[string]interface{} `json:"args"`
+}
+
+type FunctionResponse struct {
+	Name     string                 `json:"name"`
+	Response map[string]interface{} `json:"response"`
 }
 
 // AuditLog represents a single interaction logged to the database.

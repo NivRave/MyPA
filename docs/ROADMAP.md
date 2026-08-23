@@ -47,7 +47,7 @@ This document tracks upcoming features, technical debt, and future improvements 
 ## Backlog & Tech Debt (Future Ideas)
 
 - **Cloud Deployment & CI/CD**: Move from local development to a 24/7 cloud environment. Set up GitHub Actions for automated linting, testing, and deployment. Deploy the dockerized microservice stack to a cloud provider.
-- **Google Tasks: Multiple Lists**: Currently, the assistant only interfaces with the user's `@default` task list. Expand this to allow the assistant to list, switch between, and manage multiple Google Task lists.
+- ~~**Google Tasks: Multiple Lists**: Currently, the assistant only interfaces with the user's `@default` task list. Expand this to allow the assistant to list, switch between, and manage multiple Google Task lists.~~ (Completed)
 - ~~**Improve Response Parsing (Markdown Conversion)**: Ensure LLM responses with complex formatting (like markdown bullet points or tables) translate cleanly across all messaging platforms (Telegram/WhatsApp). Consider building a robust markdown-to-platform-native parser.~~ (Completed)
 - **Proxy Replacement**: Consider replacing the custom Go proxy service with an industry-standard ingress controller (e.g., Nginx, Traefik, or Caddy) to benefit from built-in rate limiting, SSL termination, and load balancing.
 - **API Documentation**: Generate Swagger/OpenAPI specifications or a Postman collection to clearly document the JSON payloads expected by the webhooks.

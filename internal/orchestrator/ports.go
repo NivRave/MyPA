@@ -45,17 +45,24 @@ type CalendarClient interface {
 
 // GmailClient defines the interface for interacting with Gmail.
 type GmailClient interface {
-	ListUnreadEmails(ctx context.Context, userID string, maxResults int64) ([]gmail.UnreadEmail, error)
+	SearchEmails(ctx context.Context, userID string, query string, maxResults int64) ([]gmail.EmailSummary, error)
 	ReadEmail(ctx context.Context, userID string, messageID string) (string, error)
 	DraftReply(ctx context.Context, userID string, messageID string, replyText string) error
+	ArchiveEmail(ctx context.Context, userID string, messageID string) error
+	SoftDeleteEmail(ctx context.Context, userID string, messageID string) error
+	ListLabels(ctx context.Context, userID string) (map[string]string, error)
+	ApplyLabel(ctx context.Context, userID, messageID, labelID string) error
+	CreateLabel(ctx context.Context, userID, labelName string) (string, error)
 }
 
 // TasksClient defines the interface for Google Tasks.
 type TasksClient interface {
-	ListTasks(ctx context.Context, userID string) ([]*tasksapi.Task, error)
-	CreateTask(ctx context.Context, userID string, title, notes, due string) error
-	CompleteTask(ctx context.Context, userID string, taskID string) error
-	DeleteTask(ctx context.Context, userID string, taskID string) error
+	ListTaskLists(ctx context.Context, userID string) ([]*tasksapi.TaskList, error)
+	CreateTaskList(ctx context.Context, userID string, title string) (*tasksapi.TaskList, error)
+	ListTasks(ctx context.Context, userID string, listID string) ([]*tasksapi.Task, error)
+	CreateTask(ctx context.Context, userID string, listID string, title, notes, due string) error
+	CompleteTask(ctx context.Context, userID string, listID string, taskID string) error
+	DeleteTask(ctx context.Context, userID string, listID string, taskID string) error
 }
 
 // DBClient defines the interface for database operations.

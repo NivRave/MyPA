@@ -13,8 +13,8 @@ Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → 
 ## Features
 - **Multi-Channel Support**: Available on both Telegram and WhatsApp (via Twilio API).
 - **Conversational Scheduling**: Create single or recurring Google Calendar events via natural language (infers dates, times, and recurrence rules).
-- **Gmail Integration**: Ask the assistant to read your unread emails and draft replies directly from Telegram/WhatsApp.
-- **Google Tasks Integration**: Create, complete, list, and delete Google Tasks effortlessly.
+- **Gmail Integration**: Ask the assistant to search, read, label, archive, and soft-delete emails, as well as draft replies directly from Telegram/WhatsApp.
+- **Google Tasks Integration**: Create, complete, list, and delete Google Tasks across multiple task lists (e.g., Shopping, Work, Personal).
 - **Web Search**: Answer real-time questions and summarize current events via the Tavily Search API.
 - **Semantic Memory**: Infinite, searchable long-term memory of past conversations and user preferences using PostgreSQL `pgvector`.
 - **Proactive Morning Briefings**: A background scheduler proactively wakes up and messages the user a summary of their daily schedule and pending TODO tasks.

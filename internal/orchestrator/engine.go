@@ -92,8 +92,8 @@ func (e *Engine) Start(ctx context.Context) error {
 	slog.Info("orchestrator engine starting")
 	
 	return e.consumer.Consume(func(msg models.Message) error {
-		// Use a bounded timeout for each message processing to prevent stuck consumers
-		msgCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		// Use a bounded timeout for each message processing to prevent stuck consumers, but allow enough time for multi-turn agent execution (5m)
+		msgCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 
 		if err := e.processMessage(msgCtx, msg); err != nil {
@@ -261,11 +261,10 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 		"The current date and time is %s. The user's timezone is %s (assume this timezone for relative dates). "+
 		"If the user asks to schedule a meeting, block time, or create an event, you MUST use the create_calendar_event tool. "+
 		"If the user asks to change or update an event, use update_calendar_event. If they ask to cancel or delete an event, use delete_calendar_event. "+
-		"If the user asks to manage tasks, to-dos, or lists, use the Google Tasks tools (list_tasks, create_task, complete_task, delete_task). "+
-		"If the user asks to be explicitly reminded about something at a specific future time (e.g. 'Remind me at 11:00 to X'), use the schedule_reminder tool instead of creating a task or calendar event. "+
+		"If the user asks to manage tasks, to-dos, or lists, use the Google Tasks tools (list_task_lists, create_task_list, list_tasks, create_task, complete_task, delete_task). You can manage multiple task lists. "+
 		"If the user asks about recent news, current events, or information you don't know, use the search_web tool to search the internet. "+
 		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference. "+
-		"If the user asks to check their emails, use the list_unread_emails tool. "+
+		"If the user asks to check, review, or organize their emails, you MUST DO IT FOR THEM using the search_emails tool. DO NOT create a calendar event to remind them to do it. You can search by 'newer_than:30d', 'is:unread', etc. For each email, optionally use read_email to analyze deeply. Based on content, you may draft_email_reply, create_task, create_calendar_event, archive_emails, or soft_delete_emails. You MUST actively categorize the emails by applying appropriate labels using apply_email_labels (find IDs via list_email_labels). If a new label makes sense, create it using the create_email_label tool. Summarize all actions taken at the end. "+
 		"If the user shares a URL and asks you to save it for later, use the fetch_webpage tool to get a summary, and then use the create_task tool to add it to their Google Tasks with the summary in the notes. "+
 		"IMPORTANT: If a tool returns JSON or raw data (like list_unread_emails or list_tasks), you MUST summarize and format it into a clean, friendly, conversational response (e.g. using bullet points). NEVER output raw JSON to the user. "+
 		"IMPORTANT: The user is in Israel. The week starts on Sunday and ends on Thursday (Friday and Saturday are the weekend). When reasoning about 'next week' or 'this week', start the week on Sunday.",
@@ -296,7 +295,11 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 
 	if resp.ToolCall != nil {
 		actionTaken = resp.ToolCall.Name
-		replyText, _ = e.handleToolCall(ctx, msg, history, systemPrompt, resp.ToolCall)
+		
+		// Initialize the loop history with the user's message
+		loopHistory := append(history, models.ChatMessage{Role: "user", Content: msg.Text})
+		
+		replyText, _ = e.handleToolCall(ctx, msg, loopHistory, systemPrompt, resp.ToolCall)
 	} else {
 		// Normal text response
 		actionTaken = "none"
@@ -318,6 +321,42 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) error {
 	_ = e.store.AppendChatHistory(ctx, msg.UserID, models.ChatMessage{Role: "assistant", Content: replyText})
 
 	return nil
+}
+
+
+func (e *Engine) feedbackToLLM(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall, feedback string) (string, error) {
+	// Add the actual assistant tool call natively
+	extendedHistory := append(history, models.ChatMessage{
+		Role: "assistant",
+		ToolCall: &models.FunctionCall{
+			Name: toolCall.Name,
+			Args: toolCall.Args,
+		},
+	})
+	
+	// Add the function response natively
+	extendedHistory = append(extendedHistory, models.ChatMessage{
+		Role: "function",
+		ToolResponse: &models.FunctionResponse{
+			Name: toolCall.Name,
+			Response: map[string]interface{}{"result": feedback},
+		},
+	})
+
+	// Prompt the LLM to continue
+	prompt := "Please continue fulfilling the user's request. What's next? If you are completely done, provide a friendly, nicely formatted final summary of all your actions directly to the user."
+	
+	summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, prompt)
+	if err != nil {
+		return "❌ Failed to process: " + err.Error(), nil
+	}
+	
+	if summaryResp.ToolCall != nil {
+		extendedHistory = append(extendedHistory, models.ChatMessage{Role: "user", Content: prompt})
+		return e.handleToolCall(ctx, msg, extendedHistory, systemPrompt, summaryResp.ToolCall)
+	}
+
+	return summaryResp.Text, nil
 }
 
 
@@ -343,8 +382,7 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 		if err != nil {
 			return "❌ Failed to create event: " + err.Error(), nil
 		}
-		
-		return fmt.Sprintf("✅ **Event Created Successfully!**\n\n[View Event](%s)", link), nil
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, fmt.Sprintf("Event Created Successfully! Link: %s", link))
 	} else if toolCall.Name == "update_calendar_event" {
 		argsJSON, _ := json.Marshal(toolCall.Args)
 		var event models.CalendarEvent
@@ -364,8 +402,7 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 		if err != nil {
 			return "❌ Failed to update event: " + err.Error(), nil
 		}
-		
-		return "✅ **Event Updated Successfully!**", nil
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, "Event Updated Successfully!")
 	} else if toolCall.Name == "delete_calendar_event" {
 		argsJSON, _ := json.Marshal(toolCall.Args)
 		var event models.CalendarEvent
@@ -385,8 +422,7 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 		if err != nil {
 			return "❌ Failed to delete event: " + err.Error(), nil
 		}
-		
-		return "✅ **Event Deleted Successfully!**", nil
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, "Event Deleted Successfully!")
 	} else if toolCall.Name == "list_calendar_events" {
 		calClient, err := e.calendarFactory(ctx, msg.UserID)
 		if err != nil {
@@ -410,7 +446,7 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 		}
 
 		eventsJSON, _ := json.Marshal(events)
-		return e.continueConversationWithToolResult(ctx, msg, history, systemPrompt, "list_calendar_events", string(eventsJSON))
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, fmt.Sprintf("Here are the calendar events I found:\n%s", string(eventsJSON)))
 	} else if toolCall.Name == "remember_fact" {
 		argsJSON, _ := json.Marshal(toolCall.Args)
 		var args struct {
@@ -434,29 +470,26 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			slog.Error("failed to save memory to db", "error", err)
 			return "❌ Failed to save memory to database.", nil
 		}
-		return "✅ Got it! I've saved that to my long-term memory.", nil
-	} else if toolCall.Name == "list_unread_emails" {
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, "Fact saved to long-term memory successfully.")
+	} else if toolCall.Name == "search_emails" {
+		query, _ := toolCall.Args["query"].(string)
 		maxResults := int64(5)
 		if val, ok := toolCall.Args["max_results"]; ok {
 			maxResults = int64(val.(float64))
 		}
 
-		slog.Info("executing list_unread_emails tool", "user", msg.UserID, "max_results", maxResults)
-		emails, err := e.gmailClient.ListUnreadEmails(ctx, msg.UserID, maxResults)
+		slog.Info("executing search_emails tool", "user", msg.UserID, "query", query, "max_results", maxResults)
+		emails, err := e.gmailClient.SearchEmails(ctx, msg.UserID, query, maxResults)
 		if err != nil {
-			slog.Error("list_unread_emails failed", "error", err)
+			slog.Error("search_emails failed", "error", err)
 			return fmt.Sprintf("Error checking emails: %v", err), nil
 		}
 		if len(emails) == 0 {
 			return "You have no unread emails.", nil
 		}
 		
-		var sb strings.Builder
-		sb.WriteString("📬 *Unread Emails:*\n\n")
-		for i, email := range emails {
-			sb.WriteString(fmt.Sprintf("%d. *From:* %s\n*Subject:* %s\n*Snippet:* %s\n\n", i+1, email.From, email.Subject, email.Snippet))
-		}
-		return e.continueConversationWithToolResult(ctx, msg, history, systemPrompt, "list_unread_emails", sb.String())
+		emailsJSON, _ := json.Marshal(emails)
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, fmt.Sprintf("Here are the emails I found:\n%s\nYou can use read_email, archive_emails, soft_delete_emails, draft_email_reply, or apply_email_labels on them.", string(emailsJSON)))
 	} else if toolCall.Name == "read_email" {
 		messageID, ok := toolCall.Args["message_id"].(string)
 		if !ok {
@@ -469,7 +502,8 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			slog.Error("read_email failed", "error", err)
 			return fmt.Sprintf("Error reading email: %v", err), nil
 		}
-		return e.continueConversationWithToolResult(ctx, msg, history, systemPrompt, "read_email", body)
+		
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, fmt.Sprintf("Here is the email body for %s:\n%s\nYou can take action or summarize it.", messageID, body))
 	} else if toolCall.Name == "draft_email_reply" {
 		messageID, okID := toolCall.Args["message_id"].(string)
 		replyText, okText := toolCall.Args["reply_text"].(string)
@@ -484,73 +518,155 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			slog.Error("draft_email_reply failed", "error", err)
 			return fmt.Sprintf("Error drafting reply: %v", err), nil
 		}
-		return "Draft created successfully! The user can review it in their Gmail app.", nil
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, "Draft created successfully! The user can review it in their Gmail app.")
+	} else if toolCall.Name == "archive_emails" {
+		messageIDsRaw, ok := toolCall.Args["message_ids"].([]interface{})
+		if !ok {
+			return "Missing message_ids parameter", nil
+		}
+		var messageIDs []string
+		for _, v := range messageIDsRaw {
+			messageIDs = append(messageIDs, v.(string))
+		}
+		slog.Info("executing archive_emails tool", "user", msg.UserID, "count", len(messageIDs))
+		for _, messageID := range messageIDs {
+			if err := e.gmailClient.ArchiveEmail(ctx, msg.UserID, messageID); err != nil {
+				slog.Error("archive_emails failed", "error", err, "message_id", messageID)
+			}
+		}
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, fmt.Sprintf("%d emails archived successfully.", len(messageIDs)))
+	} else if toolCall.Name == "soft_delete_emails" {
+		messageIDsRaw, ok := toolCall.Args["message_ids"].([]interface{})
+		if !ok {
+			return "Missing message_ids parameter", nil
+		}
+		var messageIDs []string
+		for _, v := range messageIDsRaw {
+			messageIDs = append(messageIDs, v.(string))
+		}
+		slog.Info("executing soft_delete_emails tool", "user", msg.UserID, "count", len(messageIDs))
+		for _, messageID := range messageIDs {
+			if err := e.gmailClient.SoftDeleteEmail(ctx, msg.UserID, messageID); err != nil {
+				slog.Error("soft_delete_emails failed", "error", err, "message_id", messageID)
+			}
+		}
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, fmt.Sprintf("%d emails moved to trash successfully.", len(messageIDs)))
+	} else if toolCall.Name == "list_email_labels" {
+		slog.Info("executing list_email_labels tool", "user", msg.UserID)
+		labels, err := e.gmailClient.ListLabels(ctx, msg.UserID)
+		if err != nil {
+			slog.Error("list_email_labels failed", "error", err)
+			return fmt.Sprintf("Error listing labels: %v", err), nil
+		}
+		labelsJSON, _ := json.Marshal(labels)
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, fmt.Sprintf("Here are the available labels (name -> ID):\n%s", string(labelsJSON)))
+	} else if toolCall.Name == "apply_email_labels" {
+		messageIDsRaw, okID := toolCall.Args["message_ids"].([]interface{})
+		labelID, okLabel := toolCall.Args["label_id"].(string)
+		if !okID || !okLabel {
+			return "Missing message_ids or label_id parameter", nil
+		}
+		var messageIDs []string
+		for _, v := range messageIDsRaw {
+			messageIDs = append(messageIDs, v.(string))
+		}
+		slog.Info("executing apply_email_labels tool", "user", msg.UserID, "count", len(messageIDs), "label_id", labelID)
+		for _, messageID := range messageIDs {
+			if err := e.gmailClient.ApplyLabel(ctx, msg.UserID, messageID, labelID); err != nil {
+				slog.Error("apply_email_labels failed", "error", err, "message_id", messageID)
+			}
+		}
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, fmt.Sprintf("Label applied to %d emails successfully.", len(messageIDs)))
+	} else if toolCall.Name == "create_email_label" {
+		labelName, ok := toolCall.Args["label_name"].(string)
+		if !ok {
+			return "❌ Invalid label name.", nil
+		}
+		slog.Info("executing create_email_label tool", "user", msg.UserID, "label_name", labelName)
+		labelID, err := e.gmailClient.CreateLabel(ctx, msg.UserID, labelName)
+		if err != nil {
+			return fmt.Sprintf("Error creating label: %v", err), nil
+		}
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, fmt.Sprintf("Label '%s' created successfully with ID: %s", labelName, labelID))
+	} else if toolCall.Name == "list_task_lists" {
+		slog.Info("executing list_task_lists tool", "user", msg.UserID)
+		lists, err := e.tasksClient.ListTaskLists(ctx, msg.UserID)
+		if err != nil {
+			slog.Error("list_task_lists failed", "error", err)
+			return fmt.Sprintf("Error listing task lists: %v", err), nil
+		}
+		if len(lists) == 0 {
+			return "You have no task lists.", nil
+		}
+		listsJSON, _ := json.Marshal(lists)
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, fmt.Sprintf("Here are the available task lists:\n%s", string(listsJSON)))
+	} else if toolCall.Name == "create_task_list" {
+		title, ok := toolCall.Args["title"].(string)
+		if !ok {
+			return "Missing title parameter", nil
+		}
+		slog.Info("executing create_task_list tool", "user", msg.UserID, "title", title)
+		_, err := e.tasksClient.CreateTaskList(ctx, msg.UserID, title)
+		if err != nil {
+			slog.Error("create_task_list failed", "error", err)
+			return fmt.Sprintf("Error creating task list: %v", err), nil
+		}
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, "Task list created successfully.")
 	} else if toolCall.Name == "list_tasks" {
 		slog.Info("executing list_tasks tool", "user", msg.UserID)
-		tasks, err := e.tasksClient.ListTasks(ctx, msg.UserID)
+		listID, _ := toolCall.Args["list_id"].(string)
+		tasks, err := e.tasksClient.ListTasks(ctx, msg.UserID, listID)
 		if err != nil {
 			slog.Error("list_tasks failed", "error", err)
 			return fmt.Sprintf("Error listing tasks: %v", err), nil
 		}
 		if len(tasks) == 0 {
-			return "You have no tasks on your default list.", nil
+			return "You have no tasks on this list.", nil
 		}
 		
-		var sb strings.Builder
-		sb.WriteString("📝 *Your Tasks:*\n\n")
-		for _, t := range tasks {
-			dueStr := ""
-			if t.Due != "" {
-				// Parse and format due date if possible
-				if parsed, err := time.Parse(time.RFC3339, t.Due); err == nil {
-					dueStr = fmt.Sprintf(" (Due: %s)", parsed.Format("Jan 02"))
-				}
-			}
-			notesStr := ""
-			if t.Notes != "" {
-				notesStr = fmt.Sprintf("\n   _Notes: %s_", t.Notes)
-			}
-			sb.WriteString(fmt.Sprintf("- *%s*%s%s\n", t.Title, dueStr, notesStr))
-		}
-		return e.continueConversationWithToolResult(ctx, msg, history, systemPrompt, "list_tasks", sb.String())
+		tasksJSON, _ := json.Marshal(tasks)
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, fmt.Sprintf("Here are the tasks in this list:\n%s", string(tasksJSON)))
 	} else if toolCall.Name == "create_task" {
+		listID, _ := toolCall.Args["list_id"].(string)
 		title, _ := toolCall.Args["title"].(string)
 		notes, _ := toolCall.Args["notes"].(string)
 		due, _ := toolCall.Args["due"].(string)
 
 		slog.Info("executing create_task tool", "user", msg.UserID, "title", title)
-		err := e.tasksClient.CreateTask(ctx, msg.UserID, title, notes, due)
+		err := e.tasksClient.CreateTask(ctx, msg.UserID, listID, title, notes, due)
 		if err != nil {
 			slog.Error("create_task failed", "error", err)
 			return fmt.Sprintf("Error creating task: %v", err), nil
 		}
-		return "Task created successfully.", nil
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, "Task created successfully.")
 	} else if toolCall.Name == "complete_task" {
+		listID, _ := toolCall.Args["list_id"].(string)
 		taskID, ok := toolCall.Args["task_id"].(string)
 		if !ok {
 			return "Missing task_id parameter", nil
 		}
 
 		slog.Info("executing complete_task tool", "user", msg.UserID, "task_id", taskID)
-		err := e.tasksClient.CompleteTask(ctx, msg.UserID, taskID)
+		err := e.tasksClient.CompleteTask(ctx, msg.UserID, listID, taskID)
 		if err != nil {
 			slog.Error("complete_task failed", "error", err)
 			return fmt.Sprintf("Error completing task: %v", err), nil
 		}
-		return "Task marked as completed.", nil
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, "Task marked as completed.")
 	} else if toolCall.Name == "delete_task" {
+		listID, _ := toolCall.Args["list_id"].(string)
 		taskID, ok := toolCall.Args["task_id"].(string)
 		if !ok {
 			return "Missing task_id parameter", nil
 		}
 
 		slog.Info("executing delete_task tool", "user", msg.UserID, "task_id", taskID)
-		err := e.tasksClient.DeleteTask(ctx, msg.UserID, taskID)
+		err := e.tasksClient.DeleteTask(ctx, msg.UserID, listID, taskID)
 		if err != nil {
 			slog.Error("delete_task failed", "error", err)
 			return fmt.Sprintf("Error deleting task: %v", err), nil
 		}
-		return "Task deleted successfully.", nil
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, "Task deleted successfully.")
 	} else if toolCall.Name == "search_web" {
 		query, ok := toolCall.Args["query"].(string)
 		if !ok {

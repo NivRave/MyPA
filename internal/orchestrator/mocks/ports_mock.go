@@ -342,6 +342,34 @@ func (m *MockGmailClient) EXPECT() *MockGmailClientMockRecorder {
 	return m.recorder
 }
 
+// ApplyLabel mocks base method.
+func (m *MockGmailClient) ApplyLabel(ctx context.Context, userID, messageID, labelID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ApplyLabel", ctx, userID, messageID, labelID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ApplyLabel indicates an expected call of ApplyLabel.
+func (mr *MockGmailClientMockRecorder) ApplyLabel(ctx, userID, messageID, labelID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ApplyLabel", reflect.TypeOf((*MockGmailClient)(nil).ApplyLabel), ctx, userID, messageID, labelID)
+}
+
+// ArchiveEmail mocks base method.
+func (m *MockGmailClient) ArchiveEmail(ctx context.Context, userID, messageID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ArchiveEmail", ctx, userID, messageID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ArchiveEmail indicates an expected call of ArchiveEmail.
+func (mr *MockGmailClientMockRecorder) ArchiveEmail(ctx, userID, messageID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ArchiveEmail", reflect.TypeOf((*MockGmailClient)(nil).ArchiveEmail), ctx, userID, messageID)
+}
+
 // DraftReply mocks base method.
 func (m *MockGmailClient) DraftReply(ctx context.Context, userID, messageID, replyText string) error {
 	m.ctrl.T.Helper()
@@ -356,19 +384,19 @@ func (mr *MockGmailClientMockRecorder) DraftReply(ctx, userID, messageID, replyT
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DraftReply", reflect.TypeOf((*MockGmailClient)(nil).DraftReply), ctx, userID, messageID, replyText)
 }
 
-// ListUnreadEmails mocks base method.
-func (m *MockGmailClient) ListUnreadEmails(ctx context.Context, userID string, maxResults int64) ([]gmail.UnreadEmail, error) {
+// ListLabels mocks base method.
+func (m *MockGmailClient) ListLabels(ctx context.Context, userID string) (map[string]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListUnreadEmails", ctx, userID, maxResults)
-	ret0, _ := ret[0].([]gmail.UnreadEmail)
+	ret := m.ctrl.Call(m, "ListLabels", ctx, userID)
+	ret0, _ := ret[0].(map[string]string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// ListUnreadEmails indicates an expected call of ListUnreadEmails.
-func (mr *MockGmailClientMockRecorder) ListUnreadEmails(ctx, userID, maxResults any) *gomock.Call {
+// ListLabels indicates an expected call of ListLabels.
+func (mr *MockGmailClientMockRecorder) ListLabels(ctx, userID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnreadEmails", reflect.TypeOf((*MockGmailClient)(nil).ListUnreadEmails), ctx, userID, maxResults)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListLabels", reflect.TypeOf((*MockGmailClient)(nil).ListLabels), ctx, userID)
 }
 
 // ReadEmail mocks base method.
@@ -384,6 +412,50 @@ func (m *MockGmailClient) ReadEmail(ctx context.Context, userID, messageID strin
 func (mr *MockGmailClientMockRecorder) ReadEmail(ctx, userID, messageID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadEmail", reflect.TypeOf((*MockGmailClient)(nil).ReadEmail), ctx, userID, messageID)
+}
+
+// SearchEmails mocks base method.
+func (m *MockGmailClient) SearchEmails(ctx context.Context, userID, query string, maxResults int64) ([]gmail.EmailSummary, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SearchEmails", ctx, userID, query, maxResults)
+	ret0, _ := ret[0].([]gmail.EmailSummary)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SearchEmails indicates an expected call of SearchEmails.
+func (mr *MockGmailClientMockRecorder) SearchEmails(ctx, userID, query, maxResults any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SearchEmails", reflect.TypeOf((*MockGmailClient)(nil).SearchEmails), ctx, userID, query, maxResults)
+}
+
+// SoftDeleteEmail mocks base method.
+func (m *MockGmailClient) SoftDeleteEmail(ctx context.Context, userID, messageID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SoftDeleteEmail", ctx, userID, messageID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SoftDeleteEmail indicates an expected call of SoftDeleteEmail.
+func (mr *MockGmailClientMockRecorder) SoftDeleteEmail(ctx, userID, messageID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SoftDeleteEmail", reflect.TypeOf((*MockGmailClient)(nil).SoftDeleteEmail), ctx, userID, messageID)
+}
+
+// CreateLabel mocks base method.
+func (m *MockGmailClient) CreateLabel(ctx context.Context, userID, labelName string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateLabel", ctx, userID, labelName)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateLabel indicates an expected call of CreateLabel.
+func (mr *MockGmailClientMockRecorder) CreateLabel(ctx, userID, labelName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateLabel", reflect.TypeOf((*MockGmailClient)(nil).CreateLabel), ctx, userID, labelName)
 }
 
 // MockTasksClient is a mock of TasksClient interface.
@@ -411,60 +483,90 @@ func (m *MockTasksClient) EXPECT() *MockTasksClientMockRecorder {
 }
 
 // CompleteTask mocks base method.
-func (m *MockTasksClient) CompleteTask(ctx context.Context, userID, taskID string) error {
+func (m *MockTasksClient) CompleteTask(ctx context.Context, userID, listID, taskID string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CompleteTask", ctx, userID, taskID)
+	ret := m.ctrl.Call(m, "CompleteTask", ctx, userID, listID, taskID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CompleteTask indicates an expected call of CompleteTask.
-func (mr *MockTasksClientMockRecorder) CompleteTask(ctx, userID, taskID any) *gomock.Call {
+func (mr *MockTasksClientMockRecorder) CompleteTask(ctx, userID, listID, taskID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteTask", reflect.TypeOf((*MockTasksClient)(nil).CompleteTask), ctx, userID, taskID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteTask", reflect.TypeOf((*MockTasksClient)(nil).CompleteTask), ctx, userID, listID, taskID)
 }
 
 // CreateTask mocks base method.
-func (m *MockTasksClient) CreateTask(ctx context.Context, userID, title, notes, due string) error {
+func (m *MockTasksClient) CreateTask(ctx context.Context, userID, listID, title, notes, due string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateTask", ctx, userID, title, notes, due)
+	ret := m.ctrl.Call(m, "CreateTask", ctx, userID, listID, title, notes, due)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CreateTask indicates an expected call of CreateTask.
-func (mr *MockTasksClientMockRecorder) CreateTask(ctx, userID, title, notes, due any) *gomock.Call {
+func (mr *MockTasksClientMockRecorder) CreateTask(ctx, userID, listID, title, notes, due any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTask", reflect.TypeOf((*MockTasksClient)(nil).CreateTask), ctx, userID, title, notes, due)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTask", reflect.TypeOf((*MockTasksClient)(nil).CreateTask), ctx, userID, listID, title, notes, due)
+}
+
+// CreateTaskList mocks base method.
+func (m *MockTasksClient) CreateTaskList(ctx context.Context, userID, title string) (*tasks.TaskList, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateTaskList", ctx, userID, title)
+	ret0, _ := ret[0].(*tasks.TaskList)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateTaskList indicates an expected call of CreateTaskList.
+func (mr *MockTasksClientMockRecorder) CreateTaskList(ctx, userID, title any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTaskList", reflect.TypeOf((*MockTasksClient)(nil).CreateTaskList), ctx, userID, title)
 }
 
 // DeleteTask mocks base method.
-func (m *MockTasksClient) DeleteTask(ctx context.Context, userID, taskID string) error {
+func (m *MockTasksClient) DeleteTask(ctx context.Context, userID, listID, taskID string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteTask", ctx, userID, taskID)
+	ret := m.ctrl.Call(m, "DeleteTask", ctx, userID, listID, taskID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DeleteTask indicates an expected call of DeleteTask.
-func (mr *MockTasksClientMockRecorder) DeleteTask(ctx, userID, taskID any) *gomock.Call {
+func (mr *MockTasksClientMockRecorder) DeleteTask(ctx, userID, listID, taskID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteTask", reflect.TypeOf((*MockTasksClient)(nil).DeleteTask), ctx, userID, taskID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteTask", reflect.TypeOf((*MockTasksClient)(nil).DeleteTask), ctx, userID, listID, taskID)
+}
+
+// ListTaskLists mocks base method.
+func (m *MockTasksClient) ListTaskLists(ctx context.Context, userID string) ([]*tasks.TaskList, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListTaskLists", ctx, userID)
+	ret0, _ := ret[0].([]*tasks.TaskList)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListTaskLists indicates an expected call of ListTaskLists.
+func (mr *MockTasksClientMockRecorder) ListTaskLists(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTaskLists", reflect.TypeOf((*MockTasksClient)(nil).ListTaskLists), ctx, userID)
 }
 
 // ListTasks mocks base method.
-func (m *MockTasksClient) ListTasks(ctx context.Context, userID string) ([]*tasks.Task, error) {
+func (m *MockTasksClient) ListTasks(ctx context.Context, userID, listID string) ([]*tasks.Task, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListTasks", ctx, userID)
+	ret := m.ctrl.Call(m, "ListTasks", ctx, userID, listID)
 	ret0, _ := ret[0].([]*tasks.Task)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListTasks indicates an expected call of ListTasks.
-func (mr *MockTasksClientMockRecorder) ListTasks(ctx, userID any) *gomock.Call {
+func (mr *MockTasksClientMockRecorder) ListTasks(ctx, userID, listID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTasks", reflect.TypeOf((*MockTasksClient)(nil).ListTasks), ctx, userID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTasks", reflect.TypeOf((*MockTasksClient)(nil).ListTasks), ctx, userID, listID)
 }
 
 // MockTavilyClient is a mock of TavilyClient interface.
