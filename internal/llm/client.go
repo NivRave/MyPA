@@ -51,15 +51,30 @@ func (c *Client) Chat(ctx context.Context, systemInstruction string, history []m
 	contents := []*genai.Content{}
 
 	for _, msg := range history {
-		// Map our internal role ("user" or "assistant") to Gemini roles ("user" or "model")
+		// Map our internal role ("user", "assistant", or "function") to Gemini roles ("user" or "model")
 		role := msg.Role
 		if role == "assistant" {
 			role = "model"
 		}
-		contents = append(contents, &genai.Content{
-			Role:  role,
-			Parts: []*genai.Part{genai.NewPartFromText(msg.Content)},
-		})
+		if role == "function" {
+			role = "user" // Gemini considers function responses as user turns
+		}
+
+		var parts []*genai.Part
+		if msg.ToolCall != nil {
+			parts = append(parts, genai.NewPartFromFunctionCall(msg.ToolCall.Name, msg.ToolCall.Args))
+		} else if msg.ToolResponse != nil {
+			parts = append(parts, genai.NewPartFromFunctionResponse(msg.ToolResponse.Name, msg.ToolResponse.Response))
+		} else if msg.Content != "" {
+			parts = append(parts, genai.NewPartFromText(msg.Content))
+		}
+
+		if len(parts) > 0 {
+			contents = append(contents, &genai.Content{
+				Role:  role,
+				Parts: parts,
+			})
+		}
 	}
 
 	// Add the new message
