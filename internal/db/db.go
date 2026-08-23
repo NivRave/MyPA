@@ -32,7 +32,7 @@ func NewClient(dsn string) (*Client, error) {
 	}
 
 	// Auto-migrate schemas
-	if err := db.AutoMigrate(&models.AuditSession{}, &models.AuditEvent{}, &models.Memory{}); err != nil {
+	if err := db.AutoMigrate(&models.AuditSession{}, &models.AuditEvent{}, &models.Memory{}, &models.ScheduledReminder{}); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
@@ -101,4 +101,33 @@ func (c *Client) GetLastAuditSessionForUser(userID string) (*models.AuditSession
 		return nil, fmt.Errorf("failed to get last audit session: %w", result.Error)
 	}
 	return &session, nil
+}
+
+// SaveReminder creates a new scheduled reminder.
+func (c *Client) SaveReminder(reminder models.ScheduledReminder) error {
+	result := c.DB.Create(&reminder)
+	if result.Error != nil {
+		return fmt.Errorf("failed to insert reminder: %w", result.Error)
+	}
+	return nil
+}
+
+// GetDueReminders fetches reminders that are due to be sent (due_time <= now) and haven't been sent yet.
+func (c *Client) GetDueReminders() ([]models.ScheduledReminder, error) {
+	var reminders []models.ScheduledReminder
+	// Fetch where due_time is less than or equal to now, and is_sent is false.
+	result := c.DB.Where("is_sent = ? AND due_time <= ?", false, "now()").Find(&reminders)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to fetch due reminders: %w", result.Error)
+	}
+	return reminders, nil
+}
+
+// MarkReminderSent marks a scheduled reminder as sent.
+func (c *Client) MarkReminderSent(id uint) error {
+	result := c.DB.Model(&models.ScheduledReminder{}).Where("id = ?", id).Update("is_sent", true)
+	if result.Error != nil {
+		return fmt.Errorf("failed to mark reminder as sent: %w", result.Error)
+	}
+	return nil
 }

@@ -342,20 +342,6 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 	return nil
 }
 
-func (e *Engine) getCalendarClient(ctx context.Context, userID string) (*calendar.Client, error) {
-	tokenBytes, err := e.store.GetOAuthToken(ctx, userID)
-	if err != nil || tokenBytes == nil {
-		return nil, fmt.Errorf("unauthorized")
-	}
-
-	token, err := calendar.DecodeToken(tokenBytes)
-	if err != nil {
-		return nil, fmt.Errorf("invalid_token")
-	}
-
-	ts := e.oauthCfg.TokenSource(ctx, token)
-	return calendar.NewClient(ctx, ts)
-}
 
 func (e *Engine) feedbackToLLM(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall, feedback string) (string, error) {
 	// Add the actual assistant tool call natively
@@ -715,7 +701,33 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			slog.Error("search_web failed", "error", err)
 			return fmt.Sprintf("Error searching the web: %v", err), nil
 		}
-		return result, nil
+		return e.continueConversationWithToolResult(ctx, msg, history, systemPrompt, "search_web", result)
+	} else if toolCall.Name == "schedule_reminder" {
+		message, _ := toolCall.Args["message"].(string)
+		dueTimeStr, _ := toolCall.Args["due_time"].(string)
+
+		dueTime, err := time.Parse(time.RFC3339, dueTimeStr)
+		if err != nil {
+			return "❌ Failed to parse due time. Please use ISO 8601 format.", nil
+		}
+
+		slog.Info("executing schedule_reminder tool", "user", msg.UserID, "message", message, "due_time", dueTime)
+		
+		err = e.db.SaveReminder(models.ScheduledReminder{
+			UserID:    msg.UserID,
+			Message:   message,
+			DueTime:   dueTime,
+			IsSent:    false,
+			CreatedAt: time.Now(),
+		})
+		
+		if err != nil {
+			slog.Error("schedule_reminder failed", "error", err)
+			return fmt.Sprintf("Error scheduling reminder: %v", err), nil
+		}
+		
+		// Return a nice confirmation instead of recursing, as this is an action tool
+		return fmt.Sprintf("✅ **Reminder Set!**\n\nI will remind you at %s: \"%s\"", dueTime.In(time.Local).Format(time.RFC822), message), nil
 	} else if toolCall.Name == "fetch_webpage" {
 		url, ok := toolCall.Args["url"].(string)
 		if !ok {
@@ -749,6 +761,24 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 	}
 
 	return "⚠️ LLM tried to call an unknown tool.", nil
+}
+
+func (e *Engine) continueConversationWithToolResult(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolName string, resultStr string) (string, error) {
+	summaryPrompt := fmt.Sprintf("Here is the output from the %s tool:\n%s\nPlease fulfill the user's request based on this information.", toolName, resultStr)
+	extendedHistory := append(history, models.ChatMessage{Role: "user", Content: msg.Text})
+	
+	resp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, summaryPrompt)
+	if err != nil {
+		return "❌ Failed to process tool output: " + err.Error(), nil
+	}
+	
+	if resp.ToolCall != nil {
+		// Mock a new message so the next recursion uses the summaryPrompt as the "user" context
+		nextMsg := msg
+		nextMsg.Text = summaryPrompt
+		return e.handleToolCall(ctx, nextMsg, extendedHistory, systemPrompt, resp.ToolCall)
+	}
+	return resp.Text, nil
 }
 
 // BroadcastProactiveMessage sends a scheduled prompt to all known users.
@@ -796,5 +826,50 @@ func (e *Engine) BroadcastProactiveMessage(ctx context.Context, promptText strin
 				slog.Error("failed to process proactive message", "user", m.UserID, "error", err)
 			}
 		}(msg)
+	}
+}
+
+// CheckAndSendReminders checks the database for due reminders and sends them.
+func (e *Engine) CheckAndSendReminders() {
+	reminders, err := e.db.GetDueReminders()
+	if err != nil {
+		slog.Error("failed to get due reminders", "error", err)
+		return
+	}
+
+	for _, reminder := range reminders {
+		log, err := e.db.GetLastAuditLogForUser(reminder.UserID)
+		if err != nil || log == nil {
+			slog.Warn("failed to get last audit log for reminder", "user_id", reminder.UserID, "error", err)
+			continue
+		}
+
+		if log.Source == "" {
+			continue
+		}
+
+		msg := models.Message{
+			ID:     fmt.Sprintf("reminder-%d", reminder.ID),
+			ChatID: log.ChatID,
+			UserID: reminder.UserID,
+			Source: log.Source,
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+		
+		formattedMsg := fmt.Sprintf("🔔 *Reminder:*\n\n%s", reminder.Message)
+		
+		err = e.sendMessage(ctx, msg, formattedMsg)
+		if err != nil {
+			slog.Error("failed to send reminder message", "reminder_id", reminder.ID, "error", err)
+			cancel()
+			continue
+		}
+		cancel()
+
+		_ = e.db.MarkReminderSent(reminder.ID)
+		
+		// Optionally log to history
+		_ = e.store.AppendChatHistory(context.Background(), reminder.UserID, models.ChatMessage{Role: "assistant", Content: formattedMsg})
 	}
 }

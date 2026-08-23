@@ -103,3 +103,13 @@ type Memory struct {
 	Embedding pgvector.Vector `json:"embedding" gorm:"type:vector(3072)"`
 	CreatedAt time.Time       `json:"created_at"`
 }
+
+// ScheduledReminder represents a message to be sent to a user at a specific time.
+type ScheduledReminder struct {
+	ID        uint      `json:"id" gorm:"primarykey"`
+	UserID    string    `json:"user_id" gorm:"index"`
+	Message   string    `json:"message"`
+	DueTime   time.Time `json:"due_time" gorm:"index"`
+	IsSent    bool      `json:"is_sent" gorm:"index"`
+	CreatedAt time.Time `json:"created_at"`
+}
