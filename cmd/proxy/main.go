@@ -35,16 +35,37 @@ func main() {
 		os.Exit(1)
 	}
 
-	gatewayURL, _ := url.Parse(gatewayStr)
-	orchestratorURL, _ := url.Parse(orchestratorStr)
+	mux, err := setupProxy(gatewayStr, orchestratorStr)
+	if err != nil {
+		slog.Error("failed to setup proxy", "error", err)
+		os.Exit(1)
+	}
 
-	// Create reverse proxies
+	// Start server
+	port := cfg.Server.ProxyPort
+	slog.Info("unified API gateway starting", "port", port)
+	
+	addr := fmt.Sprintf(":%d", port)
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		slog.Error("proxy server crashed", "error", err)
+		os.Exit(1)
+	}
+}
+
+func setupProxy(gatewayStr, orchestratorStr string) (*http.ServeMux, error) {
+	gatewayURL, err := url.Parse(gatewayStr)
+	if err != nil {
+		return nil, err
+	}
+	orchestratorURL, err := url.Parse(orchestratorStr)
+	if err != nil {
+		return nil, err
+	}
+
 	gatewayProxy := httputil.NewSingleHostReverseProxy(gatewayURL)
 	orchestratorProxy := httputil.NewSingleHostReverseProxy(orchestratorURL)
 
-	// Create mux router
 	mux := http.NewServeMux()
-
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/webhook/telegram") || strings.HasPrefix(r.URL.Path, "/webhook/twilio") {
 			slog.Info("proxying to gateway", "path", r.URL.Path)
@@ -62,13 +83,5 @@ func main() {
 		http.Error(w, "Not found", http.StatusNotFound)
 	})
 
-	// Start server
-	port := cfg.Server.ProxyPort
-	slog.Info("unified API gateway starting", "port", port)
-	
-	addr := fmt.Sprintf(":%d", port)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		slog.Error("proxy server crashed", "error", err)
-		os.Exit(1)
-	}
+	return mux, nil
 }

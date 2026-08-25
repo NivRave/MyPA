@@ -140,6 +140,40 @@ func main() {
 	}()
 
 	// 7. Start HTTP Server for OAuth callbacks
+	mux := setupAuthRouter(oauthCfg, store, tgClient)
+
+	serverAddr := fmt.Sprintf(":%d", cfg.Server.OrchestratorPort)
+	srv := &http.Server{
+		Addr:    serverAddr,
+		Handler: mux,
+	}
+
+	go func() {
+		slog.Info("orchestrator http server starting", "port", cfg.Server.OrchestratorPort)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("http server failed", "error", err)
+		}
+	}()
+
+	// Graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	slog.Info("orchestrator shutting down")
+	cancel()
+	_ = srv.Shutdown(context.Background())
+
+	// Wait for engine background tasks
+	engine.Wait()
+	slog.Info("orchestrator shutdown complete")
+}
+
+type AuthTelegramClient interface {
+	SendMessage(ctx context.Context, chatID string, text string) error
+}
+
+func setupAuthRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/auth/google/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
@@ -179,30 +213,5 @@ func main() {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte("<h1>Success!</h1><p>Google Calendar connected. You can close this window and return to Telegram.</p>"))
 	})
-
-	serverAddr := fmt.Sprintf(":%d", cfg.Server.OrchestratorPort)
-	srv := &http.Server{
-		Addr:    serverAddr,
-		Handler: mux,
-	}
-
-	go func() {
-		slog.Info("orchestrator http server starting", "port", cfg.Server.OrchestratorPort)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("http server failed", "error", err)
-		}
-	}()
-
-	// Graceful shutdown
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	slog.Info("orchestrator shutting down")
-	cancel()
-	_ = srv.Shutdown(context.Background())
-
-	// Wait for engine background tasks
-	engine.Wait()
-	slog.Info("orchestrator shutdown complete")
+	return mux
 }
