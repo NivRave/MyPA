@@ -6,6 +6,7 @@ This file enforces strict agent behaviors and development conventions for this w
 - **Branch Verification (CRITICAL)**: BEFORE starting any development, making file changes, or committing, you MUST verify the current branch using a terminal command.
 - **Branching**: Develop on `dev`! Never perform work directly on `main` or `master`. You must explicitly checkout the `dev` branch (or a feature branch off of it) before proceeding with changes.
 - **Verification**: Code must be tested and verified before considering a task complete. Run appropriate tests and checks.
+- **Pre-Commit Container Build**: BEFORE deciding a task is complete and asking the user for permission to commit, you MUST run a full container build locally (e.g., `docker-compose build`) to ensure there are no hidden compilation or infrastructure errors. Never rely solely on partial `go build` commands for a single service.
 
 ## 2. Terminal Commands Execution
 - **No Command Chaining**: When performing git operations (like `add`, `commit`, `push`) or other terminal actions, **do not** chain them together in a single command using `;` or `&&`. 
