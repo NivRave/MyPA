@@ -67,14 +67,18 @@ type TasksClient interface {
 
 // DBClient defines the interface for database operations.
 type DBClient interface {
-	LogInteraction(log models.AuditLog) error
 	SaveMemory(memory models.Memory) error
 	SearchMemories(userID string, embedding pgvector.Vector, limit int) ([]models.Memory, error)
 	GetUniqueUsers() ([]string, error)
-	GetLastAuditLogForUser(userID string) (*models.AuditLog, error)
+	GetLastAuditSessionForUser(userID string) (*models.AuditSession, error)
 	SaveReminder(reminder models.ScheduledReminder) error
 	GetDueReminders() ([]models.ScheduledReminder, error)
 	MarkReminderSent(id uint) error
+}
+
+// EventPublisher defines the interface for publishing telemetry events.
+type EventPublisher interface {
+	Publish(ctx context.Context, v any) error
 }
 
 // TavilyClient defines the interface for web search.

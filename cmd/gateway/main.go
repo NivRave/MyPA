@@ -48,61 +48,7 @@ func main() {
 	defer pub.Close()
 
 	// Initialize HTTP router
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-
-	// Health check
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
-	})
-
-	// Twilio Webhook
-	twHandler := twilio.NewHandler(pub)
-	r.Post("/webhook/twilio", twHandler.HandleWebhook)
-
-	// Telegram Webhook
-	r.Post("/webhook/telegram", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			slog.Error("failed to read request body", "error", err)
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		defer r.Body.Close()
-
-		// Parse the Telegram update
-		msg, err := telegram.ParseUpdate(body)
-		if err != nil {
-			slog.Error("failed to parse telegram update", "error", err)
-			// Return 200 so Telegram doesn't keep retrying bad payloads
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		if msg == nil {
-			// Not a text message, ignore
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		slog.Info("received message", "user_id", msg.UserID, "text", msg.Text)
-
-		// Publish to RabbitMQ
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		if err := pub.Publish(ctx, *msg); err != nil {
-			slog.Error("failed to publish message to broker", "error", err)
-			// Return 500 so Telegram retries later
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-	})
+	r := setupRouter(pub)
 
 	// Start server
 	server := &http.Server{
@@ -130,4 +76,60 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		slog.Error("failed to shutdown server gracefully", "error", err)
 	}
+}
+
+type EventPublisher interface {
+	Publish(ctx context.Context, msg any) error
+}
+
+func setupRouter(pub EventPublisher) *chi.Mux {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+
+	twHandler := twilio.NewHandler(pub)
+	r.Post("/webhook/twilio", twHandler.HandleWebhook)
+
+	r.Post("/webhook/telegram", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			slog.Error("failed to read request body", "error", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		defer r.Body.Close()
+
+		msg, err := telegram.ParseUpdate(body)
+		if err != nil {
+			slog.Error("failed to parse telegram update", "error", err)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		if msg == nil {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		slog.Info("received message", "user_id", msg.UserID, "text", msg.Text)
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		if err := pub.Publish(ctx, *msg); err != nil {
+			slog.Error("failed to publish message to broker", "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+	})
+
+	return r
 }

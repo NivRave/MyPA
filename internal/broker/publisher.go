@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/nivik/mypa/internal/models"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -51,9 +50,9 @@ func NewPublisher(amqpURL, queueName string) (*Publisher, error) {
 	}, nil
 }
 
-// Publish serializes and sends a Message to the queue.
-func (p *Publisher) Publish(ctx context.Context, msg models.Message) error {
-	body, err := json.Marshal(msg)
+// Publish serializes and sends a message to the queue.
+func (p *Publisher) Publish(ctx context.Context, v any) error {
+	body, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}

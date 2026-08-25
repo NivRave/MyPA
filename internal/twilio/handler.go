@@ -6,17 +6,21 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/models"
 )
 
+// EventPublisher handles publishing events to a broker.
+type EventPublisher interface {
+	Publish(ctx context.Context, v any) error
+}
+
 // Handler handles incoming Twilio Webhooks.
 type Handler struct {
-	publisher *broker.Publisher
+	publisher EventPublisher
 }
 
 // NewHandler creates a new Twilio Webhook handler.
-func NewHandler(publisher *broker.Publisher) *Handler {
+func NewHandler(publisher EventPublisher) *Handler {
 	return &Handler{
 		publisher: publisher,
 	}

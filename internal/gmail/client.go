@@ -17,6 +17,7 @@ import (
 type Client struct {
 	oauthConfig *calendar.OAuthConfig
 	store       *state.Store
+	endpoint    string // used for testing
 }
 
 // NewClient initializes a new Gmail client wrapper.
@@ -39,7 +40,11 @@ func (c *Client) getService(ctx context.Context, userID string) (*gmailapi.Servi
 	}
 
 	client := c.oauthConfig.TokenSource(ctx, token)
-	return gmailapi.NewService(ctx, option.WithTokenSource(client))
+	opts := []option.ClientOption{option.WithTokenSource(client)}
+	if c.endpoint != "" {
+		opts = append(opts, option.WithEndpoint(c.endpoint))
+	}
+	return gmailapi.NewService(ctx, opts...)
 }
 
 // EmailSummary represents a summarized email.

@@ -14,20 +14,25 @@ import (
 type Client struct {
 	oauthConfig *calendar.OAuthConfig
 	store       *state.Store
+	opts        []option.ClientOption
 }
 
 // NewClient initializes a new Tasks client wrapper.
-func NewClient(oauthCfg *calendar.OAuthConfig, store *state.Store) *Client {
+func NewClient(oauthCfg *calendar.OAuthConfig, store *state.Store, opts ...option.ClientOption) *Client {
 	return &Client{
 		oauthConfig: oauthCfg,
 		store:       store,
+		opts:        opts,
 	}
 }
 
 func (c *Client) getService(ctx context.Context, userID string) (*tasksapi.Service, error) {
 	tokenData, err := c.store.GetOAuthToken(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("no token found for user %s: %w", userID, err)
+		return nil, fmt.Errorf("error fetching token for user %s: %w", userID, err)
+	}
+	if len(tokenData) == 0 {
+		return nil, fmt.Errorf("no token found for user %s", userID)
 	}
 
 	token, err := calendar.DecodeToken(tokenData)
@@ -36,7 +41,9 @@ func (c *Client) getService(ctx context.Context, userID string) (*tasksapi.Servi
 	}
 
 	ts := c.oauthConfig.TokenSource(ctx, token)
-	srv, err := tasksapi.NewService(ctx, option.WithTokenSource(ts))
+	
+	opts := append([]option.ClientOption{option.WithTokenSource(ts)}, c.opts...)
+	srv, err := tasksapi.NewService(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tasks client: %w", err)
 	}

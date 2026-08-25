@@ -42,6 +42,11 @@ func (o *OAuthConfig) Exchange(ctx context.Context, code string) (*oauth2.Token,
 	return o.config.Exchange(ctx, code)
 }
 
+// SetEndpoint overrides the OAuth2 endpoint, primarily for testing.
+func (o *OAuthConfig) SetEndpoint(endpoint oauth2.Endpoint) {
+	o.config.Endpoint = endpoint
+}
+
 // TokenSource creates a token source that automatically refreshes the token if necessary.
 func (o *OAuthConfig) TokenSource(ctx context.Context, token *oauth2.Token) oauth2.TokenSource {
 	return o.config.TokenSource(ctx, token)

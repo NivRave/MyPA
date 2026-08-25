@@ -97,6 +97,33 @@ func (c *Consumer) Consume(handler func(models.Message) error) error {
 	return nil
 }
 
+// ConsumeRaw starts listening for messages and passes the raw bytes to the handler.
+func (c *Consumer) ConsumeRaw(handler func([]byte) error) error {
+	msgs, err := c.channel.Consume(
+		c.queue.Name,
+		"",    // consumer tag
+		false, // auto-ack (we use manual acks)
+		false, // exclusive
+		false, // no-local
+		false, // no-wait
+		nil,   // args
+	)
+	if err != nil {
+		return fmt.Errorf("failed to register consumer: %w", err)
+	}
+
+	for d := range msgs {
+		if err := handler(d.Body); err != nil {
+			slog.Error("handler failed to process raw message", "error", err)
+			_ = d.Nack(false, true)
+		} else {
+			_ = d.Ack(false)
+		}
+	}
+
+	return nil
+}
+
 // Close closes the channel and connection.
 func (c *Consumer) Close() error {
 	if err := c.channel.Close(); err != nil {

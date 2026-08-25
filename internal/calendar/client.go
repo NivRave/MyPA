@@ -17,8 +17,9 @@ type Client struct {
 }
 
 // NewClient initializes a new Calendar client using an authenticated token source.
-func NewClient(ctx context.Context, ts oauth2.TokenSource) (*Client, error) {
-	svc, err := calendar.NewService(ctx, option.WithTokenSource(ts))
+func NewClient(ctx context.Context, ts oauth2.TokenSource, opts ...option.ClientOption) (*Client, error) {
+	opts = append(opts, option.WithTokenSource(ts))
+	svc, err := calendar.NewService(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create calendar service: %w", err)
 	}
