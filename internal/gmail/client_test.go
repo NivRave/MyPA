@@ -35,7 +35,7 @@ func setupTest(t *testing.T) (*Client, *httptest.Server, *miniredis.Miniredis) {
 		switch r.URL.Path {
 		case "/gmail/v1/users/me/messages":
 			// SearchEmails
-			w.Write([]byte(`{
+			_, _ = w.Write([]byte(`{
 				"messages": [
 					{"id": "msg1", "threadId": "thread1"}
 				],
@@ -44,7 +44,7 @@ func setupTest(t *testing.T) (*Client, *httptest.Server, *miniredis.Miniredis) {
 		case "/gmail/v1/users/me/messages/msg1":
 			// Get Message Details
 			if r.URL.Query().Get("format") == "metadata" {
-				w.Write([]byte(`{
+				_, _ = w.Write([]byte(`{
 					"id": "msg1",
 					"snippet": "Test snippet",
 					"payload": {
@@ -56,7 +56,7 @@ func setupTest(t *testing.T) (*Client, *httptest.Server, *miniredis.Miniredis) {
 				}`))
 			} else if r.URL.Query().Get("format") == "full" {
 				// ReadEmail
-				w.Write([]byte(`{
+				_, _ = w.Write([]byte(`{
 					"id": "msg1",
 					"payload": {
 						"mimeType": "text/plain",
@@ -68,19 +68,19 @@ func setupTest(t *testing.T) (*Client, *httptest.Server, *miniredis.Miniredis) {
 			}
 		case "/gmail/v1/users/me/drafts":
 			// DraftReply
-			w.Write([]byte(`{"id": "draft1"}`))
+			_, _ = w.Write([]byte(`{"id": "draft1"}`))
 		case "/gmail/v1/users/me/messages/msg1/modify":
 			// ArchiveEmail / ApplyLabel
-			w.Write([]byte(`{"id": "msg1"}`))
+			_, _ = w.Write([]byte(`{"id": "msg1"}`))
 		case "/gmail/v1/users/me/messages/msg1/trash":
 			// SoftDeleteEmail
-			w.Write([]byte(`{"id": "msg1"}`))
+			_, _ = w.Write([]byte(`{"id": "msg1"}`))
 		case "/gmail/v1/users/me/labels":
 			// ListLabels / CreateLabel
 			if r.Method == http.MethodPost {
-				w.Write([]byte(`{"id": "label2", "name": "NEW_LABEL"}`))
+				_, _ = w.Write([]byte(`{"id": "label2", "name": "NEW_LABEL"}`))
 			} else {
-				w.Write([]byte(`{
+				_, _ = w.Write([]byte(`{
 					"labels": [
 						{"id": "label1", "name": "TEST_LABEL"}
 					]

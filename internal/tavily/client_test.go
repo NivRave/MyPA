@@ -16,7 +16,7 @@ func TestClient_SearchWithAnswer(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 		
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"answer": "This is a summary answer",
 			"results": []
 		}`))
@@ -34,7 +34,7 @@ func TestClient_SearchWithAnswer(t *testing.T) {
 func TestClient_SearchWithResults(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"answer": "",
 			"results": [
 				{"title": "Result 1", "url": "http://example.com/1", "content": "Content 1"},
@@ -56,7 +56,7 @@ func TestClient_SearchWithResults(t *testing.T) {
 func TestClient_SearchNoResults(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"answer": "",
 			"results": []
 		}`))

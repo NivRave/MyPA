@@ -16,7 +16,7 @@ func TestClient_SendMessage(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 		
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"ok": true}`))
+		_, _ = w.Write([]byte(`{"ok": true}`))
 	}))
 	defer ts.Close()
 
@@ -61,7 +61,7 @@ func TestClient_GetFile(t *testing.T) {
 		assert.Equal(t, "file_id=12345", r.URL.RawQuery)
 		
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"ok": true, "result": {"file_path": "music/file.ogg"}}`))
+		_, _ = w.Write([]byte(`{"ok": true, "result": {"file_path": "music/file.ogg"}}`))
 	}))
 	defer ts.Close()
 
@@ -78,7 +78,7 @@ func TestClient_DownloadFile(t *testing.T) {
 		assert.Equal(t, "/file/bottest-token/music/file.ogg", r.URL.Path)
 		
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`file-content`))
+		_, _ = w.Write([]byte(`file-content`))
 	}))
 	defer ts.Close()
 

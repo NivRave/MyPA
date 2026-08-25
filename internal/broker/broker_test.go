@@ -9,15 +9,14 @@ import (
 
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/rabbitmq"
 )
 
 func setupTestRabbitMQ(t *testing.T) (string, func()) {
 	ctx := context.Background()
 
-	rabbitContainer, err := rabbitmq.RunContainer(ctx,
-		testcontainers.WithImage("rabbitmq:3.12-management-alpine"),
+	rabbitContainer, err := rabbitmq.Run(ctx,
+		"rabbitmq:3.12-management-alpine",
 	)
 	if err != nil {
 		t.Fatalf("failed to start container: %v", err)

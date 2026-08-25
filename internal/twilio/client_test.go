@@ -54,7 +54,7 @@ func TestClient_DownloadMedia(t *testing.T) {
 		assert.Equal(t, "test-token", pass)
 
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("media content"))
+		_, _ = w.Write([]byte("media content"))
 	}))
 	defer ts.Close()
 

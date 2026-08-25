@@ -29,7 +29,7 @@ func TestClient_TranscribeAudio(t *testing.T) {
 		assert.Equal(t, "test.ogg", header.Filename)
 
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"text": "Hello this is a test"}`))
+		_, _ = w.Write([]byte(`{"text": "Hello this is a test"}`))
 	}))
 	defer ts.Close()
 
@@ -52,7 +52,7 @@ func TestClient_TranscribeAudio_NoAPIKey(t *testing.T) {
 func TestClient_TranscribeAudio_APIError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error": "Internal Server Error"}`))
+		_, _ = w.Write([]byte(`{"error": "Internal Server Error"}`))
 	}))
 	defer ts.Close()
 

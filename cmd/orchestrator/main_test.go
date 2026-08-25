@@ -38,11 +38,11 @@ func TestAuthRouter(t *testing.T) {
 	// Setup Mock OAuth server
 	oauthSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		r.ParseForm()
+		_ = r.ParseForm()
 		assert.Equal(t, "my-test-code", r.Form.Get("code"))
 		
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"access_token": "dummy-token",
 			"token_type": "Bearer",
 			"expires_in": 3600,

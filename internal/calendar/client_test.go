@@ -38,7 +38,7 @@ func TestClient_CreateEvent(t *testing.T) {
 		assert.Contains(t, r.URL.Path, "/calendars/primary/events")
 		
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"htmlLink": "https://calendar.google.com/events/123"}`))
+		_, _ = w.Write([]byte(`{"htmlLink": "https://calendar.google.com/events/123"}`))
 	}
 
 	client, ts := setupTestClient(t, handler)
@@ -66,7 +66,7 @@ func TestClient_ListEvents(t *testing.T) {
 		assert.Equal(t, "query", r.URL.Query().Get("q"))
 
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"items": [
 				{
 					"id": "event-1",
@@ -92,7 +92,7 @@ func TestClient_UpdateEvent(t *testing.T) {
 		assert.Contains(t, r.URL.Path, "/calendars/primary/events/event-1")
 		
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"id": "event-1"}`))
+		_, _ = w.Write([]byte(`{"id": "event-1"}`))
 	}
 
 	client, ts := setupTestClient(t, handler)

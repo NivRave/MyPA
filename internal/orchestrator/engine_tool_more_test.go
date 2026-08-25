@@ -130,7 +130,7 @@ func TestEngine_HandleToolCall_FetchWebpage(t *testing.T) {
 	// We could use an httptest.Server to serve mock HTML!
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<html><body><article><p>Some webpage text</p></article></body></html>`))
+		_, _ = w.Write([]byte(`<html><body><article><p>Some webpage text</p></article></body></html>`))
 	}))
 	defer ts.Close()
 

@@ -16,7 +16,6 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-var testDBClient *Client
 
 func setupTestDB(t *testing.T) (*Client, func()) {
 	ctx := context.Background()
@@ -25,8 +24,8 @@ func setupTestDB(t *testing.T) (*Client, func()) {
 	dbUser := "user"
 	dbPassword := "password"
 
-	postgresContainer, err := postgres.RunContainer(ctx,
-		testcontainers.WithImage("pgvector/pgvector:pg16"),
+	postgresContainer, err := postgres.Run(ctx,
+		"pgvector/pgvector:pg16",
 		postgres.WithDatabase(dbName),
 		postgres.WithUsername(dbUser),
 		postgres.WithPassword(dbPassword),
