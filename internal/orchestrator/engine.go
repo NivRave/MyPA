@@ -838,7 +838,7 @@ func (e *Engine) CheckAndSendReminders() {
 	}
 
 	for _, reminder := range reminders {
-		log, err := e.db.GetLastAuditLogForUser(reminder.UserID)
+		log, err := e.db.GetLastAuditSessionForUser(reminder.UserID)
 		if err != nil || log == nil {
 			slog.Warn("failed to get last audit log for reminder", "user_id", reminder.UserID, "error", err)
 			continue

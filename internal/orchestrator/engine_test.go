@@ -27,6 +27,8 @@ func setupTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.M
 	tasksMock := mocks.NewMockTasksClient(ctrl)
 	tavilyMock := mocks.NewMockTavilyClient(ctrl)
 	dbMock := mocks.NewMockDBClient(ctrl)
+	eventPublisherMock := mocks.NewMockEventPublisher(ctrl)
+	eventPublisherMock.EXPECT().Publish(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	
 	// Setup in-memory Redis
 	mr, err := miniredis.Run()
@@ -55,6 +57,7 @@ func setupTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.M
 		tasksMock,
 		tavilyMock,
 		audioMock,
+		eventPublisherMock,
 		"UTC",
 	)
 
@@ -69,7 +72,7 @@ func setupTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.M
 }
 
 func TestProcessMessage_ConnectCommand(t *testing.T) {
-	engine, tgMock, _, dbMock, cleanup := setupTestEngine(t)
+	engine, tgMock, _, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
 	msg := models.Message{
@@ -90,10 +93,6 @@ func TestProcessMessage_ConnectCommand(t *testing.T) {
 		}).
 		Times(1)
 
-	dbMock.EXPECT().
-		LogInteraction(gomock.Any()).
-		Return(nil).
-		AnyTimes()
 
 	err := engine.processMessage(context.Background(), msg)
 	assert.NoError(t, err)
@@ -122,8 +121,6 @@ func TestProcessMessage_TextMessage(t *testing.T) {
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(llmResponse, nil).Times(1)
 
 	tgMock.EXPECT().SendMessage(gomock.Any(), "chat-1", "Hello there!").Return(nil).Times(1)
-
-	dbMock.EXPECT().LogInteraction(gomock.Any()).Return(nil).AnyTimes()
 
 	err := engine.processMessage(context.Background(), msg)
 	assert.NoError(t, err)

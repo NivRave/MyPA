@@ -71,7 +71,6 @@ type DBClient interface {
 	SearchMemories(userID string, embedding pgvector.Vector, limit int) ([]models.Memory, error)
 	GetUniqueUsers() ([]string, error)
 	GetLastAuditSessionForUser(userID string) (*models.AuditSession, error)
-	GetLastAuditLogForUser(userID string) (*models.AuditLog, error)
 	SaveReminder(reminder models.ScheduledReminder) error
 	GetDueReminders() ([]models.ScheduledReminder, error)
 	MarkReminderSent(id uint) error
