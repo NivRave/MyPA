@@ -16,7 +16,7 @@ type Client struct {
 }
 
 // NewClient initializes a new Gemini client.
-func NewClient(ctx context.Context, apiKey, model string) (*Client, error) {
+func NewClient(ctx context.Context, apiKey, model string, opts ...func(*genai.ClientConfig)) (*Client, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("gemini api key is required")
 	}
@@ -24,9 +24,14 @@ func NewClient(ctx context.Context, apiKey, model string) (*Client, error) {
 		model = "gemini-2.5-flash"
 	}
 
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+	cfg := &genai.ClientConfig{
 		APIKey: apiKey,
-	})
+	}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	client, err := genai.NewClient(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gemini client: %w", err)
 	}
