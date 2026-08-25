@@ -2,27 +2,50 @@ package broker
 
 import (
 	"context"
-	"os"
+	"log"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/rabbitmq"
 )
 
-func TestPublishConsumeRoundTrip(t *testing.T) {
-	// Skip if no RabbitMQ running locally
-	amqpURL := os.Getenv("RABBITMQ_URL")
-	if amqpURL == "" {
-		t.Skip("RABBITMQ_URL is not set, skipping test")
+func setupTestRabbitMQ(t *testing.T) (string, func()) {
+	ctx := context.Background()
+
+	rabbitContainer, err := rabbitmq.RunContainer(ctx,
+		testcontainers.WithImage("rabbitmq:3.12-management-alpine"),
+	)
+	if err != nil {
+		t.Fatalf("failed to start container: %v", err)
 	}
+
+	amqpURL, err := rabbitContainer.AmqpURL(ctx)
+	if err != nil {
+		t.Fatalf("failed to get connection string: %v", err)
+	}
+
+	cleanup := func() {
+		if err := rabbitContainer.Terminate(ctx); err != nil {
+			log.Fatalf("failed to terminate container: %s", err)
+		}
+	}
+
+	return amqpURL, cleanup
+}
+
+func TestPublishConsumeRoundTrip(t *testing.T) {
+	amqpURL, cleanup := setupTestRabbitMQ(t)
+	defer cleanup()
 
 	queueName := "test.telegram.inbound"
 
 	// 1. Setup Publisher
 	pub, err := NewPublisher(amqpURL, queueName)
-	require.NoError(t, err, "Failed to create publisher. Is RabbitMQ running?")
+	require.NoError(t, err, "Failed to create publisher")
 	defer pub.Close()
 
 	// 2. Setup Consumer
@@ -46,7 +69,7 @@ func TestPublishConsumeRoundTrip(t *testing.T) {
 	wg.Add(1)
 
 	// Context to timeout the test if message is never received
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	go func() {
@@ -60,6 +83,9 @@ func TestPublishConsumeRoundTrip(t *testing.T) {
 			t.Logf("Consumer exited with error (expected on close): %v", err)
 		}
 	}()
+
+	// Small delay to ensure consumer is ready
+	time.Sleep(500 * time.Millisecond)
 
 	// 5. Publish Message
 	err = pub.Publish(ctx, originalMsg)
