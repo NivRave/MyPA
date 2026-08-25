@@ -27,7 +27,7 @@ func TestLoad_Defaults(t *testing.T) {
 	require.NoError(t, err)
 	err = os.Chdir(tempDir)
 	require.NoError(t, err)
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestLoad_EnvVars(t *testing.T) {
 	require.NoError(t, err)
 	err = os.Chdir(tempDir)
 	require.NoError(t, err)
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	t.Setenv("DEFAULT_TIMEZONE", "America/New_York")
 	t.Setenv("GATEWAY_URL", "http://localhost:8080")
@@ -101,7 +101,7 @@ func TestLoad_ConfigFile(t *testing.T) {
 	require.NoError(t, err)
 	err = os.Chdir(tempDir)
 	require.NoError(t, err)
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	configContent := `
 server:

@@ -30,7 +30,7 @@ func TestFetchAndExtractText(t *testing.T) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36", r.Header.Get("User-Agent"))
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(htmlContent))
+		_, _ = w.Write([]byte(htmlContent))
 	}))
 	defer ts.Close()
 
@@ -57,7 +57,7 @@ func TestFetchAndExtractText_NotFound(t *testing.T) {
 func TestFetchAndExtractText_NoContent(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<html><body></body></html>`)) // Empty body
+		_, _ = w.Write([]byte(`<html><body></body></html>`)) // Empty body
 	}))
 	defer ts.Close()
 
@@ -77,7 +77,7 @@ func TestFetchAndExtractText_Truncation(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(sb.String()))
+		_, _ = w.Write([]byte(sb.String()))
 	}))
 	defer ts.Close()
 

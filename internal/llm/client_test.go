@@ -17,7 +17,7 @@ func TestClient_Chat(t *testing.T) {
 		assert.Contains(t, r.URL.Path, "generateContent")
 		
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"candidates": [
 				{
 					"content": {
@@ -56,7 +56,7 @@ func TestClient_Chat(t *testing.T) {
 func TestClient_Chat_ToolCall(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"candidates": [
 				{
 					"content": {
@@ -97,7 +97,7 @@ func TestClient_GenerateEmbedding(t *testing.T) {
 		assert.Contains(t, r.URL.Path, "EmbedContent")
 		
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"embeddings": [
 				{
 					"values": [0.1, 0.2, 0.3]

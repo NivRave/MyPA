@@ -29,6 +29,8 @@ This document tracks upcoming features, technical debt, and future improvements 
    - Add optional configuration settings so users can enable only the specific features they want to use.
 7. **Shopping List & General Lists Management**
    - Add the ability to create, update, and manage various lists (e.g., shopping lists, packing lists) naturally through conversation.
+8. **Cooking Recommendations & Saved Recipes**
+   - Manage saved recipes and provide cooking recommendations (requirements to be expanded).
 
 ### Suggested Quality of Life (QoL) Features
 1. **Automated Expense & Budget Tracking**: Categorize receipts from Gmail, calculate monthly spending against budgets, split shared expenses, and send financial summaries.

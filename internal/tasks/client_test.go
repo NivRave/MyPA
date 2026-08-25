@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/nivik/mypa/internal/calendar"
@@ -13,18 +12,9 @@ import (
 	"github.com/nivik/mypa/internal/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
 )
 
-type dummyTokenSource struct{}
-
-func (t *dummyTokenSource) Token() (*oauth2.Token, error) {
-	return &oauth2.Token{
-		AccessToken: "dummy-token",
-		Expiry:      time.Now().Add(1 * time.Hour),
-	}, nil
-}
 
 func setupTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.Server, func()) {
 	ts := httptest.NewServer(handler)
@@ -63,7 +53,7 @@ func TestClient_ListTaskLists(t *testing.T) {
 		assert.Contains(t, r.URL.Path, "/users/@me/lists")
 		
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"items": [
 				{
 					"id": "list-1",
@@ -89,7 +79,7 @@ func TestClient_CreateTaskList(t *testing.T) {
 		assert.Contains(t, r.URL.Path, "/users/@me/lists")
 		
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"id": "new-list-1", "title": "New List"}`))
+		_, _ = w.Write([]byte(`{"id": "new-list-1", "title": "New List"}`))
 	}
 
 	client, _, cleanup := setupTestClient(t, handler)
@@ -108,7 +98,7 @@ func TestClient_ListTasks(t *testing.T) {
 		assert.Equal(t, "false", r.URL.Query().Get("showHidden"))
 		
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"items": [
 				{
 					"id": "task-1",
@@ -133,7 +123,7 @@ func TestClient_CreateTask(t *testing.T) {
 		assert.Contains(t, r.URL.Path, "/lists/@default/tasks") // testing empty listID defaults to @default
 		
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"id": "new-task-1"}`))
+		_, _ = w.Write([]byte(`{"id": "new-task-1"}`))
 	}
 
 	client, _, cleanup := setupTestClient(t, handler)
@@ -149,10 +139,10 @@ func TestClient_CompleteTask(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == "GET" {
 			assert.Contains(t, r.URL.Path, "/lists/list-1/tasks/task-1")
-			w.Write([]byte(`{"id": "task-1", "title": "Buy Milk", "status": "needsAction"}`))
+			_, _ = w.Write([]byte(`{"id": "task-1", "title": "Buy Milk", "status": "needsAction"}`))
 		} else if r.Method == "PUT" {
 			assert.Contains(t, r.URL.Path, "/lists/list-1/tasks/task-1")
-			w.Write([]byte(`{"id": "task-1", "title": "Buy Milk", "status": "completed"}`))
+			_, _ = w.Write([]byte(`{"id": "task-1", "title": "Buy Milk", "status": "completed"}`))
 		}
 	}
 
