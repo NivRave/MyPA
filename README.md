@@ -99,6 +99,7 @@ The V2 engine is fully built, containerized, and production-ready.
    go run ./cmd/gateway
    go run ./cmd/orchestrator
    go run ./cmd/proxy
+   go run ./cmd/audit-worker
    ```
 
 4. **Expose and set webhook:** Follow steps 3 & 4 from the Docker instructions above.
@@ -131,17 +132,20 @@ go test -v ./tests/...
 |---|---|---|
 | Proxy | 8000 | Unified API Gateway (routes to Gateway and Orchestrator) |
 | Gateway | 8080 | Telegram & WhatsApp webhook ingestion |
-| Orchestrator | 8081 | LLM reasoning + Calendar execution + OAuth + Background Scheduler |
+| Orchestrator | 8081 | LLM reasoning + API execution + OAuth + Background Scheduler |
+| Audit Worker | N/A | Asynchronously writes audit logs to PostgreSQL |
 | RabbitMQ | 5672 | Message broker |
 | Redis | 6379 | Conversation state + OAuth tokens |
 | Database | 5432 | Audit logging & Semantic Memory storage (PostgreSQL) |
 
 ## Project Structure
 
-```
+```text
 cmd/
-  gateway/          # Telegram & WhatsApp webhook service
+  audit-worker/     # Asynchronous audit logging worker
+  gateway/          # Telegram & WhatsApp webhook ingestion
   orchestrator/     # LLM reasoning + execution service
+  proxy/            # Unified API gateway routing
 internal/
   config/           # Viper configuration
   models/           # Shared domain types
@@ -151,6 +155,9 @@ internal/
   audio/            # Groq Whisper API client for voice processing
   llm/              # Gemini API client + tool definitions
   calendar/         # Google Calendar API + OAuth
+  gmail/            # Gmail API integration
+  tasks/            # Google Tasks API integration
+  tavily/           # Tavily Web Search API client
   state/            # Redis state management
   db/               # Database client for audit logging and memory
   scheduler/        # Cron jobs and background proactive messaging
