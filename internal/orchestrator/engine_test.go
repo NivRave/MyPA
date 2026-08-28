@@ -59,6 +59,7 @@ func setupTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.M
 		audioMock,
 		eventPublisherMock,
 		"UTC",
+		map[string]models.User{},
 	)
 
 	cleanup := func() {

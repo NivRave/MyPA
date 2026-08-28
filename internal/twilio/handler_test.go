@@ -24,7 +24,7 @@ func (m *mockPublisher) Publish(ctx context.Context, v any) error {
 
 func TestHandleWebhook_PostMethod(t *testing.T) {
 	pub := &mockPublisher{}
-	handler := NewHandler(pub)
+	handler := NewHandler(pub, map[string]models.User{})
 
 	data := url.Values{}
 	data.Set("From", "whatsapp:+123456789")
@@ -50,7 +50,7 @@ func TestHandleWebhook_PostMethod(t *testing.T) {
 
 func TestHandleWebhook_WrongMethod(t *testing.T) {
 	pub := &mockPublisher{}
-	handler := NewHandler(pub)
+	handler := NewHandler(pub, map[string]models.User{})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
