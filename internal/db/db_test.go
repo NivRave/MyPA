@@ -154,7 +154,7 @@ func TestMemories(t *testing.T) {
 	searchVec := make([]float32, 3072)
 	searchVec[0] = 0.9
 
-	results, err := client.SearchMemories(userID, pgvector.NewVector(searchVec), 1)
+	results, err := client.SearchMemories([]string{userID}, pgvector.NewVector(searchVec), 1)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "I love apples", results[0].Fact)

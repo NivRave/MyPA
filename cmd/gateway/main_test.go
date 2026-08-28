@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -24,7 +25,8 @@ func (m *MockEventPublisher) Publish(ctx context.Context, msg any) error {
 
 func TestGatewayHealth(t *testing.T) {
 	pub := new(MockEventPublisher)
-	r := setupRouter(pub)
+	cfg := &config.Config{}
+	r := setupRouter(pub, cfg)
 
 	req := httptest.NewRequest("GET", "/health", nil)
 	rr := httptest.NewRecorder()
@@ -37,7 +39,8 @@ func TestGatewayHealth(t *testing.T) {
 
 func TestGatewayTelegramWebhook_Success(t *testing.T) {
 	pub := new(MockEventPublisher)
-	r := setupRouter(pub)
+	cfg := &config.Config{}
+	r := setupRouter(pub, cfg)
 
 	// Valid Telegram Update payload
 	payload := []byte(`{
@@ -79,7 +82,8 @@ func TestGatewayTelegramWebhook_Success(t *testing.T) {
 
 func TestGatewayTelegramWebhook_InvalidJSON(t *testing.T) {
 	pub := new(MockEventPublisher)
-	r := setupRouter(pub)
+	cfg := &config.Config{}
+	r := setupRouter(pub, cfg)
 
 	payload := []byte(`{"update_id": 12345, bad json`)
 

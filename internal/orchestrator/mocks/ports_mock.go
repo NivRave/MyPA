@@ -720,18 +720,18 @@ func (mr *MockDBClientMockRecorder) SaveReminder(reminder any) *gomock.Call {
 }
 
 // SearchMemories mocks base method.
-func (m *MockDBClient) SearchMemories(userID string, embedding pgvector.Vector, limit int) ([]models.Memory, error) {
+func (m *MockDBClient) SearchMemories(userIDs []string, embedding pgvector.Vector, limit int) ([]models.Memory, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SearchMemories", userID, embedding, limit)
+	ret := m.ctrl.Call(m, "SearchMemories", userIDs, embedding, limit)
 	ret0, _ := ret[0].([]models.Memory)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // SearchMemories indicates an expected call of SearchMemories.
-func (mr *MockDBClientMockRecorder) SearchMemories(userID, embedding, limit any) *gomock.Call {
+func (mr *MockDBClientMockRecorder) SearchMemories(userIDs, embedding, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SearchMemories", reflect.TypeOf((*MockDBClient)(nil).SearchMemories), userID, embedding, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SearchMemories", reflect.TypeOf((*MockDBClient)(nil).SearchMemories), userIDs, embedding, limit)
 }
 
 // MockEventPublisher is a mock of EventPublisher interface.
