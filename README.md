@@ -23,6 +23,7 @@ Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → 
 - **Event Modifications**: Update or delete events easily through natural language.
 - **Multi-turn Execution**: Capable of recursive reasoning, such as fetching events and then acting upon the retrieved list in a single user turn.
 - **Audit Logging**: Asynchronously logs all user requests, LLM responses, and executed actions to a database.
+- **Automated Backups**: Nightly rolling database backups with on-demand manual triggers via WhatsApp (`/backup` and `/restore`).
 - **Microservice Architecture**: Decoupled ingestion and execution layers connected via RabbitMQ.
 
 ## V2 (Current Release)

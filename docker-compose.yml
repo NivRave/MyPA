@@ -39,6 +39,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    volumes:
+      - ./backups:/backups
     restart: unless-stopped
 
   audit-worker:

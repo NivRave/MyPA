@@ -31,11 +31,12 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build -ldflags='-w -s' -o /orchestrator ./cmd/orchestrator
 
-FROM gcr.io/distroless/static-debian12 AS orchestrator
-COPY --from=build-orchestrator /orchestrator /orchestrator
+FROM debian:12-slim AS orchestrator
+RUN apt-get update && apt-get install -y postgresql-client ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=build-orchestrator /orchestrator /usr/local/bin/orchestrator
 COPY config/config.yaml /config/config.yaml
 EXPOSE 8081
-ENTRYPOINT ["/orchestrator"]
+ENTRYPOINT ["/usr/local/bin/orchestrator"]
 
 # ── Proxy ────────────────────────────────────────────────────────
 FROM deps AS build-proxy
