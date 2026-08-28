@@ -3,8 +3,10 @@ package scheduler
 import (
 	"context"
 	"log/slog"
+	"os"
 	"time"
 
+	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"github.com/robfig/cron/v3"
 )
@@ -18,6 +20,24 @@ func StartCronJobs(engine *orchestrator.Engine) *cron.Cron {
 		loc = time.Local
 	}
 	c := cron.New(cron.WithLocation(loc))
+
+	// Every day at 2:00 AM (Database Backup)
+	_, _ = c.AddFunc("0 2 * * *", func() {
+		slog.Info("Cron triggered: Database Backup")
+		databaseURL := os.Getenv("DATABASE_URL")
+		if databaseURL == "" {
+			slog.Error("DATABASE_URL is missing, cannot perform backup")
+			return
+		}
+		backupDir := "/backups" // This will be mounted in docker-compose.yml
+		
+		path, err := db.BackupDatabase(databaseURL, backupDir, 3)
+		if err != nil {
+			slog.Error("Scheduled backup failed", "error", err)
+			return
+		}
+		slog.Info("Scheduled backup completed successfully", "path", path)
+	})
 
 	// Every day at 8:00 AM
 	_, _ = c.AddFunc("0 8 * * *", func() {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
+	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/markdown"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/scraper"
@@ -220,6 +222,41 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 		url := e.oauthCfg.AuthCodeURL(msg.UserID)
 		llmResponse = fmt.Sprintf("🔗 [Click here to connect your Google Calendar](%s)", url)
 		return e.sendMessage(ctx, msg, llmResponse)
+	}
+
+	if msg.Text == "/backup" {
+		_ = e.sendMessage(ctx, msg, "🔄 Starting database backup...")
+		databaseURL := os.Getenv("DATABASE_URL")
+		if databaseURL == "" {
+			return e.sendMessage(ctx, msg, "❌ Backup failed: DATABASE_URL not set.")
+		}
+		path, err := db.BackupDatabase(databaseURL, "/backups", 3)
+		if err != nil {
+			slog.Error("Manual backup failed", "error", err)
+			return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Backup failed: %v", err))
+		}
+		return e.sendMessage(ctx, msg, fmt.Sprintf("✅ Backup completed successfully!\n📁 Path: %s", path))
+	}
+
+	if msg.Text == "/restore" {
+		_ = e.sendMessage(ctx, msg, "🔄 Starting database restore from latest backup...")
+		databaseURL := os.Getenv("DATABASE_URL")
+		if databaseURL == "" {
+			return e.sendMessage(ctx, msg, "❌ Restore failed: DATABASE_URL not set.")
+		}
+		
+		latestBackup, err := db.GetLatestBackup("/backups")
+		if err != nil {
+			slog.Error("Failed to find latest backup", "error", err)
+			return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Restore failed: %v", err))
+		}
+
+		err = db.RestoreDatabase(databaseURL, latestBackup)
+		if err != nil {
+			slog.Error("Manual restore failed", "error", err)
+			return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Restore failed: %v", err))
+		}
+		return e.sendMessage(ctx, msg, fmt.Sprintf("✅ Restore completed successfully from %s!", latestBackup))
 	}
 
 	// 0. Intercept and transcribe Voice Messages
