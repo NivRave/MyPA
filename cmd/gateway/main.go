@@ -48,7 +48,7 @@ func main() {
 	defer pub.Close()
 
 	// Initialize HTTP router
-	r := setupRouter(pub)
+	r := setupRouter(pub, cfg)
 
 	// Start server
 	server := &http.Server{
@@ -82,7 +82,7 @@ type EventPublisher interface {
 	Publish(ctx context.Context, msg any) error
 }
 
-func setupRouter(pub EventPublisher) *chi.Mux {
+func setupRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
@@ -93,7 +93,9 @@ func setupRouter(pub EventPublisher) *chi.Mux {
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	twHandler := twilio.NewHandler(pub)
+	allowedUsers := cfg.ParseAllowedUsers()
+
+	twHandler := twilio.NewHandler(pub, allowedUsers)
 	r.Post("/webhook/twilio", twHandler.HandleWebhook)
 
 	r.Post("/webhook/telegram", func(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +116,13 @@ func setupRouter(pub EventPublisher) *chi.Mux {
 
 		if msg == nil {
 			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Verify user
+		if _, allowed := allowedUsers[msg.UserID]; len(allowedUsers) > 0 && !allowed {
+			slog.Warn("unauthorized telegram user", "user_id", msg.UserID)
+			w.WriteHeader(http.StatusOK) // Return 200 so Telegram stops retrying
 			return
 		}
 

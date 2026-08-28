@@ -125,7 +125,7 @@ func main() {
 	defer telemetryPublisher.Close()
 
 	// 9. Initialize Engine
-	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone)
+	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone, cfg.ParseAllowedUsers())
 
 	// Start Cron jobs
 	c := scheduler.StartCronJobs(engine)

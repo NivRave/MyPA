@@ -26,21 +26,22 @@ import (
 
 // Engine is the core orchestrator that connects all components.
 type Engine struct {
-	consumer    *broker.Consumer
-	store       *state.Store
-	db          DBClient
-	llm         LLMClient
-	tgClient    TelegramClient
-	twClient    TwilioClient
-	audioClient AudioClient
-	oauthCfg     *calendar.OAuthConfig
-	gmailClient  GmailClient
-	tasksClient  TasksClient
+	consumer        *broker.Consumer
+	store           *state.Store
+	db              DBClient
+	llm             LLMClient
+	tgClient        TelegramClient
+	twClient        TwilioClient
+	audioClient     AudioClient
+	oauthCfg        *calendar.OAuthConfig
+	gmailClient     GmailClient
+	tasksClient     TasksClient
 	tavilyClient    TavilyClient
 	calendarFactory func(context.Context, string) (CalendarClient, error)
 	timezone        string
 	publisher       EventPublisher
 	wg              sync.WaitGroup
+	allowedUsers    map[string]models.User
 }
 
 // NewEngine initializes the orchestrator engine.
@@ -58,14 +59,15 @@ func NewEngine(
 	audio AudioClient,
 	pub EventPublisher,
 	tz string,
+	allowedUsers map[string]models.User,
 ) *Engine {
 	e := &Engine{
-		consumer:    cons,
-		store:       store,
-		db:          db,
-		llm:         llm,
-		tgClient:    tg,
-		twClient:    tw,
+		consumer:     cons,
+		store:        store,
+		db:           db,
+		llm:          llm,
+		tgClient:     tg,
+		twClient:     tw,
 		oauthCfg:     oauth,
 		gmailClient:  gmailC,
 		tasksClient:  tasksC,
@@ -73,6 +75,7 @@ func NewEngine(
 		audioClient:  audio,
 		publisher:    pub,
 		timezone:     tz,
+		allowedUsers: allowedUsers,
 	}
 
 	e.calendarFactory = func(ctx context.Context, userID string) (CalendarClient, error) {
@@ -312,29 +315,52 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 	}
 
 	// 3. Build the system prompt
+	user, ok := e.allowedUsers[msg.UserID]
+	userCtx := "the user"
+	if ok && user.Name != "" {
+		userCtx = user.Name
+	}
+
 	systemPrompt := fmt.Sprintf(
-		"You are an omnipresent personal assistant. Your job is to help the user manage their time and tasks. "+
+		"You are an omnipresent personal assistant. Your job is to help %s manage their time and tasks. "+
+		"If the user has a specific role or family members, keep that context in mind. (Role: %s, Family Group: %s). "+
 		"The current date and time is %s. The user's timezone is %s (assume this timezone for relative dates). "+
 		"If the user asks to schedule a meeting, block time, or create an event, you MUST use the create_calendar_event tool. "+
 		"If the user asks to change or update an event, use update_calendar_event. If they ask to cancel or delete an event, use delete_calendar_event. "+
 		"If the user asks to manage tasks, to-dos, or lists, use the Google Tasks tools (list_task_lists, create_task_list, list_tasks, create_task, complete_task, delete_task). You can manage multiple task lists. "+
 		"If the user asks about recent news, current events, or information you don't know, use the search_web tool to search the internet. "+
-		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference. "+
+		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference (you can specify scope='personal' or 'family'). "+
 		"If the user asks to check, review, or organize their emails, you MUST DO IT FOR THEM using the search_emails tool. DO NOT create a calendar event to remind them to do it. You can search by 'newer_than:30d', 'is:unread', etc. For each email, optionally use read_email to analyze deeply. Based on content, you may draft_email_reply, create_task, create_calendar_event, archive_emails, or soft_delete_emails. You MUST actively categorize the emails by applying appropriate labels using apply_email_labels (find IDs via list_email_labels). If a new label makes sense, create it using the create_email_label tool. Summarize all actions taken at the end. "+
 		"If the user shares a URL and asks you to save it for later, use the fetch_webpage tool to get a summary, and then use the create_task tool to add it to their Google Tasks with the summary in the notes. "+
 		"IMPORTANT: If a tool returns JSON or raw data (like list_unread_emails or list_tasks), you MUST summarize and format it into a clean, friendly, conversational response (e.g. using bullet points). NEVER output raw JSON to the user. "+
 		"IMPORTANT: The user is in Israel. The week starts on Sunday and ends on Thursday (Friday and Saturday are the weekend). When reasoning about 'next week' or 'this week', start the week on Sunday.",
-		time.Now().Format(time.RFC1123), e.timezone,
+		userCtx, user.Role, user.FamilyGroup, time.Now().Format(time.RFC1123), e.timezone,
 	)
 
 	// Search long-term semantic memory
 	embedding, err := e.llm.GenerateEmbedding(ctx, msg.Text)
 	if err == nil && len(embedding) > 0 {
-		memories, _ := e.db.SearchMemories(msg.UserID, pgvector.NewVector(embedding), 5)
+		var searchUserIDs []string
+		searchUserIDs = append(searchUserIDs, msg.UserID)
+		
+		// Find other family members
+		if ok && user.FamilyGroup != "" {
+			for id, u := range e.allowedUsers {
+				if id != msg.UserID && u.FamilyGroup == user.FamilyGroup {
+					searchUserIDs = append(searchUserIDs, id)
+				}
+			}
+		}
+
+		memories, _ := e.db.SearchMemories(searchUserIDs, pgvector.NewVector(embedding), 5)
 		if len(memories) > 0 {
 			var facts []string
 			for _, m := range memories {
-				facts = append(facts, "- "+m.Fact)
+				scopeTag := ""
+				if m.Scope == "family" {
+					scopeTag = " (Family Shared)"
+				}
+				facts = append(facts, "- "+m.Fact+scopeTag)
 			}
 			systemPrompt += "\n\nRelevant facts about the user from past conversations:\n" + strings.Join(facts, "\n")
 		}
@@ -506,9 +532,15 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 	} else if toolCall.Name == "remember_fact" {
 		argsJSON, _ := json.Marshal(toolCall.Args)
 		var args struct {
-			Fact string `json:"fact"`
+			Fact  string `json:"fact"`
+			Scope string `json:"scope"`
 		}
 		_ = json.Unmarshal(argsJSON, &args)
+
+		scope := "personal"
+		if args.Scope == "family" {
+			scope = "family"
+		}
 
 		embedding, err := e.llm.GenerateEmbedding(ctx, args.Fact)
 		if err != nil {
@@ -518,6 +550,7 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 
 		err = e.db.SaveMemory(models.Memory{
 			UserID:    msg.UserID,
+			Scope:     scope,
 			Fact:      args.Fact,
 			Embedding: pgvector.NewVector(embedding),
 			CreatedAt: time.Now(),
@@ -526,7 +559,7 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			slog.Error("failed to save memory to db", "error", err)
 			return "❌ Failed to save memory to database.", nil
 		}
-		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, "Fact saved to long-term memory successfully.")
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, fmt.Sprintf("Fact saved to %s memory successfully.", scope))
 	} else if toolCall.Name == "search_emails" {
 		query, _ := toolCall.Args["query"].(string)
 		maxResults := int64(5)

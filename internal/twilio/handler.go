@@ -16,13 +16,15 @@ type EventPublisher interface {
 
 // Handler handles incoming Twilio Webhooks.
 type Handler struct {
-	publisher EventPublisher
+	publisher    EventPublisher
+	allowedUsers map[string]models.User
 }
 
 // NewHandler creates a new Twilio Webhook handler.
-func NewHandler(publisher EventPublisher) *Handler {
+func NewHandler(publisher EventPublisher, allowedUsers map[string]models.User) *Handler {
 	return &Handler{
-		publisher: publisher,
+		publisher:    publisher,
+		allowedUsers: allowedUsers,
 	}
 }
 
@@ -48,6 +50,13 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	// Strip "whatsapp:" prefix if present for uniform UserID storage, or keep it?
 	// It's probably best to keep it so we can just send it back out exactly as is.
 	userID := strings.TrimPrefix(from, "whatsapp:")
+
+	// Verify user
+	if _, allowed := h.allowedUsers[userID]; len(h.allowedUsers) > 0 && !allowed {
+		slog.Warn("unauthorized twilio user", "user_id", userID)
+		w.WriteHeader(http.StatusOK) // Return 200 so Twilio stops retrying
+		return
+	}
 
 	msg := models.Message{
 		ID:        messageID,

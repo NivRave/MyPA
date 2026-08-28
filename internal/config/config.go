@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	"github.com/nivik/mypa/internal/models"
 	"github.com/spf13/viper"
 )
 
@@ -30,6 +31,7 @@ type ServerConfig struct {
 	GatewayURL       string `mapstructure:"gateway_url"`
 	OrchestratorURL  string `mapstructure:"orchestrator_url"`
 	DefaultTimezone  string `mapstructure:"default_timezone"`
+	AllowedUsersRaw  string `mapstructure:"allowed_users"`
 }
 
 // TelegramConfig holds Telegram Bot API settings.
@@ -118,6 +120,7 @@ func Load() (*Config, error) {
 	// Explicit env var bindings (maps FLAT env vars to nested config keys)
 	envBindings := map[string]string{
 		"DEFAULT_TIMEZONE":      "server.default_timezone",
+		"ALLOWED_USERS":         "server.allowed_users",
 		"GATEWAY_URL":           "server.gateway_url",
 		"ORCHESTRATOR_URL":      "server.orchestrator_url",
 		"TELEGRAM_BOT_TOKEN":    "telegram.bot_token",
@@ -149,4 +152,41 @@ func Load() (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// ParseAllowedUsers parses the ALLOWED_USERS string into a map keyed by platform ID.
+// Format: "phone:name:role:family_group, phone2:name2:role2:family_group2"
+func (c *Config) ParseAllowedUsers() map[string]models.User {
+	users := make(map[string]models.User)
+	if c.Server.AllowedUsersRaw == "" {
+		return users
+	}
+
+	entries := strings.Split(c.Server.AllowedUsersRaw, ",")
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		parts := strings.Split(entry, ":")
+		u := models.User{}
+		if len(parts) >= 1 {
+			u.PlatformID = strings.TrimSpace(parts[0])
+		}
+		if len(parts) >= 2 {
+			u.Name = strings.TrimSpace(parts[1])
+		}
+		if len(parts) >= 3 {
+			u.Role = strings.TrimSpace(parts[2])
+		}
+		if len(parts) >= 4 {
+			u.FamilyGroup = strings.TrimSpace(parts[3])
+		}
+
+		if u.PlatformID != "" {
+			users[u.PlatformID] = u
+		}
+	}
+	return users
 }
