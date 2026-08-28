@@ -11,6 +11,7 @@ Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → 
 ```
 
 ## Features
+- **Multi-Tenant Architecture**: Shared bot handle for multiple users (e.g., family members). Isolated personal data with shared family memory retrieval.
 - **Multi-Channel Support**: Available on both Telegram and WhatsApp (via Twilio API).
 - **Conversational Scheduling**: Create single or recurring Google Calendar events via natural language (infers dates, times, and recurrence rules).
 - **Gmail Integration**: Ask the assistant to search, read, label, archive, and soft-delete emails, as well as draft replies directly from Telegram/WhatsApp.

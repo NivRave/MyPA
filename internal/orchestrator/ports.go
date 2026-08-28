@@ -65,10 +65,9 @@ type TasksClient interface {
 	DeleteTask(ctx context.Context, userID string, listID string, taskID string) error
 }
 
-// DBClient defines the interface for database operations.
 type DBClient interface {
 	SaveMemory(memory models.Memory) error
-	SearchMemories(userID string, embedding pgvector.Vector, limit int) ([]models.Memory, error)
+	SearchMemories(userIDs []string, embedding pgvector.Vector, limit int) ([]models.Memory, error)
 	GetUniqueUsers() ([]string, error)
 	GetLastAuditSessionForUser(userID string) (*models.AuditSession, error)
 	SaveReminder(reminder models.ScheduledReminder) error

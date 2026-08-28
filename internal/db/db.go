@@ -69,10 +69,18 @@ func (c *Client) SaveMemory(memory models.Memory) error {
 }
 
 // SearchMemories finds the most relevant memories using cosine distance.
-func (c *Client) SearchMemories(userID string, embedding pgvector.Vector, limit int) ([]models.Memory, error) {
+func (c *Client) SearchMemories(userIDs []string, embedding pgvector.Vector, limit int) ([]models.Memory, error) {
 	var memories []models.Memory
+	
+	if len(userIDs) == 0 {
+		return memories, nil
+	}
+
 	// <=> is the cosine distance operator in pgvector
-	result := c.DB.Where("user_id = ?", userID).
+	// We want to match if user_id is the primary user (index 0) OR if it's any user in the list AND scope is 'family'
+	primaryUser := userIDs[0]
+	
+	result := c.DB.Where("(user_id = ? AND scope = 'personal') OR (user_id IN ? AND scope = 'family')", primaryUser, userIDs).
 		Order(gorm.Expr("embedding <=> ?", embedding)).
 		Limit(limit).
 		Find(&memories)

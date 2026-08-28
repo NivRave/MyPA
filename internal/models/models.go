@@ -95,10 +95,19 @@ type AuditEvent struct {
 	CompletionTokens int       `json:"completion_tokens"`
 }
 
+// User represents an allowed user configured via .env
+type User struct {
+	PlatformID  string `json:"platform_id"`
+	Name        string `json:"name"`
+	Role        string `json:"role"`         // "admin" or "family"
+	FamilyGroup string `json:"family_group"` // e.g., "MyFamily"
+}
+
 // Memory represents a long-term fact or preference about a user.
 type Memory struct {
 	ID        uint            `json:"id" gorm:"primarykey"`
 	UserID    string          `json:"user_id" gorm:"index"`
+	Scope     string          `json:"scope" gorm:"index;default:'personal'"` // "personal" or "family"
 	Fact      string          `json:"fact"`
 	Embedding pgvector.Vector `json:"embedding" gorm:"type:vector(3072)"`
 	CreatedAt time.Time       `json:"created_at"`

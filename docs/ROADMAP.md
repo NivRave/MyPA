@@ -19,8 +19,8 @@ This document tracks upcoming features, technical debt, and future improvements 
    - Suggest deleting, blocking, or removing subscriptions, etc.
 2. **Bigger Whatsapp options**
    - Connect to groups, etc.
-3. **Multi-user Support**
-   - Create another instance for my wife to use on her phone.
+3. ~~**Multi-user Support**~~ (Completed)
+   - ~~Create another instance for my wife to use on her phone.~~ (Implemented via Multi-Tenant Architecture in V3)
 4. **Enhance Cognitive Capabilities**
    - Improve brain, memory, and learning process.
 5. **Connect to remote files / Project Management**
