@@ -26,7 +26,7 @@ func NewOAuthConfig(cfg *config.GoogleConfig) *OAuthConfig {
 			ClientSecret: cfg.ClientSecret,
 			Endpoint:     google.Endpoint,
 			RedirectURL:  cfg.RedirectURL,
-			Scopes:       []string{calendar.CalendarEventsScope, gmail.GmailModifyScope, tasks.TasksScope},
+			Scopes:       []string{calendar.CalendarEventsScope, gmail.GmailModifyScope, tasks.TasksScope, "https://www.googleapis.com/auth/contacts"},
 		},
 	}
 }

@@ -55,6 +55,7 @@ func setupTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.M
 		oauthCfg,
 		gmailMock,
 		tasksMock,
+		nil, // contactsMock
 		tavilyMock,
 		audioMock,
 		eventPublisherMock,

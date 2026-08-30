@@ -14,6 +14,7 @@ import (
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/config"
+	"github.com/nivik/mypa/internal/contacts"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/gmail"
 	"github.com/nivik/mypa/internal/llm"
@@ -114,6 +115,7 @@ func main() {
 
 	gmailClient := gmail.NewClient(oauthCfg, store)
 	tasksClient := tasks.NewClient(oauthCfg, store)
+	contactsClient := contacts.NewClient(oauthCfg, store)
 	tavilyClient := tavily.NewClient(cfg.Tavily.APIKey)
 
 	// 8.5 Initialize Telemetry Publisher
@@ -125,7 +127,7 @@ func main() {
 	defer telemetryPublisher.Close()
 
 	// 9. Initialize Engine
-	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone, cfg.ParseAllowedUsers())
+	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, contactsClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone, cfg.ParseAllowedUsers())
 
 	// Start Cron jobs
 	c := scheduler.StartCronJobs(engine)

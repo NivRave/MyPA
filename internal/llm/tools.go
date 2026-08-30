@@ -387,5 +387,41 @@ var CalendarEventTool = &genai.Tool{
 				Required: []string{"label_name"},
 			},
 		},
+		{
+			Name:        "search_contacts",
+			Description: "Searches the user's Google Contacts by name. Call this when the user asks for someone's email or phone number.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"query": {
+						Type:        genai.TypeString,
+						Description: "The name or part of the name of the contact to search for.",
+					},
+				},
+				Required: []string{"query"},
+			},
+		},
+		{
+			Name:        "create_contact",
+			Description: "Creates a new Google Contact. Call this when the user asks to save a phone number, email, or contact information.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"name": {
+						Type:        genai.TypeString,
+						Description: "The name of the person.",
+					},
+					"email": {
+						Type:        genai.TypeString,
+						Description: "The email address of the person (optional).",
+					},
+					"phone": {
+						Type:        genai.TypeString,
+						Description: "The phone number of the person (optional).",
+					},
+				},
+				Required: []string{"name"},
+			},
+		},
 	},
 }

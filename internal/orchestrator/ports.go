@@ -65,6 +65,12 @@ type TasksClient interface {
 	DeleteTask(ctx context.Context, userID string, listID string, taskID string) error
 }
 
+// ContactsClient defines the interface for Google Contacts API.
+type ContactsClient interface {
+	SearchContacts(ctx context.Context, userID, query string) ([]models.Contact, error)
+	CreateContact(ctx context.Context, userID, name, email, phone string) error
+}
+
 type DBClient interface {
 	SaveMemory(memory models.Memory) error
 	SearchMemories(userIDs []string, embedding pgvector.Vector, limit int) ([]models.Memory, error)

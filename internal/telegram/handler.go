@@ -20,8 +20,19 @@ type Message struct {
 	From      *User  `json:"from,omitempty"`
 	Chat      *Chat  `json:"chat,omitempty"`
 	Date      int64  `json:"date"`
-	Text      string `json:"text,omitempty"`
-	Voice     *Voice `json:"voice,omitempty"`
+	Text      string      `json:"text,omitempty"`
+	Caption   string      `json:"caption,omitempty"`
+	Voice     *Voice      `json:"voice,omitempty"`
+	Photo     []PhotoSize `json:"photo,omitempty"`
+}
+
+// PhotoSize represents a Telegram PhotoSize object.
+type PhotoSize struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	FileSize     int    `json:"file_size,omitempty"`
 }
 
 // Voice represents a Telegram Voice object.
@@ -49,15 +60,21 @@ func ParseUpdate(body []byte) (*models.Message, error) {
 		return nil, fmt.Errorf("failed to decode telegram update: %w", err)
 	}
 
-	// We care about text messages or voice messages
+	// We care about text messages, voice messages, or photos
 	if update.Message == nil {
 		return nil, nil // Not an error, just something we ignore
 	}
 
-	isText := update.Message.Text != ""
-	isVoice := update.Message.Voice != nil
+	text := update.Message.Text
+	if text == "" {
+		text = update.Message.Caption
+	}
 
-	if !isText && !isVoice {
+	isText := text != ""
+	isVoice := update.Message.Voice != nil
+	isPhoto := len(update.Message.Photo) > 0
+
+	if !isText && !isVoice && !isPhoto {
 		return nil, nil
 	}
 
@@ -66,12 +83,19 @@ func ParseUpdate(body []byte) (*models.Message, error) {
 		voiceFileID = update.Message.Voice.FileID
 	}
 
+	var photoFileID string
+	if isPhoto {
+		// Telegram sends an array of different sizes, the last one is the largest.
+		photoFileID = update.Message.Photo[len(update.Message.Photo)-1].FileID
+	}
+
 	return &models.Message{
 		ID:          fmt.Sprintf("%d", update.Message.MessageID),
 		UserID:      fmt.Sprintf("%d", update.Message.From.ID),
 		ChatID:      fmt.Sprintf("%d", update.Message.Chat.ID),
-		Text:        update.Message.Text,
+		Text:        text,
 		VoiceFileID: voiceFileID,
+		PhotoFileID: photoFileID,
 		Source:      "telegram",
 		Timestamp:   time.Unix(update.Message.Date, 0),
 	}, nil

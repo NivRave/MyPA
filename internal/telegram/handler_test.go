@@ -83,7 +83,8 @@ func TestParseUpdate_IgnoreOtherTypes(t *testing.T) {
 
 	msg, err := ParseUpdate(body)
 	require.NoError(t, err)
-	assert.Nil(t, msg)
+	require.NotNil(t, msg)
+	assert.Equal(t, "123", msg.PhotoFileID)
 }
 
 func TestParseUpdate_InvalidJSON(t *testing.T) {
