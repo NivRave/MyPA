@@ -36,6 +36,7 @@ type Engine struct {
 	oauthCfg        *calendar.OAuthConfig
 	gmailClient     GmailClient
 	tasksClient     TasksClient
+	contactsClient  ContactsClient
 	tavilyClient    TavilyClient
 	calendarFactory func(context.Context, string) (CalendarClient, error)
 	timezone        string
@@ -55,6 +56,7 @@ func NewEngine(
 	oauth *calendar.OAuthConfig,
 	gmailC GmailClient,
 	tasksC TasksClient,
+	contactsC ContactsClient,
 	tavilyC TavilyClient,
 	audio AudioClient,
 	pub EventPublisher,
@@ -62,20 +64,21 @@ func NewEngine(
 	allowedUsers map[string]models.User,
 ) *Engine {
 	e := &Engine{
-		consumer:     cons,
-		store:        store,
-		db:           db,
-		llm:          llm,
-		tgClient:     tg,
-		twClient:     tw,
-		oauthCfg:     oauth,
-		gmailClient:  gmailC,
-		tasksClient:  tasksC,
-		tavilyClient: tavilyC,
-		audioClient:  audio,
-		publisher:    pub,
-		timezone:     tz,
-		allowedUsers: allowedUsers,
+		consumer:        cons,
+		store:           store,
+		db:              db,
+		llm:             llm,
+		tgClient:        tg,
+		twClient:        tw,
+		oauthCfg:        oauth,
+		gmailClient:     gmailC,
+		tasksClient:     tasksC,
+		contactsClient:  contactsC,
+		tavilyClient:    tavilyC,
+		audioClient:     audio,
+		publisher:       pub,
+		timezone:        tz,
+		allowedUsers:    allowedUsers,
 	}
 
 	e.calendarFactory = func(ctx context.Context, userID string) (CalendarClient, error) {
@@ -262,8 +265,23 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 		return e.sendMessage(ctx, msg, fmt.Sprintf("✅ Restore completed successfully from %s!", latestBackup))
 	}
 
-	// 0. Intercept and transcribe Voice Messages
-	if msg.VoiceFileID != "" {
+	var photoData []byte
+	var photoMimeType string
+
+	// 0. Intercept and transcribe Voice Messages and Photos
+	if msg.PhotoFileID != "" {
+		filePath, err := e.tgClient.GetFile(ctx, msg.PhotoFileID)
+		if err != nil {
+			_ = e.sendMessage(ctx, msg, "❌ Failed to retrieve photo metadata.")
+			return fmt.Errorf("failed to get photo path: %w", err)
+		}
+		photoData, err = e.tgClient.DownloadFile(ctx, filePath)
+		if err != nil {
+			_ = e.sendMessage(ctx, msg, "❌ Failed to download photo.")
+			return fmt.Errorf("failed to download photo: %w", err)
+		}
+		photoMimeType = "image/jpeg"
+	} else if msg.VoiceFileID != "" {
 		filePath, err := e.tgClient.GetFile(ctx, msg.VoiceFileID)
 		if err != nil {
 			_ = e.sendMessage(ctx, msg, "❌ Failed to retrieve voice message metadata.")
@@ -284,28 +302,34 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 
 		// Notify user of transcription
 		_ = e.sendMessage(ctx, msg, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
-
-		// Replace the empty text with the transcribed text so the LLM processes it normally
 		msg.Text = transcribedText
 	} else if msg.Source == "whatsapp" && msg.MediaURL != "" {
-		// Handle Twilio Voice Messages
-		audioData, err := e.twClient.DownloadMedia(ctx, msg.MediaURL)
-		if err != nil {
-			_ = e.sendMessage(ctx, msg, "❌ Failed to download WhatsApp voice message.")
-			return fmt.Errorf("failed to download twilio media: %w", err)
+		mediaType := strings.ToLower(msg.MediaContentType)
+		slog.Info("WhatsApp media received", "media_url", msg.MediaURL, "content_type", mediaType)
+		if strings.HasPrefix(mediaType, "image/") {
+			photoData, err = e.twClient.DownloadMedia(ctx, msg.MediaURL)
+			if err != nil {
+				_ = e.sendMessage(ctx, msg, "❌ Failed to download WhatsApp photo.")
+				return fmt.Errorf("failed to download twilio photo: %w", err)
+			}
+			photoMimeType = msg.MediaContentType
+		} else {
+			// Handle Twilio Voice Messages
+			audioData, err := e.twClient.DownloadMedia(ctx, msg.MediaURL)
+			if err != nil {
+				_ = e.sendMessage(ctx, msg, "❌ Failed to download WhatsApp voice message.")
+				return fmt.Errorf("failed to download twilio media: %w", err)
+			}
+
+			transcribedText, err := e.audioClient.TranscribeAudio(ctx, audioData, "voice.ogg")
+			if err != nil {
+				_ = e.sendMessage(ctx, msg, "❌ Failed to transcribe WhatsApp audio.")
+				return fmt.Errorf("failed to transcribe twilio media: %w", err)
+			}
+
+			_ = e.sendMessage(ctx, msg, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
+			msg.Text = transcribedText
 		}
-
-		transcribedText, err := e.audioClient.TranscribeAudio(ctx, audioData, "voice.ogg")
-		if err != nil {
-			_ = e.sendMessage(ctx, msg, "❌ Failed to transcribe WhatsApp audio.")
-			return fmt.Errorf("failed to transcribe twilio media: %w", err)
-		}
-
-		// Notify user of transcription
-		_ = e.sendMessage(ctx, msg, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
-
-		// Replace the empty text with the transcribed text so the LLM processes it normally
-		msg.Text = transcribedText
 	}
 
 	// 2. Fetch conversation history
@@ -328,6 +352,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 		"If the user asks to schedule a meeting, block time, or create an event, you MUST use the create_calendar_event tool. "+
 		"If the user asks to change or update an event, use update_calendar_event. If they ask to cancel or delete an event, use delete_calendar_event. "+
 		"If the user asks to manage tasks, to-dos, or lists, use the Google Tasks tools (list_task_lists, create_task_list, list_tasks, create_task, complete_task, delete_task). You can manage multiple task lists. "+
+		"If the user asks to save, find, or retrieve contact information (like an email or phone number), use the search_contacts and create_contact tools. "+
 		"If the user asks about recent news, current events, or information you don't know, use the search_web tool to search the internet. "+
 		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference (you can specify scope='personal' or 'family'). "+
 		"If the user asks to check, review, or organize their emails, you MUST DO IT FOR THEM using the search_emails tool. DO NOT create a calendar event to remind them to do it. You can search by 'newer_than:30d', 'is:unread', etc. For each email, optionally use read_email to analyze deeply. Based on content, you may draft_email_reply, create_task, create_calendar_event, archive_emails, or soft_delete_emails. You MUST actively categorize the emails by applying appropriate labels using apply_email_labels (find IDs via list_email_labels). If a new label makes sense, create it using the create_email_label tool. Summarize all actions taken at the end. "+
@@ -367,7 +392,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 	}
 
 	// 4. Call LLM
-	resp, err := e.llm.Chat(ctx, systemPrompt, history, msg.Text)
+	resp, err := e.llm.Chat(ctx, systemPrompt, history, msg.Text, photoData, photoMimeType)
 	if err != nil {
 		return fmt.Errorf("llm chat failed: %w", err)
 	}
@@ -428,7 +453,7 @@ func (e *Engine) feedbackToLLM(ctx context.Context, msg models.Message, history 
 	// Prompt the LLM to continue
 	prompt := "Please continue fulfilling the user's request. What's next? If you are completely done, provide a friendly, nicely formatted final summary of all your actions directly to the user."
 	
-	summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, prompt)
+	summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, prompt, nil, "")
 	if err != nil {
 		return "❌ Failed to process: " + err.Error(), nil
 	}
@@ -818,7 +843,7 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 		
 		extendedHistory := append(history, models.ChatMessage{Role: "user", Content: msg.Text})
 		
-		summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, summaryPrompt)
+		summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, summaryPrompt, nil, "")
 		if err != nil {
 			return "❌ Failed to process webpage: " + err.Error(), nil
 		}
@@ -828,6 +853,39 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			return e.handleToolCall(ctx, msg, extendedHistory, systemPrompt, summaryResp.ToolCall)
 		}
 		return summaryResp.Text, nil
+	} else if toolCall.Name == "search_contacts" {
+		query, ok := toolCall.Args["query"].(string)
+		if !ok {
+			return "Missing query parameter", nil
+		}
+
+		slog.Info("executing search_contacts tool", "user", msg.UserID, "query", query)
+		contacts, err := e.contactsClient.SearchContacts(ctx, msg.UserID, query)
+		if err != nil {
+			slog.Error("search_contacts failed", "error", err)
+			return fmt.Sprintf("Error searching contacts: %v", err), nil
+		}
+		if len(contacts) == 0 {
+			return "I couldn't find any contacts matching that name.", nil
+		}
+		
+		contactsJSON, _ := json.Marshal(contacts)
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, fmt.Sprintf("Here are the contacts I found:\n%s\nPlease provide the requested information to the user.", string(contactsJSON)))
+	} else if toolCall.Name == "create_contact" {
+		name, ok := toolCall.Args["name"].(string)
+		if !ok {
+			return "Missing name parameter", nil
+		}
+		email, _ := toolCall.Args["email"].(string)
+		phone, _ := toolCall.Args["phone"].(string)
+
+		slog.Info("executing create_contact tool", "user", msg.UserID, "name", name)
+		err := e.contactsClient.CreateContact(ctx, msg.UserID, name, email, phone)
+		if err != nil {
+			slog.Error("create_contact failed", "error", err)
+			return fmt.Sprintf("Error creating contact: %v", err), nil
+		}
+		return e.feedbackToLLM(ctx, msg, history, systemPrompt, toolCall, "Contact created successfully.")
 	}
 
 	return "⚠️ LLM tried to call an unknown tool.", nil
@@ -837,7 +895,7 @@ func (e *Engine) continueConversationWithToolResult(ctx context.Context, msg mod
 	summaryPrompt := fmt.Sprintf("Here is the output from the %s tool:\n%s\nPlease fulfill the user's request based on this information.", toolName, resultStr)
 	extendedHistory := append(history, models.ChatMessage{Role: "user", Content: msg.Text})
 	
-	resp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, summaryPrompt)
+	resp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, summaryPrompt, nil, "")
 	if err != nil {
 		return "❌ Failed to process tool output: " + err.Error(), nil
 	}

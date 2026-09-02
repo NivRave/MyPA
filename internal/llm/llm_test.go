@@ -26,7 +26,7 @@ func TestLLMFunctionCalling(t *testing.T) {
 	history := []models.ChatMessage{}
 	newMessage := "Block 2 hours for deep work tomorrow afternoon starting at 1pm."
 
-	resp, err := client.Chat(ctx, systemPrompt, history, newMessage)
+	resp, err := client.Chat(ctx, systemPrompt, history, newMessage, nil, "")
 	require.NoError(t, err)
 
 	// We expect the model to invoke the tool instead of just returning text

@@ -51,7 +51,7 @@ type Response struct {
 
 // Chat sends the conversation history and the new message to the LLM.
 // It provides the LLM with the CalendarEventTool so it can request actions.
-func (c *Client) Chat(ctx context.Context, systemInstruction string, history []models.ChatMessage, newMessage string) (*Response, error) {
+func (c *Client) Chat(ctx context.Context, systemInstruction string, history []models.ChatMessage, newMessage string, photoData []byte, photoMimeType string) (*Response, error) {
 	// Build the session context
 	contents := []*genai.Content{}
 
@@ -83,9 +83,20 @@ func (c *Client) Chat(ctx context.Context, systemInstruction string, history []m
 	}
 
 	// Add the new message
+	var newParts []*genai.Part
+	if newMessage != "" {
+		newParts = append(newParts, genai.NewPartFromText(newMessage))
+	}
+	if len(photoData) > 0 && photoMimeType != "" {
+		newParts = append(newParts, genai.NewPartFromBytes(photoData, photoMimeType))
+	}
+	if len(newParts) == 0 {
+		newParts = append(newParts, genai.NewPartFromText(" ")) // Fallback to avoid empty parts
+	}
+
 	contents = append(contents, &genai.Content{
 		Role:  "user",
-		Parts: []*genai.Part{genai.NewPartFromText(newMessage)},
+		Parts: newParts,
 	})
 
 	// Configure the model

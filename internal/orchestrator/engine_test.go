@@ -55,6 +55,7 @@ func setupTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.M
 		oauthCfg,
 		gmailMock,
 		tasksMock,
+		nil, // contactsMock
 		tavilyMock,
 		audioMock,
 		eventPublisherMock,
@@ -119,7 +120,7 @@ func TestProcessMessage_TextMessage(t *testing.T) {
 	llmResponse := &llm.Response{
 		Text: "Hello there!",
 	}
-	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(llmResponse, nil).Times(1)
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(llmResponse, nil).Times(1)
 
 	tgMock.EXPECT().SendMessage(gomock.Any(), "chat-1", "Hello there!").Return(nil).Times(1)
 

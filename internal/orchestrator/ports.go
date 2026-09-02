@@ -31,7 +31,7 @@ type AudioClient interface {
 
 // LLMClient defines the interface for interacting with the LLM.
 type LLMClient interface {
-	Chat(ctx context.Context, systemPrompt string, history []models.ChatMessage, userMessage string) (*llm.Response, error)
+	Chat(ctx context.Context, systemPrompt string, history []models.ChatMessage, userMessage string, photoData []byte, photoMimeType string) (*llm.Response, error)
 	GenerateEmbedding(ctx context.Context, text string) ([]float32, error)
 }
 
@@ -63,6 +63,12 @@ type TasksClient interface {
 	CreateTask(ctx context.Context, userID string, listID string, title, notes, due string) error
 	CompleteTask(ctx context.Context, userID string, listID string, taskID string) error
 	DeleteTask(ctx context.Context, userID string, listID string, taskID string) error
+}
+
+// ContactsClient defines the interface for Google Contacts API.
+type ContactsClient interface {
+	SearchContacts(ctx context.Context, userID, query string) ([]models.Contact, error)
+	CreateContact(ctx context.Context, userID, name, email, phone string) error
 }
 
 type DBClient interface {

@@ -22,10 +22,14 @@ type Message struct {
 
 	// VoiceFileID holds the Telegram file ID if the message is a voice note.
 	VoiceFileID string `json:"voice_file_id,omitempty"`
+	// PhotoFileID holds the Telegram file ID if the message contains a photo.
+	PhotoFileID string `json:"photo_file_id,omitempty"`
 	// AudioFileID is a generic field for audio identifiers.
 	AudioFileID string `json:"audio_file_id,omitempty"`
 	// MediaURL is used for external media links (e.g., WhatsApp voice notes).
 	MediaURL string `json:"media_url,omitempty"`
+	// MediaContentType holds the MIME type of the external media.
+	MediaContentType string `json:"media_content_type,omitempty"`
 
 	// Source identifies the originating platform (e.g., "telegram").
 	Source string `json:"source"`
@@ -45,7 +49,13 @@ type CalendarEvent struct {
 	Recurrence  []string `json:"recurrence,omitempty"`
 }
 
-
+// Contact represents a Google Contact.
+type Contact struct {
+	ResourceName string `json:"resource_name"`
+	Name         string `json:"name,omitempty"`
+	Email        string `json:"email,omitempty"`
+	Phone        string `json:"phone,omitempty"`
+}
 // ChatMessage represents a single message in conversation history.
 type ChatMessage struct {
 	Role          string            `json:"role"` // "user", "assistant", or "function"

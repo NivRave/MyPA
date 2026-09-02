@@ -36,7 +36,7 @@ func TestEngine_HandleToolCall_CalendarCreate(t *testing.T) {
 	}
 
 	calMock.EXPECT().CreateEvent(gomock.Any(), gomock.Any()).Return("http://link", nil)
-	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Event created!"}, nil)
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Event created!"}, nil)
 
 	res, err := engine.handleToolCall(context.Background(), msg, nil, "system", toolCall)
 	require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestEngine_HandleToolCall_TasksCreate(t *testing.T) {
 	}
 
 	tasksMock.EXPECT().CreateTask(gomock.Any(), "user1", "list1", "Buy milk", gomock.Any(), gomock.Any()).Return(nil)
-	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Task created!"}, nil)
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Task created!"}, nil)
 
 	res, err := engine.handleToolCall(context.Background(), msg, nil, "system", toolCall)
 	require.NoError(t, err)
@@ -92,7 +92,7 @@ func TestEngine_HandleToolCall_Tavily(t *testing.T) {
 
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	tavilyMock.EXPECT().Search(gomock.Any(), "golang").Return("golang is great", nil)
-	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "I found this: golang is great"}, nil)
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "I found this: golang is great"}, nil)
 
 	res, err := engine.handleToolCall(context.Background(), msg, nil, "system", toolCall)
 	require.NoError(t, err)

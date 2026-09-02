@@ -48,7 +48,7 @@ func TestClient_Chat(t *testing.T) {
 		{Role: "assistant", ToolCall: &models.FunctionCall{Name: "func", Args: map[string]any{}}},
 	}
 
-	resp, err := client.Chat(context.Background(), "system prompt", history, "new user message")
+	resp, err := client.Chat(context.Background(), "system prompt", history, "new user message", nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, "mocked response text", resp.Text)
 }
@@ -85,7 +85,7 @@ func TestClient_Chat_ToolCall(t *testing.T) {
 	client, err := NewClient(context.Background(), "mock-key", "gemini-test", withHTTPClient)
 	require.NoError(t, err)
 
-	resp, err := client.Chat(context.Background(), "sys", nil, "msg")
+	resp, err := client.Chat(context.Background(), "sys", nil, "msg", nil, "")
 	require.NoError(t, err)
 	require.NotNil(t, resp.ToolCall)
 	assert.Equal(t, "create_calendar_event", resp.ToolCall.Name)
