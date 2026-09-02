@@ -6,12 +6,12 @@ An event-driven personal AI assistant that captures natural language requests vi
 
 ```text
 Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestrator (8081) → Gemini API & Google Calendar API
-                                 ↳ OAuth Callbacks (8081)                      ↳ Redis (State & Tokens)
-                                                                               ↳ PostgreSQL (Audit Logs & Vector Memory)
+Dashboard (GraphQL) →            ↳ GraphQL API (8081)          ↳ Redis (State & Tokens)
+                                 ↳ OAuth Callbacks (8081)      ↳ PostgreSQL (Audit Logs, Memory, & Users)
 ```
 
 ## Features
-- **Web Dashboard**: Next.js-based admin dashboard for viewing audit logs, managing sessions, configuring tools, handling OAuth, and global settings.
+- **Web Dashboard**: Next.js-based admin dashboard powered by a GraphQL API for viewing audit logs, managing users and pairing codes, configuring tools, handling OAuth, and global settings.
 - **Multi-Tenant Architecture**: Shared bot handle for multiple users (e.g., family members). Isolated personal data with shared family memory retrieval.
 - **Multi-Channel Support**: Available on both Telegram and WhatsApp (via Twilio API).
 - **Conversational Scheduling**: Create single or recurring Google Calendar events via natural language (infers dates, times, and recurrence rules).
@@ -140,9 +140,9 @@ go test -v ./tests/...
 
 | Service | Port | Description |
 |---|---|---|
-| Proxy | 8000 | Unified API Gateway (routes to Gateway and Orchestrator) |
+| Proxy | 8000 | Unified API Gateway (routes to Gateway and Orchestrator GraphQL API) |
 | Gateway | 8080 | Telegram & WhatsApp webhook ingestion |
-| Orchestrator | 8081 | LLM reasoning + API execution + OAuth + Background Scheduler |
+| Orchestrator | 8081 | LLM reasoning + API execution + OAuth + GraphQL API + Background Scheduler |
 | Audit Worker | N/A | Asynchronously writes audit logs to PostgreSQL |
 | Dashboard | 3030 | Next.js web application for administration and monitoring |
 | RabbitMQ | 5672 | Message broker |

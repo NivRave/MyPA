@@ -37,3 +37,8 @@ After completing any feature development, bug fix, milestone, or major phase, yo
   4. Always include BuildKit cache mounts (`--mount=type=cache`) for `/go/pkg/mod` and `/root/.cache/go-build`.
 - **`.dockerignore`**: Keep `.dockerignore` up to date. Any new non-source directories or large files must be excluded.
 - **Healthchecks**: Infrastructure services must include `start_period` in healthchecks to avoid unnecessary startup delays.
+
+## 7. API & GraphQL Conventions
+- **GraphQL Standard**: All new client-facing APIs must be implemented as GraphQL endpoints using `gqlgen` inside the `Orchestrator` service. Avoid creating new REST endpoints unless strictly necessary.
+- **Routing**: Client applications (like the Dashboard) must communicate with the GraphQL API through the `Proxy` service (e.g., `http://proxy:8000/graphql`).
+- **PowerShell Encoding**: When generating or modifying Go or GraphQL files via PowerShell tools, ALWAYS append `-Encoding utf8` to avoid UTF-16 BOM parsing errors with `gqlgen`.
