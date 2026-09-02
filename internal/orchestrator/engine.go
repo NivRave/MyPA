@@ -14,6 +14,7 @@ import (
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/markdown"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/scraper"
@@ -224,6 +225,42 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 	}()
 
 	// Check for commands
+	if msg.Text == "/help" {
+		var sb strings.Builder
+		sb.WriteString("🤖 *MyPA Assistant Help*\n\n")
+		sb.WriteString("*System Commands:*\n")
+		sb.WriteString("• `/connect` - Connect Google Account (Calendar, Tasks, Gmail, Contacts)\n")
+		sb.WriteString("• `/backup` - Create a manual database backup\n")
+		sb.WriteString("• `/restore` - Restore the database from the latest backup\n")
+		sb.WriteString("• `/help` - Show this help message\n\n")
+		sb.WriteString("*AI Capabilities:*\n")
+		sb.WriteString("I am an AI assistant. You can speak to me naturally. Here are my underlying capabilities:\n\n")
+		
+		for _, fn := range llm.CalendarEventTool.FunctionDeclarations {
+			desc := fn.Description
+			if idx := strings.Index(desc, " Call this"); idx != -1 {
+				desc = desc[:idx]
+			} else if idx := strings.Index(desc, ". Use this"); idx != -1 {
+				desc = desc[:idx+1]
+			} else if idx := strings.Index(desc, ". Does not"); idx != -1 {
+				desc = desc[:idx+1]
+			}
+			
+			name := strings.ReplaceAll(fn.Name, "_", " ")
+			sb.WriteString(fmt.Sprintf("• *%s*: %s\n", name, desc))
+		}
+		
+		sb.WriteString("\n*Examples of what you can ask:*\n")
+		sb.WriteString("🗣️ _\"Remind me to call Mom tomorrow at 5pm\"_\n")
+		sb.WriteString("🗣️ _\"What's on my calendar for today?\"_\n")
+		sb.WriteString("🗣️ _\"Do I have any unread emails?\"_\n")
+		sb.WriteString("🗣️ _\"Add 'Buy milk' to my Groceries list\"_\n")
+		sb.WriteString("🗣️ _\"Search the web for the weather in Tel Aviv\"_\n")
+		
+		llmResponse = sb.String()
+		return e.sendMessage(ctx, msg, llmResponse)
+	}
+
 	if msg.Text == "/connect" {
 		url := e.oauthCfg.AuthCodeURL(msg.UserID)
 		llmResponse = fmt.Sprintf("🔗 [Click here to connect your Google Calendar](%s)", url)
