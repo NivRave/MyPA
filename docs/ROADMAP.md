@@ -6,8 +6,8 @@ This document tracks upcoming features and functional improvements for the MyPA 
 *Focus: Delivering immediate tangible value through new capabilities, improved UX, and a pluggable ecosystem without rewriting the core engine.*
 
 ### 1. Core Platform & UX
-- **Web-based Control UI / Dashboard**: Provide a graphical dashboard to manage sessions, tools, configurations, view audit logs, and manage OAuth connections.
-- **Pairing Codes & Stricter Onboarding**: Secure the multi-tenant architecture by requiring an admin to approve new users via a pairing code.
+- [x] **Web-based Control UI / Dashboard**: Provide a graphical dashboard to manage sessions, tools, configurations, view audit logs, and manage OAuth connections.
+- [x] **Pairing Codes & Stricter Onboarding**: Secure the multi-tenant architecture by requiring an admin to approve new users via a pairing code.
 - **Pluggable Ecosystem (MCP / Plugins)**: Move from hardcoded integrations to a dynamic plugin system (e.g., using the Model Context Protocol) to easily load new tools.
 - **Local Model Support**: Add abstraction to support local LLMs (e.g., via Ollama) for enhanced privacy and local inference.
 - **Companion Nodes for Device Context**: Build a lightweight desktop daemon that connects to the orchestrator to execute local scripts or provide local context.
