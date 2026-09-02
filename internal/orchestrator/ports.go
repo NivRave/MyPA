@@ -79,6 +79,12 @@ type DBClient interface {
 	SaveReminder(reminder models.ScheduledReminder) error
 	GetDueReminders() ([]models.ScheduledReminder, error)
 	MarkReminderSent(id uint) error
+	GetUser(platformID string) (*models.User, error)
+	UpsertUser(u models.User) error
+	CreatePairingCode(pc models.PairingCode) error
+	GetPairingCode(code string) (*models.PairingCode, error)
+	RedeemPairingCode(codeID string, u models.User) error
+	GetUsersByFamilyGroup(familyGroup string) ([]models.User, error)
 }
 
 // EventPublisher defines the interface for publishing telemetry events.

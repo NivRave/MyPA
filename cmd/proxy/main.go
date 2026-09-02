@@ -73,7 +73,7 @@ func setupProxy(gatewayStr, orchestratorStr string) (*http.ServeMux, error) {
 			return
 		}
 
-		if strings.HasPrefix(r.URL.Path, "/auth/google") {
+		if strings.HasPrefix(r.URL.Path, "/auth/google") || strings.HasPrefix(r.URL.Path, "/graphql") || strings.HasPrefix(r.URL.Path, "/playground") {
 			slog.Info("proxying to orchestrator", "path", r.URL.Path)
 			orchestratorProxy.ServeHTTP(w, r)
 			return

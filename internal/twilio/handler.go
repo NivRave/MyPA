@@ -16,15 +16,13 @@ type EventPublisher interface {
 
 // Handler handles incoming Twilio Webhooks.
 type Handler struct {
-	publisher    EventPublisher
-	allowedUsers map[string]models.User
+	publisher EventPublisher
 }
 
 // NewHandler creates a new Twilio Webhook handler.
-func NewHandler(publisher EventPublisher, allowedUsers map[string]models.User) *Handler {
+func NewHandler(publisher EventPublisher) *Handler {
 	return &Handler{
-		publisher:    publisher,
-		allowedUsers: allowedUsers,
+		publisher: publisher,
 	}
 }
 
@@ -52,12 +50,8 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	// It's probably best to keep it so we can just send it back out exactly as is.
 	userID := strings.TrimPrefix(from, "whatsapp:")
 
-	// Verify user
-	if _, allowed := h.allowedUsers[userID]; len(h.allowedUsers) > 0 && !allowed {
-		slog.Warn("unauthorized twilio user", "user_id", userID)
-		w.WriteHeader(http.StatusOK) // Return 200 so Twilio stops retrying
-		return
-	}
+	// Forward to orchestrator regardless of authorization
+	// (Orchestrator handles unauthorized pairing flows)
 
 	msg := models.Message{
 		ID:               messageID,

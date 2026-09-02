@@ -32,7 +32,14 @@ func NewClient(dsn string) (*Client, error) {
 	}
 
 	// Auto-migrate schemas
-	if err := db.AutoMigrate(&models.AuditSession{}, &models.AuditEvent{}, &models.Memory{}, &models.ScheduledReminder{}); err != nil {
+	if err := db.AutoMigrate(
+		&models.AuditSession{},
+		&models.AuditEvent{},
+		&models.Memory{},
+		&models.ScheduledReminder{},
+		&models.User{},
+		&models.PairingCode{},
+	); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
@@ -138,4 +145,65 @@ func (c *Client) MarkReminderSent(id uint) error {
 		return fmt.Errorf("failed to mark reminder as sent: %w", result.Error)
 	}
 	return nil
+}
+// GetUser retrieves a user by their platform ID.
+func (c *Client) GetUser(platformID string) (*models.User, error) {
+	var user models.User
+	result := c.DB.Where("platform_id = ?", platformID).First(&user)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return &user, nil
+}
+
+// UpsertUser creates or updates a user.
+func (c *Client) UpsertUser(user models.User) error {
+	result := c.DB.Where("platform_id = ?", user.PlatformID).Assign(user).FirstOrCreate(&user)
+	if result.Error != nil {
+		return fmt.Errorf("failed to upsert user: %w", result.Error)
+	}
+	return nil
+}
+
+// CreatePairingCode inserts a new pairing code.
+func (c *Client) CreatePairingCode(code models.PairingCode) error {
+	result := c.DB.Create(&code)
+	if result.Error != nil {
+		return fmt.Errorf("failed to create pairing code: %w", result.Error)
+	}
+	return nil
+}
+
+// GetPairingCode retrieves a valid pairing code.
+func (c *Client) GetPairingCode(code string) (*models.PairingCode, error) {
+	var pc models.PairingCode
+	result := c.DB.Where("code = ? AND is_used = ? AND expires_at > now()", code, false).First(&pc)
+	if result.Error != nil {
+		return nil, result.Error // e.g., gorm.ErrRecordNotFound
+	}
+	return &pc, nil
+}
+
+// RedeemPairingCode marks a code as used and creates the user in a transaction.
+func (c *Client) RedeemPairingCode(codeID string, user models.User) error {
+	return c.DB.Transaction(func(tx *gorm.DB) error {
+		// Mark code as used
+		if err := tx.Model(&models.PairingCode{}).Where("id = ?", codeID).Update("is_used", true).Error; err != nil {
+			return err
+		}
+		// Create the user
+		if err := tx.Create(&user).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+// GetUsersByFamilyGroup retrieves all users in a family group.
+func (c *Client) GetUsersByFamilyGroup(familyGroup string) ([]models.User, error) {
+	var users []models.User
+	result := c.DB.Where("family_group = ?", familyGroup).Find(&users)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return users, nil
 }

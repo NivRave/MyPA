@@ -93,9 +93,7 @@ func setupRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	allowedUsers := cfg.ParseAllowedUsers()
-
-	twHandler := twilio.NewHandler(pub, allowedUsers)
+	twHandler := twilio.NewHandler(pub)
 	r.Post("/webhook/twilio", twHandler.HandleWebhook)
 
 	r.Post("/webhook/telegram", func(w http.ResponseWriter, r *http.Request) {
@@ -119,12 +117,8 @@ func setupRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
 			return
 		}
 
-		// Verify user
-		if _, allowed := allowedUsers[msg.UserID]; len(allowedUsers) > 0 && !allowed {
-			slog.Warn("unauthorized telegram user", "user_id", msg.UserID)
-			w.WriteHeader(http.StatusOK) // Return 200 so Telegram stops retrying
-			return
-		}
+		// Forward to orchestrator regardless of authorization
+		// (Orchestrator handles unauthorized pairing flows)
 
 		slog.Info("received message", "user_id", msg.UserID, "text", msg.Text)
 

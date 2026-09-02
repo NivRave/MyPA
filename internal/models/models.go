@@ -105,12 +105,25 @@ type AuditEvent struct {
 	CompletionTokens int       `json:"completion_tokens"`
 }
 
-// User represents an allowed user configured via .env
+// User represents an allowed user in the system.
 type User struct {
-	PlatformID  string `json:"platform_id"`
-	Name        string `json:"name"`
-	Role        string `json:"role"`         // "admin" or "family"
-	FamilyGroup string `json:"family_group"` // e.g., "MyFamily"
+	ID          string    `json:"id" gorm:"primarykey;type:uuid;default:gen_random_uuid()"`
+	PlatformID  string    `json:"platform_id" gorm:"uniqueIndex"`
+	Name        string    `json:"name"`
+	Role        string    `json:"role"`         // "admin" or "family"
+	FamilyGroup string    `json:"family_group"` // e.g., "MyFamily"
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// PairingCode represents a temporary code used to onboard new users.
+type PairingCode struct {
+	ID          string    `json:"id" gorm:"primarykey;type:uuid;default:gen_random_uuid()"`
+	Code        string    `json:"code" gorm:"uniqueIndex"`
+	Role        string    `json:"role"`
+	FamilyGroup string    `json:"family_group"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	IsUsed      bool      `json:"is_used" gorm:"default:false"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Memory represents a long-term fact or preference about a user.

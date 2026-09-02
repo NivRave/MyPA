@@ -43,7 +43,6 @@ type Engine struct {
 	timezone        string
 	publisher       EventPublisher
 	wg              sync.WaitGroup
-	allowedUsers    map[string]models.User
 }
 
 // NewEngine initializes the orchestrator engine.
@@ -62,7 +61,6 @@ func NewEngine(
 	audio AudioClient,
 	pub EventPublisher,
 	tz string,
-	allowedUsers map[string]models.User,
 ) *Engine {
 	e := &Engine{
 		consumer:        cons,
@@ -79,7 +77,6 @@ func NewEngine(
 		audioClient:     audio,
 		publisher:       pub,
 		timezone:        tz,
-		allowedUsers:    allowedUsers,
 	}
 
 	e.calendarFactory = func(ctx context.Context, userID string) (CalendarClient, error) {
@@ -375,10 +372,32 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 		return fmt.Errorf("failed to get chat history: %w", err)
 	}
 
+	// 2.5 Authorize User
+	user, err := e.db.GetUser(msg.UserID)
+	if err != nil {
+		// User not found. Check if msg.Text is a pairing code.
+		code := strings.TrimSpace(msg.Text)
+		pc, err := e.db.GetPairingCode(code)
+		if err == nil && pc != nil {
+			newUser := models.User{
+				PlatformID:  msg.UserID,
+				Name:        "Unknown", // Can be updated later
+				Role:        pc.Role,
+				FamilyGroup: pc.FamilyGroup,
+				CreatedAt:   time.Now(),
+			}
+			if err := e.db.RedeemPairingCode(pc.ID, newUser); err == nil {
+				llmResponse = "Pairing successful"
+				return e.sendMessage(ctx, msg, "✅ Pairing successful! Welcome to MyPA. You can now use all features.")
+			}
+		}
+		llmResponse = "Unauthorized access attempt"
+		return e.sendMessage(ctx, msg, "🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue.")
+	}
+
 	// 3. Build the system prompt
-	user, ok := e.allowedUsers[msg.UserID]
 	userCtx := "the user"
-	if ok && user.Name != "" {
+	if user.Name != "" {
 		userCtx = user.Name
 	}
 
@@ -406,10 +425,13 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 		searchUserIDs = append(searchUserIDs, msg.UserID)
 		
 		// Find other family members
-		if ok && user.FamilyGroup != "" {
-			for id, u := range e.allowedUsers {
-				if id != msg.UserID && u.FamilyGroup == user.FamilyGroup {
-					searchUserIDs = append(searchUserIDs, id)
+		if user.FamilyGroup != "" {
+			familyUsers, err := e.db.GetUsersByFamilyGroup(user.FamilyGroup)
+			if err == nil {
+				for _, u := range familyUsers {
+					if u.PlatformID != msg.UserID {
+						searchUserIDs = append(searchUserIDs, u.PlatformID)
+					}
 				}
 			}
 		}
