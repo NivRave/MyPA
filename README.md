@@ -11,6 +11,7 @@ Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → 
 ```
 
 ## Features
+- **Web Dashboard**: Next.js-based admin dashboard for viewing audit logs, managing sessions, configuring tools, handling OAuth, and global settings.
 - **Multi-Tenant Architecture**: Shared bot handle for multiple users (e.g., family members). Isolated personal data with shared family memory retrieval.
 - **Multi-Channel Support**: Available on both Telegram and WhatsApp (via Twilio API).
 - **Conversational Scheduling**: Create single or recurring Google Calendar events via natural language (infers dates, times, and recurrence rules).
@@ -104,7 +105,14 @@ The V2 engine is fully built, containerized, and production-ready.
    go run ./cmd/audit-worker
    ```
 
-4. **Expose and set webhook:** Follow steps 3 & 4 from the Docker instructions above.
+4. **Run dashboard (in a separate terminal):**
+   ```bash
+   cd dashboard
+   npm install
+   npm run dev
+   ```
+
+5. **Expose and set webhook:** Follow steps 3 & 4 from the Docker instructions above.
 
 ## Testing
 
@@ -136,13 +144,16 @@ go test -v ./tests/...
 | Gateway | 8080 | Telegram & WhatsApp webhook ingestion |
 | Orchestrator | 8081 | LLM reasoning + API execution + OAuth + Background Scheduler |
 | Audit Worker | N/A | Asynchronously writes audit logs to PostgreSQL |
+| Dashboard | 3030 | Next.js web application for administration and monitoring |
 | RabbitMQ | 5672 | Message broker |
 | Redis | 6379 | Conversation state + OAuth tokens |
 | Database | 5432 | Audit logging & Semantic Memory storage (PostgreSQL) |
+| pgadmin | 5050 | Web interface for PostgreSQL administration |
 
 ## Project Structure
 
 ```text
+dashboard/          # Next.js web application for administration and monitoring
 cmd/
   audit-worker/     # Asynchronous audit logging worker
   gateway/          # Telegram & WhatsApp webhook ingestion
