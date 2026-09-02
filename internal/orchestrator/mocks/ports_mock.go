@@ -207,18 +207,18 @@ func (m *MockLLMClient) EXPECT() *MockLLMClientMockRecorder {
 }
 
 // Chat mocks base method.
-func (m *MockLLMClient) Chat(ctx context.Context, systemPrompt string, history []models.ChatMessage, userMessage string) (*llm.Response, error) {
+func (m *MockLLMClient) Chat(ctx context.Context, systemPrompt string, history []models.ChatMessage, userMessage string, photoData []byte, photoMimeType string) (*llm.Response, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Chat", ctx, systemPrompt, history, userMessage)
+	ret := m.ctrl.Call(m, "Chat", ctx, systemPrompt, history, userMessage, photoData, photoMimeType)
 	ret0, _ := ret[0].(*llm.Response)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Chat indicates an expected call of Chat.
-func (mr *MockLLMClientMockRecorder) Chat(ctx, systemPrompt, history, userMessage any) *gomock.Call {
+func (mr *MockLLMClientMockRecorder) Chat(ctx, systemPrompt, history, userMessage, photoData, photoMimeType any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Chat", reflect.TypeOf((*MockLLMClient)(nil).Chat), ctx, systemPrompt, history, userMessage)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Chat", reflect.TypeOf((*MockLLMClient)(nil).Chat), ctx, systemPrompt, history, userMessage, photoData, photoMimeType)
 }
 
 // GenerateEmbedding mocks base method.

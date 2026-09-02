@@ -120,7 +120,7 @@ func TestProcessMessage_TextMessage(t *testing.T) {
 	llmResponse := &llm.Response{
 		Text: "Hello there!",
 	}
-	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(llmResponse, nil).Times(1)
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(llmResponse, nil).Times(1)
 
 	tgMock.EXPECT().SendMessage(gomock.Any(), "chat-1", "Hello there!").Return(nil).Times(1)
 

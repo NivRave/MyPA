@@ -45,6 +45,7 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	from := r.FormValue("From")
 	body := r.FormValue("Body")
 	mediaURL := r.FormValue("MediaUrl0")
+	mediaContentType := r.FormValue("MediaContentType0")
 	messageID := r.FormValue("MessageSid")
 
 	// Strip "whatsapp:" prefix if present for uniform UserID storage, or keep it?
@@ -59,14 +60,15 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msg := models.Message{
-		ID:        messageID,
-		UserID:    userID,
-		Text:      body,
-		Source:    "whatsapp",
-		MediaURL:  mediaURL,
+		ID:               messageID,
+		UserID:           userID,
+		Text:             body,
+		Source:           "whatsapp",
+		MediaURL:         mediaURL,
+		MediaContentType: mediaContentType,
 	}
 
-	slog.Info("received twilio message", "user_id", msg.UserID, "text", msg.Text, "has_media", mediaURL != "")
+	slog.Info("received twilio message", "user_id", msg.UserID, "text", msg.Text, "has_media", mediaURL != "", "content_type", mediaContentType)
 
 	err = h.publisher.Publish(context.Background(), msg)
 	if err != nil {

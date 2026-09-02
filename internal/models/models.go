@@ -28,6 +28,8 @@ type Message struct {
 	AudioFileID string `json:"audio_file_id,omitempty"`
 	// MediaURL is used for external media links (e.g., WhatsApp voice notes).
 	MediaURL string `json:"media_url,omitempty"`
+	// MediaContentType holds the MIME type of the external media.
+	MediaContentType string `json:"media_content_type,omitempty"`
 
 	// Source identifies the originating platform (e.g., "telegram").
 	Source string `json:"source"`

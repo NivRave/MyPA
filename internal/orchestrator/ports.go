@@ -31,7 +31,7 @@ type AudioClient interface {
 
 // LLMClient defines the interface for interacting with the LLM.
 type LLMClient interface {
-	Chat(ctx context.Context, systemPrompt string, history []models.ChatMessage, userMessage string) (*llm.Response, error)
+	Chat(ctx context.Context, systemPrompt string, history []models.ChatMessage, userMessage string, photoData []byte, photoMimeType string) (*llm.Response, error)
 	GenerateEmbedding(ctx context.Context, text string) ([]float32, error)
 }
 

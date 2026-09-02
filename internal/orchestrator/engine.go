@@ -265,8 +265,23 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 		return e.sendMessage(ctx, msg, fmt.Sprintf("✅ Restore completed successfully from %s!", latestBackup))
 	}
 
-	// 0. Intercept and transcribe Voice Messages
-	if msg.VoiceFileID != "" {
+	var photoData []byte
+	var photoMimeType string
+
+	// 0. Intercept and transcribe Voice Messages and Photos
+	if msg.PhotoFileID != "" {
+		filePath, err := e.tgClient.GetFile(ctx, msg.PhotoFileID)
+		if err != nil {
+			_ = e.sendMessage(ctx, msg, "❌ Failed to retrieve photo metadata.")
+			return fmt.Errorf("failed to get photo path: %w", err)
+		}
+		photoData, err = e.tgClient.DownloadFile(ctx, filePath)
+		if err != nil {
+			_ = e.sendMessage(ctx, msg, "❌ Failed to download photo.")
+			return fmt.Errorf("failed to download photo: %w", err)
+		}
+		photoMimeType = "image/jpeg"
+	} else if msg.VoiceFileID != "" {
 		filePath, err := e.tgClient.GetFile(ctx, msg.VoiceFileID)
 		if err != nil {
 			_ = e.sendMessage(ctx, msg, "❌ Failed to retrieve voice message metadata.")
@@ -287,28 +302,34 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 
 		// Notify user of transcription
 		_ = e.sendMessage(ctx, msg, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
-
-		// Replace the empty text with the transcribed text so the LLM processes it normally
 		msg.Text = transcribedText
 	} else if msg.Source == "whatsapp" && msg.MediaURL != "" {
-		// Handle Twilio Voice Messages
-		audioData, err := e.twClient.DownloadMedia(ctx, msg.MediaURL)
-		if err != nil {
-			_ = e.sendMessage(ctx, msg, "❌ Failed to download WhatsApp voice message.")
-			return fmt.Errorf("failed to download twilio media: %w", err)
+		mediaType := strings.ToLower(msg.MediaContentType)
+		slog.Info("WhatsApp media received", "media_url", msg.MediaURL, "content_type", mediaType)
+		if strings.HasPrefix(mediaType, "image/") {
+			photoData, err = e.twClient.DownloadMedia(ctx, msg.MediaURL)
+			if err != nil {
+				_ = e.sendMessage(ctx, msg, "❌ Failed to download WhatsApp photo.")
+				return fmt.Errorf("failed to download twilio photo: %w", err)
+			}
+			photoMimeType = msg.MediaContentType
+		} else {
+			// Handle Twilio Voice Messages
+			audioData, err := e.twClient.DownloadMedia(ctx, msg.MediaURL)
+			if err != nil {
+				_ = e.sendMessage(ctx, msg, "❌ Failed to download WhatsApp voice message.")
+				return fmt.Errorf("failed to download twilio media: %w", err)
+			}
+
+			transcribedText, err := e.audioClient.TranscribeAudio(ctx, audioData, "voice.ogg")
+			if err != nil {
+				_ = e.sendMessage(ctx, msg, "❌ Failed to transcribe WhatsApp audio.")
+				return fmt.Errorf("failed to transcribe twilio media: %w", err)
+			}
+
+			_ = e.sendMessage(ctx, msg, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
+			msg.Text = transcribedText
 		}
-
-		transcribedText, err := e.audioClient.TranscribeAudio(ctx, audioData, "voice.ogg")
-		if err != nil {
-			_ = e.sendMessage(ctx, msg, "❌ Failed to transcribe WhatsApp audio.")
-			return fmt.Errorf("failed to transcribe twilio media: %w", err)
-		}
-
-		// Notify user of transcription
-		_ = e.sendMessage(ctx, msg, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
-
-		// Replace the empty text with the transcribed text so the LLM processes it normally
-		msg.Text = transcribedText
 	}
 
 	// 2. Fetch conversation history
@@ -371,7 +392,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 	}
 
 	// 4. Call LLM
-	resp, err := e.llm.Chat(ctx, systemPrompt, history, msg.Text)
+	resp, err := e.llm.Chat(ctx, systemPrompt, history, msg.Text, photoData, photoMimeType)
 	if err != nil {
 		return fmt.Errorf("llm chat failed: %w", err)
 	}
@@ -432,7 +453,7 @@ func (e *Engine) feedbackToLLM(ctx context.Context, msg models.Message, history 
 	// Prompt the LLM to continue
 	prompt := "Please continue fulfilling the user's request. What's next? If you are completely done, provide a friendly, nicely formatted final summary of all your actions directly to the user."
 	
-	summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, prompt)
+	summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, prompt, nil, "")
 	if err != nil {
 		return "❌ Failed to process: " + err.Error(), nil
 	}
@@ -822,7 +843,7 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 		
 		extendedHistory := append(history, models.ChatMessage{Role: "user", Content: msg.Text})
 		
-		summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, summaryPrompt)
+		summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, summaryPrompt, nil, "")
 		if err != nil {
 			return "❌ Failed to process webpage: " + err.Error(), nil
 		}
@@ -874,7 +895,7 @@ func (e *Engine) continueConversationWithToolResult(ctx context.Context, msg mod
 	summaryPrompt := fmt.Sprintf("Here is the output from the %s tool:\n%s\nPlease fulfill the user's request based on this information.", toolName, resultStr)
 	extendedHistory := append(history, models.ChatMessage{Role: "user", Content: msg.Text})
 	
-	resp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, summaryPrompt)
+	resp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, summaryPrompt, nil, "")
 	if err != nil {
 		return "❌ Failed to process tool output: " + err.Error(), nil
 	}

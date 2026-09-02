@@ -33,7 +33,7 @@ func TestEngine_HandleToolCall_RememberFact(t *testing.T) {
 		assert.Equal(t, pgvector.NewVector([]float32{0.1, 0.2}), mem.Embedding)
 		return nil
 	})
-	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Saved fact!"}, nil)
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Saved fact!"}, nil)
 
 	res, err := engine.handleToolCall(context.Background(), msg, nil, "system", toolCall)
 	require.NoError(t, err)
@@ -53,7 +53,7 @@ func TestEngine_HandleToolCall_ReadEmail(t *testing.T) {
 		Args: map[string]any{"message_id": "msg-123"},
 	}
 	gmailMock.EXPECT().ReadEmail(gomock.Any(), "user1", "msg-123").Return("Hello world", nil)
-	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Email read."}, nil)
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Email read."}, nil)
 
 	res, err := engine.handleToolCall(context.Background(), models.Message{UserID: "user1"}, nil, "system", toolCall)
 	require.NoError(t, err)
@@ -73,7 +73,7 @@ func TestEngine_HandleToolCall_DraftReply(t *testing.T) {
 		Args: map[string]any{"message_id": "msg-123", "reply_text": "Hi"},
 	}
 	gmailMock.EXPECT().DraftReply(gomock.Any(), "user1", "msg-123", "Hi").Return(nil)
-	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Draft created."}, nil)
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Draft created."}, nil)
 
 	res, err := engine.handleToolCall(context.Background(), models.Message{UserID: "user1"}, nil, "system", toolCall)
 	require.NoError(t, err)
@@ -94,7 +94,7 @@ func TestEngine_HandleToolCall_ArchiveEmail(t *testing.T) {
 	}
 	gmailMock.EXPECT().ArchiveEmail(gomock.Any(), "user1", "msg-1").Return(nil)
 	gmailMock.EXPECT().ArchiveEmail(gomock.Any(), "user1", "msg-2").Return(nil)
-	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Archived."}, nil)
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Archived."}, nil)
 
 	res, err := engine.handleToolCall(context.Background(), models.Message{UserID: "user1"}, nil, "system", toolCall)
 	require.NoError(t, err)
@@ -115,7 +115,7 @@ func TestEngine_HandleToolCall_SoftDeleteEmail(t *testing.T) {
 	}
 	gmailMock.EXPECT().SoftDeleteEmail(gomock.Any(), "user1", "msg-1").Return(nil)
 	gmailMock.EXPECT().SoftDeleteEmail(gomock.Any(), "user1", "msg-2").Return(nil)
-	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Deleted."}, nil)
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Deleted."}, nil)
 
 	res, err := engine.handleToolCall(context.Background(), models.Message{UserID: "user1"}, nil, "system", toolCall)
 	require.NoError(t, err)
@@ -139,7 +139,7 @@ func TestEngine_HandleToolCall_FetchWebpage(t *testing.T) {
 		Args: map[string]any{"url": ts.URL},
 	}
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Read webpage"}, nil)
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Read webpage"}, nil)
 
 	res, err := engine.handleToolCall(context.Background(), models.Message{UserID: "user1"}, nil, "system", toolCall)
 	require.NoError(t, err)
