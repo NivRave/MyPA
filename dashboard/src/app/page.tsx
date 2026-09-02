@@ -1,67 +1,69 @@
-import Image from "next/image";
+import { LayoutDashboard, Users, Wrench, Settings, Activity, ShieldCheck } from "lucide-react";
+import Link from "next/link";
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="flex h-screen bg-neutral-100">
+      {/* Sidebar */}
+      <aside className="w-64 bg-white border-r border-neutral-200 flex flex-col">
+        <div className="h-16 flex items-center px-6 border-b border-neutral-200">
+          <span className="text-lg font-bold text-neutral-800">MyPA Dashboard</span>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <nav className="flex-1 p-4 space-y-1">
+          <Link href="/" className="flex items-center px-3 py-2 text-sm font-medium rounded-md bg-neutral-100 text-neutral-900">
+            <LayoutDashboard className="mr-3 h-5 w-5" />
+            Overview
+          </Link>
+          <Link href="/sessions" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+            <Users className="mr-3 h-5 w-5" />
+            Sessions
+          </Link>
+          <Link href="/tools" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+            <Wrench className="mr-3 h-5 w-5" />
+            Tools & Plugins
+          </Link>
+          <Link href="/logs" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+            <Activity className="mr-3 h-5 w-5" />
+            Audit Logs
+          </Link>
+          <Link href="/oauth" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+            <ShieldCheck className="mr-3 h-5 w-5" />
+            OAuth Connections
+          </Link>
+          <Link href="/settings" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+            <Settings className="mr-3 h-5 w-5" />
+            Settings
+          </Link>
+        </nav>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-y-auto">
+        <header className="h-16 bg-white border-b border-neutral-200 flex items-center px-8 justify-between">
+          <h1 className="text-xl font-semibold text-neutral-800">Overview</h1>
+        </header>
+        <div className="p-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div className="bg-white p-6 rounded-xl border border-neutral-200 shadow-sm">
+              <h3 className="text-sm font-medium text-neutral-500">Active Sessions</h3>
+              <p className="text-3xl font-bold text-neutral-900 mt-2">12</p>
+            </div>
+            <div className="bg-white p-6 rounded-xl border border-neutral-200 shadow-sm">
+              <h3 className="text-sm font-medium text-neutral-500">Loaded Tools</h3>
+              <p className="text-3xl font-bold text-neutral-900 mt-2">8</p>
+            </div>
+            <div className="bg-white p-6 rounded-xl border border-neutral-200 shadow-sm">
+              <h3 className="text-sm font-medium text-neutral-500">Audit Events Today</h3>
+              <p className="text-3xl font-bold text-neutral-900 mt-2">1,240</p>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl border border-neutral-200 shadow-sm p-6">
+            <h2 className="text-lg font-medium text-neutral-900 mb-4">Welcome to MyPA V3</h2>
+            <p className="text-neutral-600">
+              The Web Control UI is now running. From here you can manage sessions, configure tools, and view audit logs. 
+              Navigation is set up on the left to start building out the individual management screens.
+            </p>
+          </div>
         </div>
       </main>
     </div>
