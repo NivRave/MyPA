@@ -418,7 +418,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		"If the user asks to schedule a recurring workflow, macro, or cron job (e.g. 'every Monday at 9am'), use the schedule_workflow tool. "+
 		"If the user asks about recent news, current events, or information you don't know, use the search_web tool to search the internet. "+
 		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference (you can specify scope='personal' or 'family'). "+
-		"If the user asks to check, review, or organize their emails, you MUST DO IT FOR THEM using the search_emails tool. DO NOT create a calendar event to remind them to do it. You can search by 'newer_than:30d', 'is:unread', etc. For each email, optionally use read_email to analyze deeply. Based on content, you may draft_email_reply, create_task, create_calendar_event, archive_emails, or soft_delete_emails. You MUST actively categorize the emails by applying appropriate labels using apply_email_labels (find IDs via list_email_labels). If a new label makes sense, create it using the create_email_label tool. Summarize all actions taken at the end. "+
+		"If the user asks to check, review, or organize their emails, you MUST DO IT FOR THEM using the search_emails tool. DO NOT create a calendar event to remind them to do it. You can search by 'newer_than:30d', 'is:unread', etc. For each email, optionally use read_email to analyze deeply. Based on content, you may draft_email_reply, create_task, create_calendar_event, archive_emails, or soft_delete_emails. You MUST actively categorize the emails by applying appropriate labels using apply_email_labels (find IDs via list_email_labels). If a new label makes sense, create it using the create_email_label tool. " +
+		"GMAIL AUTOMATION GUIDELINES: 1) When asked to organize receipts, use search_emails to find receipts/invoices, create/find a 'Receipts' label, and apply it to all matches using apply_email_labels. 2) When asked to manage subscriptions or clean up newsletters, search for newsletters, read them, and use the unsubscribe_email tool to unsubscribe. 3) When an email contains an upcoming meeting, flight, or event ticket, proactively use create_calendar_event to schedule it. 4) When an email asks a question or requires a response, proactively use draft_email_reply to draft a response for the user's review. Summarize all actions taken at the end. "+
 		"If the user shares a URL and asks you to save it for later, use the fetch_webpage tool to get a summary, and then use the create_task tool to add it to their Google Tasks with the summary in the notes. "+
 		"If the user sends an image of a flyer or invitation, extract the details and use create_calendar_event. "+
 		"If the user sends an image of a receipt, summarize the expense. "+
@@ -789,6 +790,17 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 			return fmt.Sprintf("Error creating label: %v", err)
 		}
 		return fmt.Sprintf("Label '%s' created successfully with ID: %s", labelName, labelID)
+	} else if toolCall.Name == "unsubscribe_email" {
+		messageID, ok := toolCall.Args["message_id"].(string)
+		if !ok {
+			return "Missing message_id parameter"
+		}
+		slog.Info("executing unsubscribe_email tool", "user", msg.UserID, "message_id", messageID)
+		err := e.gmailClient.UnsubscribeEmail(ctx, msg.UserID, messageID)
+		if err != nil {
+			return fmt.Errorf("Error unsubscribing: %v", err).Error()
+		}
+		return "Successfully unsubscribed from the email list."
 	} else if toolCall.Name == "list_task_lists" {
 		slog.Info("executing list_task_lists tool", "user", msg.UserID)
 		lists, err := e.tasksClient.ListTaskLists(ctx, msg.UserID)

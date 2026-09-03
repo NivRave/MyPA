@@ -388,6 +388,20 @@ var CalendarEventTool = &genai.Tool{
 			},
 		},
 		{
+			Name:        "unsubscribe_email",
+			Description: "Attempts to unsubscribe from a newsletter or mailing list by parsing the List-Unsubscribe header of a specific email. Call this when the user asks to unsubscribe from an email.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"message_id": {
+						Type:        genai.TypeString,
+						Description: "The ID of the email to unsubscribe from.",
+					},
+				},
+				Required: []string{"message_id"},
+			},
+		},
+		{
 			Name:        "search_contacts",
 			Description: "Searches the user's Google Contacts by name. Call this when the user asks for someone's email or phone number.",
 			Parameters: &genai.Schema{

@@ -19,7 +19,7 @@ This document tracks upcoming features and functional improvements for the MyPA 
 - **Smart Home Orchestration**: Integrate with Home Assistant or Google Home for natural language control of the physical environment, synced with calendar events.
 
 ### 3. Expanded Tooling & QoL
-- **Gmail Automation Flows**: Organize receipts, create events based on emails, suggest responses, and manage subscriptions.
+- [x] **Gmail Automation Flows**: Organize receipts, create events based on emails, suggest responses, and manage subscriptions.
 - **Enhanced WhatsApp Integration**: Support group chats and expanded messaging capabilities.
 - **Project Management Integration**: Connect to remote files and platforms like GitHub to manage project tasks directly.
 - **Granular Feature Configuration**: Add optional configuration settings so users can enable only specific features.

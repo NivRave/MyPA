@@ -53,6 +53,7 @@ type GmailClient interface {
 	ListLabels(ctx context.Context, userID string) (map[string]string, error)
 	ApplyLabel(ctx context.Context, userID, messageID, labelID string) error
 	CreateLabel(ctx context.Context, userID, labelName string) (string, error)
+	UnsubscribeEmail(ctx context.Context, userID, messageID string) error
 }
 
 // TasksClient defines the interface for Google Tasks.

@@ -5,6 +5,8 @@ import (
 	b64 "encoding/base64"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/nivik/mypa/internal/calendar"
@@ -112,7 +114,26 @@ func (c *Client) ReadEmail(ctx context.Context, userID, messageID string) (strin
 	if body == "" {
 		body = msg.Snippet // Fallback to snippet if body decoding fails
 	}
-	return body, nil
+	
+	var from, date, subject, listUnsub string
+	for _, header := range msg.Payload.Headers {
+		if strings.EqualFold(header.Name, "From") {
+			from = header.Value
+		} else if strings.EqualFold(header.Name, "Date") {
+			date = header.Value
+		} else if strings.EqualFold(header.Name, "Subject") {
+			subject = header.Value
+		} else if strings.EqualFold(header.Name, "List-Unsubscribe") {
+			listUnsub = header.Value
+		}
+	}
+	
+	headerText := fmt.Sprintf("From: %s\nDate: %s\nSubject: %s\n", from, date, subject)
+	if listUnsub != "" {
+		headerText += fmt.Sprintf("List-Unsubscribe: %s\n", listUnsub)
+	}
+	
+	return headerText + "\n" + body, nil
 }
 
 // decodeBody recursively extracts the plain text from the message parts.
@@ -254,4 +275,87 @@ func (c *Client) CreateLabel(ctx context.Context, userID, labelName string) (str
 		return "", err
 	}
 	return res.Id, nil
+}
+
+// UnsubscribeEmail parses the List-Unsubscribe header and attempts to unsubscribe.
+func (c *Client) UnsubscribeEmail(ctx context.Context, userID, messageID string) error {
+	srv, err := c.getService(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	msg, err := srv.Users.Messages.Get("me", messageID).Format("metadata").Do()
+	if err != nil {
+		return fmt.Errorf("failed to fetch email: %w", err)
+	}
+
+	var listUnsub string
+	for _, header := range msg.Payload.Headers {
+		if strings.EqualFold(header.Name, "List-Unsubscribe") {
+			listUnsub = header.Value
+			break
+		}
+	}
+
+	if listUnsub == "" {
+		return fmt.Errorf("no List-Unsubscribe header found in this email")
+	}
+
+	// Find HTTPS or HTTP link
+	httpRe := regexp.MustCompile(`<(https?://[^>]+)>`)
+	if match := httpRe.FindStringSubmatch(listUnsub); len(match) > 1 {
+		url := match[1]
+		
+		req, _ := http.NewRequestWithContext(ctx, "POST", url, nil)
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return nil
+			}
+		}
+		
+		req, _ = http.NewRequestWithContext(ctx, "GET", url, nil)
+		resp, err = client.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return nil
+			}
+		}
+	}
+
+	// Find mailto link
+	mailtoRe := regexp.MustCompile(`<mailto:([^>]+)>`)
+	if match := mailtoRe.FindStringSubmatch(listUnsub); len(match) > 1 {
+		mailtoURL := match[1]
+		
+		parts := strings.SplitN(mailtoURL, "?", 2)
+		to := parts[0]
+		subject := "Unsubscribe"
+		
+		if len(parts) > 1 {
+			if strings.Contains(parts[1], "subject=") {
+				subjectMatches := regexp.MustCompile(`subject=([^&]+)`).FindStringSubmatch(parts[1])
+				if len(subjectMatches) > 1 {
+					subject = subjectMatches[1]
+				}
+			}
+		}
+
+		rawMessage := fmt.Sprintf("To: %s\r\nSubject: %s\r\n\r\nUnsubscribe", to, subject)
+		msgReq := &gmailapi.Message{
+			Raw: b64.URLEncoding.EncodeToString([]byte(rawMessage)),
+		}
+
+		_, err = srv.Users.Messages.Send("me", msgReq).Do()
+		if err != nil {
+			return fmt.Errorf("failed to send unsubscribe email: %w", err)
+		}
+		
+		return nil
+	}
+
+	return fmt.Errorf("could not parse a valid unsubscribe link from: %s", listUnsub)
 }
