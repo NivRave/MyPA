@@ -13,7 +13,7 @@ This document tracks upcoming features and functional improvements for the MyPA 
 - **Companion Nodes for Device Context**: Build a lightweight desktop daemon that connects to the orchestrator to execute local scripts or provide local context.
 
 ### 2. Advanced AI Capabilities
-- **Multimodal Vision (Image Processing)**: Process images sent via Telegram/WhatsApp (e.g., snap a flyer for calendar events, fridge photos for recipes, or receipts for expenses).
+- [x] **Multimodal Vision (Image Processing)**: Process images sent via Telegram/WhatsApp (e.g., snap a flyer for calendar events, fridge photos for recipes, or receipts for expenses).
 - **Custom Recurring Workflows (Macros)**: Allow users to define complex, multi-step cron jobs via natural language (e.g., weekly email summaries turned into task lists).
 - **Voice Outbound (Two-way Voice)**: Add Text-to-Speech (e.g., ElevenLabs) so the assistant can respond with voice notes, such as for the morning briefing.
 - **Smart Home Orchestration**: Integrate with Home Assistant or Google Home for natural language control of the physical environment, synced with calendar events.
