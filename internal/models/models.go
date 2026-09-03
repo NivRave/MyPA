@@ -58,10 +58,12 @@ type Contact struct {
 }
 // ChatMessage represents a single message in conversation history.
 type ChatMessage struct {
-	Role          string            `json:"role"` // "user", "assistant", or "function"
-	Content       string            `json:"content,omitempty"`
-	ToolCall      *FunctionCall     `json:"tool_call,omitempty"`
-	ToolResponse  *FunctionResponse `json:"tool_response,omitempty"`
+	Role          string             `json:"role"` // "user", "assistant", or "function"
+	Content       string             `json:"content,omitempty"`
+	ToolCalls     []FunctionCall     `json:"tool_calls,omitempty"`
+	ToolResponses []FunctionResponse `json:"tool_responses,omitempty"`
+	PhotoData     []byte             `json:"photo_data,omitempty"`
+	PhotoMimeType string             `json:"photo_mime_type,omitempty"`
 }
 
 type FunctionCall struct {

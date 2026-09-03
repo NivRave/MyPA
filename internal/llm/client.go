@@ -45,7 +45,7 @@ func NewClient(ctx context.Context, apiKey, model string, opts ...func(*genai.Cl
 // Response represents the output from the LLM, which could be either a text reply or a tool call.
 type Response struct {
 	Text        string
-	ToolCall    *genai.FunctionCall
+	ToolCalls   []*genai.FunctionCall
 	IsError     bool
 }
 
@@ -66,12 +66,17 @@ func (c *Client) Chat(ctx context.Context, systemInstruction string, history []m
 		}
 
 		var parts []*genai.Part
-		if msg.ToolCall != nil {
-			parts = append(parts, genai.NewPartFromFunctionCall(msg.ToolCall.Name, msg.ToolCall.Args))
-		} else if msg.ToolResponse != nil {
-			parts = append(parts, genai.NewPartFromFunctionResponse(msg.ToolResponse.Name, msg.ToolResponse.Response))
-		} else if msg.Content != "" {
+		for _, tc := range msg.ToolCalls {
+			parts = append(parts, genai.NewPartFromFunctionCall(tc.Name, tc.Args))
+		}
+		for _, tr := range msg.ToolResponses {
+			parts = append(parts, genai.NewPartFromFunctionResponse(tr.Name, tr.Response))
+		}
+		if msg.Content != "" {
 			parts = append(parts, genai.NewPartFromText(msg.Content))
+		}
+		if len(msg.PhotoData) > 0 && msg.PhotoMimeType != "" {
+			parts = append(parts, genai.NewPartFromBytes(msg.PhotoData, msg.PhotoMimeType))
 		}
 
 		if len(parts) > 0 {
@@ -118,19 +123,26 @@ func (c *Client) Chat(ctx context.Context, systemInstruction string, history []m
 		return nil, fmt.Errorf("no candidates returned from model")
 	}
 
-	part := resp.Candidates[0].Content.Parts[0]
+	var toolCalls []*genai.FunctionCall
+	var text string
 
-	// Check if the model decided to call a function
-	if part.FunctionCall != nil {
-		slog.Info("LLM invoked function", "name", part.FunctionCall.Name)
+	for _, part := range resp.Candidates[0].Content.Parts {
+		if part.FunctionCall != nil {
+			slog.Info("LLM invoked function", "name", part.FunctionCall.Name)
+			toolCalls = append(toolCalls, part.FunctionCall)
+		} else if part.Text != "" {
+			text += part.Text
+		}
+	}
+
+	if len(toolCalls) > 0 {
 		return &Response{
-			ToolCall: part.FunctionCall,
+			ToolCalls: toolCalls,
 		}, nil
 	}
 
-	// Otherwise, it's a text response
 	return &Response{
-		Text: part.Text,
+		Text: text,
 	}, nil
 }
 
