@@ -43,6 +43,12 @@ type Engine struct {
 	timezone        string
 	publisher       EventPublisher
 	wg              sync.WaitGroup
+	onWorkflowsChanged func()
+}
+
+// SetWorkflowsChangedCallback sets a callback to be invoked when workflows change.
+func (e *Engine) SetWorkflowsChangedCallback(cb func()) {
+	e.onWorkflowsChanged = cb
 }
 
 // NewEngine initializes the orchestrator engine.
@@ -106,7 +112,7 @@ func (e *Engine) Start(ctx context.Context) error {
 		msgCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 
-		if err := e.processMessage(msgCtx, msg); err != nil {
+		if err := e.ProcessMessage(msgCtx, msg); err != nil {
 			slog.Error("failed to process message", "message_id", msg.ID, "error", err)
 			
 			// Try to notify the user of the error
@@ -177,9 +183,9 @@ func (e *Engine) sendMessage(ctx context.Context, msg models.Message, text strin
 	return nil
 }
 
-// processMessage is the main entry point for handling an incoming user message.
+// ProcessMessage is the main entry point for handling an incoming user message.
 // It orchestrates transcription, command handling, confirmation flows, and LLM reasoning.
-func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err error) {
+func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err error) {
 	slog.Info("processing message", "user_id", msg.UserID, "text", msg.Text)
 
 	var llmResponse string
@@ -409,6 +415,7 @@ func (e *Engine) processMessage(ctx context.Context, msg models.Message) (err er
 		"If the user asks to change or update an event, use update_calendar_event. If they ask to cancel or delete an event, use delete_calendar_event. "+
 		"If the user asks to manage tasks, to-dos, or lists, use the Google Tasks tools (list_task_lists, create_task_list, list_tasks, create_task, complete_task, delete_task). You can manage multiple task lists. "+
 		"If the user asks to save, find, or retrieve contact information (like an email or phone number), use the search_contacts and create_contact tools. "+
+		"If the user asks to schedule a recurring workflow, macro, or cron job (e.g. 'every Monday at 9am'), use the schedule_workflow tool. "+
 		"If the user asks about recent news, current events, or information you don't know, use the search_web tool to search the internet. "+
 		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference (you can specify scope='personal' or 'family'). "+
 		"If the user asks to check, review, or organize their emails, you MUST DO IT FOR THEM using the search_emails tool. DO NOT create a calendar event to remind them to do it. You can search by 'newer_than:30d', 'is:unread', etc. For each email, optionally use read_email to analyze deeply. Based on content, you may draft_email_reply, create_task, create_calendar_event, archive_emails, or soft_delete_emails. You MUST actively categorize the emails by applying appropriate labels using apply_email_labels (find IDs via list_email_labels). If a new label makes sense, create it using the create_email_label tool. Summarize all actions taken at the end. "+
@@ -967,6 +974,68 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 			return fmt.Sprintf("Error creating contact: %v", err)
 		}
 		return "Contact created successfully."
+	} else if toolCall.Name == "schedule_workflow" {
+		name, okName := toolCall.Args["name"].(string)
+		cronExp, okCron := toolCall.Args["cron_expression"].(string)
+		instruction, okInst := toolCall.Args["instruction"].(string)
+		
+		if !okName || !okCron || !okInst {
+			return "Missing required parameters (name, cron_expression, instruction)"
+		}
+
+		slog.Info("executing schedule_workflow tool", "user", msg.UserID, "name", name, "cron", cronExp)
+		
+		err := e.db.SaveWorkflow(models.Workflow{
+			UserID:         msg.UserID,
+			Name:           name,
+			CronExpression: cronExp,
+			Instruction:    instruction,
+			IsActive:       true,
+			CreatedAt:      time.Now(),
+		})
+		
+		if err != nil {
+			slog.Error("schedule_workflow failed", "error", err)
+			return fmt.Sprintf("Error scheduling workflow: %v", err)
+		}
+		
+		if e.onWorkflowsChanged != nil {
+			e.onWorkflowsChanged()
+		}
+		
+		return fmt.Sprintf("✅ **Workflow Scheduled!**\n\n'%s' will run on schedule: %s", name, cronExp)
+	} else if toolCall.Name == "list_workflows" {
+		slog.Info("executing list_workflows tool", "user", msg.UserID)
+		workflows, err := e.db.GetUserWorkflows(msg.UserID)
+		if err != nil {
+			return fmt.Sprintf("Error listing workflows: %v", err)
+		}
+		if len(workflows) == 0 {
+			return "You have no active workflows scheduled."
+		}
+		
+		workflowsJSON, _ := json.Marshal(workflows)
+		return fmt.Sprintf("Here are your active workflows:\n%s", string(workflowsJSON))
+	} else if toolCall.Name == "delete_workflow" {
+		idStr, ok := toolCall.Args["id"].(string)
+		if !ok {
+			return "Missing id parameter"
+		}
+		
+		var id uint
+		fmt.Sscanf(idStr, "%d", &id)
+
+		slog.Info("executing delete_workflow tool", "user", msg.UserID, "workflow_id", id)
+		err := e.db.DeleteWorkflow(id, msg.UserID)
+		if err != nil {
+			return fmt.Sprintf("Error deleting workflow: %v", err)
+		}
+		
+		if e.onWorkflowsChanged != nil {
+			e.onWorkflowsChanged()
+		}
+
+		return "Workflow deleted successfully."
 	}
 
 	return "⚠️ LLM tried to call an unknown tool."
@@ -1015,7 +1084,7 @@ func (e *Engine) BroadcastProactiveMessage(ctx context.Context, promptText strin
 			defer cancel()
 
 			slog.Info("sending proactive message", "user_id", m.UserID)
-			if err := e.processMessage(bgCtx, m); err != nil {
+			if err := e.ProcessMessage(bgCtx, m); err != nil {
 				slog.Error("failed to process proactive message", "user", m.UserID, "error", err)
 			}
 		}(msg)

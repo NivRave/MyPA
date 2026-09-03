@@ -39,6 +39,7 @@ func NewClient(dsn string) (*Client, error) {
 		&models.ScheduledReminder{},
 		&models.User{},
 		&models.PairingCode{},
+		&models.Workflow{},
 	); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
@@ -206,4 +207,42 @@ func (c *Client) GetUsersByFamilyGroup(familyGroup string) ([]models.User, error
 		return nil, result.Error
 	}
 	return users, nil
+}
+
+// SaveWorkflow creates a new workflow macro.
+func (c *Client) SaveWorkflow(wf models.Workflow) error {
+	result := c.DB.Create(&wf)
+	if result.Error != nil {
+		return fmt.Errorf("failed to insert workflow: %w", result.Error)
+	}
+	return nil
+}
+
+// GetActiveWorkflows fetches all active workflows.
+func (c *Client) GetActiveWorkflows() ([]models.Workflow, error) {
+	var workflows []models.Workflow
+	result := c.DB.Where("is_active = ?", true).Find(&workflows)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to fetch active workflows: %w", result.Error)
+	}
+	return workflows, nil
+}
+
+// GetUserWorkflows fetches all active workflows for a specific user.
+func (c *Client) GetUserWorkflows(userID string) ([]models.Workflow, error) {
+	var workflows []models.Workflow
+	result := c.DB.Where("user_id = ? AND is_active = ?", userID, true).Find(&workflows)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to fetch user workflows: %w", result.Error)
+	}
+	return workflows, nil
+}
+
+// DeleteWorkflow deactivates or deletes a workflow.
+func (c *Client) DeleteWorkflow(id uint, userID string) error {
+	result := c.DB.Where("id = ? AND user_id = ?", id, userID).Delete(&models.Workflow{})
+	if result.Error != nil {
+		return fmt.Errorf("failed to delete workflow: %w", result.Error)
+	}
+	return nil
 }

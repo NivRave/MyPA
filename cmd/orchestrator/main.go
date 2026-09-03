@@ -142,8 +142,12 @@ func main() {
 	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, contactsClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone)
 
 	// Start Cron jobs
-	c := scheduler.StartCronJobs(engine)
+	c := scheduler.StartCronJobs(engine, dbClient)
 	defer c.Stop()
+	
+	engine.SetWorkflowsChangedCallback(func() {
+		scheduler.ReloadWorkflows(engine, dbClient)
+	})
 
 	// Run engine in a goroutine
 	go func() {

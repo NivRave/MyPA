@@ -85,6 +85,9 @@ type DBClient interface {
 	GetPairingCode(code string) (*models.PairingCode, error)
 	RedeemPairingCode(codeID string, u models.User) error
 	GetUsersByFamilyGroup(familyGroup string) ([]models.User, error)
+	SaveWorkflow(w models.Workflow) error
+	GetUserWorkflows(userID string) ([]models.Workflow, error)
+	DeleteWorkflow(id uint, userID string) error
 }
 
 // EventPublisher defines the interface for publishing telemetry events.

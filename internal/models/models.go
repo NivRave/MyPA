@@ -147,3 +147,14 @@ type ScheduledReminder struct {
 	IsSent    bool      `json:"is_sent" gorm:"index"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+// Workflow represents a scheduled recurring task (macro).
+type Workflow struct {
+	ID             uint      `json:"id" gorm:"primarykey"`
+	UserID         string    `json:"user_id" gorm:"index"`
+	Name           string    `json:"name"`
+	CronExpression string    `json:"cron_expression"`
+	Instruction    string    `json:"instruction"`
+	IsActive       bool      `json:"is_active" gorm:"index"`
+	CreatedAt      time.Time `json:"created_at"`
+}
