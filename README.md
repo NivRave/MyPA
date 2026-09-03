@@ -24,6 +24,8 @@ Dashboard (GraphQL) →            ↳ GraphQL API (8081)          ↳ Redis (St
 - **Calendar Querying & Summarization**: Ask "What do I have tomorrow?" to retrieve and naturally summarize events.
 - **Event Modifications**: Update or delete events easily through natural language.
 - **Multi-turn Execution**: Capable of recursive reasoning, such as fetching events and then acting upon the retrieved list in a single user turn.
+- **Custom Recurring Workflows (Macros)**: Allow users to define complex, multi-step cron jobs via natural language (e.g., weekly email summaries turned into task lists).
+- **Multimodal Vision**: Process images sent via Telegram/WhatsApp (e.g., snap a flyer for calendar events or receipts for expenses).
 - **Audit Logging**: Asynchronously logs all user requests, LLM responses, and executed actions to a database.
 - **System Commands**: Built-in commands for connecting accounts (`/connect`), on-demand database backups (`/backup` and `/restore`), and dynamically generated help (`/help`).
 - **Microservice Architecture**: Decoupled ingestion and execution layers connected via RabbitMQ.
