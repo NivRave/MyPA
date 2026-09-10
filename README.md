@@ -70,17 +70,14 @@ The V2 engine is fully built, containerized, and production-ready.
    # Edit .env with your API keys and tokens
    ```
 
-2. **Start all services:**
+2. **Start all services (including ngrok tunnel):**
    ```bash
    docker-compose up -d
    ```
+   *(ngrok starts automatically inside Docker using `NGROK_AUTHTOKEN` and `NGROK_DOMAIN` from `.env`, exposing the tunnel dashboard at `http://localhost:4040`)*
 
-3. **Expose the Proxy via ngrok:**
-   ```bash
-   ngrok http 8000 --url https://your-ngrok-url.ngrok-free.dev
-   ```
+3. **Set Webhooks:**
 
-4. **Set Webhooks:**
    - **Telegram:**
      ```bash
      curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=<NGROK_URL>/webhook/telegram"
