@@ -5,9 +5,9 @@ An event-driven personal AI assistant that captures natural language requests vi
 ## Architecture
 
 ```text
-Telegram/WhatsApp Webhooks → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestrator (8081) → Gemini API & Google Calendar API
-Dashboard (GraphQL) →            ↳ GraphQL API (8081)          ↳ Redis (State & Tokens)
-                                 ↳ OAuth Callbacks (8081)      ↳ PostgreSQL (Audit Logs, Memory, & Users)
+Telegram/WhatsApp Webhooks → ngrok (4040) → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestrator (8081) → Gemini API & Google Calendar API
+Dashboard (GraphQL) →                           ↳ GraphQL API (8081)          ↳ Redis (State & Tokens)
+                                                ↳ OAuth Callbacks (8081)      ↳ PostgreSQL (Audit Logs, Memory, & Users)
 ```
 
 ## Features
@@ -46,13 +46,13 @@ The latest release (`v2.1.0`) includes:
 
 The V2 engine is fully built, containerized, and production-ready.
 
-👉 **See the [ROADMAP.md](docs/ROADMAP.md) for the full list of planned future features.**
+👉 **See the [ROADMAP.md](docs/ROADMAP.md) for planned features and [architecture_v4.md](docs/architecture_v4.md) for the V4 system vision.**
 
 ## Prerequisites
 
 - [Go 1.24+](https://go.dev/dl/)
 - [Docker & Docker Compose](https://docs.docker.com/get-docker/)
-- [ngrok](https://ngrok.com/) (for local Telegram webhook development)
+- [ngrok Account & Auth Token](https://ngrok.com/) (for webhook ingress tunneling)
 - Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
 - Twilio Account SID & Auth Token (for WhatsApp integration)
 - Gemini API Key (from [Google AI Studio](https://aistudio.google.com/))
@@ -149,6 +149,7 @@ go test -v ./tests/...
 | Redis | 6379 | Conversation state + OAuth tokens |
 | Database | 5432 | Audit logging & Semantic Memory storage (PostgreSQL) |
 | pgadmin | 5050 | Web interface for PostgreSQL administration |
+| ngrok | 4040 | Secure public ingress tunnel & traffic inspection UI |
 
 ## Project Structure
 

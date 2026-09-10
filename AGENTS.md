@@ -10,6 +10,7 @@ This file enforces strict agent behaviors and development conventions for this w
 - **Stage Verification (CRITICAL Guardrail)**: ALWAYS before committing, verify that the added/staged files are relevant to that commit alone. This is an important guardrail when multiple agents are touching different parts of the project concurrently.
 
 ## 2. Terminal Commands Execution
+- **Native Tools First**: NEVER use PowerShell or terminal commands to read, write, search, or replace file contents (e.g., avoid commands like `Get-Content`, `cat`, `Out-File`, `sed`, `grep`, `ls`). ALWAYS prioritize and use the specialized native tools provided to you (e.g., `view_file`, `write_to_file`, `replace_file_content`, `grep_search`, `find_by_name`, `list_dir`) for these operations.
 - **No Command Chaining**: When performing git operations (like `add`, `commit`, `push`) or other terminal actions, **do not** chain them together in a single command using `;` or `&&`. 
 - **Separate Actions**: Execute each command as a separate action/tool call to ensure transparency and proper error handling.
 
