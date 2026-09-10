@@ -24,6 +24,9 @@
 .DS_Store
 Thumbs.db
 
-# Docker volumes
+# Docker volumes & data
 rabbitmq_data/
 redis_data/
+postgres_data/
+backups/
+*.jsonl

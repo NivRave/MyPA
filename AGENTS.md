@@ -10,6 +10,7 @@ This file enforces strict agent behaviors and development conventions for this w
 - **Stage Verification (CRITICAL Guardrail)**: ALWAYS before committing, verify that the added/staged files are relevant to that commit alone. This is an important guardrail when multiple agents are touching different parts of the project concurrently.
 
 ## 2. Terminal Commands Execution
+- **Native Tools First**: NEVER use PowerShell or terminal commands to read, write, search, or replace file contents (e.g., avoid commands like `Get-Content`, `cat`, `Out-File`, `sed`, `grep`, `ls`). ALWAYS prioritize and use the specialized native tools provided to you (e.g., `view_file`, `write_to_file`, `replace_file_content`, `grep_search`, `find_by_name`, `list_dir`) for these operations.
 - **No Command Chaining**: When performing git operations (like `add`, `commit`, `push`) or other terminal actions, **do not** chain them together in a single command using `;` or `&&`. 
 - **Separate Actions**: Execute each command as a separate action/tool call to ensure transparency and proper error handling.
 
@@ -37,3 +38,8 @@ After completing any feature development, bug fix, milestone, or major phase, yo
   4. Always include BuildKit cache mounts (`--mount=type=cache`) for `/go/pkg/mod` and `/root/.cache/go-build`.
 - **`.dockerignore`**: Keep `.dockerignore` up to date. Any new non-source directories or large files must be excluded.
 - **Healthchecks**: Infrastructure services must include `start_period` in healthchecks to avoid unnecessary startup delays.
+
+## 7. API & GraphQL Conventions
+- **GraphQL Standard**: All new client-facing APIs must be implemented as GraphQL endpoints using `gqlgen` inside the `Orchestrator` service. Avoid creating new REST endpoints unless strictly necessary.
+- **Routing**: Client applications (like the Dashboard) must communicate with the GraphQL API through the `Proxy` service (e.g., `http://proxy:8000/graphql`).
+- **PowerShell Encoding**: When generating or modifying Go or GraphQL files via PowerShell tools, ALWAYS append `-Encoding utf8` to avoid UTF-16 BOM parsing errors with `gqlgen`.

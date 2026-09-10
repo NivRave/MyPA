@@ -388,6 +388,20 @@ var CalendarEventTool = &genai.Tool{
 			},
 		},
 		{
+			Name:        "unsubscribe_email",
+			Description: "Attempts to unsubscribe from a newsletter or mailing list by parsing the List-Unsubscribe header of a specific email. Call this when the user asks to unsubscribe from an email.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"message_id": {
+						Type:        genai.TypeString,
+						Description: "The ID of the email to unsubscribe from.",
+					},
+				},
+				Required: []string{"message_id"},
+			},
+		},
+		{
 			Name:        "search_contacts",
 			Description: "Searches the user's Google Contacts by name. Call this when the user asks for someone's email or phone number.",
 			Parameters: &genai.Schema{
@@ -421,6 +435,49 @@ var CalendarEventTool = &genai.Tool{
 					},
 				},
 				Required: []string{"name"},
+			},
+		},
+		{
+			Name:        "schedule_workflow",
+			Description: "Schedules a recurring macro workflow for the user using a cron expression. The instruction string is executed by the agent at the specified times. Use this when the user asks for daily, weekly, or recurring tasks like 'Summarize my unread emails every morning'.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"name": {
+						Type:        genai.TypeString,
+						Description: "A short, descriptive name for this workflow (e.g., 'Morning Email Summary').",
+					},
+					"cron_expression": {
+						Type:        genai.TypeString,
+						Description: "A standard 5-part cron expression defining when this should run (e.g., '0 9 * * 1' for 9 AM every Monday). The timezone is handled implicitly based on the user's location.",
+					},
+					"instruction": {
+						Type:        genai.TypeString,
+						Description: "The exact instruction or prompt to execute at the scheduled time (e.g., 'Find my unread emails and draft a summary').",
+					},
+				},
+				Required: []string{"name", "cron_expression", "instruction"},
+			},
+		},
+		{
+			Name:        "list_workflows",
+			Description: "Lists the user's currently active recurring workflows/macros.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+			},
+		},
+		{
+			Name:        "delete_workflow",
+			Description: "Deletes a recurring workflow/macro by its ID.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"id": {
+						Type:        genai.TypeString,
+						Description: "The ID of the workflow to delete (must be stringified).",
+					},
+				},
+				Required: []string{"id"},
 			},
 		},
 	},

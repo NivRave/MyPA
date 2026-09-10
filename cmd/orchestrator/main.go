@@ -10,6 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql/handler"
+	"github.com/99designs/gqlgen/graphql/playground"
+
 	"github.com/nivik/mypa/internal/audio"
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
@@ -17,6 +20,7 @@ import (
 	"github.com/nivik/mypa/internal/contacts"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/gmail"
+	"github.com/nivik/mypa/internal/graph"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"github.com/nivik/mypa/internal/scheduler"
@@ -126,12 +130,24 @@ func main() {
 	}
 	defer telemetryPublisher.Close()
 
+	// Bootstrap legacy ALLOWED_USERS into Database
+	allowedMap := cfg.ParseAllowedUsers()
+	for _, u := range allowedMap {
+		if err := dbClient.UpsertUser(u); err != nil {
+			slog.Error("failed to bootstrap allowed user", "error", err)
+		}
+	}
+
 	// 9. Initialize Engine
-	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, contactsClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone, cfg.ParseAllowedUsers())
+	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, contactsClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone)
 
 	// Start Cron jobs
-	c := scheduler.StartCronJobs(engine)
+	c := scheduler.StartCronJobs(engine, dbClient)
 	defer c.Stop()
+	
+	engine.SetWorkflowsChangedCallback(func() {
+		scheduler.ReloadWorkflows(engine, dbClient)
+	})
 
 	// Run engine in a goroutine
 	go func() {
@@ -141,8 +157,8 @@ func main() {
 		}
 	}()
 
-	// 7. Start HTTP Server for OAuth callbacks
-	mux := setupAuthRouter(oauthCfg, store, tgClient)
+	// 7. Start HTTP Server for OAuth callbacks and GraphQL
+	mux := setupRouter(oauthCfg, store, tgClient, dbClient)
 
 	serverAddr := fmt.Sprintf(":%d", cfg.Server.OrchestratorPort)
 	srv := &http.Server{
@@ -175,8 +191,14 @@ type AuthTelegramClient interface {
 	SendMessage(ctx context.Context, chatID string, text string) error
 }
 
-func setupAuthRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient) *http.ServeMux {
+func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient, dbClient *db.Client) *http.ServeMux {
 	mux := http.NewServeMux()
+	
+	// GraphQL Server
+	srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: &graph.Resolver{DB: dbClient}}))
+	mux.Handle("/graphql", srv)
+	mux.Handle("/playground", playground.Handler("GraphQL playground", "/graphql"))
+
 	mux.HandleFunc("/auth/google/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		stateParam := r.URL.Query().Get("state") // This is the Telegram UserID

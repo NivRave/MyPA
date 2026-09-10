@@ -1,0 +1,29 @@
+﻿scalar Time
+
+type User {
+  id: ID!
+  platformId: String!
+  name: String!
+  role: String!
+  familyGroup: String!
+  createdAt: Time!
+}
+
+type PairingCode {
+  id: ID!
+  code: String!
+  role: String!
+  familyGroup: String!
+  expiresAt: Time!
+  isUsed: Boolean!
+  createdAt: Time!
+}
+
+type Query {
+  users: [User!]!
+  activePairingCodes: [PairingCode!]!
+}
+
+type Mutation {
+  generatePairingCode(role: String!, familyGroup: String!): PairingCode!
+}

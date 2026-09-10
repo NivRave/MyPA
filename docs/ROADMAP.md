@@ -1,56 +1,39 @@
-# MyPA Roadmap & Planning
+# MyPA Feature Roadmap (V3)
 
-This document tracks upcoming features, technical debt, and future improvements for the MyPA project.
+This document tracks upcoming features and functional improvements for the MyPA project, with a focus on the V3 "Expansion" release.
 
-## V3 (Upcoming Major Release)
+## V3: The Expansion Update
+*Focus: Delivering immediate tangible value through new capabilities, improved UX, and a pluggable ecosystem without rewriting the core engine.*
 
-### Initial Missions & Pre-requisites
-1. **Define Development Conventions**
-   - Establish strict agent rules as the very first mission for V3 development. (Completed)
-2. **Verify README**
-   - Review and fix mistakes in the README to ensure it is accurate. (Completed)
+### 1. Core Platform & UX
+- [x] **Web-based Control UI / Dashboard**: Provide a graphical dashboard to manage sessions, tools, configurations, view audit logs, and manage OAuth connections.
+- [x] **Pairing Codes & Stricter Onboarding**: Secure the multi-tenant architecture by requiring an admin to approve new users via a pairing code.
+- **Pluggable Ecosystem (MCP / Plugins)**: Move from hardcoded integrations to a dynamic plugin system (e.g., using the Model Context Protocol) to easily load new tools.
+- **Local Model Support**: Add abstraction to support local LLMs (e.g., via Ollama) for enhanced privacy and local inference.
+- **Companion Nodes for Device Context**: Build a lightweight desktop daemon that connects to the orchestrator to execute local scripts or provide local context.
 
-### Features
-1. **Gmail arrangement and data extraction to trigger automated flows**
-   - For example: if a receipt is received, organize it.
-   - Create events based on emails.
-   - Suggest events based on emails.
-   - Suggest responses.
-   - Suggest deleting, blocking, or removing subscriptions, etc.
-2. **Bigger Whatsapp options**
-   - Connect to groups, etc.
-3. ~~**Multi-user Support**~~ (Completed)
-   - ~~Create another instance for my wife to use on her phone.~~ (Implemented via Multi-Tenant Architecture in V3)
-4. **Enhance Cognitive Capabilities**
-   - Improve brain, memory, and learning process.
-5. **Connect to remote files / Project Management**
-   - For example: "I need to add to 'X' project a 'Y' feature" - beginning with just listing the need, later connecting to GitHub.
-6. **Granular Feature Configuration**
-   - Add optional configuration settings so users can enable only the specific features they want to use.
-7. **Shopping List & General Lists Management**
-   - Add the ability to create, update, and manage various lists (e.g., shopping lists, packing lists) naturally through conversation.
-8. **Cooking Recommendations & Saved Recipes**
-   - Manage saved recipes and provide cooking recommendations (requirements to be expanded).
+### 2. Advanced AI Capabilities
+- [x] **Multimodal Vision (Image Processing)**: Process images sent via Telegram/WhatsApp (e.g., snap a flyer for calendar events, fridge photos for recipes, or receipts for expenses).
+- [x] **Custom Recurring Workflows (Macros)**: Allow users to define complex, multi-step cron jobs via natural language (e.g., weekly email summaries turned into task lists).
+- **Voice Outbound (Two-way Voice)**: Add Text-to-Speech (e.g., ElevenLabs) so the assistant can respond with voice notes, such as for the morning briefing.
+- **Smart Home Orchestration**: Integrate with Home Assistant or Google Home for natural language control of the physical environment, synced with calendar events.
 
-### Suggested Quality of Life (QoL) Features
-1. **Automated Expense & Budget Tracking**: Categorize receipts from Gmail, calculate monthly spending against budgets, split shared expenses, and send financial summaries.
-2. **Proactive Relationship Management (Personal CRM)**: Monitor communication frequency and remind the user to reach out to important contacts (e.g., birthdays, check-ins).
-3. **Smart Scheduling & Contextual Time-Blocking**: Analyze workload to automatically block out "Deep Work" time and suggest rescheduling options for conflicts.
-4. **Unified "Universal Search"**: A single search command that spans Gmail, local files, WhatsApp history, and remote GitHub repositories.
-5. **Voice Note Processing & Meeting Summarization**: Transcribe WhatsApp voice notes, extract actionable tasks, create calendar events, and organize thoughts into the memory system.
-6. ~~**"Read-It-Later" & Content Summarization**: Summarize forwarded articles/videos into key takeaways and include them in Morning Briefs or a learning database.~~ (Completed)
-7. **Geofenced Automations**: Trigger location-based actions (e.g., messaging a spouse when leaving work, or grocery reminders).
-8. **Health & Habit Check-ins**: Interactive WhatsApp messages to help build and track habits (water intake, workouts) based on optimal timing.
-9. **Smart Travel & Itinerary Builder**: Automatically build itineraries from booking confirmations, check weather, suggest packing lists, and look up local events.
-10. **Shared Family Dashboard**: A synchronized space for the multi-user instances to share grocery lists, coordinate schedules, and assign household tasks.
+### 3. Expanded Tooling & QoL
+- [x] **Gmail Automation Flows**: Organize receipts, create events based on emails, suggest responses, and manage subscriptions.
+- **Enhanced WhatsApp Integration**: Support group chats and expanded messaging capabilities.
+- **Project Management Integration**: Connect to remote files and platforms like GitHub to manage project tasks directly.
+- **Granular Feature Configuration**: Add optional configuration settings so users can enable only specific features.
+- **List Management**: Create, update, and manage various lists (e.g., shopping, packing) naturally through conversation.
+- **Cooking & Recipes**: Manage saved recipes and provide cooking recommendations.
 
----
-
-## Backlog & Tech Debt (Future Ideas)
-
-- **Cloud Deployment & CI/CD**: Move from local development to a 24/7 cloud environment. Set up GitHub Actions for automated linting, testing, and deployment. Deploy the dockerized microservice stack to a cloud provider.
-- ~~**Google Tasks: Multiple Lists**: Currently, the assistant only interfaces with the user's `@default` task list. Expand this to allow the assistant to list, switch between, and manage multiple Google Task lists.~~ (Completed)
-- ~~**Improve Response Parsing (Markdown Conversion)**: Ensure LLM responses with complex formatting (like markdown bullet points or tables) translate cleanly across all messaging platforms (Telegram/WhatsApp). Consider building a robust markdown-to-platform-native parser.~~ (Completed)
-- **Proxy Replacement**: Consider replacing the custom Go proxy service with an industry-standard ingress controller (e.g., Nginx, Traefik, or Caddy) to benefit from built-in rate limiting, SSL termination, and load balancing.
-- **API Documentation**: Generate Swagger/OpenAPI specifications or a Postman collection to clearly document the JSON payloads expected by the webhooks.
-- ~~**Daily Blast Pending Tasks**: Add the pending TODO tasks in the daily blast.~~ (Completed)
+### 4. Backlog (Future Feature Ideas)
+- **Automated Expense & Budget Tracking**
+- **Proactive Relationship Management (Personal CRM)**
+- **Smart Scheduling & Contextual Time-Blocking**
+- **Unified "Universal Search"**
+- **Geofenced Automations**
+- **Health & Habit Check-ins**
+- **Smart Travel & Itinerary Builder**
+- **Shared Family Dashboard**
+- **Social Media & "Ghostwriter" Mode**
+- **Personal "Data Takeout" & Full Ownership**

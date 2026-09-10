@@ -58,10 +58,12 @@ type Contact struct {
 }
 // ChatMessage represents a single message in conversation history.
 type ChatMessage struct {
-	Role          string            `json:"role"` // "user", "assistant", or "function"
-	Content       string            `json:"content,omitempty"`
-	ToolCall      *FunctionCall     `json:"tool_call,omitempty"`
-	ToolResponse  *FunctionResponse `json:"tool_response,omitempty"`
+	Role          string             `json:"role"` // "user", "assistant", or "function"
+	Content       string             `json:"content,omitempty"`
+	ToolCalls     []FunctionCall     `json:"tool_calls,omitempty"`
+	ToolResponses []FunctionResponse `json:"tool_responses,omitempty"`
+	PhotoData     []byte             `json:"photo_data,omitempty"`
+	PhotoMimeType string             `json:"photo_mime_type,omitempty"`
 }
 
 type FunctionCall struct {
@@ -105,12 +107,25 @@ type AuditEvent struct {
 	CompletionTokens int       `json:"completion_tokens"`
 }
 
-// User represents an allowed user configured via .env
+// User represents an allowed user in the system.
 type User struct {
-	PlatformID  string `json:"platform_id"`
-	Name        string `json:"name"`
-	Role        string `json:"role"`         // "admin" or "family"
-	FamilyGroup string `json:"family_group"` // e.g., "MyFamily"
+	ID          string    `json:"id" gorm:"primarykey;type:uuid;default:gen_random_uuid()"`
+	PlatformID  string    `json:"platform_id" gorm:"uniqueIndex"`
+	Name        string    `json:"name"`
+	Role        string    `json:"role"`         // "admin" or "family"
+	FamilyGroup string    `json:"family_group"` // e.g., "MyFamily"
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// PairingCode represents a temporary code used to onboard new users.
+type PairingCode struct {
+	ID          string    `json:"id" gorm:"primarykey;type:uuid;default:gen_random_uuid()"`
+	Code        string    `json:"code" gorm:"uniqueIndex"`
+	Role        string    `json:"role"`
+	FamilyGroup string    `json:"family_group"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	IsUsed      bool      `json:"is_used" gorm:"default:false"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Memory represents a long-term fact or preference about a user.
@@ -131,4 +146,15 @@ type ScheduledReminder struct {
 	DueTime   time.Time `json:"due_time" gorm:"index"`
 	IsSent    bool      `json:"is_sent" gorm:"index"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// Workflow represents a scheduled recurring task (macro).
+type Workflow struct {
+	ID             uint      `json:"id" gorm:"primarykey"`
+	UserID         string    `json:"user_id" gorm:"index"`
+	Name           string    `json:"name"`
+	CronExpression string    `json:"cron_expression"`
+	Instruction    string    `json:"instruction"`
+	IsActive       bool      `json:"is_active" gorm:"index"`
+	CreatedAt      time.Time `json:"created_at"`
 }

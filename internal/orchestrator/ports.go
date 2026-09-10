@@ -53,6 +53,7 @@ type GmailClient interface {
 	ListLabels(ctx context.Context, userID string) (map[string]string, error)
 	ApplyLabel(ctx context.Context, userID, messageID, labelID string) error
 	CreateLabel(ctx context.Context, userID, labelName string) (string, error)
+	UnsubscribeEmail(ctx context.Context, userID, messageID string) error
 }
 
 // TasksClient defines the interface for Google Tasks.
@@ -79,6 +80,15 @@ type DBClient interface {
 	SaveReminder(reminder models.ScheduledReminder) error
 	GetDueReminders() ([]models.ScheduledReminder, error)
 	MarkReminderSent(id uint) error
+	GetUser(platformID string) (*models.User, error)
+	UpsertUser(u models.User) error
+	CreatePairingCode(pc models.PairingCode) error
+	GetPairingCode(code string) (*models.PairingCode, error)
+	RedeemPairingCode(codeID string, u models.User) error
+	GetUsersByFamilyGroup(familyGroup string) ([]models.User, error)
+	SaveWorkflow(w models.Workflow) error
+	GetUserWorkflows(userID string) ([]models.Workflow, error)
+	DeleteWorkflow(id uint, userID string) error
 }
 
 // EventPublisher defines the interface for publishing telemetry events.
