@@ -1047,7 +1047,9 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 		}
 		
 		var id uint
-		fmt.Sscanf(idStr, "%d", &id)
+		if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+			return "Invalid id parameter: must be a number"
+		}
 
 		slog.Info("executing delete_workflow tool", "user", msg.UserID, "workflow_id", id)
 		err := e.db.DeleteWorkflow(id, msg.UserID)
