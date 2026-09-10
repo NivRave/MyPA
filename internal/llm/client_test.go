@@ -44,8 +44,8 @@ func TestClient_Chat(t *testing.T) {
 	history := []models.ChatMessage{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "hi"},
-		{Role: "function", ToolResponse: &models.FunctionResponse{Name: "func", Response: map[string]any{}}},
-		{Role: "assistant", ToolCall: &models.FunctionCall{Name: "func", Args: map[string]any{}}},
+		{Role: "function", ToolResponses: []models.FunctionResponse{{Name: "func", Response: map[string]any{}}}},
+		{Role: "assistant", ToolCalls: []models.FunctionCall{{Name: "func", Args: map[string]any{}}}},
 	}
 
 	resp, err := client.Chat(context.Background(), "system prompt", history, "new user message", nil, "")
@@ -87,9 +87,9 @@ func TestClient_Chat_ToolCall(t *testing.T) {
 
 	resp, err := client.Chat(context.Background(), "sys", nil, "msg", nil, "")
 	require.NoError(t, err)
-	require.NotNil(t, resp.ToolCall)
-	assert.Equal(t, "create_calendar_event", resp.ToolCall.Name)
-	assert.Equal(t, "Test", resp.ToolCall.Args["title"])
+	require.NotEmpty(t, resp.ToolCalls)
+	assert.Equal(t, "create_calendar_event", resp.ToolCalls[0].Name)
+	assert.Equal(t, "Test", resp.ToolCalls[0].Args["title"])
 }
 
 func TestClient_GenerateEmbedding(t *testing.T) {

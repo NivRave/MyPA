@@ -60,8 +60,9 @@ func setupTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.M
 		audioMock,
 		eventPublisherMock,
 		"UTC",
-		map[string]models.User{},
 	)
+
+	dbMock.EXPECT().GetUser(gomock.Any()).Return(&models.User{PlatformID: "user-1", Name: "User One"}, nil).AnyTimes()
 
 	cleanup := func() {
 		engine.Wait()
@@ -96,7 +97,7 @@ func TestProcessMessage_ConnectCommand(t *testing.T) {
 		Times(1)
 
 
-	err := engine.processMessage(context.Background(), msg)
+	err := engine.ProcessMessage(context.Background(), msg)
 	assert.NoError(t, err)
 }
 
@@ -124,6 +125,6 @@ func TestProcessMessage_TextMessage(t *testing.T) {
 
 	tgMock.EXPECT().SendMessage(gomock.Any(), "chat-1", "Hello there!").Return(nil).Times(1)
 
-	err := engine.processMessage(context.Background(), msg)
+	err := engine.ProcessMessage(context.Background(), msg)
 	assert.NoError(t, err)
 }

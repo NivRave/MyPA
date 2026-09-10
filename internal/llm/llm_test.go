@@ -30,11 +30,11 @@ func TestLLMFunctionCalling(t *testing.T) {
 	require.NoError(t, err)
 
 	// We expect the model to invoke the tool instead of just returning text
-	require.NotNil(t, resp.ToolCall, "Expected LLM to return a tool call, but got text: %s", resp.Text)
+	require.NotEmpty(t, resp.ToolCalls, "Expected LLM to return a tool call, but got text: %s", resp.Text)
 
-	require.Equal(t, "create_calendar_event", resp.ToolCall.Name)
+	require.Equal(t, "create_calendar_event", resp.ToolCalls[0].Name)
 
-	args := resp.ToolCall.Args
+	args := resp.ToolCalls[0].Args
 	require.NotNil(t, args)
 	
 	// Check that the required arguments are present
@@ -44,7 +44,7 @@ func TestLLMFunctionCalling(t *testing.T) {
 	require.Contains(t, args, "timezone")
 
 	// Print the extracted arguments for visibility
-	t.Logf("Function Called: %s", resp.ToolCall.Name)
+	t.Logf("Function Called: %s", resp.ToolCalls[0].Name)
 	for k, v := range args {
 		t.Logf("  %s: %v", k, v)
 	}
