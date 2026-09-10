@@ -458,6 +458,20 @@ func (mr *MockGmailClientMockRecorder) SoftDeleteEmail(ctx, userID, messageID an
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SoftDeleteEmail", reflect.TypeOf((*MockGmailClient)(nil).SoftDeleteEmail), ctx, userID, messageID)
 }
 
+// UnsubscribeEmail mocks base method.
+func (m *MockGmailClient) UnsubscribeEmail(ctx context.Context, userID, messageID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UnsubscribeEmail", ctx, userID, messageID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UnsubscribeEmail indicates an expected call of UnsubscribeEmail.
+func (mr *MockGmailClientMockRecorder) UnsubscribeEmail(ctx, userID, messageID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnsubscribeEmail", reflect.TypeOf((*MockGmailClient)(nil).UnsubscribeEmail), ctx, userID, messageID)
+}
+
 // MockTasksClient is a mock of TasksClient interface.
 type MockTasksClient struct {
 	ctrl     *gomock.Controller
@@ -632,6 +646,34 @@ func (m *MockDBClient) EXPECT() *MockDBClientMockRecorder {
 	return m.recorder
 }
 
+// CreatePairingCode mocks base method.
+func (m *MockDBClient) CreatePairingCode(pc models.PairingCode) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreatePairingCode", pc)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreatePairingCode indicates an expected call of CreatePairingCode.
+func (mr *MockDBClientMockRecorder) CreatePairingCode(pc any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreatePairingCode", reflect.TypeOf((*MockDBClient)(nil).CreatePairingCode), pc)
+}
+
+// DeleteWorkflow mocks base method.
+func (m *MockDBClient) DeleteWorkflow(id uint, userID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteWorkflow", id, userID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteWorkflow indicates an expected call of DeleteWorkflow.
+func (mr *MockDBClientMockRecorder) DeleteWorkflow(id, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteWorkflow", reflect.TypeOf((*MockDBClient)(nil).DeleteWorkflow), id, userID)
+}
+
 // GetDueReminders mocks base method.
 func (m *MockDBClient) GetDueReminders() ([]models.ScheduledReminder, error) {
 	m.ctrl.T.Helper()
@@ -662,6 +704,21 @@ func (mr *MockDBClientMockRecorder) GetLastAuditSessionForUser(userID any) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLastAuditSessionForUser", reflect.TypeOf((*MockDBClient)(nil).GetLastAuditSessionForUser), userID)
 }
 
+// GetPairingCode mocks base method.
+func (m *MockDBClient) GetPairingCode(code string) (*models.PairingCode, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetPairingCode", code)
+	ret0, _ := ret[0].(*models.PairingCode)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetPairingCode indicates an expected call of GetPairingCode.
+func (mr *MockDBClientMockRecorder) GetPairingCode(code any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPairingCode", reflect.TypeOf((*MockDBClient)(nil).GetPairingCode), code)
+}
+
 // GetUniqueUsers mocks base method.
 func (m *MockDBClient) GetUniqueUsers() ([]string, error) {
 	m.ctrl.T.Helper()
@@ -677,6 +734,51 @@ func (mr *MockDBClientMockRecorder) GetUniqueUsers() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUniqueUsers", reflect.TypeOf((*MockDBClient)(nil).GetUniqueUsers))
 }
 
+// GetUser mocks base method.
+func (m *MockDBClient) GetUser(platformID string) (*models.User, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUser", platformID)
+	ret0, _ := ret[0].(*models.User)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUser indicates an expected call of GetUser.
+func (mr *MockDBClientMockRecorder) GetUser(platformID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUser", reflect.TypeOf((*MockDBClient)(nil).GetUser), platformID)
+}
+
+// GetUserWorkflows mocks base method.
+func (m *MockDBClient) GetUserWorkflows(userID string) ([]models.Workflow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUserWorkflows", userID)
+	ret0, _ := ret[0].([]models.Workflow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUserWorkflows indicates an expected call of GetUserWorkflows.
+func (mr *MockDBClientMockRecorder) GetUserWorkflows(userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserWorkflows", reflect.TypeOf((*MockDBClient)(nil).GetUserWorkflows), userID)
+}
+
+// GetUsersByFamilyGroup mocks base method.
+func (m *MockDBClient) GetUsersByFamilyGroup(familyGroup string) ([]models.User, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUsersByFamilyGroup", familyGroup)
+	ret0, _ := ret[0].([]models.User)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUsersByFamilyGroup indicates an expected call of GetUsersByFamilyGroup.
+func (mr *MockDBClientMockRecorder) GetUsersByFamilyGroup(familyGroup any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsersByFamilyGroup", reflect.TypeOf((*MockDBClient)(nil).GetUsersByFamilyGroup), familyGroup)
+}
+
 // MarkReminderSent mocks base method.
 func (m *MockDBClient) MarkReminderSent(id uint) error {
 	m.ctrl.T.Helper()
@@ -689,6 +791,20 @@ func (m *MockDBClient) MarkReminderSent(id uint) error {
 func (mr *MockDBClientMockRecorder) MarkReminderSent(id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkReminderSent", reflect.TypeOf((*MockDBClient)(nil).MarkReminderSent), id)
+}
+
+// RedeemPairingCode mocks base method.
+func (m *MockDBClient) RedeemPairingCode(codeID string, u models.User) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RedeemPairingCode", codeID, u)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RedeemPairingCode indicates an expected call of RedeemPairingCode.
+func (mr *MockDBClientMockRecorder) RedeemPairingCode(codeID, u any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RedeemPairingCode", reflect.TypeOf((*MockDBClient)(nil).RedeemPairingCode), codeID, u)
 }
 
 // SaveMemory mocks base method.
@@ -719,6 +835,20 @@ func (mr *MockDBClientMockRecorder) SaveReminder(reminder any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveReminder", reflect.TypeOf((*MockDBClient)(nil).SaveReminder), reminder)
 }
 
+// SaveWorkflow mocks base method.
+func (m *MockDBClient) SaveWorkflow(w models.Workflow) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SaveWorkflow", w)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SaveWorkflow indicates an expected call of SaveWorkflow.
+func (mr *MockDBClientMockRecorder) SaveWorkflow(w any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveWorkflow", reflect.TypeOf((*MockDBClient)(nil).SaveWorkflow), w)
+}
+
 // SearchMemories mocks base method.
 func (m *MockDBClient) SearchMemories(userIDs []string, embedding pgvector.Vector, limit int) ([]models.Memory, error) {
 	m.ctrl.T.Helper()
@@ -732,6 +862,20 @@ func (m *MockDBClient) SearchMemories(userIDs []string, embedding pgvector.Vecto
 func (mr *MockDBClientMockRecorder) SearchMemories(userIDs, embedding, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SearchMemories", reflect.TypeOf((*MockDBClient)(nil).SearchMemories), userIDs, embedding, limit)
+}
+
+// UpsertUser mocks base method.
+func (m *MockDBClient) UpsertUser(u models.User) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpsertUser", u)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpsertUser indicates an expected call of UpsertUser.
+func (mr *MockDBClientMockRecorder) UpsertUser(u any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertUser", reflect.TypeOf((*MockDBClient)(nil).UpsertUser), u)
 }
 
 // MockEventPublisher is a mock of EventPublisher interface.

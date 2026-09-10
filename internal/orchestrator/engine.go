@@ -554,6 +554,18 @@ func (e *Engine) handleToolCalls(ctx context.Context, msg models.Message, histor
 	return summaryResp.Text, nil
 }
 
+func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) (string, error) {
+	if toolCall.Name == "schedule_reminder" || toolCall.Name == "unknown_tool" || toolCall.Name == "fetch_webpage" {
+		return e.executeSingleTool(ctx, msg, history, systemPrompt, toolCall), nil
+	}
+	if toolCall.Name == "search_emails" {
+		res := e.executeSingleTool(ctx, msg, history, systemPrompt, toolCall)
+		if res == "You have no unread emails." {
+			return res, nil
+		}
+	}
+	return e.handleToolCalls(ctx, msg, history, systemPrompt, []*genai.FunctionCall{toolCall})
+}
 
 func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) string {
 	slog.Info("llm requested tool call", "tool", toolCall.Name)

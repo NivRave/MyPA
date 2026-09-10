@@ -191,13 +191,19 @@ type AuthTelegramClient interface {
 	SendMessage(ctx context.Context, chatID string, text string) error
 }
 
+func setupAuthRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient) *http.ServeMux {
+	return setupRouter(oauthCfg, store, tgClient, nil)
+}
+
 func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient, dbClient *db.Client) *http.ServeMux {
 	mux := http.NewServeMux()
 	
 	// GraphQL Server
-	srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: &graph.Resolver{DB: dbClient}}))
-	mux.Handle("/graphql", srv)
-	mux.Handle("/playground", playground.Handler("GraphQL playground", "/graphql"))
+	if dbClient != nil {
+		srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: &graph.Resolver{DB: dbClient}}))
+		mux.Handle("/graphql", srv)
+		mux.Handle("/playground", playground.Handler("GraphQL playground", "/graphql"))
+	}
 
 	mux.HandleFunc("/auth/google/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")

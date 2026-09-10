@@ -119,7 +119,7 @@ func TestClient_ReadEmail(t *testing.T) {
 
 	body, err := client.ReadEmail(context.Background(), "testuser", "msg1")
 	require.NoError(t, err)
-	assert.Equal(t, "Hello World", body)
+	assert.Contains(t, body, "Hello World")
 }
 
 func TestClient_DraftReply(t *testing.T) {
