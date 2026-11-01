@@ -27,10 +27,21 @@ func NewClient(cfg config.TwilioConfig) *Client {
 }
 
 // SendMessage sends a WhatsApp message (text) to the target number.
+// If the formatted text exceeds the max length (1500 chars), it is split across multiple messages.
 func (c *Client) SendMessage(ctx context.Context, to string, text string) error {
-	apiURL := fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", c.cfg.AccountSID)
-
 	formattedText := markdown.ToWhatsApp(text)
+	chunks := SplitMessage(formattedText, 1500)
+
+	for _, chunk := range chunks {
+		if err := c.sendSingleMessage(ctx, to, chunk); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) sendSingleMessage(ctx context.Context, to string, body string) error {
+	apiURL := fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", c.cfg.AccountSID)
 
 	data := url.Values{}
 	if !strings.HasPrefix(to, "whatsapp:") {
@@ -38,7 +49,7 @@ func (c *Client) SendMessage(ctx context.Context, to string, text string) error 
 	}
 	data.Set("To", to)
 	data.Set("From", c.cfg.FromNumber)
-	data.Set("Body", formattedText)
+	data.Set("Body", body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(data.Encode()))
 	if err != nil {
@@ -60,6 +71,40 @@ func (c *Client) SendMessage(ctx context.Context, to string, text string) error 
 	}
 
 	return nil
+}
+
+// SplitMessage splits text into chunks of at most maxLen characters,
+// prioritizing cuts at double newlines (\n\n), newlines (\n), or spaces.
+func SplitMessage(text string, maxLen int) []string {
+	if len(text) <= maxLen {
+		return []string{text}
+	}
+
+	var chunks []string
+	remaining := text
+
+	for len(remaining) > maxLen {
+		cut := maxLen
+		if idx := strings.LastIndex(remaining[:cut], "\n\n"); idx > 0 {
+			cut = idx + 2
+		} else if idx := strings.LastIndex(remaining[:cut], "\n"); idx > 0 {
+			cut = idx + 1
+		} else if idx := strings.LastIndex(remaining[:cut], " "); idx > 0 {
+			cut = idx + 1
+		}
+
+		chunk := strings.TrimSpace(remaining[:cut])
+		if chunk != "" {
+			chunks = append(chunks, chunk)
+		}
+		remaining = strings.TrimSpace(remaining[cut:])
+	}
+
+	if len(remaining) > 0 {
+		chunks = append(chunks, remaining)
+	}
+
+	return chunks
 }
 
 // DownloadMedia downloads a media file securely from Twilio using HTTP Basic Auth.

@@ -3,9 +3,11 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +46,14 @@ type Engine struct {
 	publisher       EventPublisher
 	wg              sync.WaitGroup
 	onWorkflowsChanged func()
+}
+
+var hebrewPrepositionRegex = regexp.MustCompile(`(^|[^\p{Hebrew}\w])([בלמכ])(\d+)`)
+
+// NormalizeHebrewPrepositionNumbers inserts a hyphen between Hebrew preposition letters and attached numbers (e.g., "ב18" -> "ב-18").
+// This prevents automated false-positive safety/content filter blocks in LLM tokenizers.
+func NormalizeHebrewPrepositionNumbers(text string) string {
+	return hebrewPrepositionRegex.ReplaceAllString(text, "${1}${2}-${3}")
 }
 
 // SetWorkflowsChangedCallback sets a callback to be invoked when workflows change.
@@ -346,6 +356,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	} else if msg.Source == "whatsapp" && msg.MediaURL != "" {
 		mediaType := strings.ToLower(msg.MediaContentType)
 		slog.Info("WhatsApp media received", "media_url", msg.MediaURL, "content_type", mediaType)
+
+		isTextDoc := strings.HasPrefix(mediaType, "text/") ||
+			mediaType == "application/json" ||
+			mediaType == "application/xml" ||
+			mediaType == "application/csv" ||
+			mediaType == "application/x-yaml" ||
+			mediaType == "text/yaml"
+
 		if strings.HasPrefix(mediaType, "image/") {
 			photoData, err = e.twClient.DownloadMedia(ctx, msg.MediaURL)
 			if err != nil {
@@ -353,7 +371,29 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 				return fmt.Errorf("failed to download twilio photo: %w", err)
 			}
 			photoMimeType = msg.MediaContentType
-		} else {
+		} else if isTextDoc {
+			docData, err := e.twClient.DownloadMedia(ctx, msg.MediaURL)
+			if err != nil {
+				_ = e.sendMessage(ctx, msg, "❌ Failed to download WhatsApp document.")
+				return fmt.Errorf("failed to download twilio document: %w", err)
+			}
+			docText := string(docData)
+			if strings.TrimSpace(msg.Text) != "" {
+				msg.Text = fmt.Sprintf("%s\n\n[Attached Document Content]:\n%s", strings.TrimSpace(msg.Text), docText)
+			} else {
+				msg.Text = docText
+			}
+		} else if mediaType == "application/pdf" {
+			photoData, err = e.twClient.DownloadMedia(ctx, msg.MediaURL)
+			if err != nil {
+				_ = e.sendMessage(ctx, msg, "❌ Failed to download WhatsApp PDF.")
+				return fmt.Errorf("failed to download twilio pdf: %w", err)
+			}
+			photoMimeType = "application/pdf"
+			if strings.TrimSpace(msg.Text) == "" {
+				msg.Text = "Please process and analyze the attached document."
+			}
+		} else if strings.HasPrefix(mediaType, "audio/") || mediaType == "application/ogg" {
 			// Handle Twilio Voice Messages
 			audioData, err := e.twClient.DownloadMedia(ctx, msg.MediaURL)
 			if err != nil {
@@ -369,6 +409,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 
 			_ = e.sendMessage(ctx, msg, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
 			msg.Text = transcribedText
+		} else {
+			_ = e.sendMessage(ctx, msg, fmt.Sprintf("⚠️ Unsupported attachment format (%s). Please send a text file (.txt, .md, .csv), PDF, image, or voice note.", msg.MediaContentType))
+			return nil
 		}
 	}
 
@@ -424,7 +467,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		"If the user sends an image of a flyer or invitation, extract the details and use create_calendar_event. "+
 		"If the user sends an image of a receipt, summarize the expense. "+
 		"If the user sends an image containing a personal fact (e.g. a business card), describe it and use the remember_fact tool to save it. "+
-		"IMPORTANT: If the user provides a list (e.g., in an image or text), you MUST process ALL items by executing multiple tool calls simultaneously. "+
+		"If the user shares a document, text file (.txt, .md, .csv), or PDF, analyze its contents and fulfill any requests, questions, or workflows requested by the user. "+
+		"IMPORTANT: If the user provides a list (e.g., in an image, document, or text), you MUST process ALL items by executing multiple tool calls simultaneously. "+
 		"IMPORTANT: If a tool returns JSON or raw data (like list_unread_emails or list_tasks), you MUST summarize and format it into a clean, friendly, conversational response (e.g. using bullet points). NEVER output raw JSON to the user. "+
 		"IMPORTANT: The user is in Israel. The week starts on Sunday and ends on Thursday (Friday and Saturday are the weekend). When reasoning about 'next week' or 'this week', start the week on Sunday.",
 		userCtx, user.Role, user.FamilyGroup, time.Now().Format(time.RFC1123), e.timezone,
@@ -463,8 +507,27 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	}
 
 	// 4. Call LLM
-	resp, err := e.llm.Chat(ctx, systemPrompt, history, msg.Text, photoData, photoMimeType)
+	promptText := msg.Text
+	resp, err := e.llm.Chat(ctx, systemPrompt, history, promptText, photoData, photoMimeType)
 	if err != nil {
+		var blockedErr *llm.ContentBlockedError
+		if errors.As(err, &blockedErr) {
+			normalized := NormalizeHebrewPrepositionNumbers(promptText)
+			if normalized != promptText {
+				slog.Info("retrying LLM chat with normalized prompt after content block", "original", promptText, "normalized", normalized, "reason", blockedErr.BlockReason)
+				resp, err = e.llm.Chat(ctx, systemPrompt, history, normalized, photoData, photoMimeType)
+			}
+		}
+	}
+	if err != nil {
+		var blockedErr *llm.ContentBlockedError
+		if errors.As(err, &blockedErr) {
+			slog.Warn("llm prompt blocked by safety filter", "user_id", msg.UserID, "reason", blockedErr.BlockReason)
+			replyText := "⚠️ The AI safety filter flagged this request (likely a false positive). Please try phrasing it slightly differently, for example by adding a hyphen (e.g. 'ב-18:00') or using full time/date words."
+			llmResponse = replyText
+			_ = e.sendMessage(ctx, msg, replyText)
+			return nil
+		}
 		return fmt.Errorf("llm chat failed: %w", err)
 	}
 
@@ -543,6 +606,10 @@ func (e *Engine) handleToolCalls(ctx context.Context, msg models.Message, histor
 	
 	summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, prompt, nil, "")
 	if err != nil {
+		var blockedErr *llm.ContentBlockedError
+		if errors.As(err, &blockedErr) {
+			return "⚠️ Actions were executed, but the final response summary was flagged by the AI content filter.", nil
+		}
 		return "❌ Failed to process: " + err.Error(), nil
 	}
 	

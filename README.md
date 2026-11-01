@@ -31,20 +31,22 @@ Dashboard (GraphQL) →                           ↳ GraphQL API (8081)        
 - **System Commands**: Built-in commands for connecting accounts (`/connect`), on-demand database backups (`/backup` and `/restore`), and dynamically generated help (`/help`).
 - **Microservice Architecture**: Decoupled ingestion and execution layers connected via RabbitMQ.
 
-## V2 (Current Release)
+## V3 (Current Release)
 
-MyPA has officially reached **V2**! 
-While V1 (last commit: `c6a3882e63f4db695b345f2b57f2b9b672e9cbbf`, tag: `v1.0.0`) focused on building a robust core scheduling engine, V2 significantly expands the assistant's capabilities. 
+MyPA has officially reached **V3 (The Expansion Release)**! 
+While V1 (`v1.0.0`) established the core scheduling engine and V2 (`v2.0.0`) introduced semantic memory, reminders, and Google ecosystem integrations, **V3** transforms MyPA into a comprehensive, multi-modal personal assistant with web management and proactive automations.
 
-The latest release (`v2.1.0`) includes:
+The latest release (`v3.2.2`) includes:
 
-- **Semantic Memory & Proactive Briefings**: Long-term memory storage using `pgvector` and daily morning summaries of your schedule and pending tasks.
-- **Proactive Scheduled Reminders**: Ask the assistant to "Remind me at 11:00" and receive a push notification at the exact time.
-- **Multi-turn Conversational UX**: Tool data (like tasks and unread emails) are synthesized naturally in conversation rather than outputting rigid JSON.
-- **Expanded Ecosystem Integrations**: Full support for Gmail (reading/drafting), Google Tasks (CRUD operations), and real-time Web Search via Tavily.
-- **Enhanced Core Capabilities**: Support for recurring calendar events and a streamlined UX that executes tasks immediately without requiring confirmation.
+- **Web Dashboard & GraphQL API**: Standalone Next.js control UI (`:3030`) for real-time audit log exploration, session inspection, tool configuration, OAuth status, and user management backed by a `gqlgen` GraphQL endpoint (`:8081`).
+- **Pairing Codes & Multi-Tenant Onboarding**: Secure multi-user access control using 6-digit pairing codes with role assignments (Admin, Family) and family group memory isolation.
+- **Multimodal Vision & Document Attachments**: Vision reasoning for event flyers, receipts, and photos, plus native document attachment support (`.txt`, `.md`, `.csv`, `.json`, `.pdf`) in WhatsApp with automatic outbound message chunking (≤1,500 chars) to bypass Twilio's length limitations.
+- **Parallel Tool Execution & Multi-Turn Agent Loop**: Multi-turn execution capable of parallel tool calls (e.g. bulk tasks, batch email actions) and natural synthesis.
+- **Custom Recurring Workflows (Macros)**: Define and manage automated cron jobs via natural language (`schedule_workflow`, `delete_workflow`) that run background workflows.
+- **Gmail Automation Flows**: Proactive agent behaviors to organize receipts, autonomously unsubscribe from newsletters, draft responses, and extract calendar events from emails.
+- **Docker-Managed ngrok Ingress**: Zero-terminal setup with a containerized ngrok service running directly in Docker Compose with real-time traffic inspection at `http://localhost:4040`.
 
-The V2 engine is fully built, containerized, and production-ready.
+The V3 engine is fully containerized, CI-verified, and production-ready.
 
 👉 **See the [ROADMAP.md](docs/ROADMAP.md) for planned features and [architecture_v4.md](docs/architecture_v4.md) for the V4 system vision.**
 

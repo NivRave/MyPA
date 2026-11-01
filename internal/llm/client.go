@@ -42,6 +42,15 @@ func NewClient(ctx context.Context, apiKey, model string, opts ...func(*genai.Cl
 	}, nil
 }
 
+// ContentBlockedError indicates that Gemini blocked the prompt or output due to a safety or content policy filter.
+type ContentBlockedError struct {
+	BlockReason string
+}
+
+func (e *ContentBlockedError) Error() string {
+	return fmt.Sprintf("gemini blocked prompt: %s", e.BlockReason)
+}
+
 // Response represents the output from the LLM, which could be either a text reply or a tool call.
 type Response struct {
 	Text        string
@@ -119,8 +128,22 @@ func (c *Client) Chat(ctx context.Context, systemInstruction string, history []m
 		return nil, fmt.Errorf("failed to generate content: %w", err)
 	}
 
+	if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "" {
+		return nil, &ContentBlockedError{BlockReason: string(resp.PromptFeedback.BlockReason)}
+	}
+
 	if len(resp.Candidates) == 0 {
 		return nil, fmt.Errorf("no candidates returned from model")
+	}
+
+	if resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
+		if resp.Candidates[0].FinishReason != "" && resp.Candidates[0].FinishReason != "STOP" {
+			if resp.Candidates[0].FinishReason == "SAFETY" || resp.Candidates[0].FinishReason == "BLOCKLIST" || resp.Candidates[0].FinishReason == "PROHIBITED_CONTENT" {
+				return nil, &ContentBlockedError{BlockReason: string(resp.Candidates[0].FinishReason)}
+			}
+			return nil, fmt.Errorf("model candidate finished with reason: %v", resp.Candidates[0].FinishReason)
+		}
+		return nil, fmt.Errorf("no content returned in model candidate")
 	}
 
 	var toolCalls []*genai.FunctionCall

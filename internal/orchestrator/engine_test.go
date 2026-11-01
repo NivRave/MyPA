@@ -128,3 +128,216 @@ func TestProcessMessage_TextMessage(t *testing.T) {
 	err := engine.ProcessMessage(context.Background(), msg)
 	assert.NoError(t, err)
 }
+
+func TestProcessMessage_WhatsApp_TextDocument(t *testing.T) {
+	engine, _, llmMock, dbMock, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	twMock := engine.twClient.(*mocks.MockTwilioClient)
+
+	msg := models.Message{
+		ID:               "wa-msg-1",
+		UserID:           "+1234567890",
+		ChatID:           "+1234567890",
+		Text:             "Please setup my daily checklist:",
+		Source:           "whatsapp",
+		MediaURL:         "https://api.twilio.com/media/doc123",
+		MediaContentType: "text/plain",
+		Timestamp:        time.Now(),
+	}
+
+	docContent := "Habit 1: Drink water\nHabit 2: Stretch"
+	twMock.EXPECT().DownloadMedia(gomock.Any(), "https://api.twilio.com/media/doc123").Return([]byte(docContent), nil).Times(1)
+
+	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
+	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.Memory{}, nil).AnyTimes()
+
+	llmResponse := &llm.Response{
+		Text: "Checklist received and scheduled!",
+	}
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Nil(), "").
+		DoAndReturn(func(ctx context.Context, sys string, hist []models.ChatMessage, newMsg string, photo []byte, mime string) (*llm.Response, error) {
+			assert.Contains(t, newMsg, "Please setup my daily checklist:")
+			assert.Contains(t, newMsg, "[Attached Document Content]:")
+			assert.Contains(t, newMsg, docContent)
+			return llmResponse, nil
+		}).Times(1)
+
+	twMock.EXPECT().SendMessage(gomock.Any(), "+1234567890", "Checklist received and scheduled!").Return(nil).Times(1)
+
+	err := engine.ProcessMessage(context.Background(), msg)
+	assert.NoError(t, err)
+}
+
+func TestProcessMessage_WhatsApp_PDFDocument(t *testing.T) {
+	engine, _, llmMock, dbMock, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	twMock := engine.twClient.(*mocks.MockTwilioClient)
+
+	msg := models.Message{
+		ID:               "wa-msg-2",
+		UserID:           "+1234567890",
+		ChatID:           "+1234567890",
+		Text:             "",
+		Source:           "whatsapp",
+		MediaURL:         "https://api.twilio.com/media/pdf123",
+		MediaContentType: "application/pdf",
+		Timestamp:        time.Now(),
+	}
+
+	pdfBytes := []byte("%PDF-1.4 mock content")
+	twMock.EXPECT().DownloadMedia(gomock.Any(), "https://api.twilio.com/media/pdf123").Return(pdfBytes, nil).Times(1)
+
+	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
+	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.Memory{}, nil).AnyTimes()
+
+	llmResponse := &llm.Response{
+		Text: "Document analyzed!",
+	}
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), "Please process and analyze the attached document.", pdfBytes, "application/pdf").
+		Return(llmResponse, nil).Times(1)
+
+	twMock.EXPECT().SendMessage(gomock.Any(), "+1234567890", "Document analyzed!").Return(nil).Times(1)
+
+	err := engine.ProcessMessage(context.Background(), msg)
+	assert.NoError(t, err)
+}
+
+func TestProcessMessage_WhatsApp_UnsupportedMedia(t *testing.T) {
+	engine, _, _, _, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	twMock := engine.twClient.(*mocks.MockTwilioClient)
+
+	msg := models.Message{
+		ID:               "wa-msg-3",
+		UserID:           "+1234567890",
+		ChatID:           "+1234567890",
+		Text:             "",
+		Source:           "whatsapp",
+		MediaURL:         "https://api.twilio.com/media/vid123",
+		MediaContentType: "video/mp4",
+		Timestamp:        time.Now(),
+	}
+
+	twMock.EXPECT().SendMessage(gomock.Any(), "+1234567890", gomock.Any()).
+		DoAndReturn(func(ctx context.Context, to, text string) error {
+			assert.Contains(t, text, "Unsupported attachment format")
+			return nil
+		}).Times(1)
+
+	err := engine.ProcessMessage(context.Background(), msg)
+	assert.NoError(t, err)
+}
+
+func TestNormalizeHebrewPrepositionNumbers(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{
+			input:    "תזכיר לי ב18 לנקות את השואב",
+			expected: "תזכיר לי ב-18 לנקות את השואב",
+		},
+		{
+			input:    "פגישה ב10:30 בבוקר",
+			expected: "פגישה ב-10:30 בבוקר",
+		},
+		{
+			input:    "ב18",
+			expected: "ב-18",
+		},
+		{
+			input:    "ב-18",
+			expected: "ב-18",
+		},
+		{
+			input:    "מ5 עד 10",
+			expected: "מ-5 עד 10",
+		},
+		{
+			input:    "ל20 אנשים",
+			expected: "ל-20 אנשים",
+		},
+		{
+			input:    "כ50 אחוז",
+			expected: "כ-50 אחוז",
+		},
+		{
+			input:    "רכב18",
+			expected: "רכב18",
+		},
+	}
+
+	for _, tt := range tests {
+		actual := NormalizeHebrewPrepositionNumbers(tt.input)
+		assert.Equal(t, tt.expected, actual, "for input: %s", tt.input)
+	}
+}
+
+func TestProcessMessage_ContentBlocked_RetrySuccess(t *testing.T) {
+	engine, _, llmMock, dbMock, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	twMock := engine.twClient.(*mocks.MockTwilioClient)
+
+	msg := models.Message{
+		ID:        "wa-blocked-1",
+		UserID:    "+1234567890",
+		ChatID:    "+1234567890",
+		Text:      "תזכיר לי ב18 לנקות את השואב",
+		Source:    "whatsapp",
+		Timestamp: time.Now(),
+	}
+
+	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
+	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.Memory{}, nil).AnyTimes()
+
+	// 1st call fails with ContentBlockedError
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), "תזכיר לי ב18 לנקות את השואב", gomock.Any(), gomock.Any()).
+		Return(nil, &llm.ContentBlockedError{BlockReason: "PROHIBITED_CONTENT"}).Times(1)
+
+	// 2nd call with normalized text succeeds
+	llmResponse := &llm.Response{
+		Text: "רשמתי תזכורת!",
+	}
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), "תזכיר לי ב-18 לנקות את השואב", gomock.Any(), gomock.Any()).
+		Return(llmResponse, nil).Times(1)
+
+	twMock.EXPECT().SendMessage(gomock.Any(), "+1234567890", "רשמתי תזכורת!").Return(nil).Times(1)
+
+	err := engine.ProcessMessage(context.Background(), msg)
+	assert.NoError(t, err)
+}
+
+func TestProcessMessage_ContentBlocked_PersistentError(t *testing.T) {
+	engine, _, llmMock, dbMock, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	twMock := engine.twClient.(*mocks.MockTwilioClient)
+
+	msg := models.Message{
+		ID:        "wa-blocked-2",
+		UserID:    "+1234567890",
+		ChatID:    "+1234567890",
+		Text:      "some blocked text without numbers",
+		Source:    "whatsapp",
+		Timestamp: time.Now(),
+	}
+
+	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
+	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.Memory{}, nil).AnyTimes()
+
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), "some blocked text without numbers", gomock.Any(), gomock.Any()).
+		Return(nil, &llm.ContentBlockedError{BlockReason: "SAFETY"}).Times(1)
+
+	twMock.EXPECT().SendMessage(gomock.Any(), "+1234567890", gomock.Any()).
+		DoAndReturn(func(ctx context.Context, to, text string) error {
+			assert.Contains(t, text, "AI safety filter flagged this request")
+			return nil
+		}).Times(1)
+
+	err := engine.ProcessMessage(context.Background(), msg)
+	assert.NoError(t, err)
+}

@@ -122,6 +122,63 @@ func TestClient_GenerateEmbedding(t *testing.T) {
 	assert.Equal(t, float32(0.1), emb[0])
 }
 
+func TestClient_Chat_PromptBlocked(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"promptFeedback": {
+				"blockReason": "PROHIBITED_CONTENT"
+			},
+			"candidates": []
+		}`))
+	}))
+	defer ts.Close()
+
+	withHTTPClient := func(cfg *genai.ClientConfig) {
+		cfg.HTTPClient = &http.Client{
+			Transport: &rewriteTransport{URL: ts.URL},
+		}
+	}
+
+	client, err := NewClient(context.Background(), "mock-key", "gemini-test", withHTTPClient)
+	require.NoError(t, err)
+
+	_, err = client.Chat(context.Background(), "sys", nil, "msg", nil, "")
+	require.Error(t, err)
+	var blockedErr *ContentBlockedError
+	require.ErrorAs(t, err, &blockedErr)
+	assert.Equal(t, "PROHIBITED_CONTENT", blockedErr.BlockReason)
+}
+
+func TestClient_Chat_CandidateSafetyBlocked(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"candidates": [
+				{
+					"finishReason": "SAFETY"
+				}
+			]
+		}`))
+	}))
+	defer ts.Close()
+
+	withHTTPClient := func(cfg *genai.ClientConfig) {
+		cfg.HTTPClient = &http.Client{
+			Transport: &rewriteTransport{URL: ts.URL},
+		}
+	}
+
+	client, err := NewClient(context.Background(), "mock-key", "gemini-test", withHTTPClient)
+	require.NoError(t, err)
+
+	_, err = client.Chat(context.Background(), "sys", nil, "msg", nil, "")
+	require.Error(t, err)
+	var blockedErr *ContentBlockedError
+	require.ErrorAs(t, err, &blockedErr)
+	assert.Equal(t, "SAFETY", blockedErr.BlockReason)
+}
+
 func TestNewClient_NoKey(t *testing.T) {
 	_, err := NewClient(context.Background(), "", "")
 	require.Error(t, err)
