@@ -1,62 +1,105 @@
-# MyPA — Personal AI Assistant
+# MyPA — Multi-Channel Personal & Family AI Operating System
 
-An event-driven personal AI assistant that captures natural language requests via Telegram and autonomously interacts with Google Calendar using Gemini API tool calling. It supports full CRUD (Create, Read, Update, Delete) operations, conversational event summarization, and multi-turn tool execution.
+An event-driven, multi-tenant personal and family AI operating system accessible via **WhatsApp**, **Telegram**, and a **Next.js 15 Web Control Dashboard**. Built in Go and powered by Google Gemini tool-calling, PostgreSQL (`pgvector`), Redis, and RabbitMQ, MyPA combines core productivity integrations (Google Calendar, Gmail, Google Tasks, Web Search, Voice & Vision) with specialized life-domain intelligence across **Baby & Child Care**, **House & Vehicle Assets**, **Finance & Budgets**, **Shared Family Spaces**, **Topic-Mapped Memory & Living Entity Profiles**, **On-Demand External APIs & Event-Driven Automations**, and **Transactional Durability with Conversational Undo (`/undo`)**.
+
+---
 
 ## Architecture
 
 ```text
-Telegram/WhatsApp Webhooks → ngrok (4040) → Proxy (8000) → Gateway (8080) → RabbitMQ → Orchestrator (8081) → Gemini API & Google Calendar API
-Dashboard (GraphQL) →                           ↳ GraphQL API (8081)          ↳ Redis (State & Tokens)
-                                                ↳ OAuth Callbacks (8081)      ↳ PostgreSQL (Audit Logs, Memory, & Users)
+Telegram / WhatsApp Webhooks ──► ngrok (4040) ──► Proxy (8000) ──► Gateway (8080) ──► RabbitMQ
+                                                       │                                  │
+Next.js 15 Dashboard (3030)  ──────────────────────────┤                                  ▼
+                                                       ▼                        Orchestrator (8081)
+                                              GraphQL API (8081) ◄────────────────────────┤
+                                              OAuth Callbacks (8081)                      ├──► Gemini API (Multi-Turn + Parallel Tools)
+                                                                                          ├──► Modular ToolRegistry & Domain Modules
+                                                                                          ├──► Internal MutationEvent Bus (Undo / Partner Sync / Rules)
+                                                                                          ├──► Google Calendar, Gmail, Tasks & Tavily APIs
+                                                                                          ├──► Redis (Conversation State & Hot Tokens)
+                                                                                          └──► PostgreSQL + pgvector (Encrypted Fallback, Audit, Domains)
 ```
 
-## Features
-- **Web Dashboard**: Next.js-based admin dashboard powered by a GraphQL API for viewing audit logs, managing users and pairing codes, configuring tools, handling OAuth, and global settings.
-- **Multi-Tenant Architecture**: Shared bot handle for multiple users (e.g., family members). Isolated personal data with shared family memory retrieval.
-- **Multi-Channel Support**: Available on both Telegram and WhatsApp (via Twilio API).
-- **Conversational Scheduling**: Create single or recurring Google Calendar events via natural language (infers dates, times, and recurrence rules).
-- **Gmail Integration**: Ask the assistant to search, read, label, archive, and soft-delete emails, as well as draft replies directly from Telegram/WhatsApp.
-- **Google Tasks Integration**: Create, complete, list, and delete Google Tasks across multiple task lists (e.g., Shopping, Work, Personal).
-- **Web Search**: Answer real-time questions and summarize current events via the Tavily Search API.
-- **Semantic Memory**: Infinite, searchable long-term memory of past conversations and user preferences using PostgreSQL `pgvector`.
-- **Proactive Morning Briefings**: A background scheduler proactively wakes up and messages the user a summary of their daily schedule and pending TODO tasks.
-- **Voice Commands**: Send voice messages via Telegram or WhatsApp, transcribed automatically using the Groq Whisper API.
-- **Calendar Querying & Summarization**: Ask "What do I have tomorrow?" to retrieve and naturally summarize events.
-- **Event Modifications**: Update or delete events easily through natural language.
-- **Multi-turn Execution**: Capable of recursive reasoning, such as fetching events and then acting upon the retrieved list in a single user turn.
-- **Custom Recurring Workflows (Macros)**: Allow users to define complex, multi-step cron jobs via natural language (e.g., weekly email summaries turned into task lists).
-- **Multimodal Vision**: Process images sent via Telegram/WhatsApp (e.g., snap a flyer for calendar events or receipts for expenses).
-- **Gmail Automation Flows**: Proactive agent behaviors to organize receipts, create events from emails, suggest responses, and autonomously unsubscribe from newsletters.
-- **Durability & Rollback (`/undo`)**: Complete mutation audit logging with before/after state snapshots and one-click rollback support via `/undo` command and GraphQL `rollbackMutation`.
-- **Topic-Isolated Memories & Living Entities**: Hierarchical topic memory trees with automatic conflict superseding and living entity profile cards.
-- **Multi-Schedule & Contextual Calendars**: Virtual sub-calendars separating work and family schedules with schedule event overlays.
-- **Baby & Family Care Tracker**: Real-time growth tracking, wonder weeks developmental leaps, pediatric medication cooldown safety enforcement, feeding/sleep logs, and supplies inventory.
-- **House Maintenance, Contracts & Vehicle Vault**: Lease/mortgage/warranty contract manager with renewal notice deadlines, preventive upkeep schedules, and vehicle service mileage/inspection tracking.
-- **Financial Tracking & Budget Intelligence**: Expense/income ledger with receipt vision parsing, monthly category budgets, alert thresholds, >30% historical spending anomaly detection, and recurring bills tracking.
-- **On-Demand External APIs & Automations**: SSRF-protected on-demand REST/webhook API connector registry (AES-256-GCM encrypted headers), event-driven When→If→Then rules engine, and Personal CRM with anniversary/birthday alerts.
-- **Shared Spaces & Partner Sync**: Collaborative spaces with cross-partner push notifications and claim/complete task hand-offs.
-- **Expanded Web Control UI & GraphQL API**: Comprehensive Next.js Dashboard (`:3030`) with dedicated domain pages for all 9 expansion areas, KPI summary cards, and full GraphQL coverage.
-- **System Commands**: Built-in commands for connecting accounts (`/connect`), on-demand database backups (`/backup` and `/restore`), rollback (`/undo`), and dynamically generated help (`/help`).
-- **Microservice Architecture**: Decoupled ingestion and execution layers connected via RabbitMQ.
+### Core Architectural Pillars
+- **Modular `ToolModule` Registry (`internal/orchestrator/registry.go`)**: Domain modules self-register their Gemini `FunctionDeclaration` schemas, execution handlers, and dynamic per-turn system prompt injections.
+- **Internal `MutationEvent` Bus (`internal/events/bus.go`)**: Every domain state change emits a typed `MutationEvent` with `BeforeJSON` and `AfterJSON` snapshots, simultaneously powering:
+  1. **Conversational Undo & Audit Trail** (`internal/domains/durability`)
+  2. **Instant Partner Notifications** across WhatsApp/Telegram (`internal/domains/shared`)
+  3. **Reactive `When -> If -> Then` User Automations** (`internal/domains/automation`)
+- **AES-256-GCM Encryption at Rest (`internal/crypto/aes.go`)**: Protects PostgreSQL-persisted OAuth credentials and external API connector authorization headers using PBKDF2/SHA-256 key derivation (`ENCRYPTION_KEY`).
 
-## V3 (Current Release)
+---
 
-MyPA has officially reached **V3 (The Expansion Release)**! 
-While V1 (`v1.0.0`) established the core scheduling engine and V2 (`v2.0.0`) introduced semantic memory, reminders, and Google ecosystem integrations, **V3** transforms MyPA into a comprehensive, multi-modal personal assistant with web management, proactive automations, and deep life-domain intelligence.
+## Features & Life Domains
 
-The latest release includes:
+### 1. Core Productivity & Multi-Modal Channels
+- **Multi-Channel Messaging**: Native support for **WhatsApp** (via Twilio with automatic ≤1,500-char smart chunking and document attachments) and **Telegram**.
+- **Voice & Multimodal Vision**: Automatic voice note transcription via Groq Whisper API and Gemini vision analysis for receipts, flyers, and documents.
+- **Google Workspace Suite**: Full CRUD for **Google Calendar** (single/recurring events, conflict checks), **Gmail** (search, read, draft, label, archive, unsubscribe flows), and **Google Tasks** (multi-list task management).
+- **Real-Time Web Search**: Live web search and summarization via the **Tavily Search API**.
+- **Proactive Morning Briefings & Custom Macros**: Cron-scheduled daily briefings and user-defined recurring natural language workflows (`schedule_workflow`).
 
-- **Expanded Web Dashboard & GraphQL API**: Standalone Next.js control UI (`:3030`) with dedicated management consoles for Memories (`/memory`), Shared Spaces (`/shared`), Baby & Child Care (`/baby`), House & Vehicles (`/house`), Finance & Budgets (`/finance`), External Automations (`/automations`), and Audit/Rollback (`/audit`), backed by a comprehensive `gqlgen` GraphQL endpoint (`:8081`).
-- **Pairing Codes & Multi-Tenant Onboarding**: Secure multi-user access control using 6-digit pairing codes with role assignments (Admin, Family) and family group memory isolation.
-- **Multimodal Vision & Document Attachments**: Vision reasoning for event flyers, receipts, and photos, plus native document attachment support (`.txt`, `.md`, `.csv`, `.json`, `.pdf`) in WhatsApp with automatic outbound message chunking (≤1,500 chars) to bypass Twilio's length limitations.
-- **Parallel Tool Execution & Multi-Turn Agent Loop**: Multi-turn execution capable of parallel tool calls (e.g. bulk tasks, batch email actions) and natural synthesis.
-- **Custom Recurring Workflows (Macros)**: Define and manage automated cron jobs via natural language (`schedule_workflow`, `delete_workflow`) that run background workflows.
-- **Gmail Automation Flows**: Proactive agent behaviors to organize receipts, autonomously unsubscribe from newsletters, draft responses, and extract calendar events from emails.
-- **Docker-Managed ngrok Ingress**: Zero-terminal setup with a containerized ngrok service running directly in Docker Compose with real-time traffic inspection at `http://localhost:4040`.
+### 2. Durability, State Fallback & Conversational Rollback (Topic 1)
+- **Encrypted OAuth & State Fallback**: Dual-write persistence wrapping Redis state with AES-256-GCM encrypted PostgreSQL storage (`EncryptedCredential`) so sessions survive cache restarts.
+- **Snapshot Mutation Log & `/undo`**: Records `BeforeJSON` and `AfterJSON` snapshots for every AI tool action. Revert mistakes via chat (`undo_last_action` / `/undo`) or one-click rollback in the Web Dashboard (`rollbackMutation`).
+- **Multi-Format Data Export**: Export any topic's records (`baby`, `house`, `finance`, `memory`, `schedule`) as formatted JSON or RFC 4180 CSV (`export_topic_data`).
 
-The V3 engine is fully containerized, CI-verified, and production-ready.
+### 3. Topic-Mapped Memory & Living Knowledge Graph (Topic 2)
+- **Hierarchical Topic Memories**: Organizes facts by `topic` (`baby`, `house`, `finance`, `work`, `personal`, `family`), `subtopic`, and `tags` (`save_topic_memory`, `search_topic_memories`).
+- **Automatic Conflict Superseding**: Updating an existing fact automatically versions history via `SupersededByID` and `ValidUntil` timestamps rather than overwriting or duplicating facts.
+- **Living Entity Profiles**: Structured JSONB profile cards (`EntityProfile`) for key entities (`upsert_entity_profile`, `get_entity_profile`) plus background memory consolidation (`ConsolidateMemories`).
 
-👉 **See the [ROADMAP.md](docs/ROADMAP.md) for planned features and [architecture_v4.md](docs/architecture_v4.md) for the V4 system vision.**
+### 4. Multi-Schedule Engine & Virtual Sub-Calendars (Topic 3)
+- **Virtual `[Topic]` Sub-Calendars**: Maps life topics to color-coded `[Topic]` prefixes on a single primary Google Calendar (`schedule_topic_event`, `list_topic_schedule`, `configure_topic_calendar`).
+- **Internal-Only High-Frequency Schedules**: Supports `sync_to_google = false` for high-frequency routines (e.g., infant feeding intervals) so the primary Google Calendar remains uncluttered.
+- **Bidirectional Partner Calendar Sync**: Shared topic events automatically sync to connected partner Google Calendars (`PartnerGoogleEventID`).
+
+### 5. Baby & Family Care Tracker (Topic 4)
+- **Growth & Care Logging**: Track feedings (breast/bottle/solids), sleep windows, diapers, temperature, measurements, and developmental milestones (`upsert_baby_profile`, `log_baby_care`, `query_baby_logs_and_trends`).
+- **Dynamic Age & Wonder Weeks Engine**: Automatically injects exact baby age (days/weeks/months with prematurity adjustment) and upcoming developmental leaps/checkups into the system prompt (`get_baby_milestone_suggestions`).
+- **Pediatric Medication Safety Guardrails**: Enforces minimum cooldown intervals (4h for Paracetamol, 6h for Ibuprofen), warns against Ibuprofen under 6 months, and flags urgent pediatric fever thresholds under 3 months.
+- **Supply Inventory**: Monitor formula, diapers, and medication stock with low-supply alerts (`manage_baby_inventory`).
+
+### 6. House Maintenance, Contracts & Vehicle Vault (Topic 5 & 8.1)
+- **Contract, Lease & Warranty Vault**: Store leases, mortgages, warranties, insurance policies, and repair receipts with advance renewal/cancellation notice alerts (`save_house_contract_or_receipt`, `list_house_contracts`).
+- **Preventive Home Maintenance**: Interval-based and seasonal maintenance scheduling for HVAC, plumbing, appliances, and pest control (`manage_home_maintenance`).
+- **Vehicle Asset Management**: Track license plates, annual test/inspection dates, insurance expiries, mileage, and service intervals (`manage_vehicle_asset`).
+
+### 7. Financial Tracking & Budget Intelligence (Topic 6)
+- **Expense & Income Ledger**: Log transactions from chat, receipt photos, or emails (`log_financial_transaction`, `get_financial_summary`).
+- **Category Budgets & Proactive Alerts**: Configure monthly category limits with customizable warning thresholds (`set_category_budget`).
+- **Historical Anomaly Detection**: Automatically flags transactions that exceed the historical merchant/category average by >30%.
+- **Recurring Bills & Subscriptions**: Track monthly and annual bills with auto-renew status (`manage_recurring_bills`).
+
+### 8. On-Demand External APIs, Automations & Personal CRM (Topics 7, 8.2 & 8.3)
+- **On-Demand REST/Webhook Connectors**: Register custom external APIs at runtime with AES-256-GCM encrypted auth headers and multi-layer SSRF protection blocking private CIDRs, localhost, and cloud metadata endpoints (`register_external_api`, `list_external_apis`, `call_external_api`).
+- **Event-Driven `When -> If -> Then` Automations**: Reactive rules engine triggered by `MutationEvent` bus publications (`create_automation_rule`, `list_automation_rules`, `delete_automation_rule`).
+- **Runtime Persona & Preference Customization**: Configure preferred language, tone/persona, default currency, quiet hours, and standing instructions (`update_user_preferences`, `get_user_preferences`).
+- **Personal CRM & Gift Tracker**: Store relationships, birthdays/anniversaries (with 30-day lookahead alerts), clothing sizes, and gift ideas (`upsert_personal_crm`, `query_personal_crm`).
+
+### 9. Shared Multi-User Spaces & Partner Sync (Topic 9)
+- **Granular Topic Sharing**: Configure per-topic family permissions (`CanView`, `CanEdit`) and notification modes (`instant`, `digest`, `silent`) (`configure_shared_topic`).
+- **Cross-User Notification Router**: Instant partner notifications on WhatsApp/Telegram whenever a shared topic (`baby`, `house`, `finance`) is updated (`"📢 [Shared • Baby] ..."`).
+- **Shared Reminder Hand-Offs**: Create and claim/complete family tasks (`create_shared_reminder`, `complete_shared_reminder`, `list_shared_activity`)—completing a task automatically notifies the partner and prevents duplicate alerts.
+
+---
+
+## Web Control Dashboard (`:3030`)
+
+The Next.js 15 Dashboard communicates with the Orchestrator's `gqlgen` GraphQL API via the Proxy (`http://localhost:8000/graphql`) and provides dedicated interactive consoles:
+
+| Route | Console Description |
+|---|---|
+| `/` | Overview KPIs, system health, user pairing codes, OAuth status, and global settings |
+| `/memory` | **Memory Explorer**: Browse/filter topic-isolated memories and Living Entity Profile cards |
+| `/shared` | **Shared Spaces**: Manage family topic permissions, notification modes, and shared tasks |
+| `/baby` | **Baby Tracker**: Feeding/sleep/diaper logs, pediatric milestones, and supply inventory |
+| `/house` | **House & Assets**: Active contracts/warranties, home maintenance tasks, and vehicle vault |
+| `/finance` | **Finance & Budgets**: Transaction ledger, monthly category budget bars, and recurring bills |
+| `/automations` | **Automations & CRM**: External API connectors, event-driven rules, and Personal CRM |
+| `/audit` | **Audit & Rollback**: Full mutation log with `BeforeJSON`/`AfterJSON` inspection and one-click Rollback |
+
+---
 
 ## Prerequisites
 
@@ -68,46 +111,41 @@ The V3 engine is fully containerized, CI-verified, and production-ready.
 - Gemini API Key (from [Google AI Studio](https://aistudio.google.com/))
 - Groq API Key (from [GroqCloud](https://console.groq.com/))
 - Tavily API Key (from [Tavily](https://tavily.com/))
-- Google Cloud OAuth credentials (for Calendar API)
+- Google Cloud OAuth credentials (for Calendar, Gmail, and Tasks APIs)
+
+---
 
 ## Quick Start
 
 ### Running with Docker (Recommended)
 
-1. **Clone and configure:**
+1. **Clone and configure environment:**
    ```bash
    cp .env.example .env
-   # Edit .env with your API keys and tokens
+   # Edit .env with your API keys, OAuth credentials, and ENCRYPTION_KEY (32-byte secret or passphrase)
    ```
 
-2. **Start all services (including ngrok tunnel):**
+2. **Build and start all services (including containerized ngrok):**
    ```bash
-   docker-compose up -d
+   docker-compose up -d --build
    ```
-   *(ngrok starts automatically inside Docker using `NGROK_AUTHTOKEN` and `NGROK_DOMAIN` from `.env`, exposing the tunnel dashboard at `http://localhost:4040`)*
+   *(ngrok starts automatically inside Docker using `NGROK_AUTHTOKEN` and `NGROK_DOMAIN` from `.env`, exposing the tunnel inspection UI at `http://localhost:4040` and the Web Dashboard at `http://localhost:3030`)*
 
 3. **Set Webhooks:**
-
    - **Telegram:**
      ```bash
      curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=<NGROK_URL>/webhook/telegram"
      ```
-   - **WhatsApp:** Paste `<NGROK_URL>/webhook/twilio` (e.g., `https://your-ngrok-url.ngrok-free.dev/webhook/twilio`) into your Twilio WhatsApp Sandbox settings.
+   - **WhatsApp:** Set `<NGROK_URL>/webhook/twilio` (e.g., `https://your-domain.ngrok-free.dev/webhook/twilio`) in your Twilio WhatsApp Sandbox settings.
 
 ### Running Locally (Development)
 
-1. **Clone and configure:**
+1. **Start infrastructure containers:**
    ```bash
-   cp .env.example .env
-   # Edit .env with your API keys and tokens
+   docker-compose up -d rabbitmq redis postgres pgadmin
    ```
 
-2. **Start infrastructure:**
-   ```bash
-   docker-compose up rabbitmq redis postgres pgadmin
-   ```
-
-3. **Run services:**
+2. **Run Go microservices:**
    ```bash
    go run ./cmd/gateway
    go run ./cmd/orchestrator
@@ -115,78 +153,101 @@ The V3 engine is fully containerized, CI-verified, and production-ready.
    go run ./cmd/audit-worker
    ```
 
-4. **Run dashboard (in a separate terminal):**
+3. **Run Next.js Web Dashboard:**
    ```bash
    cd dashboard
    npm install
    npm run dev
    ```
 
-5. **Expose and set webhook:** Follow steps 3 & 4 from the Docker instructions above.
+---
 
 ## Testing
 
-The project utilizes robust unit and End-to-End (E2E) testing. E2E tests use [Testcontainers](https://golang.testcontainers.org/) to spin up ephemeral infrastructure (e.g., RabbitMQ).
+Unit tests cover all core packages and domain modules (`crypto`, `events`, `orchestrator`, `db`, `durability`, `memory`, `shared`, `schedule`, `baby`, `house`, `finance`, `automation`). End-to-End (E2E) tests use [Testcontainers](https://golang.testcontainers.org/).
 
-**Prerequisites for E2E tests:**
-- Docker must be running.
-
-**Run all tests (Unit + E2E):**
 ```bash
-go test -v ./...
-```
-
-**Run Unit tests only:**
-```bash
+# Run all unit and domain tests
 go test -v ./internal/...
+
+# Run E2E tests (requires Docker running)
+go test -v ./tests/...
+
+# Verify full multi-stage container build
+docker-compose build
 ```
 
-**Run E2E tests only:**
-```bash
-go test -v ./tests/...
-```
+---
 
 ## Services
 
 | Service | Port | Description |
 |---|---|---|
-| Proxy | 8000 | Unified API Gateway (routes to Gateway and Orchestrator GraphQL API) |
-| Gateway | 8080 | Telegram & WhatsApp webhook ingestion |
-| Orchestrator | 8081 | LLM reasoning + API execution + OAuth + GraphQL API + Background Scheduler |
-| Audit Worker | N/A | Asynchronously writes audit logs to PostgreSQL |
-| Dashboard | 3030 | Next.js web application for administration and monitoring |
-| RabbitMQ | 5672 | Message broker |
-| Redis | 6379 | Conversation state + OAuth tokens |
-| Database | 5432 | Audit logging & Semantic Memory storage (PostgreSQL) |
-| pgadmin | 5050 | Web interface for PostgreSQL administration |
-| ngrok | 4040 | Secure public ingress tunnel & traffic inspection UI |
+| `proxy` | `8000` | Unified API Gateway routing webhooks to `gateway` and `/graphql` to `orchestrator` |
+| `gateway` | `8080` | Telegram & Twilio WhatsApp webhook ingestion and RabbitMQ publisher |
+| `orchestrator` | `8081` | Gemini reasoning engine, `ToolModule` registry, `EventBus`, OAuth, GraphQL API, and Cron Scheduler |
+| `audit-worker` | N/A | Asynchronous RabbitMQ consumer persisting system audit logs to PostgreSQL |
+| `dashboard` | `3030` | Next.js 15 web application for multi-domain management and audit rollback |
+| `rabbitmq` | `5672` | Message broker (`15672` management UI) |
+| `redis` | `6379` | Hot conversation state and OAuth token cache |
+| `postgres` | `5432` | PostgreSQL 15 with `pgvector` for domain tables, encrypted credentials, and semantic memory |
+| `pgadmin` | `5050` | Web interface for PostgreSQL administration |
+| `ngrok` | `4040` | Public webhook ingress tunnel and traffic inspection UI |
+
+---
 
 ## Project Structure
 
 ```text
-dashboard/          # Next.js web application for administration and monitoring
+dashboard/                  # Next.js 15 Web Control Dashboard (App Router)
+  src/app/
+    audit/                  # Mutation audit log & one-click rollback console
+    automations/            # External APIs, EventBus rules & Personal CRM console
+    baby/                   # Baby care logs, milestone leaps & inventory console
+    finance/                # Transactions, category budgets & anomalies console
+    house/                  # Contracts/warranties, home maintenance & vehicles console
+    memory/                 # Topic memory explorer & living entity profiles console
+    shared/                 # Multi-user family spaces & shared reminders console
 cmd/
-  audit-worker/     # Asynchronous audit logging worker
-  gateway/          # Telegram & WhatsApp webhook ingestion
-  orchestrator/     # LLM reasoning + execution service
-  proxy/            # Unified API gateway routing
+  audit-worker/             # Asynchronous audit logging worker
+  gateway/                  # Telegram & WhatsApp webhook ingestion service
+  orchestrator/             # LLM reasoning, domain modules, GraphQL & scheduler service
+  proxy/                    # Unified reverse proxy & API gateway
 internal/
-  config/           # Viper configuration
-  models/           # Shared domain types
-  broker/           # RabbitMQ publisher/consumer
-  telegram/         # Telegram Bot API client
-  twilio/           # Twilio API client and webhook handler (WhatsApp)
-  audio/            # Groq Whisper API client for voice processing
-  llm/              # Gemini API client + tool definitions
-  calendar/         # Google Calendar API + OAuth
-  gmail/            # Gmail API integration
-  tasks/            # Google Tasks API integration
-  tavily/           # Tavily Web Search API client
-  state/            # Redis state management
-  db/               # Database client for audit logging and memory
-  scheduler/        # Cron jobs and background proactive messaging
-  orchestrator/     # Core reasoning engine
+  audio/                    # Groq Whisper API client for voice transcription
+  broker/                   # RabbitMQ publisher/consumer
+  calendar/                 # Google Calendar API + OAuth
+  config/                   # Viper configuration loader
+  crypto/                   # AES-256-GCM encryption at rest (PBKDF2/SHA-256)
+  db/                       # PostgreSQL + pgvector client, dynamic migrations & domain repos
+  domains/                  # Modular ToolModule implementations (Topics 1–9)
+    automation/             # External REST connectors (SSRF-guarded), rules runner & CRM
+    baby/                   # Baby tracker, Wonder Weeks milestones & medication guardrails
+    durability/             # Encrypted token fallback, mutation log, undo & CSV/JSON export
+    finance/                # Expense/income ledger, budgets & >30% anomaly detection
+    house/                  # Contracts/warranties, preventive maintenance & vehicle vault
+    memory/                 # Topic-mapped memory v2, living entities & consolidation
+    schedule/               # Virtual [Topic] sub-calendars & partner Google Calendar sync
+    shared/                 # Family shared spaces, shared reminders & partner notifier
+  events/                   # Thread-safe internal MutationEvent pub/sub bus
+  gmail/                    # Gmail API integration & automation flows
+  graph/                    # gqlgen GraphQL schema, generated server & resolvers
+  llm/                      # Gemini API client & base tool declarations
+  models/                   # Shared domain & GORM database models
+  orchestrator/             # Multi-turn agent engine & dynamic ToolModule Registry
+  scheduler/                # Cron scheduler & proactive morning briefings
+  state/                    # Redis state management
+  tasks/                    # Google Tasks API integration
+  tavily/                   # Tavily Web Search API client
+  telegram/                 # Telegram Bot API client
+  twilio/                   # Twilio WhatsApp API client, chunker & media handler
+docs/
+  FEATURES_EXPANSION.md     # Architectural specification for Topics 1–9
+  PLAN.md                   # Parallel wave implementation plan
+  ROADMAP.md                # Release history & V3/V4 roadmap
 ```
+
+---
 
 ## License
 
