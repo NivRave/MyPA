@@ -9,6 +9,18 @@ import (
 type Mutation struct {
 }
 
+type Query struct {
+}
+
+type User struct {
+	ID          string    `json:"id"`
+	PlatformID  string    `json:"platformId"`
+	Name        string    `json:"name"`
+	Role        string    `json:"role"`
+	FamilyGroup string    `json:"familyGroup"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
 type PairingCode struct {
 	ID          string    `json:"id"`
 	Code        string    `json:"code"`
@@ -19,14 +31,273 @@ type PairingCode struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
-type Query struct {
+type TopicMemory struct {
+	ID              string     `json:"id"`
+	UserID          string     `json:"userId"`
+	FamilyGroup     string     `json:"familyGroup"`
+	Topic           string     `json:"topic"`
+	Subtopic        string     `json:"subtopic"`
+	TagsJSON        string     `json:"tagsJson"`
+	Fact            string     `json:"fact"`
+	Scope           string     `json:"scope"`
+	CreatedByUserID string     `json:"createdByUserId"`
+	SupersededByID  *int       `json:"supersededById,omitempty"`
+	ValidFrom       time.Time  `json:"validFrom"`
+	ValidUntil      *time.Time `json:"validUntil,omitempty"`
+	IsPinned        bool       `json:"isPinned"`
+	CreatedAt       time.Time  `json:"createdAt"`
 }
 
-type User struct {
+type EntityProfile struct {
+	ID              string    `json:"id"`
+	UserID          string    `json:"userId"`
+	FamilyGroup     string    `json:"familyGroup"`
+	Topic           string    `json:"topic"`
+	EntityType      string    `json:"entityType"`
+	EntityName      string    `json:"entityName"`
+	AttributesJSON  string    `json:"attributesJson"`
+	UpdatedByUserID string    `json:"updatedByUserId"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
+type SharedSpace struct {
+	ID               string    `json:"id"`
+	FamilyGroup      string    `json:"familyGroup"`
+	Topic            string    `json:"topic"`
+	OwnerUserID      string    `json:"ownerUserId"`
+	SharedWithUserID string    `json:"sharedWithUserId"`
+	CanView          bool      `json:"canView"`
+	CanEdit          bool      `json:"canEdit"`
+	NotifyMode       string    `json:"notifyMode"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+}
+
+type SharedTaskReminder struct {
+	ID                string     `json:"id"`
+	FamilyGroup       string     `json:"familyGroup"`
+	Topic             string     `json:"topic"`
+	Title             string     `json:"title"`
+	DueTime           *time.Time `json:"dueTime,omitempty"`
+	CreatedByUserID   string     `json:"createdByUserId"`
+	AssignedToUserID  *string    `json:"assignedToUserId,omitempty"`
+	IsCompleted       bool       `json:"isCompleted"`
+	CompletedByUserID *string    `json:"completedByUserId,omitempty"`
+	CompletedAt       *time.Time `json:"completedAt,omitempty"`
+	CreatedAt         time.Time  `json:"createdAt"`
+}
+
+type ScheduleEvent struct {
+	ID                    string    `json:"id"`
+	ExternalGoogleEventID string    `json:"externalGoogleEventId"`
+	PartnerGoogleEventID  string    `json:"partnerGoogleEventId"`
+	UserID                string    `json:"userId"`
+	FamilyGroup           string    `json:"familyGroup"`
+	Topic                 string    `json:"topic"`
+	TagsJSON              string    `json:"tagsJson"`
+	Title                 string    `json:"title"`
+	Description           string    `json:"description"`
+	StartTime             time.Time `json:"startTime"`
+	EndTime               time.Time `json:"endTime"`
+	RecurrenceRule        string    `json:"recurrenceRule"`
+	SyncToGoogle          bool      `json:"syncToGoogle"`
+	IsShared              bool      `json:"isShared"`
+	CreatedByUserID       string    `json:"createdByUserId"`
+	CreatedAt             time.Time `json:"createdAt"`
+}
+
+type TopicCalendarConfig struct {
+	ID                       string    `json:"id"`
+	UserID                   string    `json:"userId"`
+	Topic                    string    `json:"topic"`
+	ColorID                  string    `json:"colorId"`
+	PrefixTag                string    `json:"prefixTag"`
+	TargetCalendarID         string    `json:"targetCalendarId"`
+	IncludeInMorningBriefing bool      `json:"includeInMorningBriefing"`
+	SyncToGoogleDefault      *bool     `json:"syncToGoogleDefault,omitempty"`
+	UpdatedAt                time.Time `json:"updatedAt"`
+}
+
+type BabyProfile struct {
+	ID                 string     `json:"id"`
+	FamilyGroup        string     `json:"familyGroup"`
+	Name               string     `json:"name"`
+	DateOfBirth        time.Time  `json:"dateOfBirth"`
+	DueDate            *time.Time `json:"dueDate,omitempty"`
+	Gender             string     `json:"gender"`
+	BirthWeightGrams   int        `json:"birthWeightGrams"`
+	CurrentWeightGrams int        `json:"currentWeightGrams"`
+	HeightCm           float64    `json:"heightCm"`
+	PediatricianInfo   string     `json:"pediatricianInfo"`
+	AllergiesNotes     string     `json:"allergiesNotes"`
+	UpdatedByUserID    string     `json:"updatedByUserId"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
+}
+
+type BabyCareLog struct {
+	ID             string    `json:"id"`
+	BabyID         string    `json:"babyId"`
+	FamilyGroup    string    `json:"familyGroup"`
+	LogType        string    `json:"logType"`
+	ValueNumeric   float64   `json:"valueNumeric"`
+	Unit           string    `json:"unit"`
+	Details        string    `json:"details"`
+	Timestamp      time.Time `json:"timestamp"`
+	LoggedByUserID string    `json:"loggedByUserId"`
+}
+
+type BabyInventoryItem struct {
+	ID                string    `json:"id"`
+	FamilyGroup       string    `json:"familyGroup"`
+	ItemName          string    `json:"itemName"`
+	QuantityRemaining float64   `json:"quantityRemaining"`
+	Unit              string    `json:"unit"`
+	LowThreshold      float64   `json:"lowThreshold"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+}
+
+type HouseContractRecord struct {
+	ID                      string     `json:"id"`
+	FamilyGroup             string     `json:"familyGroup"`
+	RecordType              string     `json:"recordType"`
+	Title                   string     `json:"title"`
+	VendorOrLandlord        string     `json:"vendorOrLandlord"`
+	ContactDetails          string     `json:"contactDetails"`
+	Amount                  float64    `json:"amount"`
+	Currency                string     `json:"currency"`
+	StartDate               *time.Time `json:"startDate,omitempty"`
+	ExpirationOrRenewalDate *time.Time `json:"expirationOrRenewalDate,omitempty"`
+	NoticePeriodDays        int        `json:"noticePeriodDays"`
+	KeyTermsJSON            string     `json:"keyTermsJson"`
+	CreatedByUserID         string     `json:"createdByUserId"`
+	CreatedAt               time.Time  `json:"createdAt"`
+}
+
+type HomeMaintenanceItem struct {
+	ID              string     `json:"id"`
+	FamilyGroup     string     `json:"familyGroup"`
+	TaskName        string     `json:"taskName"`
+	Category        string     `json:"category"`
+	IntervalDays    int        `json:"intervalDays"`
+	LastCompletedAt *time.Time `json:"lastCompletedAt,omitempty"`
+	NextDueAt       time.Time  `json:"nextDueAt"`
+	ContractorInfo  string     `json:"contractorInfo"`
+	Notes           string     `json:"notes"`
+	UpdatedByUserID string     `json:"updatedByUserId"`
+}
+
+type VehicleAsset struct {
+	ID                   string     `json:"id"`
+	FamilyGroup          string     `json:"familyGroup"`
+	Name                 string     `json:"name"`
+	LicensePlate         string     `json:"licensePlate"`
+	InsuranceExpiry      *time.Time `json:"insuranceExpiry,omitempty"`
+	AnnualTestExpiry     *time.Time `json:"annualTestExpiry,omitempty"`
+	LastServiceDate      *time.Time `json:"lastServiceDate,omitempty"`
+	CurrentMileageKm     int        `json:"currentMileageKm"`
+	NextServiceMileageKm int        `json:"nextServiceMileageKm"`
+	Notes                string     `json:"notes"`
+}
+
+type FinancialTransaction struct {
+	ID              string    `json:"id"`
+	UserID          string    `json:"userId"`
+	FamilyGroup     string    `json:"familyGroup"`
+	Type            string    `json:"type"`
+	Category        string    `json:"category"`
+	Merchant        string    `json:"merchant"`
+	Amount          float64   `json:"amount"`
+	Currency        string    `json:"currency"`
+	TransactionDate time.Time `json:"transactionDate"`
+	IsShared        bool      `json:"isShared"`
+	Source          string    `json:"source"`
+	Notes           string    `json:"notes"`
+	CreatedAt       time.Time `json:"createdAt"`
+}
+
+type CategoryBudget struct {
+	ID                string    `json:"id"`
+	FamilyGroup       string    `json:"familyGroup"`
+	Category          string    `json:"category"`
+	MonthlyLimit      float64   `json:"monthlyLimit"`
+	Currency          string    `json:"currency"`
+	AlertThresholdPct float64   `json:"alertThresholdPct"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+}
+
+type RecurringBill struct {
+	ID             string    `json:"id"`
+	FamilyGroup    string    `json:"familyGroup"`
+	Name           string    `json:"name"`
+	Category       string    `json:"category"`
+	ExpectedAmount float64   `json:"expectedAmount"`
+	Currency       string    `json:"currency"`
+	BillingCycle   string    `json:"billingCycle"`
+	NextDueDay     int       `json:"nextDueDay"`
+	AutoRenew      bool      `json:"autoRenew"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+type ExternalAPIConnector struct {
+	ID            string    `json:"id"`
+	UserID        string    `json:"userId"`
+	FamilyGroup   string    `json:"familyGroup"`
+	Name          string    `json:"name"`
+	BaseURL       string    `json:"baseUrl"`
+	DefaultMethod string    `json:"defaultMethod"`
+	Description   string    `json:"description"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+type AutomationRule struct {
+	ID                string    `json:"id"`
+	UserID            string    `json:"userId"`
+	FamilyGroup       string    `json:"familyGroup"`
+	Name              string    `json:"name"`
+	TriggerType       string    `json:"triggerType"`
+	TriggerTopic      string    `json:"triggerTopic"`
+	ConditionJSON     string    `json:"conditionJson"`
+	ActionInstruction string    `json:"actionInstruction"`
+	IsActive          bool      `json:"isActive"`
+	CreatedAt         time.Time `json:"createdAt"`
+}
+
+type UserPreference struct {
+	UserID               string    `json:"userId"`
+	PreferredLanguage    string    `json:"preferredLanguage"`
+	TonePersona          string    `json:"tonePersona"`
+	DefaultCurrency      string    `json:"defaultCurrency"`
+	QuietHoursStart      string    `json:"quietHoursStart"`
+	QuietHoursEnd        string    `json:"quietHoursEnd"`
+	BriefingTopicsJSON   string    `json:"briefingTopicsJson"`
+	StandingInstructions string    `json:"standingInstructions"`
+	UpdatedAt            time.Time `json:"updatedAt"`
+}
+
+type PersonalCRMContact struct {
+	ID                 string    `json:"id"`
+	UserID             string    `json:"userId"`
+	FamilyGroup        string    `json:"familyGroup"`
+	PersonName         string    `json:"personName"`
+	Relationship       string    `json:"relationship"`
+	ImportantDatesJSON string    `json:"importantDatesJson"`
+	GiftIdeasAndSizes  string    `json:"giftIdeasAndSizes"`
+	MedicalNotes       string    `json:"medicalNotes"`
+	UpdatedAt          time.Time `json:"updatedAt"`
+}
+
+type MutationLog struct {
 	ID          string    `json:"id"`
-	PlatformID  string    `json:"platformId"`
-	Name        string    `json:"name"`
-	Role        string    `json:"role"`
+	UserID      string    `json:"userId"`
 	FamilyGroup string    `json:"familyGroup"`
+	Topic       string    `json:"topic"`
+	Action      string    `json:"action"`
+	EntityType  string    `json:"entityType"`
+	EntityID    string    `json:"entityId"`
+	BeforeJSON  *string   `json:"beforeJson,omitempty"`
+	AfterJSON   *string   `json:"afterJson,omitempty"`
+	Summary     string    `json:"summary"`
+	IsUndone    bool      `json:"isUndone"`
 	CreatedAt   time.Time `json:"createdAt"`
 }

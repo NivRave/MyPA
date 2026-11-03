@@ -63,3 +63,12 @@ func TestRegisterWave1Models(t *testing.T) {
 	assert.Len(t, models, 9)
 }
 
+func TestRegisterWave2Models(t *testing.T) {
+	ResetRegisteredModels()
+	defer ResetRegisteredModels()
+
+	RegisterWave2Models()
+	models := GetRegisteredModels()
+	assert.Len(t, models, 13)
+}
+

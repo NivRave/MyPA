@@ -1,0 +1,503 @@
+import { revalidatePath } from "next/cache";
+import { Baby, Heart, Scale, Ruler, AlertCircle, Plus, Sparkles, Check, Package, Clock } from "lucide-react";
+import { Pool } from "pg";
+
+export const dynamic = "force-dynamic";
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable",
+});
+
+function calculateAge(dob: Date): string {
+  const now = new Date();
+  const diffTime = Math.abs(now.getTime() - dob.getTime());
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  
+  if (diffDays < 14) {
+    return `${diffDays} days old`;
+  }
+  const weeks = Math.floor(diffDays / 7);
+  if (weeks < 16) {
+    return `${weeks} weeks old (${diffDays} days)`;
+  }
+  const months = Math.floor(diffDays / 30.4375);
+  const remainingDays = Math.floor(diffDays % 30.4375);
+  return `${months} months, ${remainingDays} days old`;
+}
+
+function getMilestones(dob: Date): string[] {
+  const diffDays = Math.floor(Math.abs(new Date().getTime() - dob.getTime()) / (1000 * 60 * 60 * 24));
+  const months = diffDays / 30.4375;
+
+  if (months < 2) {
+    return [
+      "2-Month Vaccination checkup (DTaP, IPV, Hib, PCV13, Rotavirus)",
+      "Tracks objects with eyes & starts smiling in response to voices",
+      "Feedings: 80–120 ml every 2.5–3.5 hours",
+      "Safe sleep: Always on back, firm mattress with zero loose bedding",
+    ];
+  } else if (months < 4) {
+    return [
+      "4-Month Pediatrician checkup & vaccine booster window",
+      "Pushes up on elbows during tummy time & holds head steady",
+      "Discovers hands and begins reaching for dangling toys",
+      "Sleep consolidation: longer stretches at night (4–6 hours)",
+    ];
+  } else if (months < 6) {
+    return [
+      "6-Month Pediatrician Well-Baby checkup & milestone screening",
+      "Introduction to solid foods readiness (iron-rich purees/cereals)",
+      "Rolls over tummy-to-back and back-to-tummy",
+      "Responds to own name and strings vowel sounds together",
+    ];
+  } else {
+    return [
+      "9–12 Month Developmental milestone screening (standing, pincer grasp)",
+      "Finger foods and self-feeding with soft cut vegetables and proteins",
+      "Separation anxiety peak & object permanence emerging",
+      "Hydration with small amounts of water in a sippy cup",
+    ];
+  }
+}
+
+async function getBabyData(familyGroup: string = "Smith Family") {
+  try {
+    const res = await fetch("http://proxy:8000/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: `
+          query GetBabyData($familyGroup: String!) {
+            babyProfiles(familyGroup: $familyGroup) {
+              id
+              name
+              dateOfBirth
+              gender
+              birthWeightGrams
+              currentWeightGrams
+              heightCm
+              pediatricianInfo
+              allergiesNotes
+              updatedAt
+            }
+            babyInventory(familyGroup: $familyGroup) {
+              id
+              itemName
+              quantityRemaining
+              unit
+              lowThreshold
+              updatedAt
+            }
+          }
+        `,
+        variables: { familyGroup },
+      }),
+      cache: "no-store",
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      if (json.data && json.data.babyProfiles && json.data.babyProfiles.length > 0) {
+        const baby = json.data.babyProfiles[0];
+        const logRes = await fetch("http://proxy:8000/graphql", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: `
+              query GetBabyLogs($babyId: ID!) {
+                babyCareLogs(babyId: $babyId, limit: 30) {
+                  id
+                  logType
+                  valueNumeric
+                  unit
+                  details
+                  timestamp
+                  loggedByUserId
+                }
+              }
+            `,
+            variables: { babyId: baby.id },
+          }),
+          cache: "no-store",
+        });
+        const logJson = logRes.ok ? await logRes.json() : {};
+        return {
+          profile: baby,
+          logs: logJson.data?.babyCareLogs || [],
+          inventory: json.data.babyInventory || [],
+        };
+      }
+    }
+  } catch (err) {}
+
+  try {
+    const { rows: pRows } = await pool.query(
+      "SELECT * FROM baby_profiles WHERE family_group = $1 LIMIT 1",
+      [familyGroup]
+    );
+    const profile = pRows[0] || null;
+
+    let logs: any[] = [];
+    if (profile) {
+      const { rows: lRows } = await pool.query(
+        "SELECT * FROM baby_care_logs WHERE baby_id = $1 ORDER BY timestamp DESC LIMIT 30",
+        [profile.id]
+      );
+      logs = lRows.map((r: any) => ({
+        id: String(r.id),
+        logType: r.log_type,
+        valueNumeric: parseFloat(r.value_numeric || 0),
+        unit: r.unit,
+        details: r.details,
+        timestamp: r.timestamp,
+        loggedByUserId: r.logged_by_user_id,
+      }));
+    }
+
+    const { rows: iRows } = await pool.query(
+      "SELECT * FROM baby_inventory_items WHERE family_group = $1 ORDER BY item_name ASC",
+      [familyGroup]
+    );
+
+    return {
+      profile: profile
+        ? {
+            id: String(profile.id),
+            name: profile.name,
+            dateOfBirth: profile.date_of_birth,
+            gender: profile.gender,
+            birthWeightGrams: profile.birth_weight_grams,
+            currentWeightGrams: profile.current_weight_grams,
+            heightCm: parseFloat(profile.height_cm || 0),
+            pediatricianInfo: profile.pediatrician_info,
+            allergiesNotes: profile.allergies_notes,
+            updatedAt: profile.updated_at,
+          }
+        : null,
+      logs,
+      inventory: iRows.map((r: any) => ({
+        id: String(r.id),
+        itemName: r.item_name,
+        quantityRemaining: parseFloat(r.quantity_remaining || 0),
+        unit: r.unit,
+        lowThreshold: parseFloat(r.low_threshold || 0),
+        updatedAt: r.updated_at,
+      })),
+    };
+  } catch (dbErr) {
+    return { profile: null, logs: [], inventory: [] };
+  }
+}
+
+export default async function BabyTrackerPage() {
+  const familyGroup = "Smith Family";
+  const { profile, logs, inventory } = await getBabyData(familyGroup);
+
+  const dob = profile ? new Date(profile.dateOfBirth) : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const ageString = calculateAge(dob);
+  const milestoneSuggestions = getMilestones(dob);
+
+  async function logCare(formData: FormData) {
+    "use server";
+    const logType = formData.get("logType") as string;
+    const value = parseFloat(formData.get("value") as string) || 0;
+    const unit = formData.get("unit") as string || "";
+    const details = formData.get("details") as string || "";
+    const babyId = formData.get("babyId") as string || "1";
+
+    await fetch("http://proxy:8000/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: `
+          mutation LogCare($babyId: ID!, $familyGroup: String!, $logType: String!, $valueNumeric: Float, $unit: String, $details: String) {
+            logBabyCare(babyId: $babyId, familyGroup: $familyGroup, logType: $logType, valueNumeric: $valueNumeric, unit: $unit, details: $details) { id }
+          }
+        `,
+        variables: { babyId, familyGroup: "Smith Family", logType, valueNumeric: value, unit, details },
+      }),
+    });
+    revalidatePath("/baby");
+  }
+
+  async function updateStock(formData: FormData) {
+    "use server";
+    const itemName = formData.get("itemName") as string;
+    const qty = parseFloat(formData.get("quantity") as string) || 0;
+    const unit = formData.get("unit") as string || "pcs";
+    const lowThreshold = parseFloat(formData.get("threshold") as string) || 5;
+
+    await fetch("http://proxy:8000/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: `
+          mutation UpdateInv($familyGroup: String!, $itemName: String!, $quantityRemaining: Float!, $unit: String!, $lowThreshold: Float!) {
+            updateBabyInventory(familyGroup: $familyGroup, itemName: $itemName, quantityRemaining: $quantityRemaining, unit: $unit, lowThreshold: $lowThreshold) { id }
+          }
+        `,
+        variables: { familyGroup: "Smith Family", itemName, quantityRemaining: qty, unit, lowThreshold },
+      }),
+    });
+    revalidatePath("/baby");
+  }
+
+  return (
+    <div className="flex-1 p-8 overflow-y-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-semibold text-neutral-900 flex items-center">
+            <Baby className="mr-3 h-7 w-7 text-pink-500" />
+            Baby & Family Care Tracker
+          </h1>
+          <p className="text-sm text-neutral-500 mt-1">
+            Dynamic age computation, care routines, medication cooldowns, and proactive developmental milestones.
+          </p>
+        </div>
+      </div>
+
+      {/* Child Profile Card */}
+      <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 mb-8">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="flex items-center space-x-4">
+            <div className="w-16 h-16 rounded-full bg-pink-100 flex items-center justify-center text-pink-600 text-2xl font-bold">
+              {profile ? profile.name[0] : "B"}
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-neutral-900">{profile ? profile.name : "Liam Smith"}</h2>
+              <p className="text-sm font-medium text-pink-600">{ageString}</p>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                DOB: {dob.toLocaleDateString()} • Gender: {profile?.gender || "male"}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+            <div className="p-3 bg-neutral-50 rounded-lg">
+              <Scale className="w-4 h-4 mx-auto text-neutral-500 mb-1" />
+              <div className="text-xs text-neutral-500">Weight</div>
+              <div className="text-sm font-bold text-neutral-800">
+                {profile?.currentWeightGrams ? `${(profile.currentWeightGrams / 1000).toFixed(2)} kg` : "6.20 kg"}
+              </div>
+            </div>
+            <div className="p-3 bg-neutral-50 rounded-lg">
+              <Ruler className="w-4 h-4 mx-auto text-neutral-500 mb-1" />
+              <div className="text-xs text-neutral-500">Height</div>
+              <div className="text-sm font-bold text-neutral-800">
+                {profile?.heightCm ? `${profile.heightCm} cm` : "62.0 cm"}
+              </div>
+            </div>
+            <div className="p-3 bg-neutral-50 rounded-lg">
+              <Heart className="w-4 h-4 mx-auto text-neutral-500 mb-1" />
+              <div className="text-xs text-neutral-500">Pediatrician</div>
+              <div className="text-sm font-bold text-neutral-800 truncate max-w-[100px]" title={profile?.pediatricianInfo || "Dr. Cohen"}>
+                {profile?.pediatricianInfo || "Dr. Cohen"}
+              </div>
+            </div>
+            <div className="p-3 bg-neutral-50 rounded-lg">
+              <AlertCircle className="w-4 h-4 mx-auto text-neutral-500 mb-1" />
+              <div className="text-xs text-neutral-500">Allergies</div>
+              <div className="text-sm font-bold text-neutral-800">
+                {profile?.allergiesNotes || "None"}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+        {/* Quick Log Form */}
+        <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6">
+          <h2 className="text-base font-semibold text-neutral-900 mb-4 flex items-center">
+            <Plus className="w-5 h-5 mr-2 text-pink-500" />
+            Log Care Routine
+          </h2>
+          <form action={logCare} className="space-y-4 text-sm">
+            <input type="hidden" name="babyId" value={profile?.id || "1"} />
+            <div>
+              <label className="block text-xs font-medium text-neutral-700 mb-1">Routine Type</label>
+              <select name="logType" className="w-full border border-neutral-300 rounded-md p-2 text-sm bg-white">
+                <option value="feeding">Feeding (Formula / Breastmilk)</option>
+                <option value="sleep">Sleep (Nap / Night)</option>
+                <option value="diaper">Diaper (Wet / Dirty)</option>
+                <option value="temperature">Temperature (°C)</option>
+                <option value="medication">Medication (Paracetamol / Drops)</option>
+                <option value="milestone">Milestone Achieved</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-neutral-700 mb-1">Amount / Value</label>
+                <input
+                  type="number"
+                  step="any"
+                  name="value"
+                  placeholder="e.g. 120"
+                  className="w-full border border-neutral-300 rounded-md p-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-neutral-700 mb-1">Unit</label>
+                <input
+                  type="text"
+                  name="unit"
+                  placeholder="ml, min, °C"
+                  className="w-full border border-neutral-300 rounded-md p-2 text-sm"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-neutral-700 mb-1">Details / Notes</label>
+              <input
+                type="text"
+                name="details"
+                placeholder="e.g. Finished bottle quickly, happy mood"
+                className="w-full border border-neutral-300 rounded-md p-2 text-sm"
+              />
+            </div>
+            <button
+              type="submit"
+              className="w-full py-2 bg-pink-600 text-white rounded-md text-sm font-medium hover:bg-pink-700 transition-colors"
+            >
+              Save Care Log
+            </button>
+          </form>
+        </div>
+
+        {/* Proactive Milestone Suggestions */}
+        <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 flex flex-col">
+          <div className="flex items-center space-x-2 mb-4">
+            <Sparkles className="w-5 h-5 text-amber-500" />
+            <h2 className="text-base font-semibold text-neutral-900">
+              Age-Based Suggestions ({ageString})
+            </h2>
+          </div>
+          <div className="space-y-3 flex-1 overflow-y-auto">
+            {milestoneSuggestions.map((m, idx) => (
+              <div key={idx} className="p-3 bg-amber-50/60 border border-amber-100 rounded-lg flex items-start space-x-3 text-xs text-amber-900">
+                <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <span>{m}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Baby Inventory Supplies */}
+        <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 flex flex-col">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-semibold text-neutral-900 flex items-center">
+              <Package className="w-5 h-5 mr-2 text-indigo-500" />
+              Supplies & Restock
+            </h2>
+          </div>
+          <div className="space-y-3 flex-1 overflow-y-auto mb-4">
+            {inventory.map((item: any) => {
+              const isLow = item.quantityRemaining <= item.lowThreshold;
+              return (
+                <div key={item.id} className="p-3 bg-neutral-50 rounded-lg flex items-center justify-between text-xs">
+                  <div>
+                    <span className="font-semibold text-neutral-800">{item.itemName}</span>
+                    <div className="text-[11px] text-neutral-400">
+                      Threshold: {item.lowThreshold} {item.unit}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className={`font-bold ${isLow ? "text-red-600" : "text-green-600"}`}>
+                      {item.quantityRemaining} {item.unit}
+                    </span>
+                    {isLow && (
+                      <span className="block text-[10px] text-red-500 font-medium">⚠️ Low Stock</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {inventory.length === 0 && (
+              <div className="text-xs text-neutral-400 text-center py-6">
+                Formula, diapers, and Vitamin D drops inventory will appear here.
+              </div>
+            )}
+          </div>
+
+          <form action={updateStock} className="flex gap-2">
+            <input
+              type="text"
+              name="itemName"
+              placeholder="Item name"
+              className="border border-neutral-300 rounded p-1.5 text-xs flex-1"
+              required
+            />
+            <input
+              type="number"
+              step="any"
+              name="quantity"
+              placeholder="Qty"
+              className="border border-neutral-300 rounded p-1.5 text-xs w-16"
+              required
+            />
+            <button
+              type="submit"
+              className="px-3 py-1.5 bg-neutral-900 text-white rounded text-xs font-medium hover:bg-neutral-800"
+            >
+              Update
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {/* Routine Logs Timeline */}
+      <div className="bg-white rounded-xl shadow-sm border border-neutral-200 overflow-hidden">
+        <div className="p-6 border-b border-neutral-200">
+          <h2 className="text-lg font-medium text-neutral-900">Recent Care Routine Activity</h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-neutral-50 text-neutral-500">
+              <tr>
+                <th className="px-6 py-3 font-medium">Time</th>
+                <th className="px-6 py-3 font-medium">Type</th>
+                <th className="px-6 py-3 font-medium">Value / Amount</th>
+                <th className="px-6 py-3 font-medium">Details</th>
+                <th className="px-6 py-3 font-medium">Logged By</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-200">
+              {logs.map((log: any) => (
+                <tr key={log.id} className="hover:bg-neutral-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-xs text-neutral-500">
+                    <span className="inline-flex items-center">
+                      <Clock className="w-3.5 h-3.5 mr-1 text-neutral-400" />
+                      {new Date(log.timestamp).toLocaleString()}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize bg-pink-50 text-pink-700">
+                      {log.logType}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 font-semibold text-neutral-900">
+                    {log.valueNumeric > 0 ? `${log.valueNumeric} ${log.unit}` : "—"}
+                  </td>
+                  <td className="px-6 py-4 text-neutral-600 max-w-sm truncate">
+                    {log.details || "—"}
+                  </td>
+                  <td className="px-6 py-4 text-xs text-neutral-400">
+                    {log.loggedByUserId}
+                  </td>
+                </tr>
+              ))}
+              {logs.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-6 py-8 text-center text-neutral-500">
+                    No care routines logged yet. Use voice/chat or the quick-log form above.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}

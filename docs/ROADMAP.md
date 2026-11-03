@@ -26,14 +26,21 @@ This document tracks upcoming features and functional improvements for the MyPA 
 - **List Management**: Create, update, and manage various lists (e.g., shopping, packing) naturally through conversation.
 - **Cooking & Recipes**: Manage saved recipes and provide cooking recommendations.
 
-### 4. Backlog (Future Feature Ideas)
-- **Automated Expense & Budget Tracking**
-- **Proactive Relationship Management (Personal CRM)**
-- **Smart Scheduling & Contextual Time-Blocking**
-- **Unified "Universal Search"**
-- **Geofenced Automations**
-- **Health & Habit Check-ins**
-- **Smart Travel & Itinerary Builder**
-- **Shared Family Dashboard**
-- **Social Media & "Ghostwriter" Mode**
-- **Personal "Data Takeout" & Full Ownership**
+### 4. Expansion Waves (Wave 1 & Wave 2 — Completed)
+- [x] **Durability & Rollback (Topic 1)**: Immutable mutation audit log with before/after state snapshots and one-click rollback (`/undo` and GraphQL `rollbackMutation`).
+- [x] **Topic-Isolated Memories & Entity Profiles (Topic 2)**: Temporal memory trees with automatic conflict resolution, superseding engine, and living entity profile cards.
+- [x] **Multi-Schedule & Contextual Time-Blocking (Topic 3)**: Work vs. personal calendars, virtual sub-calendars, and schedule event overlays.
+- [x] **Baby & Family Care Tracker (Topic 4)**: Dynamic child age calculation, wonder weeks developmental leap tracking, pediatric medication cooldown safety, routine care logging, and supplies inventory.
+- [x] **House Maintenance, Contracts & Vehicle Vault (Topic 5 & 8.1)**: Lease, mortgage, warranty and receipt registry with renewal notice period countdowns, preventive upkeep checklists, and vehicle asset odometer/inspection monitoring.
+- [x] **Financial Tracking & Budget Intelligence (Topic 6)**: Transaction ledger, receipt vision parsing, monthly category budgets with alert thresholds, >30% historical anomaly detection, and recurring bills tracking.
+- [x] **On-Demand External APIs, Automations & Personal CRM (Topics 7 & 8)**: SSRF-protected on-demand REST/webhook API connector registry with AES-256-GCM encrypted auth headers, event-driven When→If→Then rules engine, user prompt preferences/persona customization, and Personal CRM with upcoming date alerts.
+- [x] **Shared Family Spaces & Partner Sync (Topic 9)**: Collaborative spaces, cross-user push notifications via Telegram/WhatsApp, and claim/complete task hand-offs.
+- [x] **Full GraphQL API & Next.js Web UI Expansion**: Comprehensive GraphQL schema covering all 9 domain models, paired with 6 dedicated feature dashboard pages in Next.js.
+
+### 5. Backlog (Future Feature Ideas)
+- **Voice Outbound (Two-way Voice)**: Add Text-to-Speech (e.g., ElevenLabs) so the assistant can respond with voice notes, such as for the morning briefing.
+- **Smart Home Orchestration**: Native integration with Home Assistant or Google Home for environmental triggers.
+- **Unified "Universal Search"**: Cross-cutting semantic search combining vector memories, financial transactions, contracts, and email archives.
+- **Geofenced Automations**: Mobile presence detection for location-triggered reminders.
+- **Smart Travel & Itinerary Builder**: Multi-leg itinerary generation with live flight status updates.
+- **Social Media & "Ghostwriter" Mode**: Draft content suggestions aligned with user persona.

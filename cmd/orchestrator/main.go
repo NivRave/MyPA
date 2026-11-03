@@ -22,7 +22,11 @@ import (
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/contacts"
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/domains/automation"
+	"github.com/nivik/mypa/internal/domains/baby"
 	"github.com/nivik/mypa/internal/domains/durability"
+	"github.com/nivik/mypa/internal/domains/finance"
+	"github.com/nivik/mypa/internal/domains/house"
 	"github.com/nivik/mypa/internal/domains/memory"
 	"github.com/nivik/mypa/internal/domains/schedule"
 	"github.com/nivik/mypa/internal/domains/shared"
@@ -109,6 +113,7 @@ func main() {
 		os.Exit(1)
 	}
 	db.RegisterWave1Models()
+	db.RegisterWave2Models()
 	var dbClient *db.Client
 	for i := 0; i < 5; i++ {
 		dbClient, err = db.NewClient(dbURL)
@@ -158,8 +163,8 @@ func main() {
 	memoryRepo := db.NewMemoryV2Repo(dbClient.DB)
 	memoryModule := memory.NewModule(memoryRepo)
 
-	// Track 1C: Shared Spaces & Partner Sync Notifier
-	sharedNotifier := shared.NewNotifier(dbClient, func(notifyCtx context.Context, recipientID, text string) error {
+	// Proactive Notification Sender for Shared Spaces and Automations
+	notificationSender := func(notifyCtx context.Context, recipientID, text string) error {
 		if strings.HasPrefix(recipientID, "+") || strings.HasPrefix(recipientID, "whatsapp:") {
 			if twilioClient != nil {
 				return twilioClient.SendMessage(notifyCtx, recipientID, text)
@@ -169,7 +174,10 @@ func main() {
 			return tgClient.SendMessage(notifyCtx, recipientID, text)
 		}
 		return nil
-	})
+	}
+
+	// Track 1C: Shared Spaces & Partner Sync Notifier
+	sharedNotifier := shared.NewNotifier(dbClient, notificationSender)
 	sharedNotifier.RegisterWithBus(eventBus)
 	sharedModule := shared.NewModule(dbClient, eventBus, sharedNotifier)
 
@@ -188,11 +196,28 @@ func main() {
 	}
 	scheduleModule := schedule.NewModule(dbClient, schedule.WithCalendarFactory(calendarFactory), schedule.WithEventBus(eventBus))
 
-	// Register all Wave 1 domain modules in the ToolRegistry
+	// Track 2E: Baby & Family Care Tracker
+	babyModule := baby.NewModule(dbClient, baby.WithEventBus(eventBus))
+
+	// Track 2F: House Maintenance, Contracts & Vehicle Vault
+	houseModule := house.NewModule(dbClient, house.WithEventBus(eventBus))
+
+	// Track 2G: Financial Tracking & Budget Intelligence
+	financeModule := finance.NewModule(dbClient, finance.WithEventBus(eventBus))
+
+	// Track 2H: On-Demand External APIs, Automations & Personal CRM
+	automationRunner := automation.NewRunner(dbClient, eventBus, automation.WithNotificationSender(notificationSender))
+	automationModule := automation.NewModule(dbClient, automation.WithEventBus(eventBus), automation.WithRunner(automationRunner))
+
+	// Register all Wave 1 and Wave 2 domain modules in the ToolRegistry
 	registry.Register(durabilityModule)
 	registry.Register(memoryModule)
 	registry.Register(sharedModule)
 	registry.Register(scheduleModule)
+	registry.Register(babyModule)
+	registry.Register(houseModule)
+	registry.Register(financeModule)
+	registry.Register(automationModule)
 
 	// Wire registry declarations into llmClient
 	llmClient.AddFunctionDeclarations(registry.AllDeclarations()...)

@@ -26,6 +26,29 @@ func RegisterWave1Models() {
 	)
 }
 
+// RegisterWave2Models explicitly registers all Wave 2 GORM models with the migration system.
+func RegisterWave2Models() {
+	RegisterModel(
+		// Track 2E: Baby & Family Care Tracker
+		&models.BabyProfile{},
+		&models.BabyCareLog{},
+		&models.BabyInventoryItem{},
+		// Track 2F: House Maintenance, Contracts & Vehicle Vault
+		&models.HouseContractRecord{},
+		&models.HomeMaintenanceItem{},
+		&models.VehicleAsset{},
+		// Track 2G: Financial Tracking & Budget Intelligence
+		&models.FinancialTransaction{},
+		&models.CategoryBudget{},
+		&models.RecurringBill{},
+		// Track 2H: On-Demand External APIs, Automations & Personal CRM
+		&models.ExternalAPIConnector{},
+		&models.AutomationRule{},
+		&models.UserPreference{},
+		&models.PersonalCRMContact{},
+	)
+}
+
 // RegisterModel registers one or more GORM models to be included in AutoMigrate.
 // This allows domain tracks in subsequent waves to register their models in an isolated manner.
 func RegisterModel(models ...interface{}) {

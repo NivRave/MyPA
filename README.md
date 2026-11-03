@@ -27,18 +27,26 @@ Dashboard (GraphQL) →                           ↳ GraphQL API (8081)        
 - **Custom Recurring Workflows (Macros)**: Allow users to define complex, multi-step cron jobs via natural language (e.g., weekly email summaries turned into task lists).
 - **Multimodal Vision**: Process images sent via Telegram/WhatsApp (e.g., snap a flyer for calendar events or receipts for expenses).
 - **Gmail Automation Flows**: Proactive agent behaviors to organize receipts, create events from emails, suggest responses, and autonomously unsubscribe from newsletters.
-- **Audit Logging**: Asynchronously logs all user requests, LLM responses, and executed actions to a database.
-- **System Commands**: Built-in commands for connecting accounts (`/connect`), on-demand database backups (`/backup` and `/restore`), and dynamically generated help (`/help`).
+- **Durability & Rollback (`/undo`)**: Complete mutation audit logging with before/after state snapshots and one-click rollback support via `/undo` command and GraphQL `rollbackMutation`.
+- **Topic-Isolated Memories & Living Entities**: Hierarchical topic memory trees with automatic conflict superseding and living entity profile cards.
+- **Multi-Schedule & Contextual Calendars**: Virtual sub-calendars separating work and family schedules with schedule event overlays.
+- **Baby & Family Care Tracker**: Real-time growth tracking, wonder weeks developmental leaps, pediatric medication cooldown safety enforcement, feeding/sleep logs, and supplies inventory.
+- **House Maintenance, Contracts & Vehicle Vault**: Lease/mortgage/warranty contract manager with renewal notice deadlines, preventive upkeep schedules, and vehicle service mileage/inspection tracking.
+- **Financial Tracking & Budget Intelligence**: Expense/income ledger with receipt vision parsing, monthly category budgets, alert thresholds, >30% historical spending anomaly detection, and recurring bills tracking.
+- **On-Demand External APIs & Automations**: SSRF-protected on-demand REST/webhook API connector registry (AES-256-GCM encrypted headers), event-driven When→If→Then rules engine, and Personal CRM with anniversary/birthday alerts.
+- **Shared Spaces & Partner Sync**: Collaborative spaces with cross-partner push notifications and claim/complete task hand-offs.
+- **Expanded Web Control UI & GraphQL API**: Comprehensive Next.js Dashboard (`:3030`) with dedicated domain pages for all 9 expansion areas, KPI summary cards, and full GraphQL coverage.
+- **System Commands**: Built-in commands for connecting accounts (`/connect`), on-demand database backups (`/backup` and `/restore`), rollback (`/undo`), and dynamically generated help (`/help`).
 - **Microservice Architecture**: Decoupled ingestion and execution layers connected via RabbitMQ.
 
 ## V3 (Current Release)
 
 MyPA has officially reached **V3 (The Expansion Release)**! 
-While V1 (`v1.0.0`) established the core scheduling engine and V2 (`v2.0.0`) introduced semantic memory, reminders, and Google ecosystem integrations, **V3** transforms MyPA into a comprehensive, multi-modal personal assistant with web management and proactive automations.
+While V1 (`v1.0.0`) established the core scheduling engine and V2 (`v2.0.0`) introduced semantic memory, reminders, and Google ecosystem integrations, **V3** transforms MyPA into a comprehensive, multi-modal personal assistant with web management, proactive automations, and deep life-domain intelligence.
 
-The latest release (`v3.2.2`) includes:
+The latest release includes:
 
-- **Web Dashboard & GraphQL API**: Standalone Next.js control UI (`:3030`) for real-time audit log exploration, session inspection, tool configuration, OAuth status, and user management backed by a `gqlgen` GraphQL endpoint (`:8081`).
+- **Expanded Web Dashboard & GraphQL API**: Standalone Next.js control UI (`:3030`) with dedicated management consoles for Memories (`/memory`), Shared Spaces (`/shared`), Baby & Child Care (`/baby`), House & Vehicles (`/house`), Finance & Budgets (`/finance`), External Automations (`/automations`), and Audit/Rollback (`/audit`), backed by a comprehensive `gqlgen` GraphQL endpoint (`:8081`).
 - **Pairing Codes & Multi-Tenant Onboarding**: Secure multi-user access control using 6-digit pairing codes with role assignments (Admin, Family) and family group memory isolation.
 - **Multimodal Vision & Document Attachments**: Vision reasoning for event flyers, receipts, and photos, plus native document attachment support (`.txt`, `.md`, `.csv`, `.json`, `.pdf`) in WhatsApp with automatic outbound message chunking (≤1,500 chars) to bypass Twilio's length limitations.
 - **Parallel Tool Execution & Multi-Turn Agent Loop**: Multi-turn execution capable of parallel tool calls (e.g. bulk tasks, batch email actions) and natural synthesis.

@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { LayoutDashboard, Users, Wrench, Settings, Activity, ShieldCheck } from "lucide-react";
+import { 
+  LayoutDashboard, Users, Wrench, Settings, Activity, ShieldCheck,
+  Brain, Share2, Baby, Home, DollarSign, Zap, History 
+} from "lucide-react";
 import Link from "next/link";
 import "./globals.css";
 
@@ -32,35 +35,86 @@ export default function RootLayout({
           <div className="h-16 flex items-center px-6 border-b border-neutral-200">
             <span className="text-lg font-bold text-neutral-800">MyPA Dashboard</span>
           </div>
-          <nav className="flex-1 p-4 space-y-1">
-            <Link href="/" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
-              <LayoutDashboard className="mr-3 h-5 w-5" />
-              Overview
-            </Link>
-            <Link href="/sessions" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
-              <Users className="mr-3 h-5 w-5" />
-              Sessions
-            </Link>
-            <Link href="/tools" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
-              <Wrench className="mr-3 h-5 w-5" />
-              Tools & Plugins
-            </Link>
-            <Link href="/logs" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
-              <Activity className="mr-3 h-5 w-5" />
-              Audit Logs
-            </Link>
-            <Link href="/oauth" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
-              <ShieldCheck className="mr-3 h-5 w-5" />
-              OAuth Connections
-            </Link>
-            <Link href="/users" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
-              <Users className="mr-3 h-5 w-5" />
-              Users & Access
-            </Link>
-            <Link href="/settings" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
-              <Settings className="mr-3 h-5 w-5" />
-              Settings
-            </Link>
+          <nav className="flex-1 p-4 space-y-4 overflow-y-auto">
+            <div>
+              <div className="px-3 mb-1 text-xs font-semibold text-neutral-400 uppercase tracking-wider">General</div>
+              <div className="space-y-1">
+                <Link href="/" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <LayoutDashboard className="mr-3 h-5 w-5" />
+                  Overview
+                </Link>
+                <Link href="/users" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <Users className="mr-3 h-5 w-5" />
+                  Users & Access
+                </Link>
+                <Link href="/sessions" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <Activity className="mr-3 h-5 w-5" />
+                  Sessions
+                </Link>
+              </div>
+            </div>
+
+            <div>
+              <div className="px-3 mb-1 text-xs font-semibold text-neutral-400 uppercase tracking-wider">Knowledge & Family</div>
+              <div className="space-y-1">
+                <Link href="/memory" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <Brain className="mr-3 h-5 w-5 text-indigo-600" />
+                  Memory Explorer
+                </Link>
+                <Link href="/shared" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <Share2 className="mr-3 h-5 w-5 text-blue-600" />
+                  Shared Spaces
+                </Link>
+              </div>
+            </div>
+
+            <div>
+              <div className="px-3 mb-1 text-xs font-semibold text-neutral-400 uppercase tracking-wider">Life Domains</div>
+              <div className="space-y-1">
+                <Link href="/baby" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <Baby className="mr-3 h-5 w-5 text-pink-500" />
+                  Baby Tracker
+                </Link>
+                <Link href="/house" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <Home className="mr-3 h-5 w-5 text-amber-600" />
+                  House & Assets
+                </Link>
+                <Link href="/finance" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <DollarSign className="mr-3 h-5 w-5 text-emerald-600" />
+                  Finance & Budgets
+                </Link>
+              </div>
+            </div>
+
+            <div>
+              <div className="px-3 mb-1 text-xs font-semibold text-neutral-400 uppercase tracking-wider">Control & Audits</div>
+              <div className="space-y-1">
+                <Link href="/automations" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <Zap className="mr-3 h-5 w-5 text-purple-600" />
+                  Automations & APIs
+                </Link>
+                <Link href="/audit" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <History className="mr-3 h-5 w-5 text-red-500" />
+                  Audit & Rollback
+                </Link>
+                <Link href="/tools" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <Wrench className="mr-3 h-5 w-5" />
+                  Tools & Plugins
+                </Link>
+                <Link href="/logs" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <Activity className="mr-3 h-5 w-5" />
+                  Session Logs
+                </Link>
+                <Link href="/oauth" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <ShieldCheck className="mr-3 h-5 w-5" />
+                  OAuth Connections
+                </Link>
+                <Link href="/settings" className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900">
+                  <Settings className="mr-3 h-5 w-5" />
+                  Settings
+                </Link>
+              </div>
+            </div>
           </nav>
         </aside>
 
