@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/nivik/mypa/internal/models"
 	"google.golang.org/genai"
@@ -13,6 +14,8 @@ import (
 type Client struct {
 	genaiClient *genai.Client
 	model       string
+	extraTools  []*genai.FunctionDeclaration
+	toolsMu     sync.RWMutex
 }
 
 // NewClient initializes a new Gemini client.
@@ -41,6 +44,22 @@ func NewClient(ctx context.Context, apiKey, model string, opts ...func(*genai.Cl
 		model:       model,
 	}, nil
 }
+
+// SetExtraTools sets additional function declarations available to the LLM during Chat.
+func (c *Client) SetExtraTools(tools []*genai.FunctionDeclaration) {
+	c.toolsMu.Lock()
+	defer c.toolsMu.Unlock()
+	c.extraTools = make([]*genai.FunctionDeclaration, len(tools))
+	copy(c.extraTools, tools)
+}
+
+// AddFunctionDeclarations appends additional function declarations to the client's toolset.
+func (c *Client) AddFunctionDeclarations(tools ...*genai.FunctionDeclaration) {
+	c.toolsMu.Lock()
+	defer c.toolsMu.Unlock()
+	c.extraTools = append(c.extraTools, tools...)
+}
+
 
 // ContentBlockedError indicates that Gemini blocked the prompt or output due to a safety or content policy filter.
 type ContentBlockedError struct {
@@ -113,12 +132,26 @@ func (c *Client) Chat(ctx context.Context, systemInstruction string, history []m
 		Parts: newParts,
 	})
 
-	// Configure the model
+	// Configure the model with built-in CalendarEventTool plus any registered extra tools
+	c.toolsMu.RLock()
+	var tools []*genai.Tool
+	if CalendarEventTool != nil {
+		if len(c.extraTools) > 0 {
+			combinedDecls := make([]*genai.FunctionDeclaration, 0, len(CalendarEventTool.FunctionDeclarations)+len(c.extraTools))
+			combinedDecls = append(combinedDecls, CalendarEventTool.FunctionDeclarations...)
+			combinedDecls = append(combinedDecls, c.extraTools...)
+			tools = []*genai.Tool{{FunctionDeclarations: combinedDecls}}
+		} else {
+			tools = []*genai.Tool{CalendarEventTool}
+		}
+	}
+	c.toolsMu.RUnlock()
+
 	config := &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{
 			Parts: []*genai.Part{genai.NewPartFromText(systemInstruction)},
 		},
-		Tools:       []*genai.Tool{CalendarEventTool},
+		Tools:       tools,
 		Temperature: genai.Ptr[float32](0.2), // Low temp for more deterministic tool calling
 	}
 

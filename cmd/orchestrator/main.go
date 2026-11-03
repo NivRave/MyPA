@@ -2,16 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/playground"
+	"golang.org/x/oauth2"
 
 	"github.com/nivik/mypa/internal/audio"
 	"github.com/nivik/mypa/internal/broker"
@@ -19,6 +22,11 @@ import (
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/contacts"
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/domains/durability"
+	"github.com/nivik/mypa/internal/domains/memory"
+	"github.com/nivik/mypa/internal/domains/schedule"
+	"github.com/nivik/mypa/internal/domains/shared"
+	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/gmail"
 	"github.com/nivik/mypa/internal/graph"
 	"github.com/nivik/mypa/internal/llm"
@@ -100,6 +108,7 @@ func main() {
 		slog.Error("DATABASE_URL is required")
 		os.Exit(1)
 	}
+	db.RegisterWave1Models()
 	var dbClient *db.Client
 	for i := 0; i < 5; i++ {
 		dbClient, err = db.NewClient(dbURL)
@@ -138,8 +147,60 @@ func main() {
 		}
 	}
 
-	// 9. Initialize Engine
-	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, contactsClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone)
+	// 8.6 Initialize Wave 1 EventBus and Domain ToolModules
+	eventBus := events.NewEventBus()
+	registry := orchestrator.NewRegistry()
+
+	// Track 1A: Durability Module (audit logs, undo, data export)
+	durabilityModule := durability.NewModule(dbClient, eventBus)
+
+	// Track 1B: Topic Memory Module (topic memory, entity profiles)
+	memoryRepo := db.NewMemoryV2Repo(dbClient.DB)
+	memoryModule := memory.NewModule(memoryRepo)
+
+	// Track 1C: Shared Spaces & Partner Sync Notifier
+	sharedNotifier := shared.NewNotifier(dbClient, func(notifyCtx context.Context, recipientID, text string) error {
+		if strings.HasPrefix(recipientID, "+") || strings.HasPrefix(recipientID, "whatsapp:") {
+			if twilioClient != nil {
+				return twilioClient.SendMessage(notifyCtx, recipientID, text)
+			}
+		}
+		if tgClient != nil {
+			return tgClient.SendMessage(notifyCtx, recipientID, text)
+		}
+		return nil
+	})
+	sharedNotifier.RegisterWithBus(eventBus)
+	sharedModule := shared.NewModule(dbClient, eventBus, sharedNotifier)
+
+	// Track 1D: Multi-Schedule & Virtual Sub-Calendars
+	calendarFactory := func(calCtx context.Context, userID string) (orchestrator.CalendarClient, error) {
+		tokenBytes, err := store.GetOAuthToken(calCtx, userID)
+		if err != nil || tokenBytes == nil {
+			return nil, fmt.Errorf("unauthorized")
+		}
+		var tok oauth2.Token
+		if err := json.Unmarshal(tokenBytes, &tok); err != nil {
+			return nil, fmt.Errorf("unauthorized")
+		}
+		ts := oauthCfg.TokenSource(calCtx, &tok)
+		return calendar.NewClient(calCtx, ts)
+	}
+	scheduleModule := schedule.NewModule(dbClient, schedule.WithCalendarFactory(calendarFactory), schedule.WithEventBus(eventBus))
+
+	// Register all Wave 1 domain modules in the ToolRegistry
+	registry.Register(durabilityModule)
+	registry.Register(memoryModule)
+	registry.Register(sharedModule)
+	registry.Register(scheduleModule)
+
+	// Wire registry declarations into llmClient
+	llmClient.AddFunctionDeclarations(registry.AllDeclarations()...)
+
+	// 9. Initialize Engine with ToolRegistry and EventBus
+	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, contactsClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone).
+		WithToolRegistry(registry).
+		WithEventBus(eventBus)
 
 	// Start Cron jobs
 	c := scheduler.StartCronJobs(engine, dbClient)

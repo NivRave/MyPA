@@ -32,7 +32,7 @@ func NewClient(dsn string) (*Client, error) {
 	}
 
 	// Auto-migrate schemas
-	if err := db.AutoMigrate(
+	baseModels := []interface{}{
 		&models.AuditSession{},
 		&models.AuditEvent{},
 		&models.Memory{},
@@ -40,7 +40,10 @@ func NewClient(dsn string) (*Client, error) {
 		&models.User{},
 		&models.PairingCode{},
 		&models.Workflow{},
-	); err != nil {
+	}
+	allModels := append(baseModels, GetRegisteredModels()...)
+
+	if err := db.AutoMigrate(allModels...); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 

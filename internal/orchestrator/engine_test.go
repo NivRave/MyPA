@@ -14,6 +14,7 @@ import (
 	"github.com/nivik/mypa/internal/state"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
+	"google.golang.org/genai"
 )
 
 func setupTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.MockLLMClient, *mocks.MockDBClient, func()) {
@@ -341,3 +342,46 @@ func TestProcessMessage_ContentBlocked_PersistentError(t *testing.T) {
 	err := engine.ProcessMessage(context.Background(), msg)
 	assert.NoError(t, err)
 }
+
+func TestEngine_HandleToolCall_RegistryDelegation(t *testing.T) {
+	engine, _, _, dbMock, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	reg := NewRegistry()
+	mod := &mockToolModule{
+		name: "test_domain",
+		declarations: []*genai.FunctionDeclaration{
+			{Name: "custom_registry_tool"},
+		},
+		executeFunc: func(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
+			assert.Equal(t, "custom_registry_tool", toolName)
+			assert.Equal(t, "hello", args["greeting"])
+			return "registry execution success", nil
+		},
+		promptFunc: func(ctx context.Context, callCtx CallContext) string {
+			return "Custom domain prompt section."
+		},
+	}
+	reg.Register(mod)
+	engine.SetToolRegistry(reg)
+
+	dbMock.EXPECT().GetUser("user-1").Return(&models.User{PlatformID: "user-1", Name: "User One"}, nil).AnyTimes()
+
+	msg := models.Message{UserID: "user-1", Text: "run custom tool"}
+	tc := &genai.FunctionCall{
+		Name: "custom_registry_tool",
+		Args: map[string]interface{}{"greeting": "hello"},
+	}
+
+	res := engine.executeSingleTool(context.Background(), msg, nil, "system", tc)
+	assert.Equal(t, "registry execution success", res)
+
+	// Unknown tool still returns unknown tool warning
+	unknownTc := &genai.FunctionCall{
+		Name: "unregistered_tool",
+		Args: map[string]interface{}{},
+	}
+	resUnknown := engine.executeSingleTool(context.Background(), msg, nil, "system", unknownTc)
+	assert.Equal(t, "⚠️ LLM tried to call an unknown tool.", resUnknown)
+}
+

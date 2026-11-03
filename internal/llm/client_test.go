@@ -184,6 +184,23 @@ func TestNewClient_NoKey(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestClient_ExtraTools(t *testing.T) {
+	client := &Client{}
+	assert.Empty(t, client.extraTools)
+
+	decl1 := &genai.FunctionDeclaration{Name: "custom_tool_1"}
+	decl2 := &genai.FunctionDeclaration{Name: "custom_tool_2"}
+
+	client.SetExtraTools([]*genai.FunctionDeclaration{decl1})
+	assert.Len(t, client.extraTools, 1)
+	assert.Equal(t, "custom_tool_1", client.extraTools[0].Name)
+
+	client.AddFunctionDeclarations(decl2)
+	assert.Len(t, client.extraTools, 2)
+	assert.Equal(t, "custom_tool_2", client.extraTools[1].Name)
+}
+
+
 type rewriteTransport struct {
 	URL string
 }

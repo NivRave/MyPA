@@ -16,6 +16,7 @@ import (
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/markdown"
 	"github.com/nivik/mypa/internal/models"
@@ -46,6 +47,8 @@ type Engine struct {
 	publisher       EventPublisher
 	wg              sync.WaitGroup
 	onWorkflowsChanged func()
+	toolRegistry    *Registry
+	eventBus        *events.EventBus
 }
 
 var hebrewPrepositionRegex = regexp.MustCompile(`(^|[^\p{Hebrew}\w])([בלמכ])(\d+)`)
@@ -60,6 +63,65 @@ func NormalizeHebrewPrepositionNumbers(text string) string {
 func (e *Engine) SetWorkflowsChangedCallback(cb func()) {
 	e.onWorkflowsChanged = cb
 }
+
+// SetToolRegistry sets the modular tool registry and synchronizes declarations with the LLM client.
+func (e *Engine) SetToolRegistry(reg *Registry) {
+	e.toolRegistry = reg
+	if reg != nil && e.llm != nil {
+		if toolSetter, ok := e.llm.(interface{ SetExtraTools([]*genai.FunctionDeclaration) }); ok {
+			toolSetter.SetExtraTools(reg.AllDeclarations())
+		}
+	}
+}
+
+// WithToolRegistry configures the tool registry in a builder pattern.
+func (e *Engine) WithToolRegistry(reg *Registry) *Engine {
+	e.SetToolRegistry(reg)
+	return e
+}
+
+// SetEventBus sets the internal event bus.
+func (e *Engine) SetEventBus(bus *events.EventBus) {
+	e.eventBus = bus
+}
+
+// WithEventBus configures the event bus in a builder pattern.
+func (e *Engine) WithEventBus(bus *events.EventBus) *Engine {
+	e.SetEventBus(bus)
+	return e
+}
+
+// buildCallContext constructs a CallContext for the given user and incoming message.
+func (e *Engine) buildCallContext(ctx context.Context, user *models.User, msg models.Message) CallContext {
+	sendNotif := func(nCtx context.Context, targetUserID, text string) error {
+		log, err := e.db.GetLastAuditSessionForUser(targetUserID)
+		if err != nil || log == nil || log.Source == "" {
+			if targetUserID == msg.UserID {
+				return e.sendMessage(nCtx, msg, text)
+			}
+			return fmt.Errorf("no active channel found for user: %s", targetUserID)
+		}
+		targetMsg := models.Message{
+			ID:     fmt.Sprintf("notif-%d", time.Now().UnixNano()),
+			ChatID: log.ChatID,
+			UserID: targetUserID,
+			Text:   text,
+			Source: log.Source,
+		}
+		return e.sendMessage(nCtx, targetMsg, text)
+	}
+
+	return CallContext{
+		User:             user,
+		Message:          msg,
+		DB:               e.db,
+		LLM:              e.llm,
+		EventBus:         e.eventBus,
+		SendNotification: sendNotif,
+		Extra:            make(map[string]interface{}),
+	}
+}
+
 
 // NewEngine initializes the orchestrator engine.
 func NewEngine(
@@ -503,6 +565,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 				facts = append(facts, "- "+m.Fact+scopeTag)
 			}
 			systemPrompt += "\n\nRelevant facts about the user from past conversations:\n" + strings.Join(facts, "\n")
+		}
+	}
+
+	// Append dynamic system prompt instructions from registered tool modules
+	if e.toolRegistry != nil {
+		callCtx := e.buildCallContext(ctx, user, msg)
+		if extraPrompt := e.toolRegistry.CombinedSystemPrompt(ctx, callCtx); extraPrompt != "" {
+			systemPrompt += "\n\n" + extraPrompt
 		}
 	}
 
@@ -1129,6 +1199,20 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 		}
 
 		return "Workflow deleted successfully."
+	}
+
+	// Delegate to modular ToolRegistry if registered
+	if e.toolRegistry != nil {
+		user, _ := e.db.GetUser(msg.UserID)
+		callCtx := e.buildCallContext(ctx, user, msg)
+		res, handled, err := e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)
+		if handled {
+			if err != nil {
+				slog.Error("registry tool execution failed", "tool", toolCall.Name, "error", err)
+				return fmt.Sprintf("❌ Error executing %s: %v", toolCall.Name, err)
+			}
+			return res
+		}
 	}
 
 	return "⚠️ LLM tried to call an unknown tool."
