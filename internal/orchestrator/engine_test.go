@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -384,4 +386,99 @@ func TestEngine_HandleToolCall_RegistryDelegation(t *testing.T) {
 	resUnknown := engine.executeSingleTool(context.Background(), msg, nil, "system", unknownTc)
 	assert.Equal(t, "⚠️ LLM tried to call an unknown tool.", resUnknown)
 }
+
+func setupUnauthTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.MockDBClient, func()) {
+	ctrl := gomock.NewController(t)
+
+	tgMock := mocks.NewMockTelegramClient(ctrl)
+	twMock := mocks.NewMockTwilioClient(ctrl)
+	audioMock := mocks.NewMockAudioClient(ctrl)
+	llmMock := mocks.NewMockLLMClient(ctrl)
+	gmailMock := mocks.NewMockGmailClient(ctrl)
+	tasksMock := mocks.NewMockTasksClient(ctrl)
+	tavilyMock := mocks.NewMockTavilyClient(ctrl)
+	dbMock := mocks.NewMockDBClient(ctrl)
+	eventPublisherMock := mocks.NewMockEventPublisher(ctrl)
+	eventPublisherMock.EXPECT().Publish(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
+	mr, err := miniredis.Run()
+	assert.NoError(t, err)
+	store, err := state.NewStore("redis://" + mr.Addr())
+	assert.NoError(t, err)
+
+	oauthCfg := calendar.NewOAuthConfig(&config.GoogleConfig{
+		ClientID:     "test",
+		ClientSecret: "secret",
+		RedirectURL:  "url",
+	})
+
+	engine := NewEngine(
+		nil,
+		store,
+		dbMock,
+		llmMock,
+		tgMock,
+		twMock,
+		oauthCfg,
+		gmailMock,
+		tasksMock,
+		nil,
+		tavilyMock,
+		audioMock,
+		eventPublisherMock,
+		"UTC",
+	)
+
+	cleanup := func() {
+		engine.Wait()
+		store.Close()
+		mr.Close()
+		ctrl.Finish()
+	}
+
+	return engine, tgMock, dbMock, cleanup
+}
+
+func TestProcessMessage_PairingRateLimitAndLockout(t *testing.T) {
+	engine, tgMock, dbMock, cleanup := setupUnauthTestEngine(t)
+	defer cleanup()
+
+	// Override GetUser to simulate unauthorized user
+	dbMock.EXPECT().GetUser("unauth-user").Return(nil, assert.AnError).AnyTimes()
+	dbMock.EXPECT().GetPairingCode("000000").Return(nil, assert.AnError).AnyTimes()
+
+	// 1-4 failures
+	for i := 1; i <= 4; i++ {
+		expectedRemaining := 5 - i
+		tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
+			str, ok := x.(string)
+			return ok && strings.Contains(str, fmt.Sprintf("%d attempts remaining", expectedRemaining))
+		})).Return(nil).Times(1)
+
+		msg := models.Message{UserID: "unauth-user", Text: "000000", Source: "telegram"}
+		err := engine.ProcessMessage(context.Background(), msg)
+		assert.NoError(t, err)
+	}
+
+	// 5th failure triggers lockout message
+	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
+		str, ok := x.(string)
+		return ok && strings.Contains(str, "locked for 1 hour")
+	})).Return(nil).Times(1)
+
+	msg := models.Message{UserID: "unauth-user", Text: "000000", Source: "telegram"}
+	err := engine.ProcessMessage(context.Background(), msg)
+	assert.NoError(t, err)
+
+	// 6th message while locked out returns temporarily locked out
+	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
+		str, ok := x.(string)
+		return ok && strings.Contains(str, "temporarily locked out")
+	})).Return(nil).Times(1)
+
+	msg = models.Message{UserID: "unauth-user", Text: "any text", Source: "telegram"}
+	err = engine.ProcessMessage(context.Background(), msg)
+	assert.NoError(t, err)
+}
+
 

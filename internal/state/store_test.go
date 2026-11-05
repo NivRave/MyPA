@@ -94,3 +94,51 @@ func TestOAuthToken(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, expectedToken, token)
 }
+
+func TestPairingRateLimit(t *testing.T) {
+	store, _, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	userID := "unauthorized-user"
+
+	// Initially not locked out
+	locked, dur, err := store.CheckPairingLockout(ctx, userID)
+	require.NoError(t, err)
+	assert.False(t, locked)
+	assert.Zero(t, dur)
+
+	// Record 4 failed attempts - not locked out
+	for i := 1; i <= 4; i++ {
+		attempts, isLocked, err := store.RecordFailedPairingAttempt(ctx, userID)
+		require.NoError(t, err)
+		assert.Equal(t, int64(i), attempts)
+		assert.False(t, isLocked)
+	}
+
+	// 5th attempt triggers lockout
+	attempts, isLocked, err := store.RecordFailedPairingAttempt(ctx, userID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), attempts)
+	assert.True(t, isLocked)
+
+	// Verify lockout check returns true
+	locked, dur, err = store.CheckPairingLockout(ctx, userID)
+	require.NoError(t, err)
+	assert.True(t, locked)
+	assert.True(t, dur > 0)
+
+	// Further attempt still reports locked
+	_, isLocked, err = store.RecordFailedPairingAttempt(ctx, userID)
+	require.NoError(t, err)
+	assert.True(t, isLocked)
+
+	// Reset clears lockout and attempts
+	err = store.ResetPairingRateLimit(ctx, userID)
+	require.NoError(t, err)
+
+	locked, _, err = store.CheckPairingLockout(ctx, userID)
+	require.NoError(t, err)
+	assert.False(t, locked)
+}
+

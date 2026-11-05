@@ -430,6 +430,70 @@ func GenerateMilestoneSuggestions(age AgeInfo, category string) []MilestoneSugge
 	return suggestions
 }
 
+// ClassifyMedication returns the pharmacological drug class ("paracetamol", "ibuprofen", or "other")
+// and a normalized base identifier for matching dosage/brand variations.
+func ClassifyMedication(medName string) (drugClass string, baseName string) {
+	norm := strings.ToLower(strings.TrimSpace(medName))
+
+	// Paracetamol / Acetaminophen class (antipyretic/analgesic)
+	if strings.Contains(norm, "paracetamol") || strings.Contains(norm, "acetaminophen") ||
+		strings.Contains(norm, "tylenol") || strings.Contains(norm, "calpol") ||
+		strings.Contains(norm, "acamol") || strings.Contains(norm, "panadol") ||
+		strings.Contains(norm, "febricol") {
+		return "paracetamol", "paracetamol"
+	}
+
+	// Ibuprofen class (NSAID)
+	if strings.Contains(norm, "ibuprofen") || strings.Contains(norm, "advil") ||
+		strings.Contains(norm, "nurofen") || strings.Contains(norm, "motrin") ||
+		strings.Contains(norm, "pediaprofen") {
+		return "ibuprofen", "ibuprofen"
+	}
+
+	// For other medications, extract the primary drug name keyword (first word with len >= 3)
+	fields := strings.Fields(norm)
+	base := norm
+	for _, f := range fields {
+		fClean := strings.Trim(f, "0123456789.,/()[]:-")
+		if len(fClean) >= 3 {
+			base = fClean
+			break
+		}
+	}
+	return "other", base
+}
+
+// NormalizeMedicationType returns the normalized medication class string ("paracetamol", "ibuprofen", or "other").
+func NormalizeMedicationType(medName string) string {
+	drugClass, _ := ClassifyMedication(medName)
+	return drugClass
+}
+
+// IsSameMedicationClass checks whether two medication detail strings refer to the same pharmacological class.
+func IsSameMedicationClass(medA, medB string) bool {
+	classA, baseA := ClassifyMedication(medA)
+	classB, baseB := ClassifyMedication(medB)
+
+	if classA != "other" && classB != "other" {
+		return classA == classB
+	}
+	if classA == "other" && classB == "other" {
+		return baseA != "" && baseB != "" && baseA == baseB
+	}
+	return false
+}
+
+// FindLastMedicationLogForCooldown finds the most recent medication log in logs (ordered newest first)
+// that matches the pharmacological class of medName.
+func FindLastMedicationLogForCooldown(logs []models.BabyCareLog, medName string) *models.BabyCareLog {
+	for i := range logs {
+		if strings.EqualFold(logs[i].LogType, "medication") && IsSameMedicationClass(logs[i].Details, medName) {
+			return &logs[i]
+		}
+	}
+	return nil
+}
+
 // MedicationCooldownResult holds the safety assessment for administering pediatric medication.
 type MedicationCooldownResult struct {
 	MedicationName     string        `json:"medication_name"`
@@ -453,21 +517,9 @@ func CheckMedicationCooldown(lastLog *models.BabyCareLog, medName string, now ti
 		now = time.Now()
 	}
 
-	normMed := strings.ToLower(strings.TrimSpace(medName))
-	medType := "other"
+	medType, _ := ClassifyMedication(medName)
 	minCooldownHours := 4.0
-
-	// Identify medication class
-	if strings.Contains(normMed, "paracetamol") || strings.Contains(normMed, "acetaminophen") ||
-		strings.Contains(normMed, "tylenol") || strings.Contains(normMed, "calpol") ||
-		strings.Contains(normMed, "acamol") || strings.Contains(normMed, "panadol") ||
-		strings.Contains(normMed, "febricol") {
-		medType = "paracetamol"
-		minCooldownHours = 4.0 // Minimum 4 hours between paracetamol doses (max 4 doses/24h)
-	} else if strings.Contains(normMed, "ibuprofen") || strings.Contains(normMed, "advil") ||
-		strings.Contains(normMed, "nurofen") || strings.Contains(normMed, "motrin") ||
-		strings.Contains(normMed, "pediaprofen") {
-		medType = "ibuprofen"
+	if medType == "ibuprofen" {
 		minCooldownHours = 6.0 // Minimum 6 hours between ibuprofen doses (max 3-4 doses/24h)
 	}
 
@@ -494,6 +546,13 @@ func CheckMedicationCooldown(lastLog *models.BabyCareLog, medName string, now ti
 	}
 
 	if lastLog == nil {
+		res.IsSafeToAdminister = true
+		res.NextSafeDoseAt = now
+		return res
+	}
+
+	// If the prior log is of a completely different medication class, do NOT apply cooldown from it.
+	if !IsSameMedicationClass(lastLog.Details, medName) {
 		res.IsSafeToAdminister = true
 		res.NextSafeDoseAt = now
 		return res

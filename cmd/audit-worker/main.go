@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -90,12 +91,22 @@ func startArchiver(ctx context.Context, dbClient *db.Client) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			archiveOldSessions(dbClient)
+			_ = archiveOldSessions(dbClient)
 		}
 	}
 }
 
-func archiveOldSessions(dbClient *db.Client) {
+func getArchiveDir() string {
+	if dir := os.Getenv("AUDIT_ARCHIVE_DIR"); dir != "" {
+		return dir
+	}
+	if fi, err := os.Stat("/app/archives"); err == nil && fi.IsDir() {
+		return "/app/archives"
+	}
+	return "."
+}
+
+func archiveOldSessions(dbClient *db.Client, optionalDir ...string) error {
 	slog.Info("running daily archive routine for old audit sessions")
 	thirtyDaysAgo := time.Now().Add(-30 * 24 * time.Hour)
 
@@ -103,33 +114,71 @@ func archiveOldSessions(dbClient *db.Client) {
 	result := dbClient.DB.Where("start_time < ?", thirtyDaysAgo).Find(&sessions)
 	if result.Error != nil {
 		slog.Error("failed to query old sessions", "error", result.Error)
-		return
+		return result.Error
 	}
 
 	if len(sessions) == 0 {
-		return
+		return nil
 	}
 
-	// Dump to file
+	archiveDir := getArchiveDir()
+	if len(optionalDir) > 0 && optionalDir[0] != "" {
+		archiveDir = optionalDir[0]
+	}
+
+	if err := os.MkdirAll(archiveDir, 0755); err != nil {
+		slog.Error("failed to create archive directory", "dir", archiveDir, "error", err)
+		return fmt.Errorf("failed to create archive directory: %w", err)
+	}
+
 	filename := fmt.Sprintf("audit_archive_%d.jsonl", time.Now().Unix())
-	f, err := os.Create(filename)
+	filePath := filepath.Join(archiveDir, filename)
+	f, err := os.Create(filePath)
 	if err != nil {
-		slog.Error("failed to create archive file", "error", err)
-		return
+		slog.Error("failed to create archive file", "path", filePath, "error", err)
+		return fmt.Errorf("failed to create archive file: %w", err)
 	}
-	
-	encoder := json.NewEncoder(f)
-	for _, s := range sessions {
-		_ = encoder.Encode(s)
-	}
-	f.Close()
 
-	// Delete from DB
-	delResult := dbClient.DB.Where("start_time < ?", thirtyDaysAgo).Delete(&models.AuditSession{})
+	encoder := json.NewEncoder(f)
+	var encodeErr error
+	for _, s := range sessions {
+		if err := encoder.Encode(s); err != nil {
+			encodeErr = err
+			break
+		}
+	}
+	if encodeErr != nil {
+		slog.Error("failed to encode session to archive", "path", filePath, "error", encodeErr)
+		_ = f.Close()
+		_ = os.Remove(filePath)
+		return fmt.Errorf("failed to encode session: %w", encodeErr)
+	}
+
+	if err := f.Sync(); err != nil {
+		slog.Error("failed to sync archive file", "path", filePath, "error", err)
+		_ = f.Close()
+		_ = os.Remove(filePath)
+		return fmt.Errorf("failed to sync archive file: %w", err)
+	}
+
+	if err := f.Close(); err != nil {
+		slog.Error("failed to close archive file", "path", filePath, "error", err)
+		_ = os.Remove(filePath)
+		return fmt.Errorf("failed to close archive file: %w", err)
+	}
+
+	// Delete only successfully archived sessions from DB
+	sessionIDs := make([]string, len(sessions))
+	for i, s := range sessions {
+		sessionIDs[i] = s.ID
+	}
+	delResult := dbClient.DB.Where("id IN ?", sessionIDs).Delete(&models.AuditSession{})
 	if delResult.Error != nil {
 		slog.Error("failed to delete archived sessions", "error", delResult.Error)
-		return
+		return delResult.Error
 	}
 
-	slog.Info("archived and deleted old sessions", "count", len(sessions), "file", filename)
+	slog.Info("archived and deleted old sessions", "count", len(sessions), "file", filePath)
+	return nil
 }
+

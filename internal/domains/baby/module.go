@@ -144,6 +144,10 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 						Type:        genai.TypeString,
 						Description: "Optional family group override.",
 					},
+					"force": {
+						Type:        genai.TypeBoolean,
+						Description: "Optional override flag to force logging medication even if pediatric safety cooldown is active.",
+					},
 				},
 				Required: []string{"log_type"},
 			},
@@ -517,9 +521,31 @@ func (m *Module) executeLogCare(ctx context.Context, callCtx orchestrator.CallCo
 
 	// Medication Safety Cooldown Check
 	if logType == "medication" {
-		lastMedLog, _ := repo.GetLastMedicationLog(profile.ID, familyGroup, details)
+		var lastMedLog *models.BabyCareLog
+		recentMedLogs, err := repo.GetCareLogs(profile.ID, familyGroup, "medication", time.Time{}, time.Time{}, 50)
+		if err == nil && len(recentMedLogs) > 0 {
+			lastMedLog = FindLastMedicationLogForCooldown(recentMedLogs, details)
+		} else {
+			lastMedLog, _ = repo.GetLastMedicationLog(profile.ID, familyGroup, details)
+		}
+
 		cd := CheckMedicationCooldown(lastMedLog, details, timestamp, age.Months)
 		cooldownResult = &cd
+
+		// Pediatric Safety Guardrail: if cooldown is active, DO NOT record medication
+		// as administered in database unless explicitly forced.
+		force := getBoolArg(args, "force")
+		if !cd.IsSafeToAdminister && !force {
+			resp := map[string]interface{}{
+				"status":              "blocked",
+				"warning":             cd.WarningMessage,
+				"message":             cd.WarningMessage,
+				"baby_name":           profile.Name,
+				"baby_age":            age.FormattedAge,
+				"medication_cooldown": cd,
+			}
+			return toJSON(resp), nil
+		}
 	}
 
 	careLog := models.BabyCareLog{
@@ -571,7 +597,7 @@ func (m *Module) executeLogCare(ctx context.Context, callCtx orchestrator.CallCo
 
 	if cooldownResult != nil {
 		resp["medication_cooldown"] = cooldownResult
-		if !cooldownResult.IsSafeToAdminister {
+		if !cooldownResult.IsSafeToAdminister || cooldownResult.WarningMessage != "" {
 			resp["warning"] = cooldownResult.WarningMessage
 		}
 	}
@@ -1015,6 +1041,23 @@ func getFloatArg(args map[string]interface{}, key string) float64 {
 		}
 	}
 	return 0.0
+}
+
+func getBoolArg(args map[string]interface{}, key string) bool {
+	if val, ok := args[key]; ok && val != nil {
+		switch v := val.(type) {
+		case bool:
+			return v
+		case string:
+			b, _ := strconv.ParseBool(v)
+			return b
+		case int:
+			return v != 0
+		case float64:
+			return v != 0
+		}
+	}
+	return false
 }
 
 func toJSON(v interface{}) string {

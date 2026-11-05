@@ -193,15 +193,13 @@ func (r *mockBabyRepo) GetLastMedicationLog(babyID uint, familyGroup, medName st
 	if err != nil || len(logs) == 0 {
 		return nil, err
 	}
-	if medName == "" {
+	if strings.TrimSpace(medName) == "" {
 		return &logs[0], nil
 	}
-	normMed := strings.ToLower(strings.TrimSpace(medName))
-	for _, l := range logs {
-		if strings.Contains(strings.ToLower(l.Details), normMed) {
-			cp := l
-			return &cp, nil
-		}
+	matched := baby.FindLastMedicationLogForCooldown(logs, medName)
+	if matched != nil {
+		cp := *matched
+		return &cp, nil
 	}
 	return nil, nil
 }

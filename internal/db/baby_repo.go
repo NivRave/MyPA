@@ -221,7 +221,21 @@ func (c *Client) GetLastMedicationLog(babyID uint, familyGroup, medName string) 
 		query = query.Where("family_group = ?", strings.TrimSpace(familyGroup))
 	}
 	if strings.TrimSpace(medName) != "" {
-		query = query.Where("LOWER(details) LIKE ?", "%"+strings.ToLower(strings.TrimSpace(medName))+"%")
+		norm := strings.ToLower(strings.TrimSpace(medName))
+		if strings.Contains(norm, "paracetamol") || strings.Contains(norm, "acetaminophen") ||
+			strings.Contains(norm, "tylenol") || strings.Contains(norm, "calpol") ||
+			strings.Contains(norm, "acamol") || strings.Contains(norm, "panadol") ||
+			strings.Contains(norm, "febricol") {
+			query = query.Where("LOWER(details) LIKE ? OR LOWER(details) LIKE ? OR LOWER(details) LIKE ? OR LOWER(details) LIKE ? OR LOWER(details) LIKE ? OR LOWER(details) LIKE ? OR LOWER(details) LIKE ?",
+				"%paracetamol%", "%acetaminophen%", "%tylenol%", "%calpol%", "%acamol%", "%panadol%", "%febricol%")
+		} else if strings.Contains(norm, "ibuprofen") || strings.Contains(norm, "advil") ||
+			strings.Contains(norm, "nurofen") || strings.Contains(norm, "motrin") ||
+			strings.Contains(norm, "pediaprofen") {
+			query = query.Where("LOWER(details) LIKE ? OR LOWER(details) LIKE ? OR LOWER(details) LIKE ? OR LOWER(details) LIKE ? OR LOWER(details) LIKE ?",
+				"%ibuprofen%", "%advil%", "%nurofen%", "%motrin%", "%pediaprofen%")
+		} else {
+			query = query.Where("LOWER(details) LIKE ?", "%"+norm+"%")
+		}
 	}
 
 	var log models.BabyCareLog

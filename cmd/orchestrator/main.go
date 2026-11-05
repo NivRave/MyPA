@@ -248,8 +248,12 @@ func main() {
 
 	serverAddr := fmt.Sprintf(":%d", cfg.Server.OrchestratorPort)
 	srv := &http.Server{
-		Addr:    serverAddr,
-		Handler: mux,
+		Addr:              serverAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {
@@ -287,7 +291,11 @@ func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient Au
 	// GraphQL Server
 	if dbClient != nil {
 		srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: &graph.Resolver{DB: dbClient}}))
-		mux.Handle("/graphql", srv)
+		graphqlHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit for GraphQL
+			srv.ServeHTTP(w, r)
+		})
+		mux.Handle("/graphql", graphqlHandler)
 		mux.Handle("/playground", playground.Handler("GraphQL playground", "/graphql"))
 	}
 

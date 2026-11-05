@@ -483,13 +483,28 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		return fmt.Errorf("failed to get chat history: %w", err)
 	}
 
-	// 2.5 Authorize User
+	// 2.5 Authorize User & Pairing Rate Limit Enforcement
 	user, err := e.db.GetUser(msg.UserID)
 	if err != nil {
-		// User not found. Check if msg.Text is a pairing code.
+		// User not found. Check if currently locked out
+		if e.store != nil {
+			if locked, remaining, lockErr := e.store.CheckPairingLockout(ctx, msg.UserID); lockErr == nil && locked {
+				llmResponse = "Pairing rate limit exceeded (locked out)"
+				mins := int(remaining.Minutes()) + 1
+				return e.sendMessage(ctx, msg, fmt.Sprintf("🚫 Too many failed pairing attempts. You are temporarily locked out. Please try again in %d minutes.", mins))
+			}
+		}
+
 		code := strings.TrimSpace(msg.Text)
-		pc, err := e.db.GetPairingCode(code)
-		if err == nil && pc != nil {
+		code = strings.TrimPrefix(code, "/start ")
+		code = strings.TrimSpace(code)
+
+		var pc *models.PairingCode
+		if len(code) == 6 {
+			pc, _ = e.db.GetPairingCode(code)
+		}
+
+		if pc != nil {
 			newUser := models.User{
 				PlatformID:  msg.UserID,
 				Name:        "Unknown", // Can be updated later
@@ -498,10 +513,26 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 				CreatedAt:   time.Now(),
 			}
 			if err := e.db.RedeemPairingCode(pc.ID, newUser); err == nil {
+				if e.store != nil {
+					_ = e.store.ResetPairingRateLimit(ctx, msg.UserID)
+				}
 				llmResponse = "Pairing successful"
 				return e.sendMessage(ctx, msg, "✅ Pairing successful! Welcome to MyPA. You can now use all features.")
 			}
 		}
+
+		// Failed attempt: record in Redis
+		if e.store != nil {
+			attempts, lockedOut, _ := e.store.RecordFailedPairingAttempt(ctx, msg.UserID)
+			if lockedOut {
+				llmResponse = "Pairing locked out after 5 failures"
+				return e.sendMessage(ctx, msg, "🚫 Too many failed attempts (5/5). Your account has been locked for 1 hour.")
+			}
+			remainingAttempts := 5 - attempts
+			llmResponse = "Unauthorized access attempt"
+			return e.sendMessage(ctx, msg, fmt.Sprintf("🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue. (%d attempts remaining before 1-hour lockout)", remainingAttempts))
+		}
+
 		llmResponse = "Unauthorized access attempt"
 		return e.sendMessage(ctx, msg, "🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue.")
 	}

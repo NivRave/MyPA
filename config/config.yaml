@@ -8,7 +8,7 @@ server:
 google:
   client_id: ""
   client_secret: ""
-  redirect_url: "http://localhost:8080/oauth/callback"
+  redirect_url: "http://localhost:8081/auth/google/callback"
 
 tavily:
   api_key: ""

@@ -105,3 +105,52 @@ func (s *Store) GetOAuthToken(ctx context.Context, userID string) ([]byte, error
 	return res, nil
 }
 
+// RecordFailedPairingAttempt increments the failed pairing counter for a user in Redis.
+// Enforces a 15-minute rolling window on initial failure. On the 5th failure, triggers a 1-hour lockout.
+func (s *Store) RecordFailedPairingAttempt(ctx context.Context, userID string) (int64, bool, error) {
+	key := fmt.Sprintf("rate_limit:pairing:%s", userID)
+	lockoutKey := fmt.Sprintf("rate_limit:pairing:lockout:%s", userID)
+
+	// If already locked out, return immediately
+	ttl, err := s.client.TTL(ctx, lockoutKey).Result()
+	if err == nil && ttl > 0 {
+		return 5, true, nil
+	}
+
+	attempts, err := s.client.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to increment pairing rate limit: %w", err)
+	}
+
+	if attempts == 1 {
+		_ = s.client.Expire(ctx, key, 15*time.Minute).Err()
+	} else if attempts >= 5 {
+		_ = s.client.Set(ctx, lockoutKey, "locked", 1*time.Hour).Err()
+		_ = s.client.Expire(ctx, key, 1*time.Hour).Err()
+		return attempts, true, nil
+	}
+
+	return attempts, false, nil
+}
+
+// CheckPairingLockout returns true and the remaining duration if the user is currently locked out.
+func (s *Store) CheckPairingLockout(ctx context.Context, userID string) (bool, time.Duration, error) {
+	lockoutKey := fmt.Sprintf("rate_limit:pairing:lockout:%s", userID)
+	ttl, err := s.client.TTL(ctx, lockoutKey).Result()
+	if err != nil {
+		return false, 0, fmt.Errorf("failed to check pairing lockout: %w", err)
+	}
+	if ttl > 0 {
+		return true, ttl, nil
+	}
+	return false, 0, nil
+}
+
+// ResetPairingRateLimit clears all pairing rate limits and lockouts for a user upon successful authentication.
+func (s *Store) ResetPairingRateLimit(ctx context.Context, userID string) error {
+	key := fmt.Sprintf("rate_limit:pairing:%s", userID)
+	lockoutKey := fmt.Sprintf("rate_limit:pairing:lockout:%s", userID)
+	return s.client.Del(ctx, key, lockoutKey).Err()
+}
+
+
