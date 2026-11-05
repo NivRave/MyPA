@@ -107,14 +107,34 @@ func SplitMessage(text string, maxLen int) []string {
 	return chunks
 }
 
-// DownloadMedia downloads a media file securely from Twilio using HTTP Basic Auth.
+// DownloadMedia downloads a media file securely from Twilio enforcing HTTPS and hostname allowlist.
 func (c *Client) DownloadMedia(ctx context.Context, mediaURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", mediaURL, nil)
+	parsedURL, err := url.Parse(mediaURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid media URL: %w", err)
+	}
+
+	// 1. Enforce HTTPS scheme strictly
+	if !strings.EqualFold(parsedURL.Scheme, "https") {
+		return nil, fmt.Errorf("insecure media URL scheme %q: HTTPS is strictly required", parsedURL.Scheme)
+	}
+
+	// 2. Validate hostname against trusted allowlist
+	host := strings.ToLower(parsedURL.Hostname())
+	isTrusted := host == "api.twilio.com" || host == "media.twiliocdn.com"
+	if !isTrusted {
+		return nil, fmt.Errorf("untrusted media URL hostname %q: only api.twilio.com and media.twiliocdn.com are permitted", host)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", parsedURL.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
-	req.SetBasicAuth(c.cfg.AccountSID, c.cfg.AuthToken)
+	// 3. Only attach BasicAuth credentials when host matches trusted Twilio domains
+	if isTrusted {
+		req.SetBasicAuth(c.cfg.AccountSID, c.cfg.AuthToken)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -123,9 +143,11 @@ func (c *Client) DownloadMedia(ctx context.Context, mediaURL string) ([]byte, er
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, fmt.Errorf("twilio API returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	return io.ReadAll(resp.Body)
+	// Limit maximum downloaded media size to 25MB
+	const maxMediaDownloadBytes = 25 << 20
+	return io.ReadAll(io.LimitReader(resp.Body, maxMediaDownloadBytes))
 }

@@ -23,7 +23,7 @@ func init() {
 type HouseRepository interface {
 	// Contracts, Leases, Warranties & Receipts
 	CreateContract(c *models.HouseContractRecord) error
-	GetContract(id uint) (*models.HouseContractRecord, error)
+	GetContract(id uint, familyGroup ...string) (*models.HouseContractRecord, error)
 	UpdateContract(c *models.HouseContractRecord) error
 	DeleteContract(id uint) error
 	ListContracts(familyGroup string, recordType string, expiringBefore *time.Time) ([]models.HouseContractRecord, error)
@@ -31,11 +31,11 @@ type HouseRepository interface {
 
 	// Home Maintenance Items
 	CreateMaintenanceItem(m *models.HomeMaintenanceItem) error
-	GetMaintenanceItem(id uint) (*models.HomeMaintenanceItem, error)
+	GetMaintenanceItem(id uint, familyGroup ...string) (*models.HomeMaintenanceItem, error)
 	UpdateMaintenanceItem(m *models.HomeMaintenanceItem) error
 	DeleteMaintenanceItem(id uint) error
 	ListMaintenanceItems(familyGroup string, category string, overdueOnly bool) ([]models.HomeMaintenanceItem, error)
-	CompleteMaintenanceItem(id uint, completedAt time.Time, userID string) (*models.HomeMaintenanceItem, error)
+	CompleteMaintenanceItem(id uint, completedAt time.Time, userID string, familyGroup ...string) (*models.HomeMaintenanceItem, error)
 
 	// Vehicle Assets
 	CreateVehicleAsset(v *models.VehicleAsset) error
@@ -71,10 +71,14 @@ func (c *Client) CreateContract(contract *models.HouseContractRecord) error {
 	return nil
 }
 
-// GetContract retrieves a house contract record by ID. Returns (nil, nil) if not found.
-func (c *Client) GetContract(id uint) (*models.HouseContractRecord, error) {
+// GetContract retrieves a house contract record by ID, optionally scoped to tenant. Returns (nil, nil) if not found.
+func (c *Client) GetContract(id uint, familyGroup ...string) (*models.HouseContractRecord, error) {
 	var record models.HouseContractRecord
-	result := c.DB.First(&record, id)
+	query := c.DB.Where("id = ?", id)
+	if len(familyGroup) > 0 && familyGroup[0] != "" {
+		query = query.Where("((family_group = ? AND family_group != '') OR created_by_user_id = ?)", familyGroup[0], familyGroup[0])
+	}
+	result := query.First(&record)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -110,7 +114,7 @@ func (c *Client) DeleteContract(id uint) error {
 func (c *Client) ListContracts(familyGroup string, recordType string, expiringBefore *time.Time) ([]models.HouseContractRecord, error) {
 	query := c.DB.Model(&models.HouseContractRecord{})
 	if familyGroup != "" {
-		query = query.Where("family_group = ?", familyGroup)
+		query = query.Where("((family_group = ? AND family_group != '') OR created_by_user_id = ?)", familyGroup, familyGroup)
 	}
 	recordType = strings.ToLower(strings.TrimSpace(recordType))
 	if recordType != "" && recordType != "all" {
@@ -170,10 +174,14 @@ func (c *Client) CreateMaintenanceItem(item *models.HomeMaintenanceItem) error {
 	return nil
 }
 
-// GetMaintenanceItem retrieves a maintenance item by ID. Returns (nil, nil) if not found.
-func (c *Client) GetMaintenanceItem(id uint) (*models.HomeMaintenanceItem, error) {
+// GetMaintenanceItem retrieves a maintenance item by ID, optionally scoped to tenant. Returns (nil, nil) if not found.
+func (c *Client) GetMaintenanceItem(id uint, familyGroup ...string) (*models.HomeMaintenanceItem, error) {
 	var item models.HomeMaintenanceItem
-	result := c.DB.First(&item, id)
+	query := c.DB.Where("id = ?", id)
+	if len(familyGroup) > 0 && familyGroup[0] != "" {
+		query = query.Where("((family_group = ? AND family_group != '') OR updated_by_user_id = ?)", familyGroup[0], familyGroup[0])
+	}
+	result := query.First(&item)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -228,8 +236,8 @@ func (c *Client) ListMaintenanceItems(familyGroup string, category string, overd
 }
 
 // CompleteMaintenanceItem records completion of a task, rolls NextDueAt forward, and saves it.
-func (c *Client) CompleteMaintenanceItem(id uint, completedAt time.Time, userID string) (*models.HomeMaintenanceItem, error) {
-	item, err := c.GetMaintenanceItem(id)
+func (c *Client) CompleteMaintenanceItem(id uint, completedAt time.Time, userID string, familyGroup ...string) (*models.HomeMaintenanceItem, error) {
+	item, err := c.GetMaintenanceItem(id, familyGroup...)
 	if err != nil {
 		return nil, err
 	}

@@ -2,9 +2,12 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"regexp"
@@ -111,7 +114,7 @@ func (e *Engine) buildCallContext(ctx context.Context, user *models.User, msg mo
 		return e.sendMessage(nCtx, targetMsg, text)
 	}
 
-	return CallContext{
+	callCtx := CallContext{
 		User:             user,
 		Message:          msg,
 		DB:               e.db,
@@ -120,6 +123,12 @@ func (e *Engine) buildCallContext(ctx context.Context, user *models.User, msg mo
 		SendNotification: sendNotif,
 		Extra:            make(map[string]interface{}),
 	}
+	if secState := GetTurnSecurityState(ctx); secState != nil {
+		isUntrusted, sources := secState.IsUntrusted()
+		callCtx.HasUntrustedContent = isUntrusted
+		callCtx.UntrustedSources = sources
+	}
+	return callCtx
 }
 
 
@@ -255,6 +264,54 @@ func (e *Engine) sendMessage(ctx context.Context, msg models.Message, text strin
 	return nil
 }
 
+func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg models.Message) error {
+	// Check if user is currently locked out
+	if e.store != nil {
+		if locked, remaining, lockErr := e.store.CheckPairingLockout(ctx, msg.UserID); lockErr == nil && locked {
+			mins := int(remaining.Minutes()) + 1
+			return e.sendMessage(ctx, msg, fmt.Sprintf("🚫 Too many failed pairing attempts. You are temporarily locked out. Please try again in %d minutes.", mins))
+		}
+	}
+
+	// Extract potential pairing code from message text
+	code := strings.TrimSpace(msg.Text)
+	code = strings.TrimPrefix(code, "/start ")
+	code = strings.TrimSpace(code)
+
+	var pc *models.PairingCode
+	if len(code) == 6 {
+		pc, _ = e.db.GetPairingCode(code)
+	}
+
+	if pc != nil {
+		newUser := models.User{
+			PlatformID:  msg.UserID,
+			Name:        "Unknown",
+			Role:        pc.Role,
+			FamilyGroup: pc.FamilyGroup,
+			CreatedAt:   time.Now(),
+		}
+		if err := e.db.RedeemPairingCode(pc.ID, newUser); err == nil {
+			if e.store != nil {
+				_ = e.store.ResetPairingRateLimit(ctx, msg.UserID)
+			}
+			return e.sendMessage(ctx, msg, "✅ Pairing successful! Welcome to MyPA. You can now use all features.")
+		}
+	}
+
+	// Record failed pairing attempt
+	if e.store != nil {
+		attempts, lockedOut, _ := e.store.RecordFailedPairingAttempt(ctx, msg.UserID)
+		if lockedOut {
+			return e.sendMessage(ctx, msg, "🚫 Too many failed attempts (5/5). Your account has been locked for 1 hour.")
+		}
+		remainingAttempts := 5 - attempts
+		return e.sendMessage(ctx, msg, fmt.Sprintf("🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue. (%d attempts remaining before 1-hour lockout)", remainingAttempts))
+	}
+
+	return e.sendMessage(ctx, msg, "🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue.")
+}
+
 // ProcessMessage is the main entry point for handling an incoming user message.
 // It orchestrates transcription, command handling, confirmation flows, and LLM reasoning.
 func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err error) {
@@ -287,9 +344,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 				Status:          status,
 			}
 			
-			pubErr := e.publisher.Publish(context.Background(), session)
-			if pubErr != nil {
-				slog.Error("failed to publish telemetry session", "error", pubErr)
+			if e.publisher != nil {
+				pubErr := e.publisher.Publish(context.Background(), session)
+				if pubErr != nil {
+					slog.Error("failed to publish telemetry session", "error", pubErr)
+				}
 			}
 		}(msg.Text, func() string {
 			if err != nil {
@@ -298,6 +357,48 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 			return ""
 		}())
 	}()
+
+	secState := &TurnSecurityState{}
+	ctx = WithTurnSecurityState(ctx, secState)
+
+	// 1. Pre-Auth Check: Verify user exists and is authenticated
+	user, err := e.db.GetUser(msg.UserID)
+	if err != nil || user == nil {
+		return e.handleUnauthenticatedUser(ctx, msg)
+	}
+
+	// Interactive confirmation gate redemption for staged privileged actions
+	trimmedText := strings.TrimSpace(msg.Text)
+	if strings.HasPrefix(strings.ToUpper(trimmedText), "CONFIRM") {
+		parts := strings.Fields(trimmedText)
+		expectedTool := ""
+		if len(parts) >= 2 {
+			expectedTool = strings.ToLower(parts[1])
+		}
+		if e.store != nil {
+			pending, err := e.store.GetAndClearPendingMetaTool(ctx, msg.UserID)
+			if err != nil {
+				slog.Error("failed to retrieve pending meta tool action", "error", err)
+				return e.sendMessage(ctx, msg, "❌ Error retrieving pending confirmation. Please try again.")
+			}
+			if pending == nil {
+				return e.sendMessage(ctx, msg, "⚠️ No pending confirmation found or it has expired.")
+			}
+			if expectedTool != "" && strings.ToLower(pending.ToolName) != expectedTool {
+				_ = e.store.StagePendingMetaTool(ctx, msg.UserID, *pending, 5*time.Minute)
+				return e.sendMessage(ctx, msg, fmt.Sprintf("⚠️ Confirmation mismatch. Pending action is '%s', but you confirmed '%s'.", pending.ToolName, expectedTool))
+			}
+
+			slog.Info("executing confirmed meta tool action", "user_id", msg.UserID, "tool", pending.ToolName)
+			call := &genai.FunctionCall{
+				Name: pending.ToolName,
+				Args: pending.Args,
+			}
+			resultStr := e.executeSingleTool(ctx, msg, nil, "", call)
+			llmResponse = fmt.Sprintf("✅ **Confirmed and Executed:** `%s`\n\n%s", pending.ToolName, resultStr)
+			return e.sendMessage(ctx, msg, llmResponse)
+		}
+	}
 
 	// Check for commands
 	if msg.Text == "/help" {
@@ -337,12 +438,28 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	}
 
 	if msg.Text == "/connect" {
-		url := e.oauthCfg.AuthCodeURL(msg.UserID)
+		nonce := ""
+		if e.store != nil {
+			nonceBytes := make([]byte, 32)
+			if _, err := io.ReadFull(rand.Reader, nonceBytes); err == nil {
+				nonce = hex.EncodeToString(nonceBytes)
+				_ = e.store.SaveOAuthState(ctx, nonce, msg.UserID, 10*time.Minute)
+			}
+		}
+		stateParam := nonce
+		if stateParam == "" {
+			stateParam = msg.UserID
+		}
+		url := e.oauthCfg.AuthCodeURL(stateParam)
 		llmResponse = fmt.Sprintf("🔗 [Click here to connect your Google Calendar](%s)", url)
 		return e.sendMessage(ctx, msg, llmResponse)
 	}
 
 	if msg.Text == "/backup" {
+		if user.Role != "admin" {
+			slog.Warn("unauthorized backup command attempt", "user_id", user.PlatformID, "role", user.Role)
+			return e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")
+		}
 		_ = e.sendMessage(ctx, msg, "🔄 Starting database backup...")
 		databaseURL := os.Getenv("DATABASE_URL")
 		if databaseURL == "" {
@@ -357,6 +474,10 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	}
 
 	if msg.Text == "/restore" {
+		if user.Role != "admin" {
+			slog.Warn("unauthorized restore command attempt", "user_id", user.PlatformID, "role", user.Role)
+			return e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")
+		}
 		_ = e.sendMessage(ctx, msg, "🔄 Starting database restore from latest backup...")
 		databaseURL := os.Getenv("DATABASE_URL")
 		if databaseURL == "" {
@@ -439,7 +560,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 				_ = e.sendMessage(ctx, msg, "❌ Failed to download WhatsApp document.")
 				return fmt.Errorf("failed to download twilio document: %w", err)
 			}
-			docText := string(docData)
+			docText := WrapUntrustedContent("whatsapp_document", msg.MediaURL, string(docData))
+			secState.MarkUntrusted("whatsapp_document:" + msg.MediaURL)
 			if strings.TrimSpace(msg.Text) != "" {
 				msg.Text = fmt.Sprintf("%s\n\n[Attached Document Content]:\n%s", strings.TrimSpace(msg.Text), docText)
 			} else {
@@ -481,60 +603,6 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	history, err := e.store.GetChatHistory(ctx, msg.UserID)
 	if err != nil {
 		return fmt.Errorf("failed to get chat history: %w", err)
-	}
-
-	// 2.5 Authorize User & Pairing Rate Limit Enforcement
-	user, err := e.db.GetUser(msg.UserID)
-	if err != nil {
-		// User not found. Check if currently locked out
-		if e.store != nil {
-			if locked, remaining, lockErr := e.store.CheckPairingLockout(ctx, msg.UserID); lockErr == nil && locked {
-				llmResponse = "Pairing rate limit exceeded (locked out)"
-				mins := int(remaining.Minutes()) + 1
-				return e.sendMessage(ctx, msg, fmt.Sprintf("🚫 Too many failed pairing attempts. You are temporarily locked out. Please try again in %d minutes.", mins))
-			}
-		}
-
-		code := strings.TrimSpace(msg.Text)
-		code = strings.TrimPrefix(code, "/start ")
-		code = strings.TrimSpace(code)
-
-		var pc *models.PairingCode
-		if len(code) == 6 {
-			pc, _ = e.db.GetPairingCode(code)
-		}
-
-		if pc != nil {
-			newUser := models.User{
-				PlatformID:  msg.UserID,
-				Name:        "Unknown", // Can be updated later
-				Role:        pc.Role,
-				FamilyGroup: pc.FamilyGroup,
-				CreatedAt:   time.Now(),
-			}
-			if err := e.db.RedeemPairingCode(pc.ID, newUser); err == nil {
-				if e.store != nil {
-					_ = e.store.ResetPairingRateLimit(ctx, msg.UserID)
-				}
-				llmResponse = "Pairing successful"
-				return e.sendMessage(ctx, msg, "✅ Pairing successful! Welcome to MyPA. You can now use all features.")
-			}
-		}
-
-		// Failed attempt: record in Redis
-		if e.store != nil {
-			attempts, lockedOut, _ := e.store.RecordFailedPairingAttempt(ctx, msg.UserID)
-			if lockedOut {
-				llmResponse = "Pairing locked out after 5 failures"
-				return e.sendMessage(ctx, msg, "🚫 Too many failed attempts (5/5). Your account has been locked for 1 hour.")
-			}
-			remainingAttempts := 5 - attempts
-			llmResponse = "Unauthorized access attempt"
-			return e.sendMessage(ctx, msg, fmt.Sprintf("🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue. (%d attempts remaining before 1-hour lockout)", remainingAttempts))
-		}
-
-		llmResponse = "Unauthorized access attempt"
-		return e.sendMessage(ctx, msg, "🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue.")
 	}
 
 	// 3. Build the system prompt
@@ -737,6 +805,42 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 
 func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) string {
 	slog.Info("llm requested tool call", "tool", toolCall.Name)
+
+	isMetaTool := toolCall.Name == "update_user_preferences" ||
+		toolCall.Name == "create_automation_rule" ||
+		toolCall.Name == "schedule_workflow" ||
+		toolCall.Name == "register_external_api"
+
+	if isMetaTool {
+		secState := GetTurnSecurityState(ctx)
+		if secState != nil {
+			isUntrusted, sources := secState.IsUntrusted()
+			if isUntrusted {
+				if e.store != nil {
+					stageData := state.PendingMetaToolAction{
+						ToolName:  toolCall.Name,
+						Args:      toolCall.Args,
+						UserID:    msg.UserID,
+						CreatedAt: time.Now(),
+					}
+					_ = e.store.StagePendingMetaTool(ctx, msg.UserID, stageData, 5*time.Minute)
+				}
+
+				sourceDesc := "external untrusted content"
+				if len(sources) > 0 {
+					sourceDesc = strings.Join(sources, ", ")
+				}
+
+				return fmt.Sprintf(
+					"🔒 **Interactive Security Confirmation Required**\n\n"+
+						"The assistant received a command to perform a privileged system action (`%s`) while processing external data (%s).\n"+
+						"To prevent indirect prompt injection, this modification was NOT applied automatically.\n\n"+
+						"👉 If you intended to make this change, please reply with:\n`CONFIRM %s`",
+					toolCall.Name, sourceDesc, strings.ToUpper(toolCall.Name),
+				)
+			}
+		}
+	}
 	
 	if toolCall.Name == "create_calendar_event" {
 		argsJSON, _ := json.Marshal(toolCall.Args)
@@ -885,7 +989,11 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 			return fmt.Sprintf("Error reading email: %v", err)
 		}
 		
-		return fmt.Sprintf("Here is the email body for %s:\n%s\nYou can take action or summarize it.", messageID, body)
+		if secState := GetTurnSecurityState(ctx); secState != nil {
+			secState.MarkUntrusted("email:" + messageID)
+		}
+		wrappedBody := WrapUntrustedContent("email", messageID, body)
+		return fmt.Sprintf("Here is the email body for %s:\n%s\nYou can take action or summarize it.", messageID, wrappedBody)
 	} else if toolCall.Name == "draft_email_reply" {
 		messageID, okID := toolCall.Args["message_id"].(string)
 		replyText, okText := toolCall.Args["reply_text"].(string)
@@ -1118,7 +1226,11 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 			return fmt.Sprintf("Error fetching webpage: %v", err)
 		}
 		
-		summaryPrompt := fmt.Sprintf("Here is the content of the webpage:\n\n%s\n\nPlease fulfill the user's original request using this information.\nIf they asked to save it for later, use the create_task tool.\nIf they asked for a summary, provide a comprehensive, detailed summary. Use explicit **bold** markdown (double asterisks) for all topics and section headers (do not use single asterisks).", content)
+		if secState := GetTurnSecurityState(ctx); secState != nil {
+			secState.MarkUntrusted("webpage:" + url)
+		}
+		wrappedContent := WrapUntrustedContent("webpage", url, content)
+		summaryPrompt := fmt.Sprintf("Here is the content of the webpage:\n\n%s\n\nPlease fulfill the user's original request using this information.\nIf they asked to save it for later, use the create_task tool.\nIf they asked for a summary, provide a comprehensive, detailed summary. Use explicit **bold** markdown (double asterisks) for all topics and section headers (do not use single asterisks).", wrappedContent)
 		
 		extendedHistory := append(history, models.ChatMessage{Role: "user", Content: msg.Text})
 		

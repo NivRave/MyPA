@@ -122,7 +122,7 @@ The Next.js 15 Dashboard communicates with the Orchestrator's `gqlgen` GraphQL A
 1. **Clone and configure environment:**
    ```bash
    cp .env.example .env
-   # Edit .env with your API keys, OAuth credentials, and ENCRYPTION_KEY (32-byte secret or passphrase)
+   # Edit .env with your API keys, OAuth credentials, and security secrets (ENCRYPTION_KEY, TELEGRAM_SECRET_TOKEN, DASHBOARD_API_SECRET)
    ```
 
 2. **Build and start all services (including containerized ngrok):**
@@ -134,7 +134,7 @@ The Next.js 15 Dashboard communicates with the Orchestrator's `gqlgen` GraphQL A
 3. **Set Webhooks:**
    - **Telegram:**
      ```bash
-     curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=<NGROK_URL>/webhook/telegram"
+     curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=<NGROK_URL>/webhook/telegram&secret_token=<TELEGRAM_SECRET_TOKEN>"
      ```
    - **WhatsApp:** Set `<NGROK_URL>/webhook/twilio` (e.g., `https://your-domain.ngrok-free.dev/webhook/twilio`) in your Twilio WhatsApp Sandbox settings.
 
@@ -245,6 +245,9 @@ docs/
   FEATURES_EXPANSION.md     # Architectural specification for Topics 1–9
   PLAN.md                   # Parallel wave implementation plan
   ROADMAP.md                # Release history & V3/V4 roadmap
+AGENTS.md                   # Global AI agent development rules & guardrails
+SYSTEM.md                   # Canonical system architecture, DB/storage schema, API & feature playbook
+REVIEW.md                   # Senior Principal Engineer full-stack code & security review report
 ```
 
 ---

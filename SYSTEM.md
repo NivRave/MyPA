@@ -226,6 +226,74 @@ type MutationEvent struct {
 2. **[`shared.Notifier`](file:///d:/MyPA/internal/domains/shared/notifier.go#L50-L152):** Checks if `event.Topic` is shared via `shared_spaces` for `event.FamilyGroup` with `NotifyMode == "instant"`, and pushes a real-time notification (`"📢 [Shared • <Topic>] <Summary>"`) to partner users via Telegram/WhatsApp.
 3. **[`automation.Runner`](file:///d:/MyPA/internal/domains/automation/runner.go#L593-L667):** Evaluates active `AutomationRule` records matching `event.Topic`, checks `ConditionJSON` (`action`, `keyword`, `min_amount`, `field`/`equals`), and executes the configured webhook or notification action.
 
+### 3.4 Security Architecture & Defense-in-Depth
+
+Milestone 1A hardens the entire system across ingress, internal execution, storage, and egress:
+
+1. **Pre-Auth Gate & Admin RBAC (`internal/orchestrator/engine.go`):**
+   - At the very top of `ProcessMessage`, `e.db.GetUser(msg.UserID)` verifies caller identity before downloading media, transcribing voice, or running LLM prompts.
+   - Unauthenticated senders are routed strictly to `handleUnauthenticatedUser`, which permits only 6-digit pairing code redemption (`RedeemPairingCode`).
+   - Pairing attempts are rate-limited via Redis (`rate_limit:pairing:<userID>`): 5 failed attempts within 15 minutes trigger a 1-hour account lockout (`rate_limit:pairing:lockout:<userID>`).
+   - `/backup` and `/restore` commands strictly verify `user.Role == "admin"`, rejecting non-admin attempts with an explicit permission denied alert.
+
+2. **Ingress Webhook Signatures & Proxy Guard (`cmd/gateway`, `internal/twilio`, `cmd/proxy`):**
+   - Telegram webhooks require `X-Telegram-Bot-Api-Secret-Token` matching `cfg.Telegram.SecretToken` using constant-time comparison (`subtle.ConstantTimeCompare`).
+   - Twilio WhatsApp webhooks verify `X-Twilio-Signature` using HMAC-SHA1 over the full request URL and sorted POST parameters with `cfg.Twilio.AuthToken`.
+   - `proxy` restricts public ingress to `/webhook/*`, `/graphql`, and `/auth/google/*`. `/playground` returns HTTP 404 in production, and unauthenticated `/graphql` requests are rejected at the edge with HTTP 401.
+
+3. **GraphQL Authentication Middleware (`internal/graph/auth_middleware.go`):**
+   - Inspects `Authorization: Bearer <token>` on all requests to `/graphql`.
+   - Supports both constant-time `DASHBOARD_API_SECRET` comparison (granting admin role) and HMAC-SHA256 Bearer JWT claims (`user_id`, `role`, `family_group`, `exp`).
+   - Injects authenticated claims into request context (`ForContext` / `GetAuthClaims`).
+
+4. **Multi-Tenant Isolation & Anti-IDOR (`internal/orchestrator/registry.go`, `internal/db/`, domain modules):**
+   - `CallContext` exposes canonical identity helpers: `ActorID()` (platform ID) and `TenantFamilyGroup()` (family group falling back to `ActorID()`).
+   - All tool argument overrides (`family_group`, `user_id`, `fgOverride`) have been removed from schemas and handlers across `baby`, `house`, `automation`, and `schedule`.
+   - Repositories enforce compound scoping: `WHERE ((family_group = ? AND family_group != '') OR user_id = ?)`.
+   - **Positive Authorization Pattern (SEC-04 Remediation):**
+     Domain tool execution guards (`house`, `automation`, `schedule`, `finance`, `shared`, `durability`) and repository operations strictly apply positive authorization validation:
+     `isAuthorized := record != nil && ((familyGroup != "" && record.FamilyGroup == familyGroup) || (record.UserID != "" && record.UserID == userID))`
+     For family-level entities without a user ID (`VehicleAsset`, `RecurringBill`):
+     `isAuthorized := record != nil && record.FamilyGroup != "" && record.FamilyGroup == familyGroup`
+     This eliminates fail-open De Morgan boolean fallacies (`record.FamilyGroup != "" && record.FamilyGroup != familyGroup`) ensuring records with unpopulated or legacy `FamilyGroup` fail closed.
+   - Operations mutating by ID (`CompleteMaintenanceItem`, `CompleteSharedReminder`, `manage_recurring_bills`, `DeleteAutomationRule`, `executeUpsertPersonalCRM`, `undo_last_action`) verify tenant authorization prior to mutation and propagate `familyGroup ...string` into repository queries.
+
+5. **Centralized SSRF Protection (`internal/netguard/netguard.go`):**
+   - Provides `SafeClient(timeout time.Duration)` with a custom `DialContext` resolving hostnames prior to connection.
+   - Blocks IPv4/IPv6 loopback (`127.0.0.0/8`, `::1`), RFC1918 private subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), cloud metadata (`169.254.169.254`), carrier-grade NAT (`100.64.0.0/10`), link-local multicast, and Docker single-label container names (`!strings.Contains(host, ".") && host != "localhost"`).
+   - Validates redirect target URLs via `CheckRedirect`.
+   - Wired into `scraper.FetchAndExtractText`, `gmail.UnsubscribeEmail`, `automation.runner`, and `RegisterExternalAPI`.
+
+6. **Twilio Media Security (`internal/twilio/client.go`):**
+   - `DownloadMedia` enforces HTTPS scheme, validates hostnames against an allowlist (`api.twilio.com`, `media.twiliocdn.com`), attaches HTTP BasicAuth only when matching trusted Twilio domains, and enforces a 25MB response size limit.
+
+7. **Durability Rollback Allowlisting & Transactions (`internal/graph/schema.resolvers.go`):**
+   - `tableNameForEntity` enforces a strict entity allowlist and explicitly rejects system tables (`users`, `pairing_codes`, `encrypted_credentials`, `audit_sessions`, `audit_events`, `schema_migrations`).
+   - `RollbackMutation` verifies caller tenant permissions, wraps inversions in an ACID database transaction (`tx := r.DB.DB.Begin()`), checks row mutation counts, rolls back on any error, and sets `is_undone = true` only upon commit.
+
+8. **OAuth Hardening & Cryptographic Key Management (`internal/crypto/aes.go`, `internal/state/store.go`):**
+   - `ENCRYPTION_KEY` is validated at startup (`crypto.ValidateKeyConfigured()`); fails fast (panics) if empty in production.
+   - Key derivation implements HKDF-SHA256 with 16-byte cryptographically random salt (`[16-byte Salt][12-byte Nonce][Ciphertext + 16-byte Tag]`), maintaining backward compatibility with legacy unsalted ciphertexts.
+   - OAuth tokens in Redis (`token:<userID>`) are AES-256-GCM encrypted.
+   - `/connect` generates 32-byte cryptographically random hex CSRF nonces stored in Redis (`oauth_state:<nonce> -> userID`) with 10-minute TTL.
+   - `/auth/google/callback` atomically validates and deletes the nonce before exchanging the code, then persists an encrypted fallback in PostgreSQL (`encrypted_credentials`) via `durabilityModule.SaveCredentialFallback`.
+
+9. **Prompt Injection Boundaries & Meta-Tool Gates (`internal/orchestrator/security.go`, `engine.go`):**
+   - External inputs (`read_email`, `fetch_webpage`, WhatsApp document attachments) are demarcated with semantic XML delimiters: `<untrusted_external_content source="..."> ... </untrusted_external_content>`.
+   - Any ingestion of external content sets `TurnSecurityState.HasUntrustedContent = true`.
+   - If untrusted content was ingested during the turn, meta-tools (`update_user_preferences`, `create_automation_rule`, `schedule_workflow`, `register_external_api`) are blocked from automatic execution, staged in Redis (`pending_meta_tool:<userID>`), and require explicit conversational confirmation: `CONFIRM <TOOL_NAME>`.
+
+### 3.5 Redis Key Inventory Reference
+
+| Key Pattern | Type | TTL | Purpose |
+| :--- | :---: | :---: | :--- |
+| `chat:<userID>` | List | None / Rolling | Rolling conversational history (`models.ChatMessage` JSON) |
+| `token:<userID>` | String | None | AES-256-GCM encrypted Google OAuth2 token JSON |
+| `oauth_state:<nonce>` | String | 10 minutes | CSRF protection nonce mapping to `userID` |
+| `pending_meta_tool:<userID>` | String | 5 minutes | Staged privileged tool action pending `CONFIRM` redemption |
+| `rate_limit:pairing:<userID>` | String (Int) | 15 minutes | Failed pairing code attempts counter |
+| `rate_limit:pairing:lockout:<userID>` | String | 1 hour | Lockout flag set after 5 failed pairing attempts |
+
 ---
 
 ## 4. PostgreSQL + `pgvector` Database Schema Reference
@@ -433,7 +501,10 @@ Both queues are declared on the default direct exchange (`""`) with `durable: tr
 | `DATABASE_URL` | `database.url` | — | `orchestrator`, `audit-worker` | PostgreSQL connection string (`postgres://...`) |
 | `REDIS_URL` | `redis.url` | — | `orchestrator` | Redis connection string (`redis://redis:6379/0`) |
 | `RABBITMQ_URL` | `rabbitmq.url` | — | `gateway`, `orchestrator`, `audit-worker` | AMQP 0-9-1 URL (`amqp://...`) |
-| `ENCRYPTION_KEY` | *(direct `os.Getenv`)* | Dev fallback | `orchestrator` (`internal/crypto`) | Passphrase/key for AES-256-GCM credential & API header encryption |
+| `ENCRYPTION_KEY` | `encryption.key` | Required in prod | `orchestrator` (`internal/crypto`) | Primary 32-byte secret for HKDF-SHA256 salted AES-256-GCM encryption at rest; fails fast on boot in production if missing |
+| `TELEGRAM_SECRET_TOKEN` | `telegram.secret_token` | `""` | `gateway` | Shared webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header using constant-time compare |
+| `DASHBOARD_API_SECRET` | `server.dashboard_api_secret` | `""` | `orchestrator`, `proxy` | Secret token used by web dashboard / proxy to authenticate to `/graphql` |
+| `JWT_SECRET` | `server.jwt_secret` | `ENCRYPTION_KEY` | `orchestrator`, `proxy` | Secret key used for signing and verifying HMAC-SHA256 Bearer JWT claims on `/graphql` |
 | `GEMINI_API_KEY` | `gemini.api_key` | — | `orchestrator` | Google AI Studio API key |
 | `GEMINI_MODEL` | `gemini.model` | `"gemini-2.5-flash"` | `orchestrator` | Primary Gemini chat/tool-calling model |
 | `TELEGRAM_BOT_TOKEN` | `telegram.bot_token` | — | `orchestrator` | Telegram Bot token |

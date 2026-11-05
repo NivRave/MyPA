@@ -15,3 +15,9 @@ tavily:
 
 gemini:
   model: gemini-2.5-flash
+
+encryption:
+  key: "" # Supplied via ENCRYPTION_KEY environment variable
+
+telegram:
+  secret_token: "" # Supplied via TELEGRAM_SECRET_TOKEN environment variable

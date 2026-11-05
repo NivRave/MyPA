@@ -775,11 +775,14 @@ func (m *Module) executeDeleteTopicEvent(ctx context.Context, callCtx orchestrat
 	}
 	eventID := uint(eventIDRaw)
 
+	familyGroup := callCtx.TenantFamilyGroup()
+	userID := callCtx.ActorID()
 	existing, err := repo.GetScheduleEvent(eventID)
 	if err != nil {
 		return "", fmt.Errorf("failed to lookup event %d: %w", eventID, err)
 	}
-	if existing == nil {
+	isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.UserID != "" && existing.UserID == userID))
+	if !isAuthorized {
 		return fmt.Sprintf("Event with ID %d not found.", eventID), nil
 	}
 
@@ -833,8 +836,14 @@ func (m *Module) executeUpdateTopicEvent(ctx context.Context, callCtx orchestrat
 	}
 	eventID := uint(eventIDRaw)
 
+	familyGroup := callCtx.TenantFamilyGroup()
+	userID := callCtx.ActorID()
 	existing, err := repo.GetScheduleEvent(eventID)
-	if err != nil || existing == nil {
+	if err != nil {
+		return "", fmt.Errorf("failed to lookup event %d: %w", eventID, err)
+	}
+	isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.UserID != "" && existing.UserID == userID))
+	if !isAuthorized {
 		return fmt.Sprintf("Event with ID %d not found.", eventID), nil
 	}
 

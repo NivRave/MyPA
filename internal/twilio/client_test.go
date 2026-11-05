@@ -108,9 +108,33 @@ func TestClient_DownloadMedia(t *testing.T) {
 	client.httpClient.Transport = &rewriteTransport{URL: ts.URL}
 
 	// We pass the path as URL and the rewriteTransport changes scheme/host
-	content, err := client.DownloadMedia(context.Background(), "http://api.twilio.com/media/123")
+	content, err := client.DownloadMedia(context.Background(), "https://api.twilio.com/media/123")
 	require.NoError(t, err)
 	assert.Equal(t, []byte("media content"), content)
+}
+
+func TestClient_DownloadMedia_InsecureScheme(t *testing.T) {
+	cfg := config.TwilioConfig{
+		AccountSID: "test-sid",
+		AuthToken:  "test-token",
+	}
+	client := NewClient(cfg)
+
+	_, err := client.DownloadMedia(context.Background(), "http://api.twilio.com/media/123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTPS is strictly required")
+}
+
+func TestClient_DownloadMedia_UntrustedHost(t *testing.T) {
+	cfg := config.TwilioConfig{
+		AccountSID: "test-sid",
+		AuthToken:  "test-token",
+	}
+	client := NewClient(cfg)
+
+	_, err := client.DownloadMedia(context.Background(), "https://evil-attacker.com/media/123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "untrusted media URL hostname")
 }
 
 type rewriteTransport struct {

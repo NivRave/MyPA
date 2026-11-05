@@ -29,13 +29,13 @@ type Repository interface {
 	SaveEncryptedCredential(cred models.EncryptedCredential) error
 	GetEncryptedCredential(userID, provider string) (*models.EncryptedCredential, error)
 	InsertMutationLog(log models.MutationLog) error
-	GetMutationLogsByTopic(topic string, limit int) ([]models.MutationLog, error)
+	GetMutationLogsByTopic(familyGroup, userID, topic string, limit int) ([]models.MutationLog, error)
 	GetMutationLogByID(id string) (*models.MutationLog, error)
 	GetLastMutation(userID string, familyGroup string) (*models.MutationLog, error)
 	MarkMutationUndone(id string) error
 	CheckIdempotency(key string) (*models.IdempotencyRecord, error)
 	SaveIdempotency(rec models.IdempotencyRecord) error
-	ExportTopicData(topic string, format string, limit int) (string, error)
+	ExportTopicData(familyGroup, userID, topic string, format string, limit int) (string, error)
 }
 
 // UndoHandler defines a custom rollback function for a specific EntityType.
@@ -286,7 +286,18 @@ func (m *Module) executeUndo(ctx context.Context, callCtx orchestrator.CallConte
 	var err error
 
 	if mutID, ok := args["mutation_id"].(string); ok && strings.TrimSpace(mutID) != "" {
-		log, err = repo.GetMutationLogByID(strings.TrimSpace(mutID))
+		trimmedID := strings.TrimSpace(mutID)
+		log, err = repo.GetMutationLogByID(trimmedID)
+		if err != nil {
+			return "", fmt.Errorf("failed to lookup mutation %s: %w", trimmedID, err)
+		}
+		if log == nil {
+			return "No recent undoable actions found.", nil
+		}
+		isAuthorized := (familyGroup != "" && log.FamilyGroup == familyGroup) || (log.UserID != "" && log.UserID == userID)
+		if !isAuthorized {
+			return "", fmt.Errorf("mutation %s not found or permission denied", trimmedID)
+		}
 	} else {
 		log, err = repo.GetLastMutation(userID, familyGroup)
 	}
@@ -355,7 +366,9 @@ func (m *Module) executeListRecentChanges(ctx context.Context, callCtx orchestra
 		limit = 50
 	}
 
-	logs, err := repo.GetMutationLogsByTopic(topic, limit)
+	familyGroup := callCtx.TenantFamilyGroup()
+	userID := callCtx.ActorID()
+	logs, err := repo.GetMutationLogsByTopic(familyGroup, userID, topic, limit)
 	if err != nil {
 		return "", fmt.Errorf("failed to retrieve recent changes: %w", err)
 	}
@@ -403,7 +416,9 @@ func (m *Module) executeExportTopicData(ctx context.Context, callCtx orchestrato
 		limit = parseInt(l, 100)
 	}
 
-	data, err := repo.ExportTopicData(topic, format, limit)
+	familyGroup := callCtx.TenantFamilyGroup()
+	userID := callCtx.ActorID()
+	data, err := repo.ExportTopicData(familyGroup, userID, topic, format, limit)
 	if err != nil {
 		return "", fmt.Errorf("failed to export topic data: %w", err)
 	}

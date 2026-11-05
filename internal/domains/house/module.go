@@ -404,8 +404,9 @@ func (m *Module) executeSaveContract(ctx context.Context, callCtx orchestrator.C
 		if err != nil {
 			return "", fmt.Errorf("failed to load contract %d: %w", contractID, err)
 		}
-		if existing == nil {
-			return "", fmt.Errorf("contract %d not found", contractID)
+		isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.CreatedByUserID != "" && existing.CreatedByUserID == userID))
+		if !isAuthorized {
+			return "", fmt.Errorf("contract %d not found in family %q", contractID, familyGroup)
 		}
 		b, _ := json.Marshal(existing)
 		beforeJSON = string(b)
@@ -643,7 +644,16 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 			return "", fmt.Errorf("item_id is required for complete action")
 		}
 
-		item, err := repo.CompleteMaintenanceItem(uint(itemID), time.Now(), userID)
+		existing, err := repo.GetMaintenanceItem(uint(itemID))
+		if err != nil {
+			return "", fmt.Errorf("failed to load maintenance item: %w", err)
+		}
+		isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.UpdatedByUserID != "" && existing.UpdatedByUserID == userID))
+		if !isAuthorized {
+			return "", fmt.Errorf("maintenance item %d not found in family %q", itemID, familyGroup)
+		}
+
+		item, err := repo.CompleteMaintenanceItem(uint(itemID), time.Now(), userID, familyGroup)
 		if err != nil {
 			return "", fmt.Errorf("failed to mark maintenance item as completed: %w", err)
 		}
@@ -674,8 +684,9 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 		if err != nil {
 			return "", fmt.Errorf("failed to load maintenance item: %w", err)
 		}
-		if existing == nil {
-			return "", fmt.Errorf("maintenance item %d not found", itemID)
+		isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.UpdatedByUserID != "" && existing.UpdatedByUserID == userID))
+		if !isAuthorized {
+			return "", fmt.Errorf("maintenance item %d not found in family %q", itemID, familyGroup)
 		}
 
 		b, _ := json.Marshal(existing)
@@ -732,8 +743,9 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 		if err != nil {
 			return "", fmt.Errorf("failed to load maintenance item: %w", err)
 		}
-		if existing == nil {
-			return "", fmt.Errorf("maintenance item %d not found", itemID)
+		isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.UpdatedByUserID != "" && existing.UpdatedByUserID == userID))
+		if !isAuthorized {
+			return "", fmt.Errorf("maintenance item %d not found in family %q", itemID, familyGroup)
 		}
 
 		b, _ := json.Marshal(existing)
@@ -888,8 +900,9 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 		if err != nil {
 			return "", fmt.Errorf("failed to load vehicle asset: %w", err)
 		}
-		if existing == nil {
-			return "", fmt.Errorf("vehicle asset %d not found", assetID)
+		isAuthorized := existing != nil && existing.FamilyGroup != "" && existing.FamilyGroup == familyGroup
+		if !isAuthorized {
+			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, familyGroup)
 		}
 
 		b, _ := json.Marshal(existing)
@@ -950,6 +963,15 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			return "", fmt.Errorf("valid current_mileage_km is required")
 		}
 
+		existing, err := repo.GetVehicleAsset(uint(assetID))
+		if err != nil {
+			return "", fmt.Errorf("failed to load vehicle asset: %w", err)
+		}
+		isAuthorized := existing != nil && existing.FamilyGroup != "" && existing.FamilyGroup == familyGroup
+		if !isAuthorized {
+			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, familyGroup)
+		}
+
 		vehicle, err := repo.UpdateVehicleMileage(uint(assetID), mileage)
 		if err != nil {
 			return "", fmt.Errorf("failed to update vehicle mileage: %w", err)
@@ -985,8 +1007,9 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 		if err != nil {
 			return "", fmt.Errorf("failed to load vehicle asset: %w", err)
 		}
-		if existing == nil {
-			return "", fmt.Errorf("vehicle asset %d not found", assetID)
+		isAuthorized := existing != nil && existing.FamilyGroup != "" && existing.FamilyGroup == familyGroup
+		if !isAuthorized {
+			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, familyGroup)
 		}
 
 		b, _ := json.Marshal(existing)
@@ -1048,8 +1071,9 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 		if err != nil {
 			return "", fmt.Errorf("failed to load vehicle asset: %w", err)
 		}
-		if existing == nil {
-			return "", fmt.Errorf("vehicle asset %d not found", assetID)
+		isAuthorized := existing != nil && existing.FamilyGroup != "" && existing.FamilyGroup == familyGroup
+		if !isAuthorized {
+			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, familyGroup)
 		}
 
 		b, _ := json.Marshal(existing)
@@ -1252,23 +1276,11 @@ func (m *Module) publishEvent(ctx context.Context, callCtx orchestrator.CallCont
 }
 
 func resolveFamilyGroup(callCtx orchestrator.CallContext) string {
-	if callCtx.User != nil && strings.TrimSpace(callCtx.User.FamilyGroup) != "" {
-		return strings.TrimSpace(callCtx.User.FamilyGroup)
-	}
-	if callCtx.User != nil && strings.TrimSpace(callCtx.User.ID) != "" {
-		return strings.TrimSpace(callCtx.User.ID)
-	}
-	return strings.TrimSpace(callCtx.Message.UserID)
+	return callCtx.TenantFamilyGroup()
 }
 
 func resolveUserID(callCtx orchestrator.CallContext) string {
-	if callCtx.User != nil && strings.TrimSpace(callCtx.User.ID) != "" {
-		return strings.TrimSpace(callCtx.User.ID)
-	}
-	if callCtx.User != nil && strings.TrimSpace(callCtx.User.PlatformID) != "" {
-		return strings.TrimSpace(callCtx.User.PlatformID)
-	}
-	return strings.TrimSpace(callCtx.Message.UserID)
+	return callCtx.ActorID()
 }
 
 func parseDate(v interface{}) (*time.Time, error) {

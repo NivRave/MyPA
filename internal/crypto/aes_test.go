@@ -2,7 +2,10 @@ package crypto
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"os"
 	"sync"
 	"testing"
@@ -167,4 +170,46 @@ func TestEncryptDecrypt_Concurrency(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+func TestDecrypt_LegacyFormatFallback(t *testing.T) {
+	// Construct a legacy unsalted AES-GCM ciphertext ([12-byte nonce][ciphertext + 16-byte tag])
+	passphrase := "legacy-test-secret"
+	plaintext := []byte("secret legacy message from older version")
+
+	// Manually encrypt with unsalted SHA-256 key
+	hash := sha256.Sum256([]byte(passphrase))
+	block, err := aes.NewCipher(hash[:])
+	require.NoError(t, err)
+	gcm, err := cipher.NewGCM(block)
+	require.NoError(t, err)
+
+	nonce := make([]byte, gcm.NonceSize())
+	_, err = rand.Read(nonce)
+	require.NoError(t, err)
+
+	legacyCiphertext := gcm.Seal(nonce, nonce, plaintext, nil)
+	assert.Equal(t, len(nonce)+len(plaintext)+16, len(legacyCiphertext))
+
+	// Verify Decrypt successfully decrypts legacy format
+	decrypted, err := Decrypt(legacyCiphertext, passphrase)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, decrypted)
+}
+
+func TestHKDF_CiphertextStructure(t *testing.T) {
+	passphrase := "hkdf-structure-test"
+	plaintext := []byte("checking hkdf structure")
+
+	ciphertext, err := Encrypt(plaintext, passphrase)
+	require.NoError(t, err)
+
+	// Must be at least MinCiphertextSize (44 bytes) + plaintext length
+	expectedMinLen := MinCiphertextSize + len(plaintext)
+	assert.Equal(t, expectedMinLen, len(ciphertext))
+
+	// Verify decryption
+	decrypted, err := Decrypt(ciphertext, passphrase)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, decrypted)
 }

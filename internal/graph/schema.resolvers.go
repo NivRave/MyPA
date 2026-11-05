@@ -12,6 +12,7 @@ import (
 
 	"github.com/nivik/mypa/internal/graph/model"
 	dbmodels "github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/netguard"
 )
 
 // Helper ID conversions
@@ -24,49 +25,54 @@ func strToUint(s string) uint {
 	return uint(val)
 }
 
-func tableNameForEntity(entityType string) string {
-	norm := strings.ToLower(entityType)
+func tableNameForEntity(entityType string) (string, error) {
+	norm := strings.ToLower(strings.TrimSpace(entityType))
+	switch norm {
+	case "users", "pairing_codes", "encrypted_credentials", "audit_sessions", "audit_events", "schema_migrations":
+		return "", fmt.Errorf("system entity %q cannot be rolled back via mutation rollback", entityType)
+	}
+
 	switch norm {
 	case "topicmemory", "topic_memory", "topic_memories":
-		return "topic_memories"
+		return "topic_memories", nil
 	case "entityprofile", "entity_profile", "entity_profiles":
-		return "entity_profiles"
+		return "entity_profiles", nil
 	case "sharedspace", "shared_space", "shared_spaces":
-		return "shared_spaces"
+		return "shared_spaces", nil
 	case "sharedtaskreminder", "shared_task", "shared_task_reminders":
-		return "shared_task_reminders"
+		return "shared_task_reminders", nil
 	case "scheduleevent", "schedule_event", "schedule_events":
-		return "schedule_events"
+		return "schedule_events", nil
 	case "topiccalendarconfig", "topic_calendar_config", "topic_calendar_configs":
-		return "topic_calendar_configs"
+		return "topic_calendar_configs", nil
 	case "babyprofile", "baby_profile", "baby_profiles":
-		return "baby_profiles"
+		return "baby_profiles", nil
 	case "babycarelog", "baby_care_log", "baby_care_logs":
-		return "baby_care_logs"
+		return "baby_care_logs", nil
 	case "babyinventoryitem", "baby_inventory_item", "baby_inventory_items":
-		return "baby_inventory_items"
-	case "housecontractrecord", "house_contract_record", "house_contracts":
-		return "house_contract_records"
+		return "baby_inventory_items", nil
+	case "housecontractrecord", "house_contract_record", "house_contracts", "house_contract_records":
+		return "house_contract_records", nil
 	case "homemaintenanceitem", "home_maintenance_item", "home_maintenance_items":
-		return "home_maintenance_items"
+		return "home_maintenance_items", nil
 	case "vehicleasset", "vehicle_asset", "vehicle_assets":
-		return "vehicle_assets"
+		return "vehicle_assets", nil
 	case "financialtransaction", "financial_transaction", "financial_transactions":
-		return "financial_transactions"
+		return "financial_transactions", nil
 	case "categorybudget", "category_budget", "category_budgets":
-		return "category_budgets"
+		return "category_budgets", nil
 	case "recurringbill", "recurring_bill", "recurring_bills":
-		return "recurring_bills"
+		return "recurring_bills", nil
 	case "externalapiconnector", "external_api_connector", "external_api_connectors":
-		return "external_api_connectors"
+		return "external_api_connectors", nil
 	case "automationrule", "automation_rule", "automation_rules":
-		return "automation_rules"
+		return "automation_rules", nil
 	case "userpreference", "user_preference", "user_preferences":
-		return "user_preferences"
+		return "user_preferences", nil
 	case "personalcrmcontact", "personal_crm_contact", "personal_crm_contacts":
-		return "personal_crm_contacts"
+		return "personal_crm_contacts", nil
 	default:
-		return norm
+		return "", fmt.Errorf("unknown entity type %q is not allowlisted for rollback", entityType)
 	}
 }
 
@@ -628,6 +634,10 @@ func (r *mutationResolver) SaveRecurringBill(ctx context.Context, familyGroup st
 }
 
 func (r *mutationResolver) RegisterExternalAPI(ctx context.Context, name string, baseURL string, defaultMethod *string, description *string) (*model.ExternalAPIConnector, error) {
+	if err := netguard.ValidateURL(baseURL); err != nil {
+		return nil, fmt.Errorf("invalid or prohibited base_url: %w", err)
+	}
+
 	m := "GET"
 	if defaultMethod != nil && *defaultMethod != "" {
 		m = *defaultMethod
@@ -795,33 +805,90 @@ func (r *mutationResolver) RollbackMutation(ctx context.Context, mutationID stri
 		return false, nil
 	}
 
-	// Apply genuine rollback logic based on action and entity snapshot
-	tbl := tableNameForEntity(mLog.EntityType)
-	switch strings.ToLower(mLog.Action) {
-	case "create":
-		if tbl != "" && mLog.EntityID != "" {
-			_ = r.DB.DB.Table(tbl).Where("id = ?", mLog.EntityID).Delete(nil)
-		}
-	case "update":
-		if tbl != "" && mLog.EntityID != "" && mLog.BeforeJSON != "" {
-			var beforeMap map[string]interface{}
-			if err := json.Unmarshal([]byte(mLog.BeforeJSON), &beforeMap); err == nil {
-				_ = r.DB.DB.Table(tbl).Where("id = ?", mLog.EntityID).Updates(beforeMap)
-			}
-		}
-	case "delete":
-		if tbl != "" && mLog.BeforeJSON != "" {
-			var beforeMap map[string]interface{}
-			if err := json.Unmarshal([]byte(mLog.BeforeJSON), &beforeMap); err == nil {
-				_ = r.DB.DB.Table(tbl).Create(beforeMap)
-			}
+	// Tenant boundary verification
+	claims := GetAuthClaims(ctx)
+	if claims != nil && claims.Role != "admin" {
+		matchesFamily := (mLog.FamilyGroup != "" && claims.FamilyGroup == mLog.FamilyGroup)
+		matchesUser := (mLog.UserID == claims.UserID)
+		if !matchesFamily && !matchesUser {
+			return false, fmt.Errorf("permission denied: mutation %q belongs to another tenant", mutationID)
 		}
 	}
 
-	mLog.IsUndone = true
-	if err := r.DB.DB.Save(&mLog).Error; err != nil {
+	// Validate entity allowlist
+	tbl, err := tableNameForEntity(mLog.EntityType)
+	if err != nil {
 		return false, err
 	}
+
+	// Execute rollback inside a database transaction
+	tx := r.DB.DB.Begin()
+	if tx.Error != nil {
+		return false, fmt.Errorf("failed to begin rollback transaction: %w", tx.Error)
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			tx.Rollback()
+			panic(rec)
+		}
+	}()
+
+	switch strings.ToLower(mLog.Action) {
+	case "create":
+		if mLog.EntityID == "" {
+			tx.Rollback()
+			return false, fmt.Errorf("cannot rollback create mutation without entity_id")
+		}
+		res := tx.Table(tbl).Where("id = ?", mLog.EntityID).Delete(nil)
+		if res.Error != nil {
+			tx.Rollback()
+			return false, fmt.Errorf("failed to rollback create on table %s: %w", tbl, res.Error)
+		}
+	case "update":
+		if mLog.EntityID == "" || mLog.BeforeJSON == "" {
+			tx.Rollback()
+			return false, fmt.Errorf("cannot rollback update mutation without entity_id and before_json")
+		}
+		var beforeMap map[string]interface{}
+		if err := json.Unmarshal([]byte(mLog.BeforeJSON), &beforeMap); err != nil {
+			tx.Rollback()
+			return false, fmt.Errorf("failed to parse before_json for table %s: %w", tbl, err)
+		}
+		res := tx.Table(tbl).Where("id = ?", mLog.EntityID).Updates(beforeMap)
+		if res.Error != nil {
+			tx.Rollback()
+			return false, fmt.Errorf("failed to rollback update on table %s: %w", tbl, res.Error)
+		}
+	case "delete":
+		if mLog.BeforeJSON == "" {
+			tx.Rollback()
+			return false, fmt.Errorf("cannot rollback delete mutation without before_json")
+		}
+		var beforeMap map[string]interface{}
+		if err := json.Unmarshal([]byte(mLog.BeforeJSON), &beforeMap); err != nil {
+			tx.Rollback()
+			return false, fmt.Errorf("failed to parse before_json for table %s: %w", tbl, err)
+		}
+		res := tx.Table(tbl).Create(beforeMap)
+		if res.Error != nil {
+			tx.Rollback()
+			return false, fmt.Errorf("failed to rollback delete on table %s: %w", tbl, res.Error)
+		}
+	default:
+		tx.Rollback()
+		return false, fmt.Errorf("unsupported mutation action %q for rollback", mLog.Action)
+	}
+
+	mLog.IsUndone = true
+	if err := tx.Save(&mLog).Error; err != nil {
+		tx.Rollback()
+		return false, fmt.Errorf("failed to mark mutation undone in transaction: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return false, fmt.Errorf("failed to commit rollback transaction: %w", err)
+	}
+
 	return true, nil
 }
 

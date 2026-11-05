@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"io"
 	"log/slog"
@@ -103,10 +104,19 @@ func setupRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	twHandler := twilio.NewHandler(pub)
+	twHandler := twilio.NewHandler(pub, cfg.Twilio.AuthToken)
 	r.Post("/webhook/twilio", twHandler.HandleWebhook)
 
 	r.Post("/webhook/telegram", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.Telegram.SecretToken != "" {
+			secretHeader := r.Header.Get("X-Telegram-Bot-Api-Secret-Token")
+			if subtle.ConstantTimeCompare([]byte(secretHeader), []byte(cfg.Telegram.SecretToken)) != 1 {
+				slog.Warn("unauthorized telegram webhook attempt", "remote_addr", r.RemoteAddr)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			slog.Error("failed to read request body", "error", err)

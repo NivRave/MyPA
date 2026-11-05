@@ -7,11 +7,23 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
+
+	"golang.org/x/crypto/hkdf"
+)
+
+const (
+	SaltSize          = 16
+	NonceSize         = 12
+	TagSize           = 16
+	MinCiphertextSize = SaltSize + NonceSize + TagSize // 44 bytes
+	hkdfInfo          = "mypa-aes-gcm"
 )
 
 var (
@@ -20,33 +32,73 @@ var (
 	defaultDevFallbackKey = "mypa-default-dev-insecure-encryption-key"
 )
 
-// DeriveKey derives a 32-byte AES-256 key from a passphrase.
-// If passphrase is provided and non-empty, it is hashed with SHA-256.
-// If passphrase is empty, it checks the ENCRYPTION_KEY environment variable.
-// If both are empty, it falls back to a deterministic development/test key with a warning.
-func DeriveKey(passphrase string) []byte {
+func isTestMode() bool {
+	return flag.Lookup("test.v") != nil || os.Getenv("ENV") == "test" || os.Getenv("GO_ENV") == "test"
+}
+
+func getRawSecret(passphrase string) ([]byte, error) {
 	if passphrase != "" {
-		hash := sha256.Sum256([]byte(passphrase))
-		return hash[:]
+		return []byte(passphrase), nil
 	}
-
-	envKey := os.Getenv("ENCRYPTION_KEY")
+	envKey := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
 	if envKey != "" {
-		hash := sha256.Sum256([]byte(envKey))
-		return hash[:]
+		return []byte(envKey), nil
+	}
+	if isTestMode() {
+		devFallbackWarningOnce.Do(func() {
+			slog.Warn("TEST MODE: ENCRYPTION_KEY not set; using deterministic dev fallback key")
+		})
+		return []byte(defaultDevFallbackKey), nil
 	}
 
-	devFallbackWarningOnce.Do(func() {
-		slog.Warn("ENCRYPTION_KEY not set and no passphrase provided; using deterministic development/test fallback key")
-	})
-	hash := sha256.Sum256([]byte(defaultDevFallbackKey))
+	slog.Error("FATAL: ENCRYPTION_KEY is required and cannot be empty in production environments")
+	panic("ENCRYPTION_KEY must be configured in production")
+}
+
+// ValidateKeyConfigured ensures ENCRYPTION_KEY is available during startup.
+func ValidateKeyConfigured() error {
+	_, err := getRawSecret("")
+	return err
+}
+
+func deriveKeyWithSalt(rawSecret, salt []byte) ([]byte, error) {
+	kdf := hkdf.New(sha256.New, rawSecret, salt, []byte(hkdfInfo))
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(kdf, key); err != nil {
+		return nil, fmt.Errorf("hkdf key expansion failed: %w", err)
+	}
+	return key, nil
+}
+
+// DeriveKey derives a 32-byte AES-256 key from a passphrase or environment.
+func DeriveKey(passphrase string) []byte {
+	rawSecret, err := getRawSecret(passphrase)
+	if err != nil {
+		hash := sha256.Sum256([]byte(defaultDevFallbackKey))
+		return hash[:]
+	}
+	hash := sha256.Sum256(rawSecret)
 	return hash[:]
 }
 
-// Encrypt encrypts plaintext using AES-256-GCM with a key derived from passphrase.
-// A cryptographically secure random 12-byte nonce is generated and prepended to the ciphertext.
+// Encrypt encrypts plaintext using AES-256-GCM with an HKDF-SHA256 salted key.
+// Wire format: [16-byte Salt][12-byte Nonce][Ciphertext + 16-byte Tag]
 func Encrypt(plaintext []byte, passphrase string) ([]byte, error) {
-	key := DeriveKey(passphrase)
+	rawSecret, err := getRawSecret(passphrase)
+	if err != nil {
+		return nil, err
+	}
+
+	salt := make([]byte, SaltSize)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return nil, fmt.Errorf("failed to generate random salt: %w", err)
+	}
+
+	key, err := deriveKeyWithSalt(rawSecret, salt)
+	if err != nil {
+		return nil, err
+	}
+
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
@@ -57,42 +109,63 @@ func Encrypt(plaintext []byte, passphrase string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create GCM block: %w", err)
 	}
 
-	nonce := make([]byte, gcm.NonceSize())
+	nonce := make([]byte, NonceSize)
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, fmt.Errorf("failed to generate random nonce: %w", err)
 	}
 
-	// Seal appends the encrypted ciphertext and authentication tag to nonce
-	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
+	prefix := append(salt, nonce...)
+	ciphertext := gcm.Seal(prefix, nonce, plaintext, nil)
 	return ciphertext, nil
 }
 
-// Decrypt decrypts ciphertext using AES-256-GCM with a key derived from passphrase.
-// It expects the first 12 bytes of ciphertext to contain the GCM nonce.
+// Decrypt decrypts ciphertext using AES-256-GCM.
+// It supports both HKDF-SHA256 salted ciphertexts and legacy unsalted ciphertexts.
 func Decrypt(ciphertext []byte, passphrase string) ([]byte, error) {
-	key := DeriveKey(passphrase)
-	block, err := aes.NewCipher(key)
+	rawSecret, err := getRawSecret(passphrase)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+		return nil, err
 	}
 
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM block: %w", err)
+	// Primary: HKDF salted format (>= 44 bytes)
+	if len(ciphertext) >= MinCiphertextSize {
+		salt := ciphertext[:SaltSize]
+		nonce := ciphertext[SaltSize : SaltSize+NonceSize]
+		encryptedData := ciphertext[SaltSize+NonceSize:]
+
+		key, err := deriveKeyWithSalt(rawSecret, salt)
+		if err == nil {
+			block, bErr := aes.NewCipher(key)
+			if bErr == nil {
+				gcm, gErr := cipher.NewGCM(block)
+				if gErr == nil {
+					plaintext, openErr := gcm.Open(nil, nonce, encryptedData, nil)
+					if openErr == nil {
+						return plaintext, nil
+					}
+				}
+			}
+		}
 	}
 
-	nonceSize := gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
-		return nil, errors.New("ciphertext too short: missing nonce")
+	// Fallback: Legacy unsalted format (>= 28 bytes)
+	if len(ciphertext) >= NonceSize+TagSize {
+		legacyKey := sha256.Sum256(rawSecret)
+		block, bErr := aes.NewCipher(legacyKey[:])
+		if bErr == nil {
+			gcm, gErr := cipher.NewGCM(block)
+			if gErr == nil {
+				nonce := ciphertext[:NonceSize]
+				encryptedData := ciphertext[NonceSize:]
+				plaintext, openErr := gcm.Open(nil, nonce, encryptedData, nil)
+				if openErr == nil {
+					return plaintext, nil
+				}
+			}
+		}
 	}
 
-	nonce, encryptedData := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, encryptedData, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt or authenticate ciphertext: %w", err)
-	}
-
-	return plaintext, nil
+	return nil, errors.New("failed to decrypt or authenticate ciphertext")
 }
 
 // EncryptString encrypts a string and returns a base64-encoded ciphertext.

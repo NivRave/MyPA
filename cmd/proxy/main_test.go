@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -58,6 +59,18 @@ func TestProxyRouting(t *testing.T) {
 			expectedBody: "Not found\n",
 			expectedCode: 404,
 		},
+		{
+			name:         "Route Playground Returns 404 From Proxy",
+			path:         "/playground",
+			expectedBody: "Not found\n",
+			expectedCode: 404,
+		},
+		{
+			name:         "Route Unauthenticated GraphQL Fails With 401",
+			path:         "/graphql",
+			expectedBody: "Unauthorized\n",
+			expectedCode: 401,
+		},
 	}
 
 	for _, tt := range tests {
@@ -82,4 +95,26 @@ func TestSetupProxy_InvalidURL(t *testing.T) {
 	
 	_, err = setupProxy("http://ok", "http://\x00invalid")
 	assert.Error(t, err)
+}
+
+func TestProxyGraphQL_Authenticated(t *testing.T) {
+	orchSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer secret123", r.Header.Get("Authorization"))
+		fmt.Fprint(w, `{"data":{"ok":true}}`)
+	}))
+	defer orchSrv.Close()
+
+	mux, err := setupProxy("http://dummy-gateway", orchSrv.URL)
+	require.NoError(t, err)
+
+	proxySrv := httptest.NewServer(mux)
+	defer proxySrv.Close()
+
+	req, err := http.NewRequest("POST", proxySrv.URL+"/graphql", strings.NewReader(`{"query":"{__typename}"}`))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer secret123")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }

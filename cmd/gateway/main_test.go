@@ -96,3 +96,38 @@ func TestGatewayTelegramWebhook_InvalidJSON(t *testing.T) {
 	// In the real code we return 200 on parse error to avoid telegram retries
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
+
+func TestGatewayTelegramWebhook_SecretToken(t *testing.T) {
+	pub := new(MockEventPublisher)
+	cfg := &config.Config{
+		Telegram: config.TelegramConfig{
+			SecretToken: "super-secret-token-123",
+		},
+	}
+	r := setupRouter(pub, cfg)
+
+	payload := []byte(`{"update_id": 12345}`)
+
+	// 1. Missing header -> 401
+	req1 := httptest.NewRequest("POST", "/webhook/telegram", bytes.NewBuffer(payload))
+	req1.Header.Set("Content-Type", "application/json")
+	rr1 := httptest.NewRecorder()
+	r.ServeHTTP(rr1, req1)
+	assert.Equal(t, http.StatusUnauthorized, rr1.Code)
+
+	// 2. Bad header -> 401
+	req2 := httptest.NewRequest("POST", "/webhook/telegram", bytes.NewBuffer(payload))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("X-Telegram-Bot-Api-Secret-Token", "wrong-token")
+	rr2 := httptest.NewRecorder()
+	r.ServeHTTP(rr2, req2)
+	assert.Equal(t, http.StatusUnauthorized, rr2.Code)
+
+	// 3. Valid header -> 200
+	req3 := httptest.NewRequest("POST", "/webhook/telegram", bytes.NewBuffer(payload))
+	req3.Header.Set("Content-Type", "application/json")
+	req3.Header.Set("X-Telegram-Bot-Api-Secret-Token", "super-secret-token-123")
+	rr3 := httptest.NewRecorder()
+	r.ServeHTTP(rr3, req3)
+	assert.Equal(t, http.StatusOK, rr3.Code)
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/contacts"
+	"github.com/nivik/mypa/internal/crypto"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/domains/baby"
@@ -52,6 +53,11 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
+	}
+
+	if err := crypto.ValidateKeyConfigured(); err != nil {
+		slog.Error("encryption key validation failed", "error", err)
 		os.Exit(1)
 	}
 
@@ -158,6 +164,11 @@ func main() {
 
 	// Track 1A: Durability Module (audit logs, undo, data export)
 	durabilityModule := durability.NewModule(dbClient, eventBus)
+	if store != nil {
+		store.SetCredentialFallback(func(fallbackCtx context.Context, userID string) ([]byte, error) {
+			return durabilityModule.GetCredentialFallback(fallbackCtx, userID, "google_oauth")
+		})
+	}
 
 	// Track 1B: Topic Memory Module (topic memory, entity profiles)
 	memoryRepo := db.NewMemoryV2Repo(dbClient.DB)
@@ -244,7 +255,7 @@ func main() {
 	}()
 
 	// 7. Start HTTP Server for OAuth callbacks and GraphQL
-	mux := setupRouter(oauthCfg, store, tgClient, dbClient)
+	mux := setupRouter(oauthCfg, store, tgClient, dbClient, durabilityModule)
 
 	serverAddr := fmt.Sprintf(":%d", cfg.Server.OrchestratorPort)
 	srv := &http.Server{
@@ -281,31 +292,65 @@ type AuthTelegramClient interface {
 	SendMessage(ctx context.Context, chatID string, text string) error
 }
 
-func setupAuthRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient) *http.ServeMux {
-	return setupRouter(oauthCfg, store, tgClient, nil)
+type CredentialFallbackSaver interface {
+	SaveCredentialFallback(ctx context.Context, userID, provider string, tokenData []byte, passphrase ...string) error
 }
 
-func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient, dbClient *db.Client) *http.ServeMux {
+func setupAuthRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient, fallbackSaver ...CredentialFallbackSaver) *http.ServeMux {
+	var saver CredentialFallbackSaver
+	if len(fallbackSaver) > 0 {
+		saver = fallbackSaver[0]
+	}
+	return setupRouter(oauthCfg, store, tgClient, nil, saver)
+}
+
+func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient, dbClient *db.Client, fallbackSaver CredentialFallbackSaver) *http.ServeMux {
 	mux := http.NewServeMux()
 	
 	// GraphQL Server
 	if dbClient != nil {
 		srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: &graph.Resolver{DB: dbClient}}))
+
+		dashboardSecret := os.Getenv("DASHBOARD_API_SECRET")
+		jwtSecret := os.Getenv("JWT_SECRET")
+		if jwtSecret == "" {
+			jwtSecret = os.Getenv("ENCRYPTION_KEY")
+		}
+		authMiddleware := graph.NewAuthMiddleware(dashboardSecret, jwtSecret)
+
 		graphqlHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit for GraphQL
 			srv.ServeHTTP(w, r)
 		})
-		mux.Handle("/graphql", graphqlHandler)
-		mux.Handle("/playground", playground.Handler("GraphQL playground", "/graphql"))
+		mux.Handle("/graphql", authMiddleware(graphqlHandler))
+
+		if os.Getenv("ENV") != "production" {
+			mux.Handle("/playground", playground.Handler("GraphQL playground", "/graphql"))
+		} else {
+			mux.HandleFunc("/playground", func(w http.ResponseWriter, r *http.Request) {
+				http.NotFound(w, r)
+			})
+		}
 	}
 
 	mux.HandleFunc("/auth/google/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
-		stateParam := r.URL.Query().Get("state") // This is the Telegram UserID
+		stateParam := r.URL.Query().Get("state")
 
 		if code == "" || stateParam == "" {
 			http.Error(w, "missing code or state", http.StatusBadRequest)
 			return
+		}
+
+		targetUserID := stateParam
+		if store != nil {
+			validatedUser, err := store.ValidateAndDeleteOAuthState(r.Context(), stateParam)
+			if err != nil || validatedUser == "" {
+				slog.Warn("invalid or expired oauth state nonce", "state", stateParam, "error", err)
+				http.Error(w, "invalid or expired oauth state nonce", http.StatusForbidden)
+				return
+			}
+			targetUserID = validatedUser
 		}
 
 		// Exchange code for token
@@ -316,7 +361,7 @@ func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient Au
 			return
 		}
 
-		// Encode and save to Redis
+		// Encode and save to Redis (AES-256-GCM encrypted via SetOAuthToken)
 		tokenBytes, err := calendar.EncodeToken(token)
 		if err != nil {
 			slog.Error("failed to encode token", "error", err)
@@ -324,14 +369,27 @@ func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient Au
 			return
 		}
 
-		if err := store.SetOAuthToken(r.Context(), stateParam, tokenBytes); err != nil {
-			slog.Error("failed to save token to redis", "error", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
+		if store != nil {
+			if err := store.SetOAuthToken(r.Context(), targetUserID, tokenBytes); err != nil {
+				slog.Error("failed to save token to redis", "error", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		// Persist credential fallback if configured
+		if fallbackSaver != nil {
+			if err := fallbackSaver.SaveCredentialFallback(r.Context(), targetUserID, "google_oauth", tokenBytes); err != nil {
+				slog.Error("failed to persist credential fallback", "user_id", targetUserID, "error", err)
+			} else {
+				slog.Info("persisted encrypted credential fallback", "user_id", targetUserID)
+			}
 		}
 
 		// Notify user on Telegram
-		_ = tgClient.SendMessage(r.Context(), stateParam, "✅ Successfully connected to Google Calendar! You can now ask me to schedule events.")
+		if tgClient != nil {
+			_ = tgClient.SendMessage(r.Context(), targetUserID, "✅ Successfully connected to Google Calendar! You can now ask me to schedule events.")
+		}
 
 		// Tell the browser they can close the window
 		w.Header().Set("Content-Type", "text/html")

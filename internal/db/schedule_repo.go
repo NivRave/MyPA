@@ -20,9 +20,9 @@ func init() {
 // ScheduleRepository defines repository methods for topic-based schedule events and configurations.
 type ScheduleRepository interface {
 	CreateScheduleEvent(ev *models.ScheduleEvent) error
-	GetScheduleEvent(id uint) (*models.ScheduleEvent, error)
+	GetScheduleEvent(id uint, familyGroup ...string) (*models.ScheduleEvent, error)
 	UpdateScheduleEvent(ev *models.ScheduleEvent) error
-	DeleteScheduleEvent(id uint) error
+	DeleteScheduleEvent(id uint, familyGroup ...string) error
 	ListScheduleEvents(userID, familyGroup, topic string, start, end time.Time) ([]models.ScheduleEvent, error)
 	UpsertTopicCalendarConfig(cfg *models.TopicCalendarConfig) error
 	GetTopicCalendarConfig(userID, topic string) (*models.TopicCalendarConfig, error)
@@ -54,11 +54,15 @@ func (c *Client) CreateScheduleEvent(ev *models.ScheduleEvent) error {
 	return nil
 }
 
-// GetScheduleEvent fetches a single schedule event by its ID.
+// GetScheduleEvent fetches a single schedule event by its ID, optionally scoped to tenant.
 // Returns (nil, nil) if the event is not found.
-func (c *Client) GetScheduleEvent(id uint) (*models.ScheduleEvent, error) {
+func (c *Client) GetScheduleEvent(id uint, familyGroup ...string) (*models.ScheduleEvent, error) {
 	var ev models.ScheduleEvent
-	result := c.DB.First(&ev, id)
+	query := c.DB.Where("id = ?", id)
+	if len(familyGroup) > 0 && familyGroup[0] != "" {
+		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup[0], familyGroup[0])
+	}
+	result := query.First(&ev)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -81,9 +85,13 @@ func (c *Client) UpdateScheduleEvent(ev *models.ScheduleEvent) error {
 	return nil
 }
 
-// DeleteScheduleEvent removes a schedule event by ID.
-func (c *Client) DeleteScheduleEvent(id uint) error {
-	result := c.DB.Delete(&models.ScheduleEvent{}, id)
+// DeleteScheduleEvent removes a schedule event by ID, optionally scoped to tenant.
+func (c *Client) DeleteScheduleEvent(id uint, familyGroup ...string) error {
+	query := c.DB.Where("id = ?", id)
+	if len(familyGroup) > 0 && familyGroup[0] != "" {
+		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup[0], familyGroup[0])
+	}
+	result := query.Delete(&models.ScheduleEvent{})
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete schedule event: %w", result.Error)
 	}
@@ -96,11 +104,11 @@ func (c *Client) ListScheduleEvents(userID, familyGroup, topic string, start, en
 
 	// User / FamilyGroup filter
 	if userID != "" && familyGroup != "" {
-		query = query.Where("(user_id = ? OR (family_group = ? AND is_shared = true))", userID, familyGroup)
+		query = query.Where("((family_group = ? AND family_group != '' AND is_shared = true) OR user_id = ?)", familyGroup, userID)
 	} else if userID != "" {
 		query = query.Where("user_id = ?", userID)
 	} else if familyGroup != "" {
-		query = query.Where("family_group = ?", familyGroup)
+		query = query.Where("family_group = ? AND family_group != ''", familyGroup)
 	}
 
 	// Topic filter

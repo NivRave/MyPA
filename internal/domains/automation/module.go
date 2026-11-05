@@ -128,13 +128,8 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 			Name:        "list_external_apis",
 			Description: "List all registered external API connectors available to the user and family group (with auth headers securely masked).",
 			Parameters: &genai.Schema{
-				Type: genai.TypeObject,
-				Properties: map[string]*genai.Schema{
-					"family_group": {
-						Type:        genai.TypeString,
-						Description: "Optional family group name filter.",
-					},
-				},
+				Type:       genai.TypeObject,
+				Properties: map[string]*genai.Schema{},
 			},
 		},
 		{
@@ -335,6 +330,23 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 
 // Execute dispatches and runs tools provided by the automation module.
 func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, toolName string, args map[string]interface{}) (string, error) {
+	if callCtx.HasUntrustedContent {
+		switch toolName {
+		case "update_user_preferences", "create_automation_rule", "register_external_api":
+			sourceDesc := "external untrusted content"
+			if len(callCtx.UntrustedSources) > 0 {
+				sourceDesc = strings.Join(callCtx.UntrustedSources, ", ")
+			}
+			return fmt.Sprintf(
+				"🔒 **Interactive Security Confirmation Required**\n\n"+
+					"The assistant received a command to perform a privileged system action (`%s`) while processing external data (%s).\n"+
+					"To prevent indirect prompt injection, this modification was NOT applied automatically.\n\n"+
+					"👉 If you intended to make this change, please reply with:\n`CONFIRM %s`",
+				toolName, sourceDesc, strings.ToUpper(toolName),
+			), nil
+		}
+	}
+
 	repo, err := m.resolveRepo(callCtx)
 	if err != nil {
 		return "", err
@@ -430,9 +442,6 @@ func (m *Module) executeRegisterExternalAPI(ctx context.Context, callCtx orchest
 
 func (m *Module) executeListExternalAPIs(ctx context.Context, callCtx orchestrator.CallContext, repo db.AutomationRepository, args map[string]interface{}) (string, error) {
 	userID, familyGroup := getUserAndFamily(callCtx)
-	if fg := strings.TrimSpace(getStringArg(args, "family_group")); fg != "" {
-		familyGroup = fg
-	}
 
 	connectors, err := repo.ListAPIConnectors(userID, familyGroup)
 	if err != nil {
@@ -495,8 +504,9 @@ func (m *Module) executeCallExternalAPI(ctx context.Context, callCtx orchestrato
 		if err != nil {
 			return "", fmt.Errorf("failed to look up connector: %w", err)
 		}
-		if conn == nil {
-			return "", fmt.Errorf("API connector not found")
+		isAuthorized := conn != nil && ((familyGroup != "" && conn.FamilyGroup == familyGroup) || (conn.UserID != "" && conn.UserID == userID))
+		if !isAuthorized {
+			return "", fmt.Errorf("API connector not found or permission denied")
 		}
 
 		targetURL = strings.TrimRight(conn.BaseURL, "/")
@@ -629,11 +639,21 @@ func (m *Module) executeDeleteAutomationRule(ctx context.Context, callCtx orches
 		return "", fmt.Errorf("valid rule_id is required")
 	}
 
+	userID, familyGroup := getUserAndFamily(callCtx)
+	rule, err := repo.GetAutomationRule(uint(ruleID))
+	if err != nil {
+		return "", fmt.Errorf("failed to lookup automation rule: %w", err)
+	}
+	if rule != nil {
+		isAuthorized := (familyGroup != "" && rule.FamilyGroup == familyGroup) || (rule.UserID != "" && rule.UserID == userID)
+		if !isAuthorized {
+			return "", fmt.Errorf("automation rule %d not found or permission denied", ruleID)
+		}
+	}
+
 	if err := repo.DeleteAutomationRule(uint(ruleID)); err != nil {
 		return "", fmt.Errorf("failed to delete automation rule: %w", err)
 	}
-
-	userID, familyGroup := getUserAndFamily(callCtx)
 	if bus := m.resolveEventBus(callCtx); bus != nil {
 		_ = bus.Publish(ctx, events.MutationEvent{
 			Topic:       "automation",
@@ -715,9 +735,6 @@ func (m *Module) executeUpdateUserPreferences(ctx context.Context, callCtx orche
 
 func (m *Module) executeGetUserPreferences(ctx context.Context, callCtx orchestrator.CallContext, repo db.AutomationRepository, args map[string]interface{}) (string, error) {
 	userID, _ := getUserAndFamily(callCtx)
-	if u := strings.TrimSpace(getStringArg(args, "user_id")); u != "" {
-		userID = u
-	}
 	if userID == "" {
 		return "", fmt.Errorf("unable to determine user ID")
 	}
@@ -741,12 +758,23 @@ func (m *Module) executeUpsertPersonalCRM(ctx context.Context, callCtx orchestra
 	}
 
 	contactID, _ := getInt64Arg(args, "id")
+	userID, familyGroup := getUserAndFamily(callCtx)
+
+	if contactID > 0 {
+		existing, err := repo.GetCRMContact(uint(contactID))
+		if err != nil {
+			return "", fmt.Errorf("failed to verify CRM contact %d: %w", contactID, err)
+		}
+		isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.UserID != "" && existing.UserID == userID))
+		if !isAuthorized {
+			return "", fmt.Errorf("CRM contact %d not found or permission denied", contactID)
+		}
+	}
+
 	relationship := strings.TrimSpace(getStringArg(args, "relationship"))
 	giftIdeas := strings.TrimSpace(getStringArg(args, "gift_ideas_and_sizes"))
 	medicalNotes := strings.TrimSpace(getStringArg(args, "medical_notes"))
 	datesJSON := normalizeJSONSlice(getStringArg(args, "important_dates"))
-
-	userID, familyGroup := getUserAndFamily(callCtx)
 
 	contact := &models.PersonalCRMContact{
 		ID:                 uint(contactID),
@@ -945,19 +973,7 @@ func (m *Module) resolveEventBus(callCtx orchestrator.CallContext) *events.Event
 }
 
 func getUserAndFamily(callCtx orchestrator.CallContext) (string, string) {
-	userID := ""
-	familyGroup := ""
-	if callCtx.User != nil {
-		userID = callCtx.User.PlatformID
-		if userID == "" {
-			userID = callCtx.User.ID
-		}
-		familyGroup = callCtx.User.FamilyGroup
-	}
-	if userID == "" {
-		userID = callCtx.Message.UserID
-	}
-	return userID, familyGroup
+	return callCtx.ActorID(), callCtx.TenantFamilyGroup()
 }
 
 func getStringArg(args map[string]interface{}, key string) string {

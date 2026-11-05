@@ -16,13 +16,34 @@ type NotificationSender func(ctx context.Context, userID, text string) error
 // CallContext provides domain ToolModules with all ambient context and services
 // required to execute tools and generate system prompt additions.
 type CallContext struct {
-	User             *models.User
-	Message          models.Message
-	DB               DBClient
-	LLM              LLMClient
-	EventBus         *events.EventBus
-	SendNotification NotificationSender
-	Extra            map[string]interface{}
+	User                *models.User
+	Message             models.Message
+	DB                  DBClient
+	LLM                 LLMClient
+	EventBus            *events.EventBus
+	SendNotification    NotificationSender
+	Extra               map[string]interface{}
+	HasUntrustedContent bool
+	UntrustedSources    []string
+}
+
+// ActorID returns the canonical external platform identifier (e.g. Telegram chat ID,
+// WhatsApp phone number) representing the active actor.
+func (c CallContext) ActorID() string {
+	if c.User != nil && strings.TrimSpace(c.User.PlatformID) != "" {
+		return strings.TrimSpace(c.User.PlatformID)
+	}
+	return strings.TrimSpace(c.Message.UserID)
+}
+
+// TenantFamilyGroup returns the non-empty family group scope for the active session.
+// If the user does not belong to a family group (or User is nil), it safely falls
+// back to ActorID(), ensuring a non-empty, strictly scoped tenant boundary.
+func (c CallContext) TenantFamilyGroup() string {
+	if c.User != nil && strings.TrimSpace(c.User.FamilyGroup) != "" {
+		return strings.TrimSpace(c.User.FamilyGroup)
+	}
+	return c.ActorID()
 }
 
 // ToolModule is the unified contract that domain packages (e.g. durability, memory,

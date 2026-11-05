@@ -24,7 +24,7 @@ func init() {
 type AutomationRepository interface {
 	// ExternalAPIConnector CRUD
 	CreateAPIConnector(connector *models.ExternalAPIConnector) error
-	GetAPIConnector(id uint) (*models.ExternalAPIConnector, error)
+	GetAPIConnector(id uint, familyGroup ...string) (*models.ExternalAPIConnector, error)
 	GetAPIConnectorByName(userID, familyGroup, name string) (*models.ExternalAPIConnector, error)
 	ListAPIConnectors(userID, familyGroup string) ([]models.ExternalAPIConnector, error)
 	DeleteAPIConnector(id uint) error
@@ -35,7 +35,7 @@ type AutomationRepository interface {
 	ListAutomationRules(userID, familyGroup, triggerTopic string) ([]models.AutomationRule, error)
 	ListActiveAutomationRules(triggerTopic string) ([]models.AutomationRule, error)
 	UpdateAutomationRule(rule *models.AutomationRule) error
-	DeleteAutomationRule(id uint) error
+	DeleteAutomationRule(id uint, familyGroup ...string) error
 
 	// UserPreference CRUD
 	UpsertUserPreference(pref *models.UserPreference) error
@@ -72,11 +72,15 @@ func (c *Client) CreateAPIConnector(connector *models.ExternalAPIConnector) erro
 	return nil
 }
 
-// GetAPIConnector retrieves an ExternalAPIConnector by its primary key ID.
+// GetAPIConnector retrieves an ExternalAPIConnector by its primary key ID, optionally scoped to tenant.
 // Returns (nil, nil) if not found.
-func (c *Client) GetAPIConnector(id uint) (*models.ExternalAPIConnector, error) {
+func (c *Client) GetAPIConnector(id uint, familyGroup ...string) (*models.ExternalAPIConnector, error) {
 	var conn models.ExternalAPIConnector
-	result := c.DB.First(&conn, id)
+	query := c.DB.Where("id = ?", id)
+	if len(familyGroup) > 0 && familyGroup[0] != "" {
+		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup[0], familyGroup[0])
+	}
+	result := query.First(&conn)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -97,11 +101,11 @@ func (c *Client) GetAPIConnectorByName(userID, familyGroup, name string) (*model
 	var conn models.ExternalAPIConnector
 	query := c.DB.Where("LOWER(name) = ?", strings.ToLower(name))
 	if userID != "" && familyGroup != "" {
-		query = query.Where("(user_id = ? OR family_group = ?)", userID, familyGroup)
+		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup, userID)
 	} else if userID != "" {
 		query = query.Where("user_id = ?", userID)
 	} else if familyGroup != "" {
-		query = query.Where("family_group = ?", familyGroup)
+		query = query.Where("family_group = ? AND family_group != ''", familyGroup)
 	}
 
 	result := query.First(&conn)
@@ -118,11 +122,11 @@ func (c *Client) GetAPIConnectorByName(userID, familyGroup, name string) (*model
 func (c *Client) ListAPIConnectors(userID, familyGroup string) ([]models.ExternalAPIConnector, error) {
 	query := c.DB.Model(&models.ExternalAPIConnector{})
 	if userID != "" && familyGroup != "" {
-		query = query.Where("(user_id = ? OR family_group = ?)", userID, familyGroup)
+		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup, userID)
 	} else if userID != "" {
 		query = query.Where("user_id = ?", userID)
 	} else if familyGroup != "" {
-		query = query.Where("family_group = ?", familyGroup)
+		query = query.Where("family_group = ? AND family_group != ''", familyGroup)
 	}
 
 	var connectors []models.ExternalAPIConnector
@@ -180,11 +184,11 @@ func (c *Client) GetAutomationRule(id uint) (*models.AutomationRule, error) {
 func (c *Client) ListAutomationRules(userID, familyGroup, triggerTopic string) ([]models.AutomationRule, error) {
 	query := c.DB.Model(&models.AutomationRule{})
 	if userID != "" && familyGroup != "" {
-		query = query.Where("(user_id = ? OR family_group = ?)", userID, familyGroup)
+		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup, userID)
 	} else if userID != "" {
 		query = query.Where("user_id = ?", userID)
 	} else if familyGroup != "" {
-		query = query.Where("family_group = ?", familyGroup)
+		query = query.Where("family_group = ? AND family_group != ''", familyGroup)
 	}
 
 	normTopic := strings.ToLower(strings.TrimSpace(triggerTopic))
@@ -229,9 +233,13 @@ func (c *Client) UpdateAutomationRule(rule *models.AutomationRule) error {
 	return nil
 }
 
-// DeleteAutomationRule removes an AutomationRule by its primary key ID.
-func (c *Client) DeleteAutomationRule(id uint) error {
-	result := c.DB.Delete(&models.AutomationRule{}, id)
+// DeleteAutomationRule removes an AutomationRule by its primary key ID, optionally scoped to tenant.
+func (c *Client) DeleteAutomationRule(id uint, familyGroup ...string) error {
+	query := c.DB.Where("id = ?", id)
+	if len(familyGroup) > 0 && familyGroup[0] != "" {
+		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup[0], familyGroup[0])
+	}
+	result := query.Delete(&models.AutomationRule{})
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete automation rule: %w", result.Error)
 	}

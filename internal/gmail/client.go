@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/nivik/mypa/internal/calendar"
+	"github.com/nivik/mypa/internal/netguard"
 	"github.com/nivik/mypa/internal/state"
 	gmailapi "google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
@@ -305,23 +307,27 @@ func (c *Client) UnsubscribeEmail(ctx context.Context, userID, messageID string)
 	httpRe := regexp.MustCompile(`<(https?://[^>]+)>`)
 	if match := httpRe.FindStringSubmatch(listUnsub); len(match) > 1 {
 		url := match[1]
-		
-		req, _ := http.NewRequestWithContext(ctx, "POST", url, nil)
-		client := &http.Client{}
-		resp, err := client.Do(req)
+		client := netguard.SafeClient(10 * time.Second)
+
+		req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 		if err == nil {
-			defer resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				return nil
+			resp, err := client.Do(req)
+			if err == nil {
+				defer resp.Body.Close()
+				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+					return nil
+				}
 			}
 		}
-		
-		req, _ = http.NewRequestWithContext(ctx, "GET", url, nil)
-		resp, err = client.Do(req)
+
+		req, err = http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err == nil {
-			defer resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				return nil
+			resp, err := client.Do(req)
+			if err == nil {
+				defer resp.Body.Close()
+				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+					return nil
+				}
 			}
 		}
 	}

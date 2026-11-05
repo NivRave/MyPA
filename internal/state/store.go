@@ -3,16 +3,23 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/nivik/mypa/internal/crypto"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/redis/go-redis/v9"
 )
 
+// TokenFallbackGetter retrieves an encrypted token fallback from persistent storage.
+type TokenFallbackGetter func(ctx context.Context, userID string) ([]byte, error)
+
 // Store handles all state persistence in Redis.
 type Store struct {
-	client *redis.Client
+	client         *redis.Client
+	fallbackGetter TokenFallbackGetter
 }
 
 // NewStore initializes a new Redis store.
@@ -86,23 +93,106 @@ func (s *Store) GetChatHistory(ctx context.Context, userID string) ([]models.Cha
 	return history, nil
 }
 
-// SetOAuthToken stores a Google OAuth2 token for a user.
-func (s *Store) SetOAuthToken(ctx context.Context, userID string, tokenBytes []byte) error {
-	key := fmt.Sprintf("token:%s", userID)
-	// Tokens are long-lived, we won't set a TTL, or we could set a long one
-	return s.client.Set(ctx, key, tokenBytes, 0).Err()
+// SetCredentialFallback configures a persistent fallback getter (e.g. PostgreSQL encrypted fallback).
+func (s *Store) SetCredentialFallback(getter TokenFallbackGetter) {
+	s.fallbackGetter = getter
 }
 
-// GetOAuthToken retrieves a Google OAuth2 token for a user.
+// SetOAuthToken encrypts tokenBytes using AES-256-GCM and persists them in Redis.
+func (s *Store) SetOAuthToken(ctx context.Context, userID string, tokenBytes []byte) error {
+	key := fmt.Sprintf("token:%s", userID)
+	encrypted, err := crypto.Encrypt(tokenBytes, "")
+	if err != nil {
+		return fmt.Errorf("failed to encrypt oauth token: %w", err)
+	}
+	return s.client.Set(ctx, key, encrypted, 0).Err()
+}
+
+// GetOAuthToken retrieves and decrypts the Google OAuth2 token for a user.
+// If the token is missing from Redis, it invokes the optional fallback retriever.
 func (s *Store) GetOAuthToken(ctx context.Context, userID string) ([]byte, error) {
 	key := fmt.Sprintf("token:%s", userID)
 	res, err := s.client.Get(ctx, key).Bytes()
-	if err == redis.Nil {
+	if err == redis.Nil || len(res) == 0 {
+		if s.fallbackGetter != nil {
+			fallbackBytes, fbErr := s.fallbackGetter(ctx, userID)
+			if fbErr == nil && len(fallbackBytes) > 0 {
+				_ = s.SetOAuthToken(ctx, userID, fallbackBytes)
+				return fallbackBytes, nil
+			}
+		}
 		return nil, nil // No token found
 	} else if err != nil {
 		return nil, fmt.Errorf("failed to get token: %w", err)
 	}
-	return res, nil
+
+	plaintext, decErr := crypto.Decrypt(res, "")
+	if decErr != nil {
+		// Graceful migration: check if res is legacy unencrypted JSON
+		var legacyTok map[string]interface{}
+		if json.Unmarshal(res, &legacyTok) == nil && legacyTok["access_token"] != nil {
+			_ = s.SetOAuthToken(ctx, userID, res)
+			return res, nil
+		}
+		return nil, fmt.Errorf("failed to decrypt oauth token from redis: %w", decErr)
+	}
+
+	return plaintext, nil
+}
+
+// SaveOAuthState stores a 32-byte hex nonce mapping to the userID with a TTL.
+func (s *Store) SaveOAuthState(ctx context.Context, nonce, userID string, ttl time.Duration) error {
+	key := fmt.Sprintf("oauth_state:%s", nonce)
+	return s.client.Set(ctx, key, userID, ttl).Err()
+}
+
+// ValidateAndDeleteOAuthState atomically retrieves and removes the OAuth state nonce.
+func (s *Store) ValidateAndDeleteOAuthState(ctx context.Context, nonce string) (string, error) {
+	if strings.TrimSpace(nonce) == "" {
+		return "", errors.New("empty oauth state nonce")
+	}
+	key := fmt.Sprintf("oauth_state:%s", nonce)
+	val, err := s.client.GetDel(ctx, key).Result()
+	if err == redis.Nil {
+		return "", errors.New("invalid or expired oauth state nonce")
+	} else if err != nil {
+		return "", fmt.Errorf("failed to validate oauth state: %w", err)
+	}
+	return val, nil
+}
+
+// PendingMetaToolAction represents an interactive confirmation payload for privileged actions.
+type PendingMetaToolAction struct {
+	ToolName  string                 `json:"tool_name"`
+	Args      map[string]interface{} `json:"args"`
+	UserID    string                 `json:"user_id"`
+	CreatedAt time.Time              `json:"created_at"`
+}
+
+// StagePendingMetaTool stages a pending tool action in Redis with a TTL.
+func (s *Store) StagePendingMetaTool(ctx context.Context, userID string, action PendingMetaToolAction, ttl time.Duration) error {
+	key := fmt.Sprintf("pending_meta_tool:%s", userID)
+	data, err := json.Marshal(action)
+	if err != nil {
+		return fmt.Errorf("failed to marshal pending meta tool action: %w", err)
+	}
+	return s.client.Set(ctx, key, data, ttl).Err()
+}
+
+// GetAndClearPendingMetaTool retrieves and clears a staged pending tool action.
+func (s *Store) GetAndClearPendingMetaTool(ctx context.Context, userID string) (*PendingMetaToolAction, error) {
+	key := fmt.Sprintf("pending_meta_tool:%s", userID)
+	data, err := s.client.GetDel(ctx, key).Bytes()
+	if err == redis.Nil {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to get and clear pending meta tool: %w", err)
+	}
+	var action PendingMetaToolAction
+	if err := json.Unmarshal(data, &action); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal pending meta tool: %w", err)
+	}
+	return &action, nil
 }
 
 // RecordFailedPairingAttempt increments the failed pairing counter for a user in Redis.

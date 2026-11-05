@@ -670,8 +670,9 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 		if err != nil {
 			return "", fmt.Errorf("failed to retrieve recurring bill %d: %w", id, err)
 		}
-		if existing == nil {
-			return "", fmt.Errorf("recurring bill %d not found", id)
+		isAuthorized := existing != nil && existing.FamilyGroup != "" && existing.FamilyGroup == familyGroup
+		if !isAuthorized {
+			return "", fmt.Errorf("recurring bill %d not found or permission denied", id)
 		}
 
 		if n := parseString(args["name"], ""); n != "" {
@@ -722,8 +723,9 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 		if err != nil {
 			return "", fmt.Errorf("failed to check recurring bill %d: %w", id, err)
 		}
-		if existing == nil {
-			return "", fmt.Errorf("recurring bill %d not found", id)
+		isAuthorized := existing != nil && existing.FamilyGroup != "" && existing.FamilyGroup == familyGroup
+		if !isAuthorized {
+			return "", fmt.Errorf("recurring bill %d not found or permission denied", id)
 		}
 
 		if err := repo.DeleteRecurringBill(ctx, id); err != nil {

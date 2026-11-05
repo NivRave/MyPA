@@ -18,7 +18,7 @@ type Repository interface {
 	GetSharedSpacesForFamily(familyGroup string) ([]models.SharedSpace, error)
 	GetSharedSpace(familyGroup, topic string) (*models.SharedSpace, error)
 	CreateSharedReminder(reminder *models.SharedTaskReminder) error
-	CompleteSharedReminder(id uint, completedByUserID string) (*models.SharedTaskReminder, error)
+	CompleteSharedReminder(id uint, completedByUserID string, familyGroup ...string) (*models.SharedTaskReminder, error)
 	ListSharedReminders(familyGroup string, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error)
 	GetUsersByFamilyGroup(familyGroup string) ([]models.User, error)
 }
@@ -323,14 +323,30 @@ func (m *Module) executeCompleteSharedReminder(ctx context.Context, callCtx orch
 		return "", fmt.Errorf("invalid reminder id: %w", err)
 	}
 
-	completedBy := callCtx.User.ID
-	if completedBy == "" {
+	completedBy := ""
+	if callCtx.User != nil && callCtx.User.ID != "" {
+		completedBy = callCtx.User.ID
+	} else if callCtx.User != nil && callCtx.User.PlatformID != "" {
 		completedBy = callCtx.User.PlatformID
+	} else {
+		completedBy = callCtx.ActorID()
 	}
+	if completedBy == "" {
+		completedBy = callCtx.Message.UserID
+	}
+	familyGroup := callCtx.TenantFamilyGroup()
 
-	reminder, err := repo.CompleteSharedReminder(id, completedBy)
+	reminder, err := repo.CompleteSharedReminder(id, completedBy, familyGroup)
 	if err != nil {
 		return "", fmt.Errorf("failed to complete shared reminder: %w", err)
+	}
+
+	isAuthorized := reminder != nil && (
+		(familyGroup != "" && reminder.FamilyGroup == familyGroup) ||
+		(reminder.CreatedByUserID != "" && reminder.CreatedByUserID == completedBy) ||
+		(reminder.AssignedToUserID != "" && reminder.AssignedToUserID == completedBy))
+	if !isAuthorized {
+		return "", fmt.Errorf("shared reminder with id %d not found or permission denied", id)
 	}
 
 	actorName := callCtx.User.Name

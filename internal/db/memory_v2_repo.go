@@ -201,17 +201,19 @@ func (r *MemoryV2Repo) GetEntityProfile(ctx context.Context, familyGroup, topic,
 	return &profile, nil
 }
 
-// ListEntityProfiles retrieves all entity profiles for a family group, optionally filtered by topic.
+// ListEntityProfiles retrieves all entity profiles for a family group or user, optionally filtered by topic.
 func (r *MemoryV2Repo) ListEntityProfiles(ctx context.Context, familyGroup, topic string) ([]models.EntityProfile, error) {
 	var profiles []models.EntityProfile
 
 	query := r.db.WithContext(ctx)
 	if familyGroup != "" {
-		query = query.Where("family_group = ?", familyGroup)
+		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup, familyGroup)
+	} else {
+		query = query.Where("1 = 0")
 	}
 
 	topic = strings.ToLower(strings.TrimSpace(topic))
-	if topic != "" {
+	if topic != "" && topic != "all" {
 		query = query.Where("LOWER(topic) = ?", topic)
 	}
 

@@ -57,13 +57,14 @@ func (c *Client) InsertMutationLog(log models.MutationLog) error {
 	return nil
 }
 
-// GetMutationLogsByTopic retrieves recent mutation logs, optionally filtered by topic.
+// GetMutationLogsByTopic retrieves recent mutation logs scoped to tenant, optionally filtered by topic.
 // If topic is empty or "all", all topics are returned.
-func (c *Client) GetMutationLogsByTopic(topic string, limit int) ([]models.MutationLog, error) {
+func (c *Client) GetMutationLogsByTopic(familyGroup, userID, topic string, limit int) ([]models.MutationLog, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	query := c.DB.Order("created_at desc").Limit(limit)
+	query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup, userID)
 	if topic != "" && !strings.EqualFold(topic, "all") {
 		query = query.Where("LOWER(topic) = ?", strings.ToLower(topic))
 	}
@@ -135,8 +136,8 @@ func (c *Client) SaveIdempotency(rec models.IdempotencyRecord) error {
 }
 
 // ExportTopicData exports mutation logs and topic data as formatted JSON or CSV.
-func (c *Client) ExportTopicData(topic string, format string, limit int) (string, error) {
-	logs, err := c.GetMutationLogsByTopic(topic, limit)
+func (c *Client) ExportTopicData(familyGroup, userID, topic string, format string, limit int) (string, error) {
+	logs, err := c.GetMutationLogsByTopic(familyGroup, userID, topic, limit)
 	if err != nil {
 		return "", err
 	}

@@ -83,7 +83,20 @@ func setupProxy(gatewayStr, orchestratorStr string) (*http.ServeMux, error) {
 			return
 		}
 
-		if strings.HasPrefix(r.URL.Path, "/auth/google") || strings.HasPrefix(r.URL.Path, "/graphql") || strings.HasPrefix(r.URL.Path, "/playground") {
+		if strings.HasPrefix(r.URL.Path, "/auth/google") {
+			slog.Info("proxying to orchestrator", "path", r.URL.Path)
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+			orchestratorProxy.ServeHTTP(w, r)
+			return
+		}
+
+		if strings.HasPrefix(r.URL.Path, "/graphql") {
+			// Proxy ingress guard: require Authorization header
+			if r.Header.Get("Authorization") == "" {
+				slog.Warn("proxy: unauthenticated request to /graphql rejected", "remote_addr", r.RemoteAddr)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
 			slog.Info("proxying to orchestrator", "path", r.URL.Path)
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
 			orchestratorProxy.ServeHTTP(w, r)
