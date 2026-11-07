@@ -20,7 +20,9 @@ import (
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/netguard"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/robfig/cron/v3"
 )
 
 var (
@@ -81,58 +83,12 @@ func init() {
 // IsBlockedIP tests whether a given IP address belongs to loopback, private, link-local,
 // cloud metadata, or reserved ranges.
 func IsBlockedIP(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-
-	// If IPv4-mapped IPv6, convert to 4-byte representation
-	if ip4 := ip.To4(); ip4 != nil {
-		if ip4.IsLoopback() || ip4.IsPrivate() || ip4.IsLinkLocalUnicast() || ip4.IsUnspecified() {
-			return true
-		}
-		for _, bNet := range blockedIPNets {
-			if bNet.Contains(ip4) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// IPv6 check
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-		return true
-	}
-	for _, bNet := range blockedIPNets {
-		if bNet.Contains(ip) {
-			return true
-		}
-	}
-	return false
+	return netguard.IsBlockedIP(ip)
 }
 
 // IsBlockedHostname tests whether a hostname is prohibited (e.g. docker internals, localhost, .internal).
 func IsBlockedHostname(host string) bool {
-	h := strings.ToLower(strings.TrimSpace(host))
-	// Strip port if present
-	if strings.Contains(h, ":") {
-		if sh, _, err := net.SplitHostPort(h); err == nil {
-			h = sh
-		}
-	}
-
-	for _, b := range blockedHostnames {
-		if h == b {
-			return true
-		}
-	}
-
-	for _, s := range blockedSuffixes {
-		if strings.HasSuffix(h, s) {
-			return true
-		}
-	}
-
-	return false
+	return netguard.IsBlockedHostname(host)
 }
 
 // DecryptAESGCM decrypts ciphertext using AES-256-GCM (delegating to crypto.Decrypt).
@@ -713,3 +669,38 @@ func (r *Runner) ExecuteAction(ctx context.Context, rule models.AutomationRule, 
 
 	return nil
 }
+
+// ExtractCronSchedule extracts the cron expression from condition JSON or plain string.
+// Supported formats:
+// 1. JSON object: `{"cron": "0 9 * * 1"}` or `{"expression": "0 9 * * 1"}` or `{"schedule": "0 9 * * 1"}`
+// 2. Plain standard cron string: "0 9 * * 1"
+func ExtractCronSchedule(conditionJSON string) (string, error) {
+	trimmed := strings.TrimSpace(conditionJSON)
+	if trimmed == "" {
+		return "", errors.New("empty condition for cron trigger")
+	}
+
+	// Try JSON parsing
+	if strings.HasPrefix(trimmed, "{") {
+		var obj map[string]interface{}
+		if err := json.Unmarshal([]byte(trimmed), &obj); err == nil {
+			for _, k := range []string{"cron", "cron_expression", "expression", "schedule"} {
+				if v, ok := obj[k]; ok {
+					if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+						trimmed = strings.TrimSpace(s)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Validate cron expression (standard 5-field or descriptor)
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+	_, err := parser.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("invalid cron expression %q: %w", trimmed, err)
+	}
+	return trimmed, nil
+}
+

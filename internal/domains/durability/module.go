@@ -33,9 +33,19 @@ type Repository interface {
 	GetMutationLogByID(id string) (*models.MutationLog, error)
 	GetLastMutation(userID string, familyGroup string) (*models.MutationLog, error)
 	MarkMutationUndone(id string) error
+	RollbackSnapshot(ctx context.Context, log models.MutationLog, tableName string) error
 	CheckIdempotency(key string) (*models.IdempotencyRecord, error)
 	SaveIdempotency(rec models.IdempotencyRecord) error
 	ExportTopicData(familyGroup, userID, topic string, format string, limit int) (string, error)
+}
+
+// RollbackResult provides unified, structured feedback on completed rollback operations.
+type RollbackResult = models.RollbackResult
+
+// RollbackEngine is the unified interface exposed to engine, tools, and resolvers.
+type RollbackEngine interface {
+	Rollback(ctx context.Context, actorID, familyGroup, mutationID string, reason ...string) (*RollbackResult, error)
+	RollbackLast(ctx context.Context, actorID, familyGroup string, reason ...string) (*RollbackResult, error)
 }
 
 // UndoHandler defines a custom rollback function for a specific EntityType.
@@ -268,88 +278,137 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 	}
 }
 
-func (m *Module) executeUndo(ctx context.Context, callCtx orchestrator.CallContext, repo Repository, args map[string]interface{}) (string, error) {
-	userID := ""
-	familyGroup := ""
-	if callCtx.User != nil {
-		userID = callCtx.User.PlatformID
-		if userID == "" {
-			userID = callCtx.User.ID
-		}
-		familyGroup = callCtx.User.FamilyGroup
-	}
-	if userID == "" {
-		userID = callCtx.Message.UserID
+// Rollback performs atomic, snapshot-backed rollback for a specific mutation ID.
+func (m *Module) Rollback(ctx context.Context, actorID, familyGroup, mutationID string, reason ...string) (*RollbackResult, error) {
+	if m.repo == nil {
+		return nil, fmt.Errorf("durability: repository is not configured")
 	}
 
-	var log *models.MutationLog
-	var err error
-
-	if mutID, ok := args["mutation_id"].(string); ok && strings.TrimSpace(mutID) != "" {
-		trimmedID := strings.TrimSpace(mutID)
-		log, err = repo.GetMutationLogByID(trimmedID)
-		if err != nil {
-			return "", fmt.Errorf("failed to lookup mutation %s: %w", trimmedID, err)
-		}
-		if log == nil {
-			return "No recent undoable actions found.", nil
-		}
-		isAuthorized := (familyGroup != "" && log.FamilyGroup == familyGroup) || (log.UserID != "" && log.UserID == userID)
-		if !isAuthorized {
-			return "", fmt.Errorf("mutation %s not found or permission denied", trimmedID)
-		}
-	} else {
-		log, err = repo.GetLastMutation(userID, familyGroup)
+	trimmedID := strings.TrimSpace(mutationID)
+	if trimmedID == "" {
+		return m.RollbackLast(ctx, actorID, familyGroup, reason...)
 	}
 
+	log, err := m.repo.GetMutationLogByID(trimmedID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup mutation %s: %w", trimmedID, err)
+	}
+	if log == nil {
+		return nil, fmt.Errorf("mutation %s not found", trimmedID)
+	}
+
+	return m.executeRollbackInternal(ctx, actorID, familyGroup, log)
+}
+
+// RollbackLast performs atomic, snapshot-backed rollback for the most recent mutation of an actor/family.
+func (m *Module) RollbackLast(ctx context.Context, actorID, familyGroup string, reason ...string) (*RollbackResult, error) {
+	if m.repo == nil {
+		return nil, fmt.Errorf("durability: repository is not configured")
+	}
+
+	log, err := m.repo.GetLastMutation(actorID, familyGroup)
 	if err != nil || log == nil {
-		return "No recent undoable actions found.", nil
+		return nil, fmt.Errorf("no recent undoable actions found")
+	}
+
+	return m.executeRollbackInternal(ctx, actorID, familyGroup, log)
+}
+
+func (m *Module) executeRollbackInternal(ctx context.Context, actorID, familyGroup string, log *models.MutationLog) (*RollbackResult, error) {
+	// Tenant boundary check
+	matchesFamily := (familyGroup != "" && log.FamilyGroup == familyGroup)
+	matchesUser := (actorID != "" && log.UserID == actorID)
+	if !matchesFamily && !matchesUser && actorID != "system" {
+		return nil, fmt.Errorf("permission denied: mutation %q belongs to another tenant", log.ID)
 	}
 
 	if log.IsUndone {
-		return fmt.Sprintf("Action %s (%s) has already been undone.", log.ID, log.Summary), nil
+		return &RollbackResult{
+			MutationID:    log.ID,
+			Topic:         log.Topic,
+			Action:        log.Action,
+			EntityType:    log.EntityType,
+			EntityID:      log.EntityID,
+			Summary:       log.Summary,
+			Detail:        fmt.Sprintf("Action %s (%s) has already been undone.", log.ID, log.Summary),
+			AlreadyUndone: true,
+		}, nil
 	}
 
-	var rollbackDetail string
+	// Validate against strict entity allowlist
+	tbl, err := ResolveRollbackTable(log.EntityType)
+	if err != nil {
+		return nil, err
+	}
+
+	var detail string
+	// Check if a domain registered a custom UndoHandler (e.g. external Google Calendar deletion)
 	if handler, exists := m.getUndoHandler(log.EntityType); exists {
-		detail, err := handler(ctx, *log, callCtx)
+		callCtx := orchestrator.CallContext{
+			User:     &models.User{PlatformID: actorID, FamilyGroup: familyGroup},
+			Message:  models.Message{UserID: actorID},
+			EventBus: m.bus,
+		}
+		customDetail, err := handler(ctx, *log, callCtx)
 		if err != nil {
-			return "", fmt.Errorf("custom undo handler failed for %s: %w", log.EntityType, err)
+			return nil, fmt.Errorf("custom undo handler failed for %s: %w", log.EntityType, err)
 		}
-		rollbackDetail = detail
+		detail = customDetail
+		if err := m.repo.MarkMutationUndone(log.ID); err != nil {
+			return nil, fmt.Errorf("failed to mark mutation log undone: %w", err)
+		}
 	} else {
-		rollbackDetail = fmt.Sprintf("Reverted %s '%s' on %s (%s).", log.Action, log.EntityID, log.EntityType, log.Summary)
+		// Default: Atomic Transactional Snapshot Rollback
+		if err := m.repo.RollbackSnapshot(ctx, *log, tbl); err != nil {
+			return nil, fmt.Errorf("snapshot rollback failed: %w", err)
+		}
+		detail = fmt.Sprintf("Reverted %s '%s' on %s.", log.Action, log.EntityID, log.EntityType)
 		if log.BeforeJSON != "" && log.BeforeJSON != "{}" {
-			rollbackDetail += fmt.Sprintf(" Restored prior state: %s", log.BeforeJSON)
+			detail += fmt.Sprintf(" Restored prior state: %s", log.BeforeJSON)
 		}
 	}
 
-	if err := repo.MarkMutationUndone(log.ID); err != nil {
-		return "", fmt.Errorf("failed to mark mutation log undone: %w", err)
-	}
-
-	// Publish undo mutation event to event bus if available
-	bus := m.bus
-	if bus == nil && callCtx.EventBus != nil {
-		bus = callCtx.EventBus
-	}
-	if bus != nil {
-		undoEv := events.MutationEvent{
+	// Publish MutationEvent with Action: "undo"
+	if m.bus != nil {
+		_ = m.bus.Publish(ctx, events.MutationEvent{
 			Topic:       log.Topic,
 			Action:      "undo",
 			EntityType:  log.EntityType,
 			EntityID:    log.EntityID,
-			ActorUserID: userID,
+			ActorUserID: actorID,
 			FamilyGroup: familyGroup,
 			BeforeJSON:  log.AfterJSON,
 			AfterJSON:   log.BeforeJSON,
 			Summary:     fmt.Sprintf("Undid %s (%s): %s", log.ID, log.Action, log.Summary),
 			Timestamp:   time.Now(),
-		}
-		_ = bus.Publish(ctx, undoEv)
+		})
 	}
 
-	return fmt.Sprintf("Successfully undone! %s", rollbackDetail), nil
+	return &RollbackResult{
+		MutationID:    log.ID,
+		Topic:         log.Topic,
+		Action:        log.Action,
+		EntityType:    log.EntityType,
+		EntityID:      log.EntityID,
+		Summary:       log.Summary,
+		Detail:        detail,
+		AlreadyUndone: false,
+	}, nil
+}
+
+func (m *Module) executeUndo(ctx context.Context, callCtx orchestrator.CallContext, repo Repository, args map[string]interface{}) (string, error) {
+	mutID, _ := args["mutation_id"].(string)
+	res, err := m.Rollback(ctx, callCtx.ActorID(), callCtx.TenantFamilyGroup(), mutID)
+	if err != nil {
+		if strings.Contains(err.Error(), "no recent undoable actions found") {
+			return "No recent undoable actions found.", nil
+		}
+		return "", err
+	}
+	if res.AlreadyUndone {
+		return res.Detail, nil
+	}
+	return fmt.Sprintf("Successfully undone! %s", res.Detail), nil
 }
 
 func (m *Module) executeListRecentChanges(ctx context.Context, callCtx orchestrator.CallContext, repo Repository, args map[string]interface{}) (string, error) {

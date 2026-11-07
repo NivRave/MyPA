@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/markdown"
@@ -21,8 +22,10 @@ type Client struct {
 // NewClient creates a new Twilio API client.
 func NewClient(cfg config.TwilioConfig) *Client {
 	return &Client{
-		cfg:        cfg,
-		httpClient: &http.Client{},
+		cfg: cfg,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}
 }
 

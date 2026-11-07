@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -33,6 +34,22 @@ func TestEngine_ReadEmail_WrapsUntrustedContent(t *testing.T) {
 	eng := &Engine{
 		gmailClient: gmailMock,
 	}
+
+	reg := NewRegistry()
+	reg.Register(&testToolModule{
+		name:  "workspace_gmail",
+		decls: []*genai.FunctionDeclaration{{Name: "read_email"}},
+		exec: func(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
+			msgID, _ := args["message_id"].(string)
+			body, _ := eng.gmailClient.ReadEmail(ctx, callCtx.ActorID(), msgID)
+			if secState := GetTurnSecurityState(ctx); secState != nil {
+				secState.MarkUntrusted("email:" + msgID)
+			}
+			wrappedBody := WrapUntrustedContent("email", msgID, body)
+			return wrappedBody, nil
+		},
+	})
+	eng.SetToolRegistry(reg)
 
 	call := &genai.FunctionCall{
 		Name: "read_email",
@@ -109,7 +126,7 @@ func TestEngine_ConfirmCommand_RedeemsStagedMetaTool(t *testing.T) {
 		PlatformID: "user-alice",
 		Role:       "user",
 	}
-	dbMock.EXPECT().GetUser("user-alice").Return(user, nil)
+	dbMock.EXPECT().GetUser("user-alice").Return(user, nil).AnyTimes()
 	dbMock.EXPECT().SaveWorkflow(gomock.Any()).Return(nil)
 
 	// Stage a workflow creation action
@@ -139,6 +156,25 @@ func TestEngine_ConfirmCommand_RedeemsStagedMetaTool(t *testing.T) {
 		db:       dbMock,
 		tgClient: tgMock,
 	}
+
+	reg := NewRegistry()
+	reg.Register(&testToolModule{
+		name:  "automation",
+		decls: []*genai.FunctionDeclaration{{Name: "schedule_workflow"}},
+		exec: func(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
+			name, _ := args["name"].(string)
+			cronExp, _ := args["cron_expression"].(string)
+			instruction, _ := args["instruction"].(string)
+			_ = eng.db.SaveWorkflow(models.Workflow{
+				UserID:         callCtx.ActorID(),
+				Name:           name,
+				CronExpression: cronExp,
+				Instruction:    instruction,
+			})
+			return fmt.Sprintf("✅ **Workflow Scheduled!**\n\n'%s' will run on schedule: %s", name, cronExp), nil
+		},
+	})
+	eng.SetToolRegistry(reg)
 
 	confirmMsg := models.Message{
 		UserID: "user-alice",

@@ -47,7 +47,7 @@ func (r *fakeScheduleRepo) CreateScheduleEvent(ev *models.ScheduleEvent) error {
 	return nil
 }
 
-func (r *fakeScheduleRepo) GetScheduleEvent(id uint) (*models.ScheduleEvent, error) {
+func (r *fakeScheduleRepo) GetScheduleEvent(id uint, familyGroup ...string) (*models.ScheduleEvent, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	ev, ok := r.events[id]
@@ -69,7 +69,7 @@ func (r *fakeScheduleRepo) UpdateScheduleEvent(ev *models.ScheduleEvent) error {
 	return nil
 }
 
-func (r *fakeScheduleRepo) DeleteScheduleEvent(id uint) error {
+func (r *fakeScheduleRepo) DeleteScheduleEvent(id uint, familyGroup ...string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.events, id)
@@ -609,3 +609,82 @@ func TestModule_SystemPromptSection(t *testing.T) {
 	assert.Contains(t, prompt, "Prefix `[Baby]`, Color ID `4`")
 	assert.Contains(t, prompt, "Pediatrician Checkup")
 }
+
+// TestSEC04_CrossTenant_ScheduleEvents_Blocked empirically verifies that schedule topic events
+// cannot be updated or deleted across tenants, and confirms non-regression on legitimate operations.
+func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
+	repo := newFakeScheduleRepo()
+	mod := NewModule(repo)
+	ctx := context.Background()
+
+	// 1. User Alpha creates an event in family_alpha
+	userAlpha := &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
+	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: models.Message{UserID: "user_alpha"}}
+
+	createResp, err := mod.Execute(ctx, callCtxAlpha, "schedule_topic_event", map[string]interface{}{
+		"topic":      "medical",
+		"title":      "Alpha Doctor Appointment",
+		"start_time": "2026-11-10T10:00:00Z",
+		"end_time":   "2026-11-10T11:00:00Z",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, createResp, "Alpha Doctor Appointment")
+
+	// Event 1 exists
+	ev1, err := repo.GetScheduleEvent(1)
+	require.NoError(t, err)
+	require.NotNil(t, ev1)
+	assert.Equal(t, "family_alpha", ev1.FamilyGroup)
+
+	// 2. User Beta (family_beta) attempts to UPDATE Event 1
+	userBeta := &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"}
+	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: models.Message{UserID: "user_beta"}}
+
+	updateBetaResp, err := mod.Execute(ctx, callCtxBeta, "update_topic_event", map[string]interface{}{
+		"event_id": 1,
+		"title":    "Hacked Event Title",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, updateBetaResp, "not found", "Cross-tenant update must return not found without mutating")
+
+	// Verify Event 1 was NOT mutated
+	ev1After, err := repo.GetScheduleEvent(1)
+	require.NoError(t, err)
+	assert.Equal(t, "Alpha Doctor Appointment", ev1After.Title)
+
+	// 3. User Beta (family_beta) attempts to DELETE Event 1
+	deleteBetaResp, err := mod.Execute(ctx, callCtxBeta, "delete_topic_event", map[string]interface{}{
+		"event_id": 1,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, deleteBetaResp, "not found", "Cross-tenant delete must return not found without deleting")
+
+	// Verify Event 1 still exists
+	ev1StillExists, err := repo.GetScheduleEvent(1)
+	require.NoError(t, err)
+	require.NotNil(t, ev1StillExists)
+
+	// 4. Legitimate same-family update (non-regression)
+	updateAlphaResp, err := mod.Execute(ctx, callCtxAlpha, "update_topic_event", map[string]interface{}{
+		"event_id": 1,
+		"title":    "Alpha Pediatrician Visit",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, updateAlphaResp, "Alpha Pediatrician Visit")
+
+	ev1Updated, err := repo.GetScheduleEvent(1)
+	require.NoError(t, err)
+	assert.Equal(t, "Alpha Pediatrician Visit", ev1Updated.Title)
+
+	// 5. Legitimate same-family delete (non-regression)
+	deleteAlphaResp, err := mod.Execute(ctx, callCtxAlpha, "delete_topic_event", map[string]interface{}{
+		"event_id": 1,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, deleteAlphaResp, "successfully deleted")
+
+	ev1Deleted, err := repo.GetScheduleEvent(1)
+	require.NoError(t, err)
+	assert.Nil(t, ev1Deleted)
+}
+

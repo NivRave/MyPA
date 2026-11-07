@@ -137,9 +137,20 @@ func (c *Client) Chat(ctx context.Context, systemInstruction string, history []m
 	var tools []*genai.Tool
 	if CalendarEventTool != nil {
 		if len(c.extraTools) > 0 {
+			seenNames := make(map[string]bool)
 			combinedDecls := make([]*genai.FunctionDeclaration, 0, len(CalendarEventTool.FunctionDeclarations)+len(c.extraTools))
-			combinedDecls = append(combinedDecls, CalendarEventTool.FunctionDeclarations...)
-			combinedDecls = append(combinedDecls, c.extraTools...)
+			for _, d := range c.extraTools {
+				if d != nil && d.Name != "" && !seenNames[d.Name] {
+					seenNames[d.Name] = true
+					combinedDecls = append(combinedDecls, d)
+				}
+			}
+			for _, d := range CalendarEventTool.FunctionDeclarations {
+				if d != nil && d.Name != "" && !seenNames[d.Name] {
+					seenNames[d.Name] = true
+					combinedDecls = append(combinedDecls, d)
+				}
+			}
 			tools = []*genai.Tool{{FunctionDeclarations: combinedDecls}}
 		} else {
 			tools = []*genai.Tool{CalendarEventTool}

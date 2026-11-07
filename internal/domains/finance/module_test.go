@@ -871,3 +871,89 @@ func TestFinanceModule_FlexibleArgumentParsing(t *testing.T) {
 	assert.Equal(t, time.November, tx.TransactionDate.Month())
 	assert.Equal(t, 4, tx.TransactionDate.Day())
 }
+
+// TestSEC04_CrossTenant_RecurringBills_Blocked empirically verifies that recurring bills
+// cannot be updated or deleted across families, and verifies legitimate same-family operations.
+func TestSEC04_CrossTenant_RecurringBills_Blocked(t *testing.T) {
+	repo := newInMemoryFinanceRepo()
+	mod := NewModule(repo)
+	ctx := context.Background()
+
+	// 1. Family Alpha creates a recurring bill
+	callCtxAlpha := makeTestCallCtx("family_alpha", "user_alpha", nil)
+	createResp, err := mod.Execute(ctx, callCtxAlpha, "manage_recurring_bills", map[string]interface{}{
+		"action":          "add",
+		"name":            "Internet Fiber",
+		"category":        "utilities",
+		"expected_amount": 60.00,
+		"currency":        "USD",
+		"billing_cycle":   "monthly",
+		"next_due_day":    15,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, createResp, "Internet Fiber")
+
+	// Verify Bill 1 is in repo
+	bill1, err := repo.GetRecurringBill(ctx, 1)
+	require.NoError(t, err)
+	require.NotNil(t, bill1)
+	assert.Equal(t, "family_alpha", bill1.FamilyGroup)
+
+	// 2. Family Beta attempts to UPDATE Bill 1
+	callCtxBeta := makeTestCallCtx("family_beta", "user_beta", nil)
+	_, updateErr := mod.Execute(ctx, callCtxBeta, "manage_recurring_bills", map[string]interface{}{
+		"action":          "update",
+		"bill_id":         1,
+		"name":            "Hacked Bill",
+		"expected_amount": 999.00,
+	})
+	assert.Error(t, updateErr, "Family Beta must NOT be able to update Family Alpha's recurring bill")
+	assert.Contains(t, updateErr.Error(), "permission denied")
+
+	// Verify bill was not mutated
+	bill1After, err := repo.GetRecurringBill(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "Internet Fiber", bill1After.Name)
+	assert.Equal(t, 60.00, bill1After.ExpectedAmount)
+
+	// 3. Family Beta attempts to DELETE Bill 1
+	_, deleteErr := mod.Execute(ctx, callCtxBeta, "manage_recurring_bills", map[string]interface{}{
+		"action":  "delete",
+		"bill_id": 1,
+	})
+	assert.Error(t, deleteErr, "Family Beta must NOT be able to delete Family Alpha's recurring bill")
+	assert.Contains(t, deleteErr.Error(), "permission denied")
+
+	// Verify bill still exists
+	bill1StillExists, err := repo.GetRecurringBill(ctx, 1)
+	require.NoError(t, err)
+	require.NotNil(t, bill1StillExists)
+
+	// 4. Non-regression: Family Alpha updates Bill 1
+	updateAlphaResp, err := mod.Execute(ctx, callCtxAlpha, "manage_recurring_bills", map[string]interface{}{
+		"action":          "update",
+		"bill_id":         1,
+		"name":            "High-Speed Internet Fiber",
+		"expected_amount": 70.00,
+	})
+	require.NoError(t, err, "Family Alpha must be able to update their own bill")
+	assert.Contains(t, updateAlphaResp, "High-Speed Internet Fiber")
+
+	bill1Updated, err := repo.GetRecurringBill(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "High-Speed Internet Fiber", bill1Updated.Name)
+	assert.Equal(t, 70.00, bill1Updated.ExpectedAmount)
+
+	// 5. Non-regression: Family Alpha deletes Bill 1
+	deleteAlphaResp, err := mod.Execute(ctx, callCtxAlpha, "manage_recurring_bills", map[string]interface{}{
+		"action":  "delete",
+		"bill_id": 1,
+	})
+	require.NoError(t, err, "Family Alpha must be able to delete their own bill")
+	assert.Contains(t, deleteAlphaResp, "deleted")
+
+	bill1Deleted, err := repo.GetRecurringBill(ctx, 1)
+	require.NoError(t, err)
+	assert.Nil(t, bill1Deleted)
+}
+

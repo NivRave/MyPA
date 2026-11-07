@@ -44,6 +44,8 @@ type SharedTaskReminder struct {
 	IsCompleted       bool       `json:"is_completed" gorm:"index;default:false"`
 	CompletedByUserID string     `json:"completed_by_user_id,omitempty" gorm:"size:100"`
 	CompletedAt       *time.Time `json:"completed_at,omitempty"`
+	IsSent            bool       `json:"is_sent" gorm:"index;default:false"`
+	RemindedAt        *time.Time `json:"reminded_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 }
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nivik/mypa/internal/domains/toolutil"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -139,11 +140,33 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 				},
 			},
 		},
+		{
+			Name:        "schedule_reminder",
+			Description: "Schedules a point-in-time reminder alert for the user at a specified due date and time.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"message": {
+						Type:        genai.TypeString,
+						Description: "The reminder message or task to be reminded about.",
+					},
+					"due_time": {
+						Type:        genai.TypeString,
+						Description: "The date and time when the reminder should trigger (in ISO 8601 / RFC 3339 format).",
+					},
+				},
+				Required: []string{"message", "due_time"},
+			},
+		},
 	}
 }
 
 // Execute dispatches and runs the requested tool.
 func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, toolName string, args map[string]interface{}) (string, error) {
+	if toolName == "schedule_reminder" {
+		return m.executeScheduleReminder(ctx, callCtx, args)
+	}
+
 	repo := m.resolveRepo(callCtx)
 	if repo == nil {
 		return "", fmt.Errorf("shared repository is not configured")
@@ -223,10 +246,13 @@ func (m *Module) executeConfigureSharedTopic(ctx context.Context, callCtx orches
 
 	sharedWith, _ := args["shared_with_user_id"].(string)
 
+	actorID := callCtx.ActorID()
+	familyGroup := callCtx.TenantFamilyGroup()
+
 	space := models.SharedSpace{
-		FamilyGroup:      callCtx.User.FamilyGroup,
+		FamilyGroup:      familyGroup,
 		Topic:            topic,
-		OwnerUserID:      callCtx.User.ID,
+		OwnerUserID:      actorID,
 		SharedWithUserID: sharedWith,
 		CanView:          canView,
 		CanEdit:          canEdit,
@@ -243,14 +269,60 @@ func (m *Module) executeConfigureSharedTopic(ctx context.Context, callCtx orches
 		Action:      "configure",
 		EntityType:  "SharedSpace",
 		EntityID:    fmt.Sprintf("%d", space.ID),
-		ActorUserID: callCtx.User.ID,
-		FamilyGroup: callCtx.User.FamilyGroup,
+		ActorUserID: actorID,
+		FamilyGroup: familyGroup,
 		Summary:     summary,
 		Timestamp:   time.Now(),
 	})
 
 	return fmt.Sprintf("Successfully configured shared topic '%s' for family '%s' (view: %v, edit: %v, notify: %s).",
-		topic, callCtx.User.FamilyGroup, canView, canEdit, notifyMode), nil
+		topic, familyGroup, canView, canEdit, notifyMode), nil
+}
+
+func (m *Module) executeScheduleReminder(ctx context.Context, callCtx orchestrator.CallContext, args map[string]interface{}) (string, error) {
+	message := toolutil.String(args, "message")
+	dueTimeStr := toolutil.String(args, "due_time")
+
+	if message == "" || dueTimeStr == "" {
+		return "❌ message and due_time are required to schedule a reminder.", nil
+	}
+
+	dueTime, err := toolutil.ParseTime(dueTimeStr)
+	if err != nil {
+		return "❌ Failed to parse due time. Please use ISO 8601 format.", nil
+	}
+
+	actorID := callCtx.ActorID()
+	familyGroup := callCtx.TenantFamilyGroup()
+
+	if callCtx.DB == nil {
+		return "❌ Database client not configured.", nil
+	}
+
+	reminder := models.ScheduledReminder{
+		UserID:    actorID,
+		Message:   message,
+		DueTime:   dueTime,
+		IsSent:    false,
+		CreatedAt: time.Now(),
+	}
+
+	if err := callCtx.DB.SaveReminder(reminder); err != nil {
+		return fmt.Sprintf("Error scheduling reminder: %v", err), nil
+	}
+
+	m.publishEvent(ctx, callCtx, events.MutationEvent{
+		Topic:       "shared",
+		Action:      "create",
+		EntityType:  "ScheduledReminder",
+		EntityID:    fmt.Sprintf("%s:%d", actorID, dueTime.Unix()),
+		ActorUserID: actorID,
+		FamilyGroup: familyGroup,
+		Summary:     fmt.Sprintf("Scheduled reminder for %s: %s", dueTime.Format(time.RFC822), message),
+		Timestamp:   time.Now(),
+	})
+
+	return fmt.Sprintf("✅ **Reminder Set!**\n\nI will remind you at %s: \"%s\"", dueTime.In(time.Local).Format(time.RFC822), message), nil
 }
 
 func (m *Module) executeCreateSharedReminder(ctx context.Context, callCtx orchestrator.CallContext, repo Repository, args map[string]interface{}) (string, error) {
@@ -277,12 +349,15 @@ func (m *Module) executeCreateSharedReminder(ctx context.Context, callCtx orches
 		}
 	}
 
+	actorID := callCtx.ActorID()
+	familyGroup := callCtx.TenantFamilyGroup()
+
 	reminder := models.SharedTaskReminder{
-		FamilyGroup:      callCtx.User.FamilyGroup,
+		FamilyGroup:      familyGroup,
 		Topic:            topic,
 		Title:            title,
 		DueTime:          dueTime,
-		CreatedByUserID:  callCtx.User.ID,
+		CreatedByUserID:  actorID,
 		AssignedToUserID: strings.TrimSpace(assignedTo),
 		IsCompleted:      false,
 	}
@@ -297,8 +372,8 @@ func (m *Module) executeCreateSharedReminder(ctx context.Context, callCtx orches
 		Action:      "create",
 		EntityType:  "SharedTaskReminder",
 		EntityID:    fmt.Sprintf("%d", reminder.ID),
-		ActorUserID: callCtx.User.ID,
-		FamilyGroup: callCtx.User.FamilyGroup,
+		ActorUserID: actorID,
+		FamilyGroup: familyGroup,
 		Summary:     summary,
 		Timestamp:   time.Now(),
 	})
@@ -309,7 +384,7 @@ func (m *Module) executeCreateSharedReminder(ctx context.Context, callCtx orches
 	}
 
 	return fmt.Sprintf("Created shared task/reminder #%d: '%s' under topic '%s'%s for family group '%s'.",
-		reminder.ID, reminder.Title, reminder.Topic, dueMsg, callCtx.User.FamilyGroup), nil
+		reminder.ID, reminder.Title, reminder.Topic, dueMsg, familyGroup), nil
 }
 
 func (m *Module) executeCompleteSharedReminder(ctx context.Context, callCtx orchestrator.CallContext, repo Repository, args map[string]interface{}) (string, error) {
@@ -323,17 +398,7 @@ func (m *Module) executeCompleteSharedReminder(ctx context.Context, callCtx orch
 		return "", fmt.Errorf("invalid reminder id: %w", err)
 	}
 
-	completedBy := ""
-	if callCtx.User != nil && callCtx.User.ID != "" {
-		completedBy = callCtx.User.ID
-	} else if callCtx.User != nil && callCtx.User.PlatformID != "" {
-		completedBy = callCtx.User.PlatformID
-	} else {
-		completedBy = callCtx.ActorID()
-	}
-	if completedBy == "" {
-		completedBy = callCtx.Message.UserID
-	}
+	completedBy := callCtx.ActorID()
 	familyGroup := callCtx.TenantFamilyGroup()
 
 	reminder, err := repo.CompleteSharedReminder(id, completedBy, familyGroup)
@@ -349,9 +414,9 @@ func (m *Module) executeCompleteSharedReminder(ctx context.Context, callCtx orch
 		return "", fmt.Errorf("shared reminder with id %d not found or permission denied", id)
 	}
 
-	actorName := callCtx.User.Name
-	if actorName == "" {
-		actorName = "Partner"
+	actorName := "Partner"
+	if callCtx.User != nil && callCtx.User.Name != "" {
+		actorName = callCtx.User.Name
 	}
 
 	summary := reminder.Title
@@ -361,7 +426,7 @@ func (m *Module) executeCompleteSharedReminder(ctx context.Context, callCtx orch
 		EntityType:  "SharedTaskReminder",
 		EntityID:    fmt.Sprintf("%d", reminder.ID),
 		ActorUserID: completedBy,
-		FamilyGroup: callCtx.User.FamilyGroup,
+		FamilyGroup: familyGroup,
 		Summary:     summary,
 		Timestamp:   time.Now(),
 	})

@@ -98,10 +98,6 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 						Type:        genai.TypeString,
 						Description: "Known allergies, sensitivities, or special medical instructions.",
 					},
-					"family_group": {
-						Type:        genai.TypeString,
-						Description: "Optional family group ID. Defaults to the active user's family group.",
-					},
 				},
 				Required: []string{"name", "date_of_birth"},
 			},
@@ -139,10 +135,6 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					"timestamp": {
 						Type:        genai.TypeString,
 						Description: "Time of the event in RFC3339 or ISO 8601 format (e.g. '2026-11-03T14:30:00Z'). Defaults to current time if omitted.",
-					},
-					"family_group": {
-						Type:        genai.TypeString,
-						Description: "Optional family group override.",
 					},
 					"force": {
 						Type:        genai.TypeBoolean,
@@ -186,10 +178,6 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 						Type:        genai.TypeInteger,
 						Description: "Maximum number of recent raw log entries to return (default 50).",
 					},
-					"family_group": {
-						Type:        genai.TypeString,
-						Description: "Optional family group filter.",
-					},
 				},
 			},
 		},
@@ -210,10 +198,6 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					"category": {
 						Type:        genai.TypeString,
 						Description: "Filter guidance category: 'all', 'development', 'vaccine', 'checkup', 'feeding', or 'sleep'. Default 'all'.",
-					},
-					"family_group": {
-						Type:        genai.TypeString,
-						Description: "Optional family group filter.",
 					},
 				},
 			},
@@ -248,10 +232,6 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 						Type:        genai.TypeNumber,
 						Description: "Alert threshold when remaining stock falls at or below this value.",
 					},
-					"family_group": {
-						Type:        genai.TypeString,
-						Description: "Optional family group filter.",
-					},
 				},
 				Required: []string{"action"},
 			},
@@ -270,21 +250,9 @@ func (m *Module) resolveRepo(callCtx orchestrator.CallContext) (db.BabyRepositor
 	return nil, fmt.Errorf("no baby repository configured")
 }
 
-// resolveContext extracts familyGroup and userID from callCtx and optional override.
-func (m *Module) resolveContext(callCtx orchestrator.CallContext, fgOverride string) (string, string) {
-	userID := ""
-	familyGroup := ""
-	if callCtx.User != nil {
-		userID = callCtx.User.ID
-		familyGroup = callCtx.User.FamilyGroup
-	}
-	if strings.TrimSpace(fgOverride) != "" {
-		familyGroup = strings.TrimSpace(fgOverride)
-	}
-	if familyGroup == "" {
-		familyGroup = userID
-	}
-	return familyGroup, userID
+// resolveContext extracts familyGroup and userID canonically from callCtx.
+func (m *Module) resolveContext(callCtx orchestrator.CallContext) (string, string) {
+	return callCtx.TenantFamilyGroup(), callCtx.ActorID()
 }
 
 // resolveBabyProfile locates a baby profile by ID, name, or auto-selection if only one baby exists.
@@ -294,8 +262,8 @@ func (m *Module) resolveBabyProfile(repo db.BabyRepository, familyGroup string, 
 		if err != nil {
 			return nil, err
 		}
-		if p == nil {
-			return nil, fmt.Errorf("baby profile with ID %d not found", babyID)
+		if p == nil || p.FamilyGroup != familyGroup {
+			return nil, fmt.Errorf("baby profile with ID %d not found in family %q", babyID, familyGroup)
 		}
 		return p, nil
 	}
@@ -377,8 +345,7 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 
 // executeUpsertProfile creates or updates baby profile details.
 func (m *Module) executeUpsertProfile(ctx context.Context, callCtx orchestrator.CallContext, repo db.BabyRepository, args map[string]interface{}) (string, error) {
-	fgOverride := getStringArg(args, "family_group")
-	familyGroup, userID := m.resolveContext(callCtx, fgOverride)
+	familyGroup, userID := m.resolveContext(callCtx)
 
 	name := getStringArg(args, "name")
 	if strings.TrimSpace(name) == "" {
@@ -408,6 +375,9 @@ func (m *Module) executeUpsertProfile(ctx context.Context, callCtx orchestrator.
 	var existing *models.BabyProfile
 	if profileID > 0 {
 		existing, _ = repo.GetBabyProfile(profileID)
+		if existing != nil && existing.FamilyGroup != familyGroup {
+			return "", fmt.Errorf("baby profile with ID %d not found in family %q", profileID, familyGroup)
+		}
 	} else {
 		existing, _ = repo.GetBabyProfileByName(familyGroup, name)
 	}
@@ -484,8 +454,7 @@ func (m *Module) executeUpsertProfile(ctx context.Context, callCtx orchestrator.
 
 // executeLogCare records feeding, diaper, sleep, med, milestone, or measurement events.
 func (m *Module) executeLogCare(ctx context.Context, callCtx orchestrator.CallContext, repo db.BabyRepository, args map[string]interface{}) (string, error) {
-	fgOverride := getStringArg(args, "family_group")
-	familyGroup, userID := m.resolveContext(callCtx, fgOverride)
+	familyGroup, userID := m.resolveContext(callCtx)
 
 	logType := strings.ToLower(strings.TrimSpace(getStringArg(args, "log_type")))
 	if logType == "" {
@@ -607,8 +576,7 @@ func (m *Module) executeLogCare(ctx context.Context, callCtx orchestrator.CallCo
 
 // executeQueryLogsAndTrends fetches logs and aggregated summaries.
 func (m *Module) executeQueryLogsAndTrends(ctx context.Context, callCtx orchestrator.CallContext, repo db.BabyRepository, args map[string]interface{}) (string, error) {
-	fgOverride := getStringArg(args, "family_group")
-	familyGroup, _ := m.resolveContext(callCtx, fgOverride)
+	familyGroup, _ := m.resolveContext(callCtx)
 
 	babyID := uint(getIntArg(args, "baby_id"))
 	babyName := getStringArg(args, "baby_name")
@@ -689,8 +657,7 @@ func (m *Module) executeQueryLogsAndTrends(ctx context.Context, callCtx orchestr
 
 // executeGetMilestoneSuggestions calculates age-based guidelines and leaps.
 func (m *Module) executeGetMilestoneSuggestions(ctx context.Context, callCtx orchestrator.CallContext, repo db.BabyRepository, args map[string]interface{}) (string, error) {
-	fgOverride := getStringArg(args, "family_group")
-	familyGroup, _ := m.resolveContext(callCtx, fgOverride)
+	familyGroup, _ := m.resolveContext(callCtx)
 
 	babyID := uint(getIntArg(args, "baby_id"))
 	babyName := getStringArg(args, "baby_name")
@@ -735,8 +702,7 @@ func (m *Module) executeGetMilestoneSuggestions(ctx context.Context, callCtx orc
 
 // executeManageInventory handles supply inventory CRUD and stock checks.
 func (m *Module) executeManageInventory(ctx context.Context, callCtx orchestrator.CallContext, repo db.BabyRepository, args map[string]interface{}) (string, error) {
-	fgOverride := getStringArg(args, "family_group")
-	familyGroup, userID := m.resolveContext(callCtx, fgOverride)
+	familyGroup, userID := m.resolveContext(callCtx)
 
 	action := strings.ToLower(strings.TrimSpace(getStringArg(args, "action")))
 	itemName := strings.TrimSpace(getStringArg(args, "item_name"))
@@ -885,7 +851,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 		return ""
 	}
 
-	familyGroup, _ := m.resolveContext(callCtx, "")
+	familyGroup, _ := m.resolveContext(callCtx)
 	profiles, err := repo.GetBabyProfilesForFamily(familyGroup)
 	if err != nil || len(profiles) == 0 {
 		return ""

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/nivik/mypa/internal/models"
+	"github.com/pgvector/pgvector-go"
 	"gorm.io/gorm"
 )
 
@@ -19,6 +20,7 @@ func init() {
 type MemoryV2Repository interface {
 	SaveTopicMemory(ctx context.Context, memory *models.TopicMemory) error
 	SearchTopicMemories(ctx context.Context, userID, familyGroup, topic, query string, tags []string) ([]models.TopicMemory, error)
+	SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error)
 	SupersedeMemory(ctx context.Context, oldID uint, newID uint) error
 	UpsertEntityProfile(ctx context.Context, profile *models.EntityProfile) error
 	GetEntityProfile(ctx context.Context, familyGroup, topic, entityName string) (*models.EntityProfile, error)
@@ -110,6 +112,63 @@ func (r *MemoryV2Repo) SearchTopicMemories(ctx context.Context, userID, familyGr
 	if result.Error != nil {
 		return nil, fmt.Errorf("failed to search topic memories: %w", result.Error)
 	}
+	return memories, nil
+}
+
+// SearchSimilarMemories searches for active, valid topic memories using pgvector cosine distance,
+// with transparent fallback to legacy memories if 0 results are found.
+func (r *MemoryV2Repo) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
+	var memories []models.TopicMemory
+	if limit <= 0 {
+		limit = 5
+	}
+
+	now := time.Now()
+	q := r.db.WithContext(ctx).
+		Where("superseded_by_id IS NULL AND (valid_until IS NULL OR valid_until > ?)", now)
+
+	if familyGroup != "" && userID != "" {
+		q = q.Where("((user_id = ? AND scope = 'personal') OR (family_group = ? AND scope = 'family') OR (user_id = ? AND scope = 'family'))",
+			userID, familyGroup, userID)
+	} else if familyGroup != "" {
+		q = q.Where("(family_group = ? AND scope = 'family')", familyGroup)
+	} else if userID != "" {
+		q = q.Where("user_id = ?", userID)
+	}
+
+	// Order by cosine distance on embedding
+	err := q.Order(gorm.Expr("embedding <=> ?", embedding)).Limit(limit).Find(&memories).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// Transparent Fallback: If 0 results in topic_memories, query legacy memories table
+	if len(memories) == 0 {
+		var legacy []models.Memory
+		searchIDs := []string{userID}
+		if familyGroup != "" {
+			searchIDs = append(searchIDs, familyGroup)
+		}
+		legErr := r.db.WithContext(ctx).
+			Where("(user_id = ? AND scope = 'personal') OR (user_id IN ? AND scope = 'family')", userID, searchIDs).
+			Order(gorm.Expr("embedding <=> ?", embedding)).
+			Limit(limit).
+			Find(&legacy).Error
+		if legErr == nil {
+			for _, lm := range legacy {
+				memories = append(memories, models.TopicMemory{
+					UserID:    lm.UserID,
+					Topic:     "general",
+					Subtopic:  "fact",
+					Fact:      lm.Fact,
+					Scope:     lm.Scope,
+					Embedding: lm.Embedding,
+					CreatedAt: lm.CreatedAt,
+				})
+			}
+		}
+	}
+
 	return memories, nil
 }
 
@@ -279,3 +338,9 @@ func (c *Client) ListEntityProfiles(ctx context.Context, familyGroup, topic stri
 func (c *Client) ListActiveMemoriesForConsolidation(ctx context.Context) ([]models.TopicMemory, error) {
 	return c.MemoryV2().ListActiveMemoriesForConsolidation(ctx)
 }
+
+// SearchSimilarMemories provides a direct helper on Client.
+func (c *Client) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
+	return c.MemoryV2().SearchSimilarMemories(ctx, userID, familyGroup, embedding, limit)
+}
+

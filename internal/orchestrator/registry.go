@@ -116,6 +116,14 @@ func (r *Registry) GetModule(name string) (ToolModule, bool) {
 	return m, ok
 }
 
+// GetModuleForTool returns the registered ToolModule handling toolName.
+func (r *Registry) GetModuleForTool(toolName string) (ToolModule, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	mod, ok := r.byTool[toolName]
+	return mod, ok
+}
+
 // Modules returns a snapshot of all registered modules.
 func (r *Registry) Modules() []ToolModule {
 	r.mu.RLock()

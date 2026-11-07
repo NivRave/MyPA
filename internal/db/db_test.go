@@ -194,3 +194,121 @@ func TestReminders(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, dueAgain)
 }
+
+func TestTopicMemories_VectorSearchAndFallback(t *testing.T) {
+	client, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	user := "user-vec-test"
+	fam := "fam-vec-test"
+
+	// 1. Insert TopicMemory with vector
+	v1 := make([]float32, 3072)
+	v1[0] = 1.0
+	tm1 := models.TopicMemory{
+		UserID:      user,
+		FamilyGroup: fam,
+		Topic:       "baby",
+		Subtopic:    "nutrition",
+		Fact:        "Baby drinks 150ml milk formula",
+		Scope:       "family",
+		ValidFrom:   time.Now().Add(-1 * time.Hour),
+		Embedding:   pgvector.NewVector(v1),
+	}
+	err := client.SaveTopicMemory(ctx, &tm1)
+	require.NoError(t, err)
+
+	v2 := make([]float32, 3072)
+	v2[1] = 1.0
+	tm2 := models.TopicMemory{
+		UserID:      user,
+		FamilyGroup: fam,
+		Topic:       "house",
+		Subtopic:    "cleaning",
+		Fact:        "HVAC filters changed quarterly",
+		Scope:       "family",
+		ValidFrom:   time.Now().Add(-1 * time.Hour),
+		Embedding:   pgvector.NewVector(v2),
+	}
+	err = client.SaveTopicMemory(ctx, &tm2)
+	require.NoError(t, err)
+
+	// Search closest to v1
+	queryVec := make([]float32, 3072)
+	queryVec[0] = 0.95
+	results, err := client.SearchSimilarMemories(ctx, user, fam, pgvector.NewVector(queryVec), 1)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "Baby drinks 150ml milk formula", results[0].Fact)
+	assert.Equal(t, "baby", results[0].Topic)
+
+	// 2. Test fallback to legacy memories when 0 topic memories match
+	legacyUser := "user-legacy-only"
+	legacyVec := make([]float32, 3072)
+	legacyVec[2] = 1.0
+	legacyMem := models.Memory{
+		UserID:    legacyUser,
+		Fact:      "Grandma's birthday is on June 12",
+		Scope:     "personal",
+		Embedding: pgvector.NewVector(legacyVec),
+		CreatedAt: time.Now(),
+	}
+	err = client.SaveMemory(legacyMem)
+	require.NoError(t, err)
+
+	queryLegacy := make([]float32, 3072)
+	queryLegacy[2] = 0.9
+	fbResults, err := client.SearchSimilarMemories(ctx, legacyUser, "", pgvector.NewVector(queryLegacy), 1)
+	require.NoError(t, err)
+	require.Len(t, fbResults, 1)
+	assert.Equal(t, "Grandma's birthday is on June 12", fbResults[0].Fact)
+	assert.Equal(t, "general", fbResults[0].Topic)
+}
+
+func TestSharedReminders_DueAndSent(t *testing.T) {
+	client, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	pastDue := time.Now().Add(-10 * time.Minute)
+	futureDue := time.Now().Add(10 * time.Minute)
+
+	rem1 := models.SharedTaskReminder{
+		FamilyGroup:     "fam-sr-test",
+		Topic:           "baby",
+		Title:           "Buy diapers",
+		DueTime:         &pastDue,
+		CreatedByUserID: "mom-1",
+		IsCompleted:     false,
+		IsSent:          false,
+		CreatedAt:       time.Now(),
+	}
+	err := client.CreateSharedReminder(&rem1)
+	require.NoError(t, err)
+
+	rem2 := models.SharedTaskReminder{
+		FamilyGroup:     "fam-sr-test",
+		Topic:           "baby",
+		Title:           "Doctor visit",
+		DueTime:         &futureDue,
+		CreatedByUserID: "mom-1",
+		IsCompleted:     false,
+		IsSent:          false,
+		CreatedAt:       time.Now(),
+	}
+	err = client.CreateSharedReminder(&rem2)
+	require.NoError(t, err)
+
+	due, err := client.GetDueSharedReminders()
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	assert.Equal(t, "Buy diapers", due[0].Title)
+
+	err = client.MarkSharedReminderSent(due[0].ID)
+	require.NoError(t, err)
+
+	dueAfter, err := client.GetDueSharedReminders()
+	require.NoError(t, err)
+	assert.Empty(t, dueAfter)
+}
+

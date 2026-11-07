@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/pgvector/pgvector-go"
 )
 
 // Supported canonical memory topics.
@@ -40,8 +42,9 @@ type TopicMemory struct {
 	SupersededByID  *uint      `json:"superseded_by_id,omitempty" gorm:"index"`
 	ValidFrom       time.Time  `json:"valid_from"`
 	ValidUntil      *time.Time `json:"valid_until,omitempty"`
-	IsPinned        bool       `json:"is_pinned" gorm:"default:false"`
-	CreatedAt       time.Time  `json:"created_at"`
+	IsPinned        bool            `json:"is_pinned" gorm:"default:false"`
+	Embedding       pgvector.Vector `json:"embedding,omitempty" gorm:"type:vector(3072)"`
+	CreatedAt       time.Time       `json:"created_at"`
 }
 
 // TableName explicitly specifies the database table name for GORM.

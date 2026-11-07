@@ -96,13 +96,19 @@ func (r *inMemorySharedRepo) CreateSharedReminder(reminder *models.SharedTaskRem
 	return nil
 }
 
-func (r *inMemorySharedRepo) CompleteSharedReminder(id uint, completedByUserID string) (*models.SharedTaskReminder, error) {
+func (r *inMemorySharedRepo) CompleteSharedReminder(id uint, completedByUserID string, familyGroup ...string) (*models.SharedTaskReminder, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	rem, exists := r.reminders[id]
 	if !exists {
 		return nil, fmt.Errorf("shared reminder with id %d not found", id)
+	}
+
+	if len(familyGroup) > 0 && familyGroup[0] != "" {
+		if rem.FamilyGroup != familyGroup[0] && rem.CreatedByUserID != completedByUserID && rem.AssignedToUserID != completedByUserID {
+			return nil, fmt.Errorf("shared reminder with id %d not found in family %q", id, familyGroup[0])
+		}
 	}
 
 	now := time.Now()
@@ -428,7 +434,7 @@ func TestToolModule_DeclarationsAndPrompt(t *testing.T) {
 	assert.Equal(t, "shared", mod.Name())
 
 	decls := mod.Declarations()
-	require.Len(t, decls, 4)
+	require.Len(t, decls, 5)
 
 	toolNames := make(map[string]bool)
 	for _, d := range decls {
@@ -438,6 +444,7 @@ func TestToolModule_DeclarationsAndPrompt(t *testing.T) {
 	assert.True(t, toolNames["create_shared_reminder"])
 	assert.True(t, toolNames["complete_shared_reminder"])
 	assert.True(t, toolNames["list_shared_activity"])
+	assert.True(t, toolNames["schedule_reminder"])
 
 	ctx := context.Background()
 
@@ -549,7 +556,7 @@ func TestToolModule_ExecuteTools(t *testing.T) {
 		"include_completed": true,
 	})
 	require.NoError(t, err)
-	assert.Contains(t, resListAfter, "✅ Completed by user-john")
+	assert.Contains(t, resListAfter, "✅ Completed by tg-200")
 }
 
 func TestToolModule_ErrorCases(t *testing.T) {
@@ -593,3 +600,106 @@ func TestToolModule_ErrorCases(t *testing.T) {
 	_, err = mod.Execute(ctx, famCtx, "non_existent_tool", map[string]interface{}{})
 	assert.ErrorContains(t, err, "unknown shared tool")
 }
+
+// TestSEC04_CrossTenant_SharedReminders_Blocked empirically verifies that shared reminders
+// cannot be completed across families, and verifies legitimate same-family completions.
+func TestSEC04_CrossTenant_SharedReminders_Blocked(t *testing.T) {
+	repo := newInMemoryRepo()
+	bus := events.NewEventBus()
+	mod := NewModule(repo, bus, nil)
+	ctx := context.Background()
+
+	// 1. Family Alpha creates a shared reminder
+	callCtxAlpha := orchestrator.CallContext{
+		User:    &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha", Name: "Alpha User"},
+		Message: models.Message{UserID: "user_alpha"},
+	}
+
+	createResp, err := mod.Execute(ctx, callCtxAlpha, "create_shared_reminder", map[string]interface{}{
+		"title": "Alpha Grocery Shopping",
+		"topic": "groceries",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, createResp, "Alpha Grocery Shopping")
+
+	// Verify reminder 1 exists and is not completed
+	listAlpha, err := repo.ListSharedReminders("family_alpha", "groceries", true)
+	require.NoError(t, err)
+	require.Len(t, listAlpha, 1)
+	assert.Equal(t, uint(1), listAlpha[0].ID)
+	assert.False(t, listAlpha[0].IsCompleted)
+
+	// 2. Family Beta attempts to complete Family Alpha's reminder (id: 1)
+	callCtxBeta := orchestrator.CallContext{
+		User:    &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta", Name: "Beta Attacker"},
+		Message: models.Message{UserID: "user_beta"},
+	}
+
+	_, completeBetaErr := mod.Execute(ctx, callCtxBeta, "complete_shared_reminder", map[string]interface{}{
+		"id": 1,
+	})
+	assert.Error(t, completeBetaErr, "Family Beta must NOT be able to complete Family Alpha's reminder")
+
+	// Verify reminder 1 is STILL not completed
+	listAlphaAfter, err := repo.ListSharedReminders("family_alpha", "groceries", true)
+	require.NoError(t, err)
+	require.Len(t, listAlphaAfter, 1)
+	assert.False(t, listAlphaAfter[0].IsCompleted)
+
+	// 3. Legitimate same-family completion (non-regression)
+	completeAlphaResp, err := mod.Execute(ctx, callCtxAlpha, "complete_shared_reminder", map[string]interface{}{
+		"id": 1,
+	})
+	require.NoError(t, err, "Family Alpha must be able to complete their own reminder")
+	assert.Contains(t, completeAlphaResp, "completed")
+
+	// Verify reminder 1 is now completed
+	listAlphaFinal, err := repo.ListSharedReminders("family_alpha", "groceries", true)
+	require.NoError(t, err)
+	require.Len(t, listAlphaFinal, 1)
+	assert.True(t, listAlphaFinal[0].IsCompleted)
+	assert.Equal(t, "user_alpha", listAlphaFinal[0].CompletedByUserID)
+}
+
+type testSharedDBClient struct {
+	orchestrator.DBClient
+	savedReminders []models.ScheduledReminder
+}
+
+func (m *testSharedDBClient) SaveReminder(r models.ScheduledReminder) error {
+	m.savedReminders = append(m.savedReminders, r)
+	return nil
+}
+
+func TestScheduleReminder_Execution(t *testing.T) {
+	ctx := context.Background()
+	repo := newInMemoryRepo()
+	bus := events.NewEventBus()
+	mod := NewModule(repo, bus, nil)
+
+	dbMock := &testSharedDBClient{}
+
+	callCtx := orchestrator.CallContext{
+		User: &models.User{
+			PlatformID:  "tg_456",
+			FamilyGroup: "FamTest",
+		},
+		DB:       dbMock,
+		EventBus: bus,
+	}
+
+	res, err := mod.Execute(ctx, callCtx, "schedule_reminder", map[string]interface{}{
+		"message":  "Pick up dry cleaning",
+		"due_time": "2026-11-10T15:00:00Z",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, res, "Reminder Set!")
+	assert.Contains(t, res, "Pick up dry cleaning")
+
+	require.Len(t, dbMock.savedReminders, 1)
+	assert.Equal(t, "tg_456", dbMock.savedReminders[0].UserID)
+	assert.Equal(t, "Pick up dry cleaning", dbMock.savedReminders[0].Message)
+	assert.False(t, dbMock.savedReminders[0].IsSent)
+}
+
+

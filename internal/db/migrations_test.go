@@ -17,7 +17,7 @@ type dummyModelB struct {
 	Value int
 }
 
-func TestRegisterModel_ThreadSafetyAndRetrieval(t *testing.T) {
+func TestRegisterModel_ThreadSafetyAndDeduplication(t *testing.T) {
 	ResetRegisteredModels()
 	defer ResetRegisteredModels()
 
@@ -25,6 +25,11 @@ func TestRegisterModel_ThreadSafetyAndRetrieval(t *testing.T) {
 
 	RegisterModel(&dummyModelA{})
 	models := GetRegisteredModels()
+	assert.Len(t, models, 1)
+
+	// Duplicate registration of dummyModelA should not increase count
+	RegisterModel(&dummyModelA{})
+	models = GetRegisteredModels()
 	assert.Len(t, models, 1)
 
 	RegisterModel(&dummyModelB{})
@@ -36,7 +41,7 @@ func TestRegisterModel_ThreadSafetyAndRetrieval(t *testing.T) {
 	cleanModels := GetRegisteredModels()
 	assert.NotNil(t, cleanModels[0])
 
-	// Concurrent registration
+	// Concurrent registration with deduplication
 	ResetRegisteredModels()
 	const goroutines = 20
 	var wg sync.WaitGroup
@@ -51,13 +56,16 @@ func TestRegisterModel_ThreadSafetyAndRetrieval(t *testing.T) {
 	}
 
 	wg.Wait()
-	assert.Len(t, GetRegisteredModels(), goroutines)
+	// With reflect.TypeOf deduplication, all 20 calls register the single unique type
+	assert.Len(t, GetRegisteredModels(), 1)
 }
 
 func TestRegisterWave1Models(t *testing.T) {
 	ResetRegisteredModels()
 	defer ResetRegisteredModels()
 
+	RegisterWave1Models()
+	// Multiple registrations are idempotent
 	RegisterWave1Models()
 	models := GetRegisteredModels()
 	assert.Len(t, models, 9)
@@ -68,7 +76,8 @@ func TestRegisterWave2Models(t *testing.T) {
 	defer ResetRegisteredModels()
 
 	RegisterWave2Models()
+	// Multiple registrations are idempotent
+	RegisterWave2Models()
 	models := GetRegisteredModels()
 	assert.Len(t, models, 13)
 }
-

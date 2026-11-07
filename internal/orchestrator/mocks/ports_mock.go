@@ -878,6 +878,35 @@ func (mr *MockDBClientMockRecorder) UpsertUser(u any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertUser", reflect.TypeOf((*MockDBClient)(nil).UpsertUser), u)
 }
 
+// GetDueSharedReminders mocks base method.
+func (m *MockDBClient) GetDueSharedReminders() ([]models.SharedTaskReminder, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDueSharedReminders")
+	ret0, _ := ret[0].([]models.SharedTaskReminder)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDueSharedReminders indicates an expected call of GetDueSharedReminders.
+func (mr *MockDBClientMockRecorder) GetDueSharedReminders() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDueSharedReminders", reflect.TypeOf((*MockDBClient)(nil).GetDueSharedReminders))
+}
+
+// MarkSharedReminderSent mocks base method.
+func (m *MockDBClient) MarkSharedReminderSent(id uint) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkSharedReminderSent", id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MarkSharedReminderSent indicates an expected call of MarkSharedReminderSent.
+func (mr *MockDBClientMockRecorder) MarkSharedReminderSent(id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkSharedReminderSent", reflect.TypeOf((*MockDBClient)(nil).MarkSharedReminderSent), id)
+}
+
 // MockEventPublisher is a mock of EventPublisher interface.
 type MockEventPublisher struct {
 	ctrl     *gomock.Controller

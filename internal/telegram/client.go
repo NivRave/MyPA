@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/nivik/mypa/internal/markdown"
 )
@@ -20,8 +21,10 @@ type Client struct {
 // NewClient creates a new Telegram API client.
 func NewClient(token string) *Client {
 	return &Client{
-		token:      token,
-		httpClient: &http.Client{},
+		token: token,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}
 }
 
@@ -32,11 +35,17 @@ type SendMessageRequest struct {
 	ParseMode string `json:"parse_mode,omitempty"`
 }
 
-// SendMessage sends a text message to a chat.
+// SendMessage sends a text message to a chat. If the text is already Telegram HTML,
+// it is preserved as-is; otherwise, it formats markdown to Telegram HTML.
 func (c *Client) SendMessage(ctx context.Context, chatID, text string) error {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", c.token)
 
-	htmlText := markdown.ToTelegramHTML(text)
+	var htmlText string
+	if markdown.IsTelegramHTML(text) {
+		htmlText = text
+	} else {
+		htmlText = markdown.ToTelegramHTML(text)
+	}
 
 	reqBody := SendMessageRequest{
 		ChatID:    chatID,
@@ -49,6 +58,26 @@ func (c *Client) SendMessage(ctx context.Context, chatID, text string) error {
 		// Retry without html formatting if it fails
 		reqBody.ParseMode = ""
 		reqBody.Text = text
+		return c.doSend(ctx, url, reqBody)
+	}
+	return nil
+}
+
+// SendMessageHTML sends an already-formatted HTML message to a chat without conversion.
+func (c *Client) SendMessageHTML(ctx context.Context, chatID, htmlText string) error {
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", c.token)
+
+	reqBody := SendMessageRequest{
+		ChatID:    chatID,
+		Text:      htmlText,
+		ParseMode: "HTML",
+	}
+
+	err := c.doSend(ctx, url, reqBody)
+	if err != nil {
+		// Retry without html formatting if it fails
+		reqBody.ParseMode = ""
+		reqBody.Text = htmlText
 		return c.doSend(ctx, url, reqBody)
 	}
 	return nil

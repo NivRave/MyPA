@@ -2,6 +2,7 @@ package house
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -50,7 +51,7 @@ func (r *fakeHouseRepo) CreateContract(c *models.HouseContractRecord) error {
 	return nil
 }
 
-func (r *fakeHouseRepo) GetContract(id uint) (*models.HouseContractRecord, error) {
+func (r *fakeHouseRepo) GetContract(id uint, familyGroup ...string) (*models.HouseContractRecord, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	c, ok := r.contracts[id]
@@ -128,12 +129,17 @@ func (r *fakeHouseRepo) CreateMaintenanceItem(m *models.HomeMaintenanceItem) err
 	return nil
 }
 
-func (r *fakeHouseRepo) GetMaintenanceItem(id uint) (*models.HomeMaintenanceItem, error) {
+func (r *fakeHouseRepo) GetMaintenanceItem(id uint, familyGroup ...string) (*models.HomeMaintenanceItem, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	m, ok := r.maintenance[id]
 	if !ok {
 		return nil, nil
+	}
+	if len(familyGroup) > 0 && familyGroup[0] != "" {
+		if m.FamilyGroup != familyGroup[0] && m.UpdatedByUserID != familyGroup[0] {
+			return nil, nil
+		}
 	}
 	cp := *m
 	return &cp, nil
@@ -175,12 +181,17 @@ func (r *fakeHouseRepo) ListMaintenanceItems(familyGroup string, category string
 	return res, nil
 }
 
-func (r *fakeHouseRepo) CompleteMaintenanceItem(id uint, completedAt time.Time, userID string) (*models.HomeMaintenanceItem, error) {
+func (r *fakeHouseRepo) CompleteMaintenanceItem(id uint, completedAt time.Time, userID string, familyGroup ...string) (*models.HomeMaintenanceItem, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	m, ok := r.maintenance[id]
 	if !ok {
 		return nil, assert.AnError
+	}
+	if len(familyGroup) > 0 && familyGroup[0] != "" {
+		if m.FamilyGroup != familyGroup[0] && m.UpdatedByUserID != familyGroup[0] {
+			return nil, fmt.Errorf("maintenance item %d not found in family %q", id, familyGroup[0])
+		}
 	}
 	m.MarkCompleted(completedAt, userID)
 	cp := *m

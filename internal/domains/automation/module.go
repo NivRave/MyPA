@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/domains/toolutil"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -49,14 +50,22 @@ func WithAllowLoopback(allow bool) Option {
 	}
 }
 
+// WithWorkflowsChanged sets the workflow change callback.
+func WithWorkflowsChanged(fn func()) Option {
+	return func(m *Module) {
+		m.workflowsChanged = fn
+	}
+}
+
 // Module implements orchestrator.ToolModule for on-demand external APIs,
 // event-driven automation rules, user customization preferences, and personal CRM.
 type Module struct {
-	repo          db.AutomationRepository
-	runner        *Runner
-	bus           *events.EventBus
-	allowLoopback bool
-	mu            sync.RWMutex
+	repo             db.AutomationRepository
+	runner           *Runner
+	bus              *events.EventBus
+	workflowsChanged func()
+	allowLoopback    bool
+	mu               sync.RWMutex
 }
 
 // NewModule initializes a new automation Module.
@@ -89,6 +98,13 @@ func (m *Module) Runner() *Runner {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.runner
+}
+
+// SetWorkflowsChanged sets or updates the workflow change callback.
+func (m *Module) SetWorkflowsChanged(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.workflowsChanged = fn
 }
 
 // Declarations returns the Gemini FunctionDeclarations provided by this module.
@@ -325,17 +341,72 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 				},
 			},
 		},
+		{
+			Name:        "schedule_workflow",
+			Description: "Schedules a recurring autonomous prompt/workflow instruction using a cron expression.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"name": {
+						Type:        genai.TypeString,
+						Description: "A descriptive name for the workflow.",
+					},
+					"cron_expression": {
+						Type:        genai.TypeString,
+						Description: "Standard 5-part cron expression (e.g. '0 9 * * *' for daily at 9am, '0 8 * * 1' for every Monday at 8am).",
+					},
+					"instruction": {
+						Type:        genai.TypeString,
+						Description: "The prompt instruction or autonomous action the assistant will execute on schedule.",
+					},
+				},
+				Required: []string{"name", "cron_expression", "instruction"},
+			},
+		},
+		{
+			Name:        "list_workflows",
+			Description: "Lists all scheduled recurring workflows and their cron expressions for the current user.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+			},
+		},
+		{
+			Name:        "delete_workflow",
+			Description: "Deletes a scheduled recurring workflow by its ID.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"id": {
+						Type:        genai.TypeString,
+						Description: "The ID of the workflow to delete.",
+					},
+				},
+				Required: []string{"id"},
+			},
+		},
 	}
 }
 
 // Execute dispatches and runs tools provided by the automation module.
 func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, toolName string, args map[string]interface{}) (string, error) {
-	if callCtx.HasUntrustedContent {
+	hasUntrusted := callCtx.HasUntrustedContent
+	untrustedSources := callCtx.UntrustedSources
+	if !hasUntrusted {
+		if secState := orchestrator.GetTurnSecurityState(ctx); secState != nil {
+			isUntrusted, sources := secState.IsUntrusted()
+			if isUntrusted {
+				hasUntrusted = true
+				untrustedSources = sources
+			}
+		}
+	}
+
+	if hasUntrusted {
 		switch toolName {
-		case "update_user_preferences", "create_automation_rule", "register_external_api":
+		case "update_user_preferences", "create_automation_rule", "register_external_api", "schedule_workflow", "delete_workflow":
 			sourceDesc := "external untrusted content"
-			if len(callCtx.UntrustedSources) > 0 {
-				sourceDesc = strings.Join(callCtx.UntrustedSources, ", ")
+			if len(untrustedSources) > 0 {
+				sourceDesc = strings.Join(untrustedSources, ", ")
 			}
 			return fmt.Sprintf(
 				"🔒 **Interactive Security Confirmation Required**\n\n"+
@@ -345,6 +416,15 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 				toolName, sourceDesc, strings.ToUpper(toolName),
 			), nil
 		}
+	}
+
+	switch toolName {
+	case "schedule_workflow":
+		return m.executeScheduleWorkflow(ctx, callCtx, args)
+	case "list_workflows":
+		return m.executeListWorkflows(ctx, callCtx, args)
+	case "delete_workflow":
+		return m.executeDeleteWorkflow(ctx, callCtx, args)
 	}
 
 	repo, err := m.resolveRepo(callCtx)
@@ -760,6 +840,8 @@ func (m *Module) executeUpsertPersonalCRM(ctx context.Context, callCtx orchestra
 	contactID, _ := getInt64Arg(args, "id")
 	userID, familyGroup := getUserAndFamily(callCtx)
 
+	var beforeJSON string
+	action := "create"
 	if contactID > 0 {
 		existing, err := repo.GetCRMContact(uint(contactID))
 		if err != nil {
@@ -769,6 +851,9 @@ func (m *Module) executeUpsertPersonalCRM(ctx context.Context, callCtx orchestra
 		if !isAuthorized {
 			return "", fmt.Errorf("CRM contact %d not found or permission denied", contactID)
 		}
+		b, _ := json.Marshal(existing)
+		beforeJSON = string(b)
+		action = "update"
 	}
 
 	relationship := strings.TrimSpace(getStringArg(args, "relationship"))
@@ -792,14 +877,21 @@ func (m *Module) executeUpsertPersonalCRM(ctx context.Context, callCtx orchestra
 		return "", fmt.Errorf("failed to save CRM contact: %w", err)
 	}
 
+	var afterJSON string
+	if b, err := json.Marshal(contact); err == nil {
+		afterJSON = string(b)
+	}
+
 	if bus := m.resolveEventBus(callCtx); bus != nil {
 		_ = bus.Publish(ctx, events.MutationEvent{
 			Topic:       "automation",
-			Action:      "crm_upserted",
+			Action:      action,
 			EntityType:  "PersonalCRMContact",
 			EntityID:    fmt.Sprint(contact.ID),
 			ActorUserID: userID,
 			FamilyGroup: familyGroup,
+			BeforeJSON:  beforeJSON,
+			AfterJSON:   afterJSON,
 			Summary:     fmt.Sprintf("Saved personal CRM contact %s (%s)", contact.PersonName, contact.Relationship),
 			Timestamp:   time.Now(),
 		})
@@ -1058,3 +1150,137 @@ func jsonMarshalNoEscape(v interface{}) (string, error) {
 	}
 	return strings.TrimRight(buf.String(), "\n"), nil
 }
+
+func (m *Module) executeScheduleWorkflow(ctx context.Context, callCtx orchestrator.CallContext, args map[string]interface{}) (string, error) {
+	name := toolutil.String(args, "name")
+	cronExp := toolutil.String(args, "cron_expression")
+	instruction := toolutil.String(args, "instruction")
+
+	if name == "" || cronExp == "" || instruction == "" {
+		return "Missing required parameters (name, cron_expression, instruction)", nil
+	}
+
+	actorID := callCtx.ActorID()
+	familyGroup := callCtx.TenantFamilyGroup()
+
+	if callCtx.DB == nil {
+		return "❌ Database client not configured.", nil
+	}
+
+	wf := models.Workflow{
+		UserID:         actorID,
+		Name:           name,
+		CronExpression: cronExp,
+		Instruction:    instruction,
+		IsActive:       true,
+		CreatedAt:      time.Now(),
+	}
+
+	if err := callCtx.DB.SaveWorkflow(wf); err != nil {
+		return fmt.Sprintf("Error scheduling workflow: %v", err), nil
+	}
+
+	if callCtx.Extra != nil {
+		if fn, ok := callCtx.Extra["workflows_changed"].(func()); ok && fn != nil {
+			fn()
+		}
+	}
+	m.mu.RLock()
+	cb := m.workflowsChanged
+	m.mu.RUnlock()
+	if cb != nil {
+		cb()
+	}
+
+	if bus := m.resolveEventBus(callCtx); bus != nil {
+		afterBytes, _ := json.Marshal(wf)
+		_ = toolutil.PublishMutation(ctx, bus, events.MutationEvent{
+			Topic:       "automation",
+			Action:      "create",
+			EntityType:  "Workflow",
+			EntityID:    fmt.Sprintf("%s:%s", actorID, name),
+			ActorUserID: actorID,
+			FamilyGroup: familyGroup,
+			AfterJSON:   string(afterBytes),
+			Summary:     fmt.Sprintf("Scheduled workflow '%s' on cron %s", name, cronExp),
+			Timestamp:   time.Now(),
+		})
+	}
+
+	return fmt.Sprintf("✅ **Workflow Scheduled!**\n\n'%s' will run on schedule: %s", name, cronExp), nil
+}
+
+func (m *Module) executeListWorkflows(ctx context.Context, callCtx orchestrator.CallContext, args map[string]interface{}) (string, error) {
+	actorID := callCtx.ActorID()
+	if callCtx.DB == nil {
+		return "❌ Database client not configured.", nil
+	}
+
+	workflows, err := callCtx.DB.GetUserWorkflows(actorID)
+	if err != nil {
+		return fmt.Sprintf("Error listing workflows: %v", err), nil
+	}
+	if len(workflows) == 0 {
+		return "You have no active workflows scheduled.", nil
+	}
+
+	workflowsJSON, _ := json.Marshal(workflows)
+	return fmt.Sprintf("Here are your active workflows:\n%s", string(workflowsJSON)), nil
+}
+
+func (m *Module) executeDeleteWorkflow(ctx context.Context, callCtx orchestrator.CallContext, args map[string]interface{}) (string, error) {
+	idVal := toolutil.String(args, "id")
+	if idVal == "" {
+		idInt := toolutil.Int(args, "id", 0)
+		if idInt > 0 {
+			idVal = fmt.Sprintf("%d", idInt)
+		}
+	}
+	if idVal == "" {
+		return "Missing id parameter", nil
+	}
+
+	var id uint
+	if _, err := fmt.Sscanf(idVal, "%d", &id); err != nil {
+		return "Invalid id parameter: must be a number", nil
+	}
+
+	actorID := callCtx.ActorID()
+	familyGroup := callCtx.TenantFamilyGroup()
+
+	if callCtx.DB == nil {
+		return "❌ Database client not configured.", nil
+	}
+
+	if err := callCtx.DB.DeleteWorkflow(id, actorID); err != nil {
+		return fmt.Sprintf("Error deleting workflow: %v", err), nil
+	}
+
+	if callCtx.Extra != nil {
+		if fn, ok := callCtx.Extra["workflows_changed"].(func()); ok && fn != nil {
+			fn()
+		}
+	}
+	m.mu.RLock()
+	cb := m.workflowsChanged
+	m.mu.RUnlock()
+	if cb != nil {
+		cb()
+	}
+
+	if bus := m.resolveEventBus(callCtx); bus != nil {
+		_ = toolutil.PublishMutation(ctx, bus, events.MutationEvent{
+			Topic:       "automation",
+			Action:      "delete",
+			EntityType:  "Workflow",
+			EntityID:    fmt.Sprintf("%d", id),
+			ActorUserID: actorID,
+			FamilyGroup: familyGroup,
+			Summary:     fmt.Sprintf("Deleted workflow #%d", id),
+			Timestamp:   time.Now(),
+		})
+	}
+
+	return "Workflow deleted successfully.", nil
+}
+

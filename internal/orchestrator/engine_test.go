@@ -65,7 +65,13 @@ func setupTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.M
 		"UTC",
 	)
 
-	dbMock.EXPECT().GetUser(gomock.Any()).Return(&models.User{PlatformID: "user-1", Name: "User One"}, nil).AnyTimes()
+	reg := NewRegistry()
+	reg.Register(&testBaseToolsModule{engine: engine})
+	engine.SetToolRegistry(reg)
+
+	dbMock.EXPECT().GetUser(gomock.Any()).DoAndReturn(func(userID string) (*models.User, error) {
+		return &models.User{PlatformID: userID, Name: "User " + userID}, nil
+	}).AnyTimes()
 
 	cleanup := func() {
 		engine.Wait()
@@ -75,6 +81,86 @@ func setupTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.M
 	}
 
 	return engine, tgMock, llmMock, dbMock, cleanup
+}
+
+type testBaseToolsModule struct {
+	engine *Engine
+}
+
+func (m *testBaseToolsModule) Name() string { return "test_base_tools" }
+func (m *testBaseToolsModule) Declarations() []*genai.FunctionDeclaration {
+	return []*genai.FunctionDeclaration{
+		{Name: "create_calendar_event"},
+		{Name: "create_task"},
+		{Name: "search_web"},
+		{Name: "search_emails"},
+		{Name: "schedule_reminder"},
+	}
+}
+func (m *testBaseToolsModule) SystemPromptSection(ctx context.Context, callCtx CallContext) string {
+	return ""
+}
+func (m *testBaseToolsModule) Execute(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
+	switch toolName {
+	case "create_calendar_event":
+		if m.engine.calendarFactory != nil {
+			client, err := m.engine.calendarFactory(ctx, callCtx.ActorID())
+			if err != nil {
+				return "", err
+			}
+			link, err := client.CreateEvent(ctx, models.CalendarEvent{})
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Event Created Successfully! Link: %s", link), nil
+		}
+	case "create_task":
+		if m.engine.tasksClient != nil {
+			listID, _ := args["list_id"].(string)
+			title, _ := args["title"].(string)
+			notes, _ := args["notes"].(string)
+			due, _ := args["due"].(string)
+			err := m.engine.tasksClient.CreateTask(ctx, callCtx.ActorID(), listID, title, notes, due)
+			if err != nil {
+				return "", err
+			}
+			return "Task created successfully.", nil
+		}
+	case "search_web":
+		if m.engine.tavilyClient != nil {
+			query, _ := args["query"].(string)
+			if callCtx.SendNotification != nil {
+				_ = callCtx.SendNotification(ctx, callCtx.ActorID(), "🔍 Searching the web...")
+			}
+			return m.engine.tavilyClient.Search(ctx, query)
+		}
+	case "search_emails":
+		if m.engine.gmailClient != nil {
+			query, _ := args["query"].(string)
+			emails, err := m.engine.gmailClient.SearchEmails(ctx, callCtx.ActorID(), query, int64(5))
+			if err != nil {
+				return "", err
+			}
+			if len(emails) == 0 {
+				return "You have no unread emails.", nil
+			}
+			return "Found emails", nil
+		}
+	case "schedule_reminder":
+		msgStr, _ := args["message"].(string)
+		dueTimeStr, _ := args["due_time"].(string)
+		dueTime, _ := time.Parse(time.RFC3339, dueTimeStr)
+		err := m.engine.db.SaveReminder(models.ScheduledReminder{
+			UserID:  callCtx.ActorID(),
+			Message: msgStr,
+			DueTime: dueTime,
+		})
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("✅ **Reminder Set!**\n\nI will remind you at %s: \"%s\"", dueTime.In(time.Local).Format(time.RFC822), msgStr), nil
+	}
+	return "", nil
 }
 
 func TestProcessMessage_ConnectCommand(t *testing.T) {
@@ -480,5 +566,80 @@ func TestProcessMessage_PairingRateLimitAndLockout(t *testing.T) {
 	err = engine.ProcessMessage(context.Background(), msg)
 	assert.NoError(t, err)
 }
+
+type testRollbackModule struct {
+	lastActorID    string
+	lastMutationID string
+}
+
+func (m *testRollbackModule) Name() string { return "durability" }
+func (m *testRollbackModule) Declarations() []*genai.FunctionDeclaration { return nil }
+func (m *testRollbackModule) Execute(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) { return "", nil }
+func (m *testRollbackModule) SystemPromptSection(ctx context.Context, callCtx CallContext) string { return "" }
+func (m *testRollbackModule) Rollback(ctx context.Context, actorID, familyGroup, mutationID string, reason ...string) (*models.RollbackResult, error) {
+	m.lastActorID = actorID
+	m.lastMutationID = mutationID
+	return &models.RollbackResult{
+		MutationID: mutationID,
+		Detail:     "Reverted test action",
+	}, nil
+}
+func (m *testRollbackModule) RollbackLast(ctx context.Context, actorID, familyGroup string, reason ...string) (*models.RollbackResult, error) {
+	return m.Rollback(ctx, actorID, familyGroup, "")
+}
+
+func TestProcessMessage_UndoCommand(t *testing.T) {
+	engine, tgMock, _, _, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	rbMod := &testRollbackModule{}
+	reg := NewRegistry()
+	reg.Register(rbMod)
+	engine.WithToolRegistry(reg)
+
+	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
+		str, ok := x.(string)
+		return ok && strings.Contains(str, "Successfully Undone") && strings.Contains(str, "Reverted test action")
+	})).Return(nil).Times(1)
+
+	msg := models.Message{UserID: "user-1", Text: "/undo mut-123", Source: "telegram"}
+	err := engine.ProcessMessage(context.Background(), msg)
+	assert.NoError(t, err)
+	assert.Equal(t, "user-1", rbMod.lastActorID)
+	assert.Equal(t, "mut-123", rbMod.lastMutationID)
+}
+
+func TestCheckAndSendReminders_SharedTaskReminders(t *testing.T) {
+	engine, tgMock, _, dbMock, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	now := time.Now()
+	sharedDue := []models.SharedTaskReminder{
+		{
+			ID:               42,
+			FamilyGroup:      "fam-1",
+			Topic:            "baby",
+			Title:            "Buy diapers",
+			DueTime:          &now,
+			CreatedByUserID:  "user-mom",
+			AssignedToUserID: "user-dad",
+		},
+	}
+
+	dbMock.EXPECT().GetDueReminders().Return(nil, nil)
+	dbMock.EXPECT().GetDueSharedReminders().Return(sharedDue, nil)
+	dbMock.EXPECT().GetLastAuditSessionForUser("user-dad").Return(&models.AuditSession{
+		ChatID: "chat-dad",
+		Source: "telegram",
+	}, nil)
+	tgMock.EXPECT().SendMessage(gomock.Any(), "chat-dad", gomock.Cond(func(x any) bool {
+		str, ok := x.(string)
+		return ok && strings.Contains(str, "Shared Task Reminder") && strings.Contains(str, "Buy diapers") && strings.Contains(str, "baby")
+	})).Return(nil)
+	dbMock.EXPECT().MarkSharedReminderSent(uint(42)).Return(nil)
+
+	engine.CheckAndSendReminders()
+}
+
 
 

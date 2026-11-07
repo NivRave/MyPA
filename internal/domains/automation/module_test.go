@@ -55,7 +55,7 @@ func (r *fakeAutomationRepo) CreateAPIConnector(c *models.ExternalAPIConnector) 
 	return nil
 }
 
-func (r *fakeAutomationRepo) GetAPIConnector(id uint) (*models.ExternalAPIConnector, error) {
+func (r *fakeAutomationRepo) GetAPIConnector(id uint, familyGroup ...string) (*models.ExternalAPIConnector, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	c, ok := r.connectors[id]
@@ -195,7 +195,7 @@ func (r *fakeAutomationRepo) UpdateAutomationRule(rule *models.AutomationRule) e
 	return nil
 }
 
-func (r *fakeAutomationRepo) DeleteAutomationRule(id uint) error {
+func (r *fakeAutomationRepo) DeleteAutomationRule(id uint, familyGroup ...string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.rules, id)
@@ -643,7 +643,7 @@ func TestAutomation_ToolDeclarations(t *testing.T) {
 	assert.Equal(t, "automation", mod.Name())
 
 	decls := mod.Declarations()
-	assert.Len(t, decls, 10)
+	assert.Len(t, decls, 13)
 
 	expectedTools := map[string]bool{
 		"register_external_api":   false,
@@ -656,6 +656,9 @@ func TestAutomation_ToolDeclarations(t *testing.T) {
 		"get_user_preferences":    false,
 		"upsert_personal_crm":     false,
 		"query_personal_crm":      false,
+		"schedule_workflow":       false,
+		"list_workflows":          false,
+		"delete_workflow":         false,
 	}
 
 	for _, d := range decls {

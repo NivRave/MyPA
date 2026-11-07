@@ -13,6 +13,7 @@ import (
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/pgvector/pgvector-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -143,6 +144,43 @@ func (r *inMemoryRepo) SearchTopicMemories(ctx context.Context, userID, familyGr
 		return result[i].CreatedAt.After(result[j].CreatedAt)
 	})
 
+	return result, nil
+}
+
+func (r *inMemoryRepo) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var result []models.TopicMemory
+	now := time.Now()
+	for _, m := range r.topicMemories {
+		if m.SupersededByID != nil {
+			continue
+		}
+		if m.ValidUntil != nil && m.ValidUntil.Before(now) {
+			continue
+		}
+		if familyGroup != "" && userID != "" {
+			canAccess := (m.UserID == userID && m.Scope == "personal") ||
+				(m.FamilyGroup == familyGroup && m.Scope == "family") ||
+				(m.UserID == userID && m.Scope == "family")
+			if !canAccess {
+				continue
+			}
+		} else if familyGroup != "" {
+			if m.FamilyGroup != familyGroup || m.Scope != "family" {
+				continue
+			}
+		} else if userID != "" {
+			if m.UserID != userID {
+				continue
+			}
+		}
+		result = append(result, m)
+		if limit > 0 && len(result) >= limit {
+			break
+		}
+	}
 	return result, nil
 }
 
@@ -374,7 +412,7 @@ func TestToolModule_Declarations(t *testing.T) {
 
 	assert.Equal(t, memory.ModuleName, mod.Name())
 	decls := mod.Declarations()
-	require.Len(t, decls, 4)
+	require.Len(t, decls, 5)
 
 	toolNames := make(map[string]bool)
 	for _, d := range decls {
@@ -384,6 +422,7 @@ func TestToolModule_Declarations(t *testing.T) {
 	assert.True(t, toolNames["search_topic_memories"])
 	assert.True(t, toolNames["upsert_entity_profile"])
 	assert.True(t, toolNames["get_entity_profile"])
+	assert.True(t, toolNames["remember_fact"])
 }
 
 func TestToolModule_Execute_SaveAndSearch(t *testing.T) {
@@ -706,3 +745,60 @@ func TestIntegration_RegistryWired(t *testing.T) {
 	assert.True(t, handled)
 	assert.Contains(t, result, `"status":"saved"`)
 }
+
+type testLLMClient struct {
+	orchestrator.LLMClient
+}
+
+func (m *testLLMClient) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
+	return []float32{0.1, 0.2, 0.3}, nil
+}
+
+type testDBClient struct {
+	orchestrator.DBClient
+	savedMemories []models.Memory
+}
+
+func (m *testDBClient) SaveMemory(mem models.Memory) error {
+	m.savedMemories = append(m.savedMemories, mem)
+	return nil
+}
+
+func TestRememberFact_Execution(t *testing.T) {
+	ctx := context.Background()
+	repo := newInMemoryRepo()
+	mod := memory.NewModule(repo)
+
+	dbMock := &testDBClient{}
+	llmMock := &testLLMClient{}
+	bus := events.NewEventBus()
+
+	callCtx := orchestrator.CallContext{
+		User: &models.User{
+			PlatformID:  "tg_123",
+			FamilyGroup: "FamAlpha",
+		},
+		DB:       dbMock,
+		LLM:      llmMock,
+		EventBus: bus,
+	}
+
+	res, err := mod.Execute(ctx, callCtx, "remember_fact", map[string]interface{}{
+		"fact":  "Likes dark chocolate 85%",
+		"scope": "family",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, res, "Fact saved to family memory successfully")
+
+	require.Len(t, dbMock.savedMemories, 1)
+	assert.Equal(t, "tg_123", dbMock.savedMemories[0].UserID)
+	assert.Equal(t, "family", dbMock.savedMemories[0].Scope)
+	assert.Equal(t, "Likes dark chocolate 85%", dbMock.savedMemories[0].Fact)
+
+	// Check that TopicMemory was also recorded in repo
+	mems, err := repo.SearchTopicMemories(ctx, "tg_123", "FamAlpha", "personal", "chocolate", nil)
+	require.NoError(t, err)
+	require.Len(t, mems, 1)
+	assert.Equal(t, "Likes dark chocolate 85%", mems[0].Fact)
+}
+

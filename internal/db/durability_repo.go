@@ -2,6 +2,7 @@ package db
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/models"
+	"gorm.io/gorm"
 )
 
 func init() {
@@ -183,3 +185,53 @@ func (c *Client) ExportTopicData(familyGroup, userID, topic string, format strin
 	}
 	return string(bytesData), nil
 }
+
+// RollbackSnapshot executes an atomic, transactional snapshot rollback of a mutation log.
+func (c *Client) RollbackSnapshot(ctx context.Context, log models.MutationLog, tableName string) error {
+	return c.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		switch strings.ToLower(log.Action) {
+		case "create":
+			if log.EntityID == "" {
+				return fmt.Errorf("cannot rollback create mutation without entity_id")
+			}
+			res := tx.Table(tableName).Where("id = ?", log.EntityID).Delete(nil)
+			if res.Error != nil {
+				return fmt.Errorf("failed to rollback create on table %s: %w", tableName, res.Error)
+			}
+		case "update":
+			if log.EntityID == "" || log.BeforeJSON == "" {
+				return fmt.Errorf("cannot rollback update mutation without entity_id and before_json")
+			}
+			var beforeMap map[string]interface{}
+			if err := json.Unmarshal([]byte(log.BeforeJSON), &beforeMap); err != nil {
+				return fmt.Errorf("failed to parse before_json for table %s: %w", tableName, err)
+			}
+			res := tx.Table(tableName).Where("id = ?", log.EntityID).Updates(beforeMap)
+			if res.Error != nil {
+				return fmt.Errorf("failed to rollback update on table %s: %w", tableName, res.Error)
+			}
+		case "delete":
+			if log.BeforeJSON == "" {
+				return fmt.Errorf("cannot rollback delete mutation without before_json")
+			}
+			var beforeMap map[string]interface{}
+			if err := json.Unmarshal([]byte(log.BeforeJSON), &beforeMap); err != nil {
+				return fmt.Errorf("failed to parse before_json for table %s: %w", tableName, err)
+			}
+			res := tx.Table(tableName).Create(beforeMap)
+			if res.Error != nil {
+				return fmt.Errorf("failed to rollback delete on table %s: %w", tableName, res.Error)
+			}
+		default:
+			return fmt.Errorf("unsupported mutation action %q for rollback", log.Action)
+		}
+
+		// Mark undone within the exact same database transaction
+		res := tx.Model(&models.MutationLog{}).Where("id = ?", log.ID).Update("is_undone", true)
+		if res.Error != nil {
+			return fmt.Errorf("failed to mark mutation undone in transaction: %w", res.Error)
+		}
+		return nil
+	})
+}
+

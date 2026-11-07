@@ -72,7 +72,7 @@ func (r *inMemoryDurabilityRepo) InsertMutationLog(log models.MutationLog) error
 	return nil
 }
 
-func (r *inMemoryDurabilityRepo) GetMutationLogsByTopic(topic string, limit int) ([]models.MutationLog, error) {
+func (r *inMemoryDurabilityRepo) GetMutationLogsByTopic(familyGroup, userID, topic string, limit int) ([]models.MutationLog, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if limit <= 0 {
@@ -82,6 +82,13 @@ func (r *inMemoryDurabilityRepo) GetMutationLogsByTopic(topic string, limit int)
 	// return newest first
 	for i := len(r.mutationLogs) - 1; i >= 0; i-- {
 		item := r.mutationLogs[i]
+		if familyGroup != "" || userID != "" {
+			matchesFamily := (familyGroup != "" && item.FamilyGroup == familyGroup)
+			matchesUser := (userID != "" && item.UserID == userID)
+			if !matchesFamily && !matchesUser {
+				continue
+			}
+		}
 		if topic == "" || strings.EqualFold(topic, "all") || strings.EqualFold(item.Topic, topic) {
 			res = append(res, item)
 			if len(res) >= limit {
@@ -132,6 +139,18 @@ func (r *inMemoryDurabilityRepo) MarkMutationUndone(id string) error {
 	return errors.New("mutation log not found")
 }
 
+func (r *inMemoryDurabilityRepo) RollbackSnapshot(ctx context.Context, log models.MutationLog, tableName string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, l := range r.mutationLogs {
+		if l.ID == log.ID {
+			r.mutationLogs[i].IsUndone = true
+			return nil
+		}
+	}
+	return nil
+}
+
 func (r *inMemoryDurabilityRepo) CheckIdempotency(key string) (*models.IdempotencyRecord, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -155,8 +174,8 @@ func (r *inMemoryDurabilityRepo) SaveIdempotency(rec models.IdempotencyRecord) e
 	return nil
 }
 
-func (r *inMemoryDurabilityRepo) ExportTopicData(topic string, format string, limit int) (string, error) {
-	logs, err := r.GetMutationLogsByTopic(topic, limit)
+func (r *inMemoryDurabilityRepo) ExportTopicData(familyGroup, userID, topic string, format string, limit int) (string, error) {
+	logs, err := r.GetMutationLogsByTopic(familyGroup, userID, topic, limit)
 	if err != nil {
 		return "", err
 	}
@@ -300,7 +319,7 @@ func TestEventBusSubscriber(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify that the event was persisted into repo
-	logs, err := repo.GetMutationLogsByTopic("baby", 10)
+	logs, err := repo.GetMutationLogsByTopic("fam-cooper", "sarah_mom", "baby", 10)
 	require.NoError(t, err)
 	require.Len(t, logs, 1)
 
@@ -574,3 +593,126 @@ func TestIdempotencyOperations(t *testing.T) {
 	_, err = repo.CheckIdempotency(expiredKey)
 	assert.Error(t, err, "Expired idempotency record must not be returned as valid")
 }
+
+// TestSEC04_CrossTenant_DurabilityUndo_Blocked empirically verifies that durability mutations
+// cannot be undone across tenants by specifying an arbitrary mutation_id, and confirms non-regression.
+func TestSEC04_CrossTenant_DurabilityUndo_Blocked(t *testing.T) {
+	repo := newInMemoryDurabilityRepo()
+	bus := events.NewEventBus()
+	mod := NewModule(repo, bus)
+	ctx := context.Background()
+
+	// 1. Seed mutation log for Family Alpha
+	alphaMut := models.MutationLog{
+		ID:          "mut-alpha-99",
+		Topic:       "finance",
+		Action:      "create",
+		EntityType:  "FinancialTransaction",
+		EntityID:    "tx-99",
+		UserID:      "user_alpha",
+		FamilyGroup: "family_alpha",
+		Summary:     "Alpha Grocery Expense",
+		IsUndone:    false,
+		CreatedAt:   time.Now(),
+	}
+	require.NoError(t, repo.InsertMutationLog(alphaMut))
+
+	// 2. Family Beta attempts to undo Family Alpha's mutation by passing mutation_id
+	callCtxBeta := orchestrator.CallContext{
+		User:    &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"},
+		Message: models.Message{UserID: "user_beta"},
+	}
+
+	_, undoBetaErr := mod.Execute(ctx, callCtxBeta, "undo_last_action", map[string]interface{}{
+		"mutation_id": "mut-alpha-99",
+	})
+	assert.Error(t, undoBetaErr, "Family Beta must NOT be able to undo Family Alpha's mutation")
+	assert.Contains(t, undoBetaErr.Error(), "permission denied")
+
+	// Verify mutation remains undone == false
+	log1, err := repo.GetMutationLogByID("mut-alpha-99")
+	require.NoError(t, err)
+	assert.False(t, log1.IsUndone, "Mutation must not be marked undone after unauthorized attempt")
+
+	// 3. Legitimate same-family undo (non-regression)
+	callCtxAlpha := orchestrator.CallContext{
+		User:    &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"},
+		Message: models.Message{UserID: "user_alpha"},
+	}
+
+	undoAlphaResp, err := mod.Execute(ctx, callCtxAlpha, "undo_last_action", map[string]interface{}{
+		"mutation_id": "mut-alpha-99",
+	})
+	require.NoError(t, err, "Family Alpha must be able to undo their own mutation")
+	assert.Contains(t, undoAlphaResp, "Successfully undone")
+
+	// Verify mutation is now marked undone
+	log1After, err := repo.GetMutationLogByID("mut-alpha-99")
+	require.NoError(t, err)
+	assert.True(t, log1After.IsUndone, "Mutation must be marked undone after legitimate undo")
+}
+
+func TestRollbackEngine_AllowlistAndIdempotency(t *testing.T) {
+	repo := newInMemoryDurabilityRepo()
+	bus := events.NewEventBus()
+	mod := NewModule(repo, bus)
+	ctx := context.Background()
+
+	// 1. Rejection of system entity
+	sysMut := models.MutationLog{
+		ID:          "mut-sys-1",
+		Topic:       "system",
+		Action:      "update",
+		EntityType:  "users",
+		EntityID:    "user_1",
+		UserID:      "user_1",
+		FamilyGroup: "family_1",
+	}
+	require.NoError(t, repo.InsertMutationLog(sysMut))
+
+	_, err := mod.Rollback(ctx, "user_1", "family_1", "mut-sys-1")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "system entity")
+
+	// 2. Rejection of unknown entity
+	unkMut := models.MutationLog{
+		ID:          "mut-unk-1",
+		Topic:       "custom",
+		Action:      "delete",
+		EntityType:  "arbitrary_table",
+		EntityID:    "123",
+		UserID:      "user_1",
+		FamilyGroup: "family_1",
+	}
+	require.NoError(t, repo.InsertMutationLog(unkMut))
+
+	_, err = mod.Rollback(ctx, "user_1", "family_1", "mut-unk-1")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not allowlisted")
+
+	// 3. Valid allowlisted entity rollback and idempotency
+	validMut := models.MutationLog{
+		ID:          "mut-valid-1",
+		Topic:       "baby",
+		Action:      "create",
+		EntityType:  "BabyCareLog",
+		EntityID:    "log-42",
+		UserID:      "user_1",
+		FamilyGroup: "family_1",
+		Summary:     "Logged feeding",
+	}
+	require.NoError(t, repo.InsertMutationLog(validMut))
+
+	res, err := mod.Rollback(ctx, "user_1", "family_1", "mut-valid-1")
+	require.NoError(t, err)
+	assert.False(t, res.AlreadyUndone)
+	assert.Contains(t, res.Detail, "Reverted")
+
+	// Second rollback is idempotent
+	res2, err := mod.Rollback(ctx, "user_1", "family_1", "mut-valid-1")
+	require.NoError(t, err)
+	assert.True(t, res2.AlreadyUndone)
+	assert.Contains(t, res2.Detail, "already been undone")
+}
+
+

@@ -122,6 +122,12 @@ d:\MyPA\
 │   │   ├── finance_repo.go         # `FinanceRepository` (FinancialTransaction, CategoryBudget, RecurringBill)
 │   │   └── automation_repo.go      # `AutomationRepository` (ExternalAPIConnector, AutomationRule, UserPreference, PersonalCRMContact)
 │   ├── domains/                    # Modular `orchestrator.ToolModule` implementations:
+│   │   ├── toolutil/               # Shared typed argument extractors & mutation publishing helpers
+│   │   ├── workspace_calendar/     # 4 Calendar tools (create, list, update, delete) emitting schedule mutations
+│   │   ├── workspace_gmail/        # 9 Gmail tools (search, read, reply, archive, delete, labels, unsubscribe)
+│   │   ├── workspace_tasks/        # 6 Google Tasks tools (lists & tasks CRUD) emitting tasks mutations
+│   │   ├── workspace_contacts/     # 2 Google Contacts tools (search, create) emitting contacts mutations
+│   │   ├── web_research/           # 2 Web research tools (search_web, fetch_webpage with SSRF netguard)
 │   │   ├── durability/             # Topic 1: Audit listener, `/undo` (`undo_last_action`), CSV/JSON export
 │   │   ├── memory/                 # Topic 2: Topic memories, conflict superseding, living entity profiles & consolidation
 │   │   ├── shared/                 # Topic 9: Shared spaces, partner `Notifier` on `EventBus`, shared reminders
@@ -162,19 +168,20 @@ d:\MyPA\
 
 1. **Ingress & Queuing:** Telegram or Twilio sends an HTTP POST to `proxy:8000` -> `gateway:8080`, which parses it into a [`models.Message`](file:///d:/MyPA/internal/models/models.go#L9-L22) (`ID`, `UserID`, `ChatID`, `Text`, `VoiceFileID`, `PhotoFileID`, `MediaURL`, `MediaContentType`, `Source`) and publishes to RabbitMQ queue `telegram.inbound`.
 2. **Consumption & Pre-Processing:** `orchestrator` consumes `models.Message` with a 5-minute context timeout ([`engine.go:184`](file:///d:/MyPA/internal/orchestrator/engine.go#L184)).
-   - Slash commands (`/help`, `/connect`, `/backup`, `/restore`) are handled directly.
+   - Slash commands (`/help`, `/connect`, `/backup`, `/restore`, `/undo`) are handled directly (`/undo` invokes `durability.Module.RollbackLast` or rolls back a specific mutation ID).
    - Voice messages (`VoiceFileID` or WhatsApp `audio/*`) are downloaded and transcribed via Groq Whisper (`whisper-large-v3`).
    - Images and PDFs (`PhotoFileID` or WhatsApp `image/*`, `application/pdf`) are downloaded into `photoData []byte` for multimodal Gemini input; text attachments (`text/*`, `json`, `csv`, `yaml`) are appended directly to `msg.Text`.
 3. **Authorization & Pairing:** `e.db.GetUser(msg.UserID)` checks if the user's `PlatformID` exists in `users`. If not, `msg.Text` is checked against active 6-digit `pairing_codes` (`RedeemPairingCode`).
 4. **System Prompt Assembly:**
    - Base persona, user role/family group, current timestamp, timezone, and workspace tool instructions ([`engine.go:515-537`](file:///d:/MyPA/internal/orchestrator/engine.go#L515-L537)).
-   - Semantic vector memory retrieval: embeds `msg.Text` via `gemini-embedding-001` (3072 dims) and queries top-5 cosine matches from `memories` across the user and their `FamilyGroup` ([`engine.go:540-569`](file:///d:/MyPA/internal/orchestrator/engine.go#L540-L569)).
-   - Dynamic Domain Sections: calls [`e.toolRegistry.CombinedSystemPrompt(ctx, callCtx)`](file:///d:/MyPA/internal/orchestrator/registry.go#L144-L163), concatenating live state from all 8 registered `ToolModule`s.
-5. **LLM Chat & Multi-Turn Tool Loop:**
+   - Semantic vector memory retrieval: embeds `msg.Text` via `gemini-embedding-001` (3072 dims) and queries top-5 cosine matches from `TopicMemory` vector embeddings (falling back to legacy `memories`) across the user and their `FamilyGroup`.
+   - Dynamic Domain Sections: calls [`e.toolRegistry.CombinedSystemPrompt(ctx, callCtx)`](file:///d:/MyPA/internal/orchestrator/registry.go#L144-L163), concatenating live state from all registered `ToolModule` plugins.
+5. **LLM Chat & Multi-Turn Dynamic Dispatch Loop:**
    - Calls `e.llm.Chat(ctx, systemPrompt, history, promptText, photoData, photoMimeType)` (with automatic retry normalizing Hebrew preposition numbers like `ב18` -> `ב-18` via [`NormalizeHebrewPrepositionNumbers`](file:///d:/MyPA/internal/orchestrator/engine.go#L58-L60) if flagged by safety filters).
-   - If `resp.ToolCalls` is non-empty, [`handleToolCalls`](file:///d:/MyPA/internal/orchestrator/engine.go#L648-L692) executes each tool via `executeSingleTool` (checking base tools first, then delegating to `e.toolRegistry.Execute`), appends `Role: "assistant"` (`ToolCalls`) and `Role: "function"` (`ToolResponses`), and recurses until Gemini produces a final text summary.
+   - If `resp.ToolCalls` is non-empty, [`handleToolCalls`](file:///d:/MyPA/internal/orchestrator/engine.go#L648-L692) executes each tool via `executeSingleTool`. After checking the SEC-09 interactive confirmation gate for meta-tools, `executeSingleTool` dynamically dispatches the call via `e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)`. All tools receive standardized canonical identity through `callCtx.ActorID()` and `callCtx.TenantFamilyGroup()`.
+   - Tool execution appends `Role: "assistant"` (`ToolCalls`) and `Role: "function"` (`ToolResponses`), and recurses until Gemini produces a final text summary.
 6. **Delivery, State & Telemetry:**
-   - Formats markdown for WhatsApp (`markdown.ToWhatsApp`) or Telegram (`markdown.ToTelegramHTML`), chunks at ≤1,500 chars on natural paragraph/sentence boundaries, and sends via `twClient` or `tgClient`.
+   - Formats markdown for WhatsApp (`markdown.ToWhatsApp`) or single-pass Telegram HTML (`markdown.ToTelegramHTML`), safely chunking messages via `markdown.SafeChunkTelegramHTML` (which preserves balanced HTML open-tag stacks across chunks up to 4,000 characters) and sends via `twClient` or `tgClient`.
    - Appends user and assistant [`models.ChatMessage`](file:///d:/MyPA/internal/models/models.go#L58-L66) turns to Redis (`chat:<userID>`).
    - Asynchronously publishes [`models.AuditSession`](file:///d:/MyPA/internal/models/models.go#L80-L92) to RabbitMQ `audit.events` via `defer`.
 
@@ -200,6 +207,15 @@ type ToolModule interface {
     SystemPromptSection(ctx context.Context, callCtx CallContext) string
 }
 ```
+
+**Registered Domain Modules (13 total wired in [`cmd/orchestrator/main.go`](file:///d:/MyPA/cmd/orchestrator/main.go)):**
+- **5 Workspace Base Modules:** `workspace_calendar` (4 tools), `workspace_gmail` (9 tools), `workspace_tasks` (6 tools), `workspace_contacts` (2 tools), `web_research` (2 tools).
+- **8 Life Domain Modules:** `durability` (Topic 1 & `/undo`), `memory` (Topic 2 & `remember_fact`), `shared` (Topic 9 & `schedule_reminder`), `schedule` (Topic 3), `baby` (Topic 4), `house` (Topic 5 & 8.1), `finance` (Topic 6), `automation` (Topics 7, 8.2, 8.3 & workflow management).
+
+**Unified Durability Rollback Engine (`internal/domains/durability`):**
+All undo paths—the `/undo` chat command, LLM `undo_last_action` tool, and GraphQL `RollbackMutation`—delegate to `durability.Module.Rollback(ctx, actorID, familyGroup, mutationID)` and `RollbackLast(ctx, actorID, familyGroup)`.
+- **Entity Allowlist (`allowlist.go`):** Centralized `ResolveRollbackTable` validates 19 allowed domain entity types and rejects system tables (`users`, `pairing_codes`, `encrypted_credentials`, `audit_sessions`, `audit_events`, `schema_migrations`).
+- **Snapshot Restoration (`durability_repo.go`):** Executes in an atomic ACID transaction (`RollbackSnapshot`). For `action == "create"`, deletes the inserted record; for `action == "delete"`, recreates the record from `before_json`; for `action == "update"`, restores the exact prior state from `before_json`. Upon commit, marks `is_undone = true`.
 
 ### 3.3 Internal `EventBus` & `MutationEvent` Contract ([`internal/events/bus.go`](file:///d:/MyPA/internal/events/bus.go))
 
@@ -299,7 +315,7 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
 ## 4. PostgreSQL + `pgvector` Database Schema Reference
 
 ### 4.1 Migration Registration Mechanism ([`internal/db/migrations.go`](file:///d:/MyPA/internal/db/migrations.go))
-- On startup, [`db.NewClient(dsn)`](file:///d:/MyPA/internal/db/db.go#L23-L53) enables `pgvector` (`CREATE EXTENSION IF NOT EXISTS vector`) and runs `db.AutoMigrate(allModels...)` combining core Wave 0 models with all models registered via `db.RegisterModel(...)`, `db.RegisterWave1Models()`, and `db.RegisterWave2Models()`.
+- On startup, [`db.NewClient(dsn)`](file:///d:/MyPA/internal/db/db.go#L23-L53) enables `pgvector` (`CREATE EXTENSION IF NOT EXISTS vector`) and runs `db.AutoMigrate(allModels...)` combining core Wave 0 models with all models registered via `db.RegisterModel(...)`, `db.RegisterWave1Models()`, and `db.RegisterWave2Models()`. Models are automatically deduplicated by `reflect.TypeOf`, guaranteeing idempotent execution.
 - **Total Database Tables:** **29 tables** across 9 model files in [`internal/models/`](file:///d:/MyPA/internal/models/).
 
 ### 4.2 Complete Table & GORM Model Inventory (29 Tables)
@@ -328,7 +344,7 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
 
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
 | :---: | :--- | :--- | :--- | :--- |
-| 11 | **`TopicMemory`** (`L30`) | `topic_memories` | `ID` (`uint`) | `UserID` (`string`, `index`), `FamilyGroup` (`string`, `index`), `Topic` (`string`, `index`), `Subtopic` (`string`, `index`), `TagsJSON` (`jsonb`), `Fact` (`string`), `Scope` (`string`, `index;default:'personal'`), `CreatedByUserID` (`string`), `SupersededByID` (`*uint`, `index`), `ValidFrom` (`time.Time`), `ValidUntil` (`*time.Time`), `IsPinned` (`bool`, `default:false`), `CreatedAt` (`time.Time`) |
+| 11 | **`TopicMemory`** (`L30`) | `topic_memories` | `ID` (`uint`) | `UserID` (`string`, `index`), `FamilyGroup` (`string`, `index`), `Topic` (`string`, `index`), `Subtopic` (`string`, `index`), `TagsJSON` (`jsonb`), `Fact` (`string`), `Scope` (`string`, `index;default:'personal'`), `CreatedByUserID` (`string`), `SupersededByID` (`*uint`, `index`), `ValidFrom` (`time.Time`), `ValidUntil` (`*time.Time`), `IsPinned` (`bool`, `default:false`), `Embedding` (`pgvector.Vector`, `type:vector(3072)`), `CreatedAt` (`time.Time`) |
 | 12 | **`EntityProfile`** (`L91`) | `entity_profiles` | `ID` (`uint`) | `UserID` (`string`, `index`), `FamilyGroup` (`string`, `index`), `Topic` (`string`, `index`), `EntityType` (`string`, `index`), `EntityName` (`string`, `index`), `AttributesJSON` (`jsonb`), `UpdatedByUserID` (`string`), `UpdatedAt` (`time.Time`) |
 
 #### D. Topic 9: Shared Family Spaces ([`internal/models/shared.go`](file:///d:/MyPA/internal/models/shared.go)) — Repo: [`internal/db/shared_repo.go`](file:///d:/MyPA/internal/db/shared_repo.go)
@@ -336,7 +352,7 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
 | :---: | :--- | :--- | :--- | :--- |
 | 13 | **`SharedSpace`** (`L22`) | `shared_spaces` | `ID` (`uint`) | `FamilyGroup` (`string`, `index;size:100;not null`), `Topic` (`string`, `index;size:100;not null`), `OwnerUserID` (`string`, `size:100`), `SharedWithUserID` (`string`, `size:100`), `CanView` (`bool`, `default:true`), `CanEdit` (`bool`, `default:true`), `NotifyMode` (`string`, `size:20;default:'instant'`: `"instant"`\|`"digest"`\|`"silent"`), `UpdatedAt` (`time.Time`) |
-| 14 | **`SharedTaskReminder`** (`L36`) | `shared_task_reminders` | `ID` (`uint`) | `FamilyGroup` (`string`, `index;size:100;not null`), `Topic` (`string`, `index;size:100;not null`), `Title` (`text;not null`), `DueTime` (`*time.Time`, `index`), `CreatedByUserID` (`string`, `size:100;not null`), `AssignedToUserID` (`string`, `size:100`), `IsCompleted` (`bool`, `index;default:false`), `CompletedByUserID` (`string`, `size:100`), `CompletedAt` (`*time.Time`), `CreatedAt` (`time.Time`) |
+| 14 | **`SharedTaskReminder`** (`L36`) | `shared_task_reminders` | `ID` (`uint`) | `FamilyGroup` (`string`, `index;size:100;not null`), `Topic` (`string`, `index;size:100;not null`), `Title` (`text;not null`), `DueTime` (`*time.Time`, `index`), `CreatedByUserID` (`string`, `size:100;not null`), `AssignedToUserID` (`string`, `size:100`), `IsCompleted` (`bool`, `index;default:false`), `CompletedByUserID` (`string`, `size:100`), `CompletedAt` (`*time.Time`), `IsSent` (`bool`, `index;default:false`), `RemindedAt` (`*time.Time`), `CreatedAt` (`time.Time`) |
 
 #### E. Topic 3: Multi-Schedule Engine ([`internal/models/schedule.go`](file:///d:/MyPA/internal/models/schedule.go)) — Repo: [`internal/db/schedule_repo.go`](file:///d:/MyPA/internal/db/schedule_repo.go)
 
@@ -525,8 +541,8 @@ Both queues are declared on the default direct exchange (`""`) with `durable: tr
 All cron schedules run in the `Asia/Jerusalem` timezone (`scheduler.go:20`):
 - **`0 2 * * *` (02:00 AM daily):** Runs [`db.BackupDatabase`](file:///d:/MyPA/internal/db/backup.go#L15-L43) to `/backups` (retaining last 3 backups).
 - **`0 8 * * *` (08:00 AM daily):** Calls `engine.BroadcastProactiveMessage` to send personalized Morning Briefings to all active users.
-- **`* * * * *` (Every 1 minute):** Calls `engine.CheckAndSendReminders()` to deliver due reminders from `scheduled_reminders`.
-- **`*/5 * * * *` (Every 5 minutes) + On-Change Hook:** Calls `ReloadWorkflows(engine, dbClient)` to synchronize user-defined cron workflows from the `workflows` table.
+- **`* * * * *` (Every 1 minute):** Calls `engine.CheckAndSendReminders()` to deliver due personal reminders from `scheduled_reminders` and due collaborative reminders from `shared_task_reminders` (updating `is_sent = true` and `reminded_at`).
+- **`*/5 * * * *` (Every 5 minutes) + On-Change Hook:** Calls `ReloadWorkflows(engine, dbClient, runner)` (thread-safe via `workflowMu sync.Mutex`) to rebuild the active cron runner for both legacy workflows (`workflows` table) and active cron automation rules (`automation_rules` table WHERE `trigger_type = 'cron' AND is_active = true`, parsing cron expressions via `automation.ExtractCronSchedule` and executing actions via `automation.Runner.ExecuteAction`).
 
 ---
 

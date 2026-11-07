@@ -1,6 +1,7 @@
 package db
 
 import (
+	"reflect"
 	"sync"
 
 	"github.com/nivik/mypa/internal/models"
@@ -50,11 +51,28 @@ func RegisterWave2Models() {
 }
 
 // RegisterModel registers one or more GORM models to be included in AutoMigrate.
-// This allows domain tracks in subsequent waves to register their models in an isolated manner.
+// Models are deduplicated by reflect.TypeOf so multiple registrations do not cause duplicate migrations.
 func RegisterModel(models ...interface{}) {
 	registeredModelsMu.Lock()
 	defer registeredModelsMu.Unlock()
-	registeredModels = append(registeredModels, models...)
+
+	existingTypes := make(map[reflect.Type]bool)
+	for _, m := range registeredModels {
+		if m != nil {
+			existingTypes[reflect.TypeOf(m)] = true
+		}
+	}
+
+	for _, m := range models {
+		if m == nil {
+			continue
+		}
+		t := reflect.TypeOf(m)
+		if !existingTypes[t] {
+			existingTypes[t] = true
+			registeredModels = append(registeredModels, m)
+		}
+	}
 }
 
 // GetRegisteredModels returns a thread-safe copy of all registered GORM models.

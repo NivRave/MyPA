@@ -31,6 +31,11 @@ import (
 	"github.com/nivik/mypa/internal/domains/memory"
 	"github.com/nivik/mypa/internal/domains/schedule"
 	"github.com/nivik/mypa/internal/domains/shared"
+	"github.com/nivik/mypa/internal/domains/web_research"
+	"github.com/nivik/mypa/internal/domains/workspace_calendar"
+	"github.com/nivik/mypa/internal/domains/workspace_contacts"
+	"github.com/nivik/mypa/internal/domains/workspace_gmail"
+	"github.com/nivik/mypa/internal/domains/workspace_tasks"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/gmail"
 	"github.com/nivik/mypa/internal/graph"
@@ -220,7 +225,19 @@ func main() {
 	automationRunner := automation.NewRunner(dbClient, eventBus, automation.WithNotificationSender(notificationSender))
 	automationModule := automation.NewModule(dbClient, automation.WithEventBus(eventBus), automation.WithRunner(automationRunner))
 
-	// Register all Wave 1 and Wave 2 domain modules in the ToolRegistry
+	// Register all Wave 0, Wave 1, and Wave 2 domain modules in the ToolRegistry
+	workspaceCalendarModule := workspace_calendar.NewModule(calendarFactory, workspace_calendar.WithEventBus(eventBus))
+	workspaceGmailModule := workspace_gmail.NewModule(workspace_gmail.WithClient(gmailClient), workspace_gmail.WithEventBus(eventBus))
+	workspaceTasksModule := workspace_tasks.NewModule(workspace_tasks.WithClient(tasksClient), workspace_tasks.WithEventBus(eventBus))
+	workspaceContactsModule := workspace_contacts.NewModule(workspace_contacts.WithClient(contactsClient), workspace_contacts.WithEventBus(eventBus))
+	webResearchModule := web_research.NewModule(web_research.WithClient(tavilyClient))
+
+	registry.Register(workspaceCalendarModule)
+	registry.Register(workspaceGmailModule)
+	registry.Register(workspaceTasksModule)
+	registry.Register(workspaceContactsModule)
+	registry.Register(webResearchModule)
+
 	registry.Register(durabilityModule)
 	registry.Register(memoryModule)
 	registry.Register(sharedModule)
@@ -239,11 +256,11 @@ func main() {
 		WithEventBus(eventBus)
 
 	// Start Cron jobs
-	c := scheduler.StartCronJobs(engine, dbClient)
+	c := scheduler.StartCronJobs(engine, dbClient, automationRunner)
 	defer c.Stop()
 	
 	engine.SetWorkflowsChangedCallback(func() {
-		scheduler.ReloadWorkflows(engine, dbClient)
+		scheduler.ReloadWorkflows(engine, dbClient, automationRunner)
 	})
 
 	// Run engine in a goroutine
@@ -309,7 +326,11 @@ func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient Au
 	
 	// GraphQL Server
 	if dbClient != nil {
-		srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: &graph.Resolver{DB: dbClient}}))
+		var durEngine durability.RollbackEngine
+		if dMod, ok := fallbackSaver.(durability.RollbackEngine); ok {
+			durEngine = dMod
+		}
+		srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: &graph.Resolver{DB: dbClient, Durability: durEngine}}))
 
 		dashboardSecret := os.Getenv("DASHBOARD_API_SECRET")
 		jwtSecret := os.Getenv("JWT_SECRET")

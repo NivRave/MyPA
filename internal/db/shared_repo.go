@@ -186,3 +186,33 @@ func (c *Client) CompleteSharedReminder(id uint, completedByUserID string, famil
 func (c *Client) ListSharedReminders(familyGroup string, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error) {
 	return NewSharedRepository(c.DB).ListSharedReminders(familyGroup, topic, includeCompleted)
 }
+
+// GetDueSharedReminders returns uncompleted, unsent shared reminders that have reached their due time.
+func (r *SharedRepository) GetDueSharedReminders() ([]models.SharedTaskReminder, error) {
+	var reminders []models.SharedTaskReminder
+	now := time.Now()
+	err := r.db.Where("is_completed = ? AND is_sent = ? AND due_time IS NOT NULL AND due_time <= ?", false, false, now).Find(&reminders).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get due shared reminders: %w", err)
+	}
+	return reminders, nil
+}
+
+// MarkSharedReminderSent sets is_sent = true and reminded_at to now for the shared reminder.
+func (r *SharedRepository) MarkSharedReminderSent(id uint) error {
+	now := time.Now()
+	return r.db.Model(&models.SharedTaskReminder{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"is_sent":     true,
+		"reminded_at": &now,
+	}).Error
+}
+
+// GetDueSharedReminders returns uncompleted, unsent shared reminders on Client.
+func (c *Client) GetDueSharedReminders() ([]models.SharedTaskReminder, error) {
+	return NewSharedRepository(c.DB).GetDueSharedReminders()
+}
+
+// MarkSharedReminderSent marks a shared reminder as sent on Client.
+func (c *Client) MarkSharedReminderSent(id uint) error {
+	return NewSharedRepository(c.DB).MarkSharedReminderSent(id)
+}

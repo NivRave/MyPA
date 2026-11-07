@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/domains/toolutil"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/pgvector/pgvector-go"
 	"google.golang.org/genai"
 )
 
@@ -151,27 +153,40 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 				Required: []string{"topic", "entity_name"},
 			},
 		},
+		{
+			Name:        "remember_fact",
+			Description: "Saves a semantic memory fact and its vector embedding for long-term recall.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"fact": {
+						Type:        genai.TypeString,
+						Description: "The fact or information to remember.",
+					},
+					"scope": {
+						Type:        genai.TypeString,
+						Description: "Access scope: 'personal' (default) or 'family'.",
+					},
+				},
+				Required: []string{"fact"},
+			},
+		},
 	}
 }
 
 // Execute handles tool calls for memory management.
 func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, toolName string, args map[string]interface{}) (string, error) {
 	repo, err := m.resolveRepo(callCtx)
-	if err != nil {
+	if err != nil && toolName != "remember_fact" {
 		return "", fmt.Errorf("memory module: %w", err)
 	}
 
-	userID := ""
-	familyGroup := ""
-	if callCtx.User != nil {
-		userID = callCtx.User.PlatformID
-		if userID == "" {
-			userID = callCtx.User.ID
-		}
-		familyGroup = callCtx.User.FamilyGroup
-	}
+	userID := callCtx.ActorID()
+	familyGroup := callCtx.TenantFamilyGroup()
 
 	switch toolName {
+	case "remember_fact":
+		return m.executeRememberFact(ctx, callCtx, repo, userID, familyGroup, args)
 	case "save_topic_memory":
 		return m.executeSaveTopicMemory(ctx, callCtx, repo, userID, familyGroup, args)
 	case "search_topic_memories":
@@ -260,6 +275,80 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 	}
 
 	return strings.TrimSpace(sb.String())
+}
+
+func (m *Module) executeRememberFact(ctx context.Context, callCtx orchestrator.CallContext, repo db.MemoryV2Repository, userID, familyGroup string, args map[string]interface{}) (string, error) {
+	fact := toolutil.String(args, "fact")
+	if fact == "" {
+		return "Missing fact parameter", nil
+	}
+	scope := toolutil.String(args, "scope", "personal")
+	if strings.ToLower(scope) == "family" {
+		scope = "family"
+	} else {
+		scope = "personal"
+	}
+
+	if callCtx.LLM == nil {
+		return "❌ LLM client not configured for memory embedding.", nil
+	}
+	if callCtx.DB == nil {
+		return "❌ Database client not configured.", nil
+	}
+
+	embedding, err := callCtx.LLM.GenerateEmbedding(ctx, fact)
+	if err != nil {
+		return "❌ Failed to save memory (embedding error).", nil
+	}
+
+	vec := pgvector.NewVector(embedding)
+	mem := models.Memory{
+		UserID:    userID,
+		Scope:     scope,
+		Fact:      fact,
+		Embedding: vec,
+		CreatedAt: time.Now(),
+	}
+
+	if err := callCtx.DB.SaveMemory(mem); err != nil {
+		return "❌ Failed to save memory to database.", nil
+	}
+
+	if repo != nil {
+		_ = repo.SaveTopicMemory(ctx, &models.TopicMemory{
+			UserID:          userID,
+			FamilyGroup:     familyGroup,
+			Topic:           models.TopicPersonal,
+			Subtopic:        "fact",
+			TagsJSON:        "[]",
+			Fact:            fact,
+			Scope:           scope,
+			CreatedByUserID: userID,
+			ValidFrom:       time.Now(),
+			Embedding:       vec,
+			CreatedAt:       time.Now(),
+		})
+	}
+
+	if callCtx.EventBus != nil {
+		afterBytes, _ := json.Marshal(map[string]interface{}{
+			"fact":  fact,
+			"scope": scope,
+		})
+		_ = toolutil.PublishMutation(ctx, callCtx.EventBus, events.MutationEvent{
+			Topic:       "memory",
+			Action:      "create",
+			EntityType:  "Memory",
+			EntityID:    fmt.Sprintf("%s:%d", userID, time.Now().UnixNano()),
+			ActorUserID: userID,
+			FamilyGroup: familyGroup,
+			AfterJSON:   string(afterBytes),
+			Summary:     fmt.Sprintf("Remembered %s fact: %s", scope, fact),
+			Timestamp:   time.Now(),
+		})
+	}
+
+	return fmt.Sprintf("Fact saved to %s memory successfully.", scope), nil
 }
 
 func (m *Module) executeSaveTopicMemory(ctx context.Context, callCtx orchestrator.CallContext, repo db.MemoryV2Repository, userID, familyGroup string, args map[string]interface{}) (string, error) {

@@ -39,3 +39,16 @@ type IdempotencyRecord struct {
 	ResponseSummary string    `json:"response_summary"`
 	ExpiresAt       time.Time `json:"expires_at" gorm:"index"`
 }
+
+// RollbackResult provides unified, structured feedback on completed rollback operations.
+type RollbackResult struct {
+	MutationID    string `json:"mutation_id"`
+	Topic         string `json:"topic"`
+	Action        string `json:"action"`
+	EntityType    string `json:"entity_type"`
+	EntityID      string `json:"entity_id"`
+	Summary       string `json:"summary"`
+	Detail        string `json:"detail"`
+	AlreadyUndone bool   `json:"already_undone"`
+}
+

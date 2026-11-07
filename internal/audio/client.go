@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"time"
 )
 
 // Client handles audio transcription via the Groq API.
@@ -19,8 +20,10 @@ type Client struct {
 // NewClient creates a new Groq audio client.
 func NewClient(apiKey string) *Client {
 	return &Client{
-		apiKey:     apiKey,
-		httpClient: &http.Client{},
+		apiKey: apiKey,
+		httpClient: &http.Client{
+			Timeout: 60 * time.Second,
+		},
 	}
 }
 
