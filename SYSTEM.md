@@ -274,6 +274,12 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
      This eliminates fail-open De Morgan boolean fallacies (`record.FamilyGroup != "" && record.FamilyGroup != familyGroup`) ensuring records with unpopulated or legacy `FamilyGroup` fail closed.
    - Operations mutating by ID (`CompleteMaintenanceItem`, `CompleteSharedReminder`, `manage_recurring_bills`, `DeleteAutomationRule`, `executeUpsertPersonalCRM`, `undo_last_action`) verify tenant authorization prior to mutation and propagate `familyGroup ...string` into repository queries.
 
+    - **GraphQL Resolvers Anti-IDOR & Scoping Enforcement (Milestone 1C):**
+      - `ToggleAutomationRule` and `DeleteAutomationRule` enforce tenant boundaries: non-admins are denied with `permission denied: unauthorized access to automation rule` if `rule.FamilyGroup` does not match the caller's family group (or `rule.UserID != actorID` for personal rules).
+      - `UserPreference` enforces `targetUserID = actorID` for non-admin callers, preventing user preference disclosure or modification across users.
+      - `AuditSessions` and `UserSessions` are positively scoped via `r.resolveTenantAndActor(ctx, familyGroup)` (defaulting to the caller's family group for non-admins, while preserving system-wide access for admins when `familyGroup` is empty or `"*"`), and utilize type-cast JOIN predicates `JOIN users ON (users.id::text = audit_sessions.user_id OR users.platform_id = audit_sessions.user_id)` to prevent PostgreSQL `SQLSTATE 42883` (`uuid = text`) mismatches.
+      - `CompleteSharedTask` pre-fetches the target task with `r.sharedRepo().GetSharedReminder` to populate `BeforeJSON` in the emitted `MutationEvent`, ensuring full rollback durability.
+
 5. **Centralized SSRF Protection (`internal/netguard/netguard.go`):**
    - Provides `SafeClient(timeout time.Duration)` with a custom `DialContext` resolving hostnames prior to connection.
    - Blocks IPv4/IPv6 loopback (`127.0.0.0/8`, `::1`), RFC1918 private subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), cloud metadata (`169.254.169.254`), carrier-grade NAT (`100.64.0.0/10`), link-local multicast, and Docker single-label container names (`!strings.Contains(host, ".") && host != "localhost"`).
@@ -344,10 +350,11 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
 
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
 | :---: | :--- | :--- | :--- | :--- |
-| 11 | **`TopicMemory`** (`L30`) | `topic_memories` | `ID` (`uint`) | `UserID` (`string`, `index`), `FamilyGroup` (`string`, `index`), `Topic` (`string`, `index`), `Subtopic` (`string`, `index`), `TagsJSON` (`jsonb`), `Fact` (`string`), `Scope` (`string`, `index;default:'personal'`), `CreatedByUserID` (`string`), `SupersededByID` (`*uint`, `index`), `ValidFrom` (`time.Time`), `ValidUntil` (`*time.Time`), `IsPinned` (`bool`, `default:false`), `Embedding` (`pgvector.Vector`, `type:vector(3072)`), `CreatedAt` (`time.Time`) |
+| 11 | **`TopicMemory`** (`L30`) | `topic_memories` | `ID` (`uint`) | `UserID` (`string`, `index`), `FamilyGroup` (`string`, `index`), `Topic` (`string`, `index`), `Subtopic` (`string`, `index`), `TagsJSON` (`jsonb`), `Fact` (`string`), `Scope` (`string`, `index;default:'personal'`), `CreatedByUserID` (`string`), `SupersededByID` (`*uint`, `index`), `ValidFrom` (`time.Time`), `ValidUntil` (`*time.Time`), `IsPinned` (`bool`, `default:false`), `Embedding` (`pgvector.Vector`, `type:vector(3072)`), `CreatedAt` (`time.Time`). *Lifecycle Hooks: `BeforeCreate` & `BeforeSave` auto-populate uninitialized vectors with 3072-dimensional zero vectors (`pgvector.NewVector(make([]float32, 3072))`) to prevent PostgreSQL SQLSTATE 22000.* |
 | 12 | **`EntityProfile`** (`L91`) | `entity_profiles` | `ID` (`uint`) | `UserID` (`string`, `index`), `FamilyGroup` (`string`, `index`), `Topic` (`string`, `index`), `EntityType` (`string`, `index`), `EntityName` (`string`, `index`), `AttributesJSON` (`jsonb`), `UpdatedByUserID` (`string`), `UpdatedAt` (`time.Time`) |
 
 #### D. Topic 9: Shared Family Spaces ([`internal/models/shared.go`](file:///d:/MyPA/internal/models/shared.go)) — Repo: [`internal/db/shared_repo.go`](file:///d:/MyPA/internal/db/shared_repo.go)
+*Repository & Client API: Provides `UpsertSharedSpace`, `GetSharedSpacesForFamily`, `GetSharedSpace`, `CreateSharedReminder`, `GetSharedReminder(id uint, familyGroup ...string)` (tenant-scoped single reminder query), `CompleteSharedReminder`, `ListSharedReminders`, `GetDueSharedReminders`, `MarkSharedReminderSent`.*
 
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
 | :---: | :--- | :--- | :--- | :--- |
@@ -474,10 +481,15 @@ Both queues are declared on the default direct exchange (`""`) with `durable: tr
 
 - **Endpoint:** `POST /graphql` (proxied via `http://proxy:8000/graphql` to `http://orchestrator:8081/graphql`).
 - **Code Generation:** Configured via [`gqlgen.yml`](file:///d:/MyPA/gqlgen.yml). Run `go run github.com/99designs/gqlgen generate` after editing `internal/graph/schema.graphqls` (always save files with UTF-8 encoding without BOM).
+- **Resolver Decoupling & Positive Authorization (Milestone 1C):** `graph.Resolver` receives explicit domain repository interfaces (`BabyRepo`, `FinanceRepo`, `HouseRepo`, `ScheduleRepo`, `SharedRepo`, `MemoryRepo`, `AutomationRepo`, `UserRepo`), `durability.RollbackEngine`, and `events.EventBus`. Direct `r.DB.DB` calls are eliminated across domain resolvers.
+  - **Safe ID Parsing:** All string entity IDs are strictly validated via [`toolutil.ParseID`](file:///d:/MyPA/internal/domains/toolutil/toolutil.go), rejecting empty, non-numeric, or `<= 0` values.
+  - **Positive Multi-Tenant Authorization:** Enforced via `resolveTenantAndActor`. Admin roles can target any `familyGroup`; non-admin callers are strictly bounded to their authenticated JWT/Context `familyGroup`.
+  - **MutationEvent Emission:** Every state-changing GraphQL mutation captures `BeforeJSON` and `AfterJSON` snapshots and publishes an [`events.MutationEvent`](file:///d:/MyPA/internal/events/bus.go) to `r.EventBus`, triggering audit logging, partner sync notifications, and automation rules across the system.
 
 | Domain | GraphQL Object Types | Queries (`type Query`) | Mutations (`type Mutation`) |
 | :--- | :--- | :--- | :--- |
 | **Core / Auth** | `User`, `PairingCode` | `users`, `activePairingCodes` | `generatePairingCode` |
+| **System / Audit** | `AuditSession`, `UserSessionSummary` | `auditSessions`, `userSessions` | — |
 | **Topic 1: Durability** | `MutationLog` | `mutationLogs` | `rollbackMutation` |
 | **Topic 2: Memory** | `TopicMemory`, `EntityProfile` | `topicMemories`, `entityProfiles` | `saveTopicMemory`, `deleteTopicMemory`, `pinTopicMemory`, `upsertEntityProfile` |
 | **Topic 3: Schedule** | `ScheduleEvent`, `TopicCalendarConfig` | `scheduleEvents`, `topicCalendarConfigs` | `createScheduleEvent`, `deleteScheduleEvent`, `saveTopicCalendarConfig` |
@@ -487,20 +499,25 @@ Both queues are declared on the default direct exchange (`""`) with `durable: tr
 | **Topics 7 & 8: Automation & CRM** | `ExternalAPIConnector`, `AutomationRule`, `UserPreference`, `PersonalCRMContact` | `externalApiConnectors`, `automationRules`, `userPreference`, `personalCrmContacts` | `registerExternalApi`, `saveAutomationRule`, `toggleAutomationRule`, `deleteAutomationRule`, `saveUserPreference`, `savePersonalCrmContact` |
 | **Topic 9: Shared** | `SharedSpace`, `SharedTaskReminder` | `sharedSpaces`, `sharedTasks` | `updateSharedSpace`, `createSharedTask`, `completeSharedTask` |
 
-### 7.2 Next.js Dashboard Routes ([`dashboard/src/app/`](file:///d:/MyPA/dashboard/src/app/layout.tsx))
+### 7.2 Next.js Dashboard Architecture & Routes ([`dashboard/`](file:///d:/MyPA/dashboard/))
 
-| Route | Source File | Primary GraphQL Queries & Mutations Used |
+- **Decoupled Frontend Tier (Milestone 1C):** Direct `pg.Pool` usage, raw SQL queries, and local database connection strings are 100% eliminated from Next.js. `pg` and `@types/pg` packages are removed from `dashboard/package.json`.
+- **Centralized Typed Client ([`dashboard/src/lib/graphql.ts`](file:///d:/MyPA/dashboard/src/lib/graphql.ts)):** Implements `graphqlFetch<TData, TVariables>` with automatic `Authorization: Bearer <DASHBOARD_API_SECRET>` header injection, endpoint discovery via `GRAPHQL_ENDPOINT` / `NEXT_PUBLIC_PROXY_URL`, and complete TypeScript type declarations for all domain entities.
+
+| Route | Source File | Primary GraphQL Operations Used |
 | :--- | :--- | :--- |
 | `/` | [`src/app/page.tsx`](file:///d:/MyPA/dashboard/src/app/page.tsx) | System overview KPIs & navigation cards |
-| `/audit` | [`src/app/audit/page.tsx`](file:///d:/MyPA/dashboard/src/app/audit/page.tsx) | `mutationLogs`, `rollbackMutation`, `saveTopicMemory` |
-| `/automations` | [`src/app/automations/page.tsx`](file:///d:/MyPA/dashboard/src/app/automations/page.tsx) | `externalApiConnectors`, `automationRules`, `userPreference`, `personalCrmContacts`, `registerExternalApi`, `saveAutomationRule`, `toggleAutomationRule`, `deleteAutomationRule`, `saveUserPreference`, `savePersonalCrmContact` |
-| `/baby` | [`src/app/baby/page.tsx`](file:///d:/MyPA/dashboard/src/app/baby/page.tsx) | `babyProfiles`, `babyCareLogs`, `babyInventory`, `upsertBabyProfile`, `logBabyCare`, `updateBabyInventory` |
-| `/finance` | [`src/app/finance/page.tsx`](file:///d:/MyPA/dashboard/src/app/finance/page.tsx) | `financialTransactions`, `categoryBudgets`, `recurringBills`, `logFinancialTransaction`, `setCategoryBudget`, `saveRecurringBill` |
-| `/house` | [`src/app/house/page.tsx`](file:///d:/MyPA/dashboard/src/app/house/page.tsx) | `houseContracts`, `homeMaintenanceItems`, `vehicleAssets`, `saveHouseContract`, `saveHomeMaintenanceItem`, `completeHomeMaintenance`, `saveVehicleAsset` |
-| `/memory` | [`src/app/memory/page.tsx`](file:///d:/MyPA/dashboard/src/app/memory/page.tsx) | `topicMemories`, `entityProfiles`, `saveTopicMemory`, `pinTopicMemory`, `deleteTopicMemory`, `upsertEntityProfile` |
-| `/shared` | [`src/app/shared/page.tsx`](file:///d:/MyPA/dashboard/src/app/shared/page.tsx) | `sharedSpaces`, `sharedTasks`, `scheduleEvents`, `topicCalendarConfigs`, `updateSharedSpace`, `createSharedTask`, `completeSharedTask`, `createScheduleEvent`, `deleteScheduleEvent` |
+| `/audit` | [`src/app/audit/page.tsx`](file:///d:/MyPA/dashboard/src/app/audit/page.tsx) | `mutationLogs`, `rollbackMutation` |
+| `/automations` | [`src/app/automations/page.tsx`](file:///d:/MyPA/dashboard/src/app/automations/page.tsx) | `externalApiConnectors`, `automationRules`, `userPreference`, `personalCrmContacts`, `registerExternalApi`, `toggleAutomationRule`, `deleteAutomationRule`, `saveUserPreference` |
+| `/baby` | [`src/app/baby/page.tsx`](file:///d:/MyPA/dashboard/src/app/baby/page.tsx) | `babyProfiles`, `babyCareLogs`, `babyInventory`, `logBabyCare`, `updateBabyInventory` |
+| `/finance` | [`src/app/finance/page.tsx`](file:///d:/MyPA/dashboard/src/app/finance/page.tsx) | `financialTransactions`, `categoryBudgets`, `recurringBills`, `logFinancialTransaction`, `setCategoryBudget` |
+| `/house` | [`src/app/house/page.tsx`](file:///d:/MyPA/dashboard/src/app/house/page.tsx) | `houseContracts`, `homeMaintenanceItems`, `vehicleAssets`, `completeHomeMaintenance`, `saveHouseContract` |
+| `/logs` | [`src/app/logs/page.tsx`](file:///d:/MyPA/dashboard/src/app/logs/page.tsx) | `auditSessions` |
+| `/memory` | [`src/app/memory/page.tsx`](file:///d:/MyPA/dashboard/src/app/memory/page.tsx) | `topicMemories`, `entityProfiles`, `pinTopicMemory`, `deleteTopicMemory` |
+| `/sessions` | [`src/app/sessions/page.tsx`](file:///d:/MyPA/dashboard/src/app/sessions/page.tsx) | `userSessions` |
+| `/shared` | [`src/app/shared/page.tsx`](file:///d:/MyPA/dashboard/src/app/shared/page.tsx) | `sharedSpaces`, `sharedTasks`, `updateSharedSpace`, `completeSharedTask`, `createSharedTask` |
 | `/users` | [`src/app/users/page.tsx`](file:///d:/MyPA/dashboard/src/app/users/page.tsx) | `users`, `activePairingCodes`, `generatePairingCode` |
-| `/logs`, `/sessions`, `/oauth`, `/tools`, `/settings` | `src/app/{logs,sessions,oauth,tools,settings}/page.tsx` | System inspection & configuration consoles |
+| `/oauth`, `/tools`, `/settings` | `src/app/{oauth,tools,settings}/page.tsx` | System inspection & configuration consoles |
 
 ---
 
@@ -519,7 +536,8 @@ Both queues are declared on the default direct exchange (`""`) with `durable: tr
 | `RABBITMQ_URL` | `rabbitmq.url` | — | `gateway`, `orchestrator`, `audit-worker` | AMQP 0-9-1 URL (`amqp://...`) |
 | `ENCRYPTION_KEY` | `encryption.key` | Required in prod | `orchestrator` (`internal/crypto`) | Primary 32-byte secret for HKDF-SHA256 salted AES-256-GCM encryption at rest; fails fast on boot in production if missing |
 | `TELEGRAM_SECRET_TOKEN` | `telegram.secret_token` | `""` | `gateway` | Shared webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header using constant-time compare |
-| `DASHBOARD_API_SECRET` | `server.dashboard_api_secret` | `""` | `orchestrator`, `proxy` | Secret token used by web dashboard / proxy to authenticate to `/graphql` |
+| `DASHBOARD_API_SECRET` | `server.dashboard_api_secret` | `""` | `orchestrator`, `proxy`, `dashboard` | Secret token used by web dashboard / proxy to authenticate to `/graphql` |
+| `GRAPHQL_ENDPOINT` | *(dashboard env)* | `http://proxy:8000/graphql` | `dashboard` | Upstream GraphQL URL used by Next.js server actions and SSR data fetching |
 | `JWT_SECRET` | `server.jwt_secret` | `ENCRYPTION_KEY` | `orchestrator`, `proxy` | Secret key used for signing and verifying HMAC-SHA256 Bearer JWT claims on `/graphql` |
 | `GEMINI_API_KEY` | `gemini.api_key` | — | `orchestrator` | Google AI Studio API key |
 | `GEMINI_MODEL` | `gemini.model` | `"gemini-2.5-flash"` | `orchestrator` | Primary Gemini chat/tool-calling model |

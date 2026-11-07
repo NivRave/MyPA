@@ -1,102 +1,106 @@
 import { revalidatePath } from "next/cache";
 import { Share2, Users, Bell, CheckCircle2, Clock, Plus, ShieldCheck } from "lucide-react";
-import { Pool } from "pg";
+import {
+  graphqlFetch,
+  type SharedSpace,
+  type SharedTaskReminder,
+} from "@/lib/graphql";
 
 export const dynamic = "force-dynamic";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable",
-});
-
-async function getSharedData(familyGroup: string = "Smith Family") {
-  try {
-    const res = await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          query GetSharedSpaces($familyGroup: String!) {
-            sharedSpaces(familyGroup: $familyGroup) {
-              id
-              familyGroup
-              topic
-              ownerUserId
-              sharedWithUserId
-              canView
-              canEdit
-              notifyMode
-              updatedAt
-            }
-            sharedTasks(familyGroup: $familyGroup) {
-              id
-              familyGroup
-              topic
-              title
-              dueTime
-              createdByUserId
-              assignedToUserId
-              isCompleted
-              completedByUserId
-              completedAt
-              createdAt
-            }
-          }
-        `,
-        variables: { familyGroup },
-      }),
-      cache: "no-store",
-    });
-
-    if (res.ok) {
-      const json = await res.json();
-      if (json.data && json.data.sharedSpaces) {
-        return {
-          spaces: json.data.sharedSpaces,
-          tasks: json.data.sharedTasks || [],
-        };
-      }
+const GET_SHARED_DATA_QUERY = `
+  query GetSharedSpaces($familyGroup: String!) {
+    sharedSpaces(familyGroup: $familyGroup) {
+      id
+      familyGroup
+      topic
+      ownerUserId
+      sharedWithUserId
+      canView
+      canEdit
+      notifyMode
+      updatedAt
     }
-  } catch (err) {
-    // fallback
+    sharedTasks(familyGroup: $familyGroup) {
+      id
+      familyGroup
+      topic
+      title
+      dueTime
+      createdByUserId
+      assignedToUserId
+      isCompleted
+      completedByUserId
+      completedAt
+      createdAt
+    }
   }
+`;
 
+const UPDATE_SHARED_SPACE_MUTATION = `
+  mutation UpdateSpace(
+    $familyGroup: String!
+    $topic: String!
+    $sharedWithUserId: String!
+    $canView: Boolean!
+    $canEdit: Boolean!
+    $notifyMode: String!
+  ) {
+    updateSharedSpace(
+      familyGroup: $familyGroup
+      topic: $topic
+      sharedWithUserId: $sharedWithUserId
+      canView: $canView
+      canEdit: $canEdit
+      notifyMode: $notifyMode
+    ) {
+      id
+    }
+  }
+`;
+
+const COMPLETE_TASK_MUTATION = `
+  mutation CompleteTask($id: ID!, $completedByUserId: String!) {
+    completeSharedTask(id: $id, completedByUserId: $completedByUserId) {
+      id
+    }
+  }
+`;
+
+const CREATE_TASK_MUTATION = `
+  mutation CreateTask(
+    $familyGroup: String!
+    $topic: String!
+    $title: String!
+    $assignedToUserId: String
+  ) {
+    createSharedTask(
+      familyGroup: $familyGroup
+      topic: $topic
+      title: $title
+      assignedToUserId: $assignedToUserId
+    ) {
+      id
+    }
+  }
+`;
+
+async function getSharedData(familyGroup: string = "Smith Family"): Promise<{
+  spaces: SharedSpace[];
+  tasks: SharedTaskReminder[];
+}> {
   try {
-    const { rows: spaceRows } = await pool.query(
-      "SELECT * FROM shared_spaces WHERE family_group = $1 ORDER BY topic ASC",
-      [familyGroup]
-    );
-    const { rows: taskRows } = await pool.query(
-      "SELECT * FROM shared_task_reminders WHERE family_group = $1 ORDER BY is_completed ASC, due_time ASC LIMIT 50",
-      [familyGroup]
-    );
+    const data = await graphqlFetch<{
+      sharedSpaces: SharedSpace[];
+      sharedTasks: SharedTaskReminder[];
+    }>(GET_SHARED_DATA_QUERY, { familyGroup });
 
     return {
-      spaces: spaceRows.map((r: any) => ({
-        id: String(r.id),
-        familyGroup: r.family_group,
-        topic: r.topic,
-        ownerUserId: r.owner_user_id,
-        sharedWithUserId: r.shared_with_user_id,
-        canView: !!r.can_view,
-        canEdit: !!r.can_edit,
-        notifyMode: r.notify_mode || "instant",
-        updatedAt: r.updated_at,
-      })),
-      tasks: taskRows.map((r: any) => ({
-        id: String(r.id),
-        familyGroup: r.family_group,
-        topic: r.topic,
-        title: r.title,
-        dueTime: r.due_time,
-        createdByUserId: r.created_by_user_id,
-        assignedToUserId: r.assigned_to_user_id,
-        isCompleted: !!r.is_completed,
-        completedByUserId: r.completed_by_user_id,
-        completedAt: r.completed_at,
-        createdAt: r.created_at,
-      })),
+      spaces: data.sharedSpaces || [],
+      tasks: data.sharedTasks || [],
     };
-  } catch (dbErr) {
+  } catch (err) {
+    console.error("Failed to fetch shared data:", err);
     return { spaces: [], tasks: [] };
   }
 }
@@ -107,65 +111,57 @@ export default async function SharedSpacesPage() {
 
   async function updatePermission(formData: FormData) {
     "use server";
-    const topic = formData.get("topic") as string;
-    const sharedWithUserId = formData.get("sharedWithUserId") as string || "*";
+    const topic = (formData.get("topic") as string) || "general";
+    const sharedWithUserId = (formData.get("sharedWithUserId") as string) || "*";
     const canView = formData.get("canView") === "on";
     const canEdit = formData.get("canEdit") === "on";
-    const notifyMode = formData.get("notifyMode") as string || "instant";
+    const notifyMode = (formData.get("notifyMode") as string) || "instant";
 
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation UpdateSpace($familyGroup: String!, $topic: String!, $sharedWithUserId: String!, $canView: Boolean!, $canEdit: Boolean!, $notifyMode: String!) {
-            updateSharedSpace(familyGroup: $familyGroup, topic: $topic, sharedWithUserId: $sharedWithUserId, canView: $canView, canEdit: $canEdit, notifyMode: $notifyMode) {
-              id
-            }
-          }
-        `,
-        variables: { familyGroup: "Smith Family", topic, sharedWithUserId, canView, canEdit, notifyMode },
-      }),
-    });
+    try {
+      await graphqlFetch(UPDATE_SHARED_SPACE_MUTATION, {
+        familyGroup: "Smith Family",
+        topic,
+        sharedWithUserId,
+        canView,
+        canEdit,
+        notifyMode,
+      });
+    } catch (err) {
+      console.error("updatePermission failed:", err);
+    }
     revalidatePath("/shared");
   }
 
   async function completeTask(formData: FormData) {
     "use server";
     const id = formData.get("id") as string;
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation CompleteTask($id: ID!, $completedByUserId: String!) {
-            completeSharedTask(id: $id, completedByUserId: $completedByUserId) { id }
-          }
-        `,
-        variables: { id, completedByUserId: "partner" },
-      }),
-    });
+    try {
+      await graphqlFetch(COMPLETE_TASK_MUTATION, {
+        id,
+        completedByUserId: "partner",
+      });
+    } catch (err) {
+      console.error("completeTask failed:", err);
+    }
     revalidatePath("/shared");
   }
 
   async function addTask(formData: FormData) {
     "use server";
-    const topic = formData.get("topic") as string;
-    const title = formData.get("title") as string;
-    const assignedTo = formData.get("assignedTo") as string || null;
+    const topic = (formData.get("topic") as string) || "general";
+    const title = (formData.get("title") as string) || "";
+    const assignedTo = (formData.get("assignedTo") as string) || null;
 
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation CreateTask($familyGroup: String!, $topic: String!, $title: String!, $assignedToUserId: String) {
-            createSharedTask(familyGroup: $familyGroup, topic: $topic, title: $title, assignedToUserId: $assignedToUserId) { id }
-          }
-        `,
-        variables: { familyGroup: "Smith Family", topic, title, assignedToUserId: assignedTo },
-      }),
-    });
+    try {
+      await graphqlFetch(CREATE_TASK_MUTATION, {
+        familyGroup: "Smith Family",
+        topic,
+        title,
+        assignedToUserId: assignedTo,
+      });
+    } catch (err) {
+      console.error("addTask failed:", err);
+    }
     revalidatePath("/shared");
   }
 
@@ -278,7 +274,7 @@ export default async function SharedSpacesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
-              {spaces.map((s: any) => (
+              {spaces.map((s: SharedSpace) => (
                 <tr key={s.id} className="hover:bg-neutral-50">
                   <td className="px-6 py-4 font-medium text-neutral-900 capitalize">{s.topic}</td>
                   <td className="px-6 py-4 text-neutral-600">
@@ -355,7 +351,7 @@ export default async function SharedSpacesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
-              {tasks.map((t: any) => (
+              {tasks.map((t: SharedTaskReminder) => (
                 <tr key={t.id} className={`hover:bg-neutral-50 ${t.isCompleted ? "opacity-60 bg-neutral-50/50" : ""}`}>
                   <td className="px-6 py-4">
                     {t.isCompleted ? (

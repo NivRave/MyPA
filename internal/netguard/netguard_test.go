@@ -107,7 +107,7 @@ func TestValidateURL(t *testing.T) {
 func TestSafeClient_BlockedAndAllowed(t *testing.T) {
 	// 1. With loopback disabled, local request must fail
 	SetAllowLoopbackForTesting(false)
-	client := SafeClient(2 * time.Second)
+	client := SafeClient(5 * time.Second)
 
 	req, err := http.NewRequestWithContext(context.Background(), "GET", "http://127.0.0.1:9999", nil)
 	require.NoError(t, err)

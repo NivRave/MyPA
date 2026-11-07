@@ -138,6 +138,23 @@ func (r *SharedRepository) CompleteSharedReminder(id uint, completedByUserID str
 	return &reminder, nil
 }
 
+// GetSharedReminder retrieves a shared reminder by ID, optionally scoped to familyGroup or user ID. Returns (nil, nil) if not found.
+func (r *SharedRepository) GetSharedReminder(id uint, familyGroup ...string) (*models.SharedTaskReminder, error) {
+	var reminder models.SharedTaskReminder
+	query := r.db.Where("id = ?", id)
+	if len(familyGroup) > 0 && familyGroup[0] != "" {
+		query = query.Where("((family_group = ? AND family_group != '') OR created_by_user_id = ? OR assigned_to_user_id = ?)", familyGroup[0], familyGroup[0], familyGroup[0])
+	}
+	result := query.First(&reminder)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get shared reminder %d: %w", id, result.Error)
+	}
+	return &reminder, nil
+}
+
 // ListSharedReminders queries shared reminders for a family group, optionally filtering by topic.
 func (r *SharedRepository) ListSharedReminders(familyGroup string, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error) {
 	var reminders []models.SharedTaskReminder
@@ -180,6 +197,11 @@ func (c *Client) CreateSharedReminder(reminder *models.SharedTaskReminder) error
 // CompleteSharedReminder marks a shared reminder as completed on Client.
 func (c *Client) CompleteSharedReminder(id uint, completedByUserID string, familyGroup ...string) (*models.SharedTaskReminder, error) {
 	return NewSharedRepository(c.DB).CompleteSharedReminder(id, completedByUserID, familyGroup...)
+}
+
+// GetSharedReminder retrieves a shared reminder on Client.
+func (c *Client) GetSharedReminder(id uint, familyGroup ...string) (*models.SharedTaskReminder, error) {
+	return NewSharedRepository(c.DB).GetSharedReminder(id, familyGroup...)
 }
 
 // ListSharedReminders queries shared reminders on Client.

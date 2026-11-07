@@ -1,115 +1,79 @@
 import { revalidatePath } from "next/cache";
-import { DollarSign, PieChart, CreditCard, RefreshCw, AlertCircle, Plus, ArrowUpRight, ArrowDownLeft } from "lucide-react";
-import { Pool } from "pg";
+import { DollarSign, PieChart, RefreshCw, AlertCircle, Plus, ArrowUpRight, ArrowDownLeft } from "lucide-react";
+import {
+  graphqlFetch,
+  type FinancialTransaction,
+  type CategoryBudget,
+  type RecurringBill,
+} from "@/lib/graphql";
 
 export const dynamic = "force-dynamic";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable",
-});
-
-async function getFinanceData(familyGroup: string = "Smith Family") {
-  try {
-    const res = await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          query GetFinanceData($familyGroup: String!) {
-            financialTransactions(familyGroup: $familyGroup, limit: 50) {
-              id
-              type
-              category
-              merchant
-              amount
-              currency
-              transactionDate
-              isShared
-              source
-              notes
-            }
-            categoryBudgets(familyGroup: $familyGroup) {
-              id
-              category
-              monthlyLimit
-              currency
-              alertThresholdPct
-            }
-            recurringBills(familyGroup: $familyGroup) {
-              id
-              name
-              category
-              expectedAmount
-              currency
-              billingCycle
-              nextDueDay
-              autoRenew
-            }
-          }
-        `,
-        variables: { familyGroup },
-      }),
-      cache: "no-store",
-    });
-
-    if (res.ok) {
-      const json = await res.json();
-      if (json.data) {
-        return {
-          transactions: json.data.financialTransactions || [],
-          budgets: json.data.categoryBudgets || [],
-          bills: json.data.recurringBills || [],
-        };
-      }
+const GET_FINANCE_DATA_QUERY = `
+  query GetFinanceData($familyGroup: String!) {
+    financialTransactions(familyGroup: $familyGroup, limit: 50) {
+      id
+      type
+      category
+      merchant
+      amount
+      currency
+      transactionDate
+      isShared
+      source
+      notes
     }
-  } catch (err) {}
+    categoryBudgets(familyGroup: $familyGroup) {
+      id
+      category
+      monthlyLimit
+      currency
+      alertThresholdPct
+    }
+    recurringBills(familyGroup: $familyGroup) {
+      id
+      name
+      category
+      expectedAmount
+      currency
+      billingCycle
+      nextDueDay
+      autoRenew
+    }
+  }
+`;
 
+const LOG_TRANSACTION_MUTATION = `
+  mutation LogTx($familyGroup: String!, $type: String!, $category: String!, $merchant: String!, $amount: Float!, $currency: String!, $notes: String) {
+    logFinancialTransaction(familyGroup: $familyGroup, type: $type, category: $category, merchant: $merchant, amount: $amount, currency: $currency, notes: $notes) { id }
+  }
+`;
+
+const SET_BUDGET_MUTATION = `
+  mutation SetBudget($familyGroup: String!, $category: String!, $monthlyLimit: Float!, $currency: String!) {
+    setCategoryBudget(familyGroup: $familyGroup, category: $category, monthlyLimit: $monthlyLimit, currency: $currency) { id }
+  }
+`;
+
+async function getFinanceData(familyGroup: string = "Smith Family"): Promise<{
+  transactions: FinancialTransaction[];
+  budgets: CategoryBudget[];
+  bills: RecurringBill[];
+}> {
   try {
-    const { rows: tRows } = await pool.query(
-      "SELECT * FROM financial_transactions WHERE family_group = $1 ORDER BY transaction_date DESC LIMIT 50",
-      [familyGroup]
-    );
-    const { rows: bRows } = await pool.query(
-      "SELECT * FROM category_budgets WHERE family_group = $1 ORDER BY category ASC",
-      [familyGroup]
-    );
-    const { rows: rRows } = await pool.query(
-      "SELECT * FROM recurring_bills WHERE family_group = $1 ORDER BY next_due_day ASC",
-      [familyGroup]
-    );
+    const data = await graphqlFetch<{
+      financialTransactions: FinancialTransaction[];
+      categoryBudgets: CategoryBudget[];
+      recurringBills: RecurringBill[];
+    }>(GET_FINANCE_DATA_QUERY, { familyGroup });
 
     return {
-      transactions: tRows.map((r: any) => ({
-        id: String(r.id),
-        type: r.type,
-        category: r.category,
-        merchant: r.merchant,
-        amount: parseFloat(r.amount || 0),
-        currency: r.currency || "USD",
-        transactionDate: r.transaction_date,
-        isShared: !!r.is_shared,
-        source: r.source || "chat",
-        notes: r.notes,
-      })),
-      budgets: bRows.map((r: any) => ({
-        id: String(r.id),
-        category: r.category,
-        monthlyLimit: parseFloat(r.monthly_limit || 0),
-        currency: r.currency || "USD",
-        alertThresholdPct: parseFloat(r.alert_threshold_pct || 80),
-      })),
-      bills: rRows.map((r: any) => ({
-        id: String(r.id),
-        name: r.name,
-        category: r.category,
-        expectedAmount: parseFloat(r.expected_amount || 0),
-        currency: r.currency || "USD",
-        billingCycle: r.billing_cycle || "monthly",
-        nextDueDay: r.next_due_day || 1,
-        autoRenew: !!r.auto_renew,
-      })),
+      transactions: data.financialTransactions || [],
+      budgets: data.categoryBudgets || [],
+      bills: data.recurringBills || [],
     };
-  } catch (dbErr) {
+  } catch (err) {
+    console.error("Failed to load finance data:", err);
     return { transactions: [], budgets: [], bills: [] };
   }
 }
@@ -134,46 +98,45 @@ export default async function FinancePage() {
 
   async function addTransaction(formData: FormData) {
     "use server";
-    const typeArg = formData.get("type") as string;
-    const category = formData.get("category") as string;
-    const merchant = formData.get("merchant") as string;
-    const amount = parseFloat(formData.get("amount") as string) || 0;
-    const currency = formData.get("currency") as string || "USD";
-    const notes = formData.get("notes") as string || "";
+    const typeArg = (formData.get("type") as string) || "expense";
+    const category = (formData.get("category") as string) || "other";
+    const merchant = (formData.get("merchant") as string) || "";
+    const amount = parseFloat((formData.get("amount") as string) || "0") || 0;
+    const currency = (formData.get("currency") as string) || "USD";
+    const notes = (formData.get("notes") as string) || "";
 
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation LogTx($familyGroup: String!, $type: String!, $category: String!, $merchant: String!, $amount: Float!, $currency: String!, $notes: String) {
-            logFinancialTransaction(familyGroup: $familyGroup, type: $type, category: $category, merchant: $merchant, amount: $amount, currency: $currency, notes: $notes) { id }
-          }
-        `,
-        variables: { familyGroup: "Smith Family", type: typeArg, category, merchant, amount, currency, notes },
-      }),
-    });
+    try {
+      await graphqlFetch(LOG_TRANSACTION_MUTATION, {
+        familyGroup: "Smith Family",
+        type: typeArg,
+        category,
+        merchant,
+        amount,
+        currency,
+        notes,
+      });
+    } catch (err) {
+      console.error("addTransaction failed:", err);
+    }
     revalidatePath("/finance");
   }
 
   async function saveBudget(formData: FormData) {
     "use server";
-    const category = formData.get("category") as string;
-    const monthlyLimit = parseFloat(formData.get("limit") as string) || 0;
-    const currency = formData.get("currency") as string || "USD";
+    const category = (formData.get("category") as string) || "other";
+    const monthlyLimit = parseFloat((formData.get("limit") as string) || "0") || 0;
+    const currency = (formData.get("currency") as string) || "USD";
 
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation SetBudget($familyGroup: String!, $category: String!, $monthlyLimit: Float!, $currency: String!) {
-            setCategoryBudget(familyGroup: $familyGroup, category: $category, monthlyLimit: $monthlyLimit, currency: $currency) { id }
-          }
-        `,
-        variables: { familyGroup: "Smith Family", category, monthlyLimit, currency },
-      }),
-    });
+    try {
+      await graphqlFetch(SET_BUDGET_MUTATION, {
+        familyGroup: "Smith Family",
+        category,
+        monthlyLimit,
+        currency,
+      });
+    } catch (err) {
+      console.error("saveBudget failed:", err);
+    }
     revalidatePath("/finance");
   }
 
@@ -245,7 +208,7 @@ export default async function FinancePage() {
           </div>
 
           <div className="space-y-5">
-            {budgets.map((b: any) => {
+            {budgets.map((b: CategoryBudget) => {
               const currentSpend = spendByCategory[b.category] || 0;
               const pct = b.monthlyLimit > 0 ? (currentSpend / b.monthlyLimit) * 100 : 0;
               const isOver = pct >= 100;
@@ -404,7 +367,7 @@ export default async function FinancePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
-              {bills.map((b: any) => (
+              {bills.map((b: RecurringBill) => (
                 <tr key={b.id} className="hover:bg-neutral-50">
                   <td className="px-6 py-4 font-semibold text-neutral-900">{b.name}</td>
                   <td className="px-6 py-4 capitalize text-neutral-600">{b.category}</td>
@@ -452,7 +415,7 @@ export default async function FinancePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
-              {transactions.map((t: any) => {
+              {transactions.map((t: FinancialTransaction) => {
                 const isExpense = t.type === "expense";
                 return (
                   <tr key={t.id} className="hover:bg-neutral-50">

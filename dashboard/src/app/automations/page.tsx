@@ -1,162 +1,140 @@
 import { revalidatePath } from "next/cache";
-import { Zap, Globe, Sliders, Users, Plus, CheckCircle2, XCircle, Trash2, Shield, Clock } from "lucide-react";
-import { Pool } from "pg";
+import { Zap, Globe, Sliders, Users, CheckCircle2, XCircle, Trash2, Shield, Clock } from "lucide-react";
+import {
+  graphqlFetch,
+  type ExternalAPIConnector,
+  type AutomationRule,
+  type UserPreference,
+  type PersonalCRMContact,
+} from "@/lib/graphql";
 
 export const dynamic = "force-dynamic";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable",
-});
+const GET_AUTOMATIONS_QUERY = `
+  query GetAutomations($familyGroup: String!, $userId: ID!) {
+    externalApiConnectors(familyGroup: $familyGroup) {
+      id
+      name
+      baseUrl
+      defaultMethod
+      description
+      createdAt
+    }
+    automationRules(familyGroup: $familyGroup) {
+      id
+      name
+      triggerType
+      triggerTopic
+      conditionJson
+      actionInstruction
+      isActive
+      createdAt
+    }
+    userPreference(userId: $userId) {
+      userId
+      preferredLanguage
+      tonePersona
+      defaultCurrency
+      quietHoursStart
+      quietHoursEnd
+      standingInstructions
+    }
+    personalCrmContacts(familyGroup: $familyGroup) {
+      id
+      personName
+      relationship
+      importantDatesJson
+      giftIdeasAndSizes
+      medicalNotes
+      updatedAt
+    }
+  }
+`;
+
+const REGISTER_API_MUTATION = `
+  mutation RegisterAPI($familyGroup: String, $name: String!, $baseUrl: String!, $defaultMethod: String, $description: String) {
+    registerExternalApi(familyGroup: $familyGroup, name: $name, baseUrl: $baseUrl, defaultMethod: $defaultMethod, description: $description) { id }
+  }
+`;
+
+const TOGGLE_RULE_MUTATION = `
+  mutation ToggleRule($id: ID!, $isActive: Boolean!) {
+    toggleAutomationRule(id: $id, isActive: $isActive) { id }
+  }
+`;
+
+const DELETE_RULE_MUTATION = `
+  mutation DeleteRule($id: ID!) {
+    deleteAutomationRule(id: $id)
+  }
+`;
+
+const SAVE_PREFERENCES_MUTATION = `
+  mutation SavePref(
+    $userId: ID!
+    $preferredLanguage: String
+    $tonePersona: String
+    $defaultCurrency: String
+    $quietHoursStart: String
+    $quietHoursEnd: String
+    $standingInstructions: String
+  ) {
+    saveUserPreference(
+      userId: $userId
+      preferredLanguage: $preferredLanguage
+      tonePersona: $tonePersona
+      defaultCurrency: $defaultCurrency
+      quietHoursStart: $quietHoursStart
+      quietHoursEnd: $quietHoursEnd
+      standingInstructions: $standingInstructions
+    ) {
+      userId
+    }
+  }
+`;
 
 async function getAutomationData(familyGroup: string = "Smith Family", userId: string = "default") {
   try {
-    const res = await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          query GetAutomations($familyGroup: String!, $userId: ID!) {
-            externalApiConnectors(familyGroup: $familyGroup) {
-              id
-              name
-              baseUrl
-              defaultMethod
-              description
-              createdAt
-            }
-            automationRules(familyGroup: $familyGroup) {
-              id
-              name
-              triggerType
-              triggerTopic
-              conditionJson
-              actionInstruction
-              isActive
-              createdAt
-            }
-            userPreference(userId: $userId) {
-              userId
-              preferredLanguage
-              tonePersona
-              defaultCurrency
-              quietHoursStart
-              quietHoursEnd
-              standingInstructions
-            }
-            personalCrmContacts(familyGroup: $familyGroup) {
-              id
-              personName
-              relationship
-              importantDatesJson
-              giftIdeasAndSizes
-              medicalNotes
-              updatedAt
-            }
-          }
-        `,
-        variables: { familyGroup, userId },
-      }),
-      cache: "no-store",
-    });
-
-    if (res.ok) {
-      const json = await res.json();
-      if (json.data) {
-        return {
-          apis: json.data.externalApiConnectors || [],
-          rules: json.data.automationRules || [],
-          preferences: json.data.userPreference || null,
-          contacts: json.data.personalCrmContacts || [],
-        };
-      }
-    }
-  } catch (err) {}
-
-  try {
-    const { rows: aRows } = await pool.query(
-      "SELECT * FROM external_api_connectors ORDER BY created_at DESC",
-      []
-    );
-    const { rows: rRows } = await pool.query(
-      "SELECT * FROM automation_rules ORDER BY created_at DESC",
-      []
-    );
-    const { rows: pRows } = await pool.query(
-      "SELECT * FROM user_preferences LIMIT 1",
-      []
-    );
-    const { rows: cRows } = await pool.query(
-      "SELECT * FROM personal_crm_contacts ORDER BY person_name ASC",
-      []
-    );
+    const data = await graphqlFetch<{
+      externalApiConnectors: ExternalAPIConnector[];
+      automationRules: AutomationRule[];
+      userPreference: UserPreference | null;
+      personalCrmContacts: PersonalCRMContact[];
+    }>(GET_AUTOMATIONS_QUERY, { familyGroup, userId });
 
     return {
-      apis: aRows.map((r: any) => ({
-        id: String(r.id),
-        name: r.name,
-        baseUrl: r.base_url,
-        defaultMethod: r.default_method,
-        description: r.description,
-        createdAt: r.created_at,
-      })),
-      rules: rRows.map((r: any) => ({
-        id: String(r.id),
-        name: r.name,
-        triggerType: r.trigger_type,
-        triggerTopic: r.trigger_topic,
-        conditionJson: r.condition_json || "{}",
-        actionInstruction: r.action_instruction,
-        isActive: !!r.is_active,
-        createdAt: r.created_at,
-      })),
-      preferences: pRows[0]
-        ? {
-            userId: pRows[0].user_id,
-            preferredLanguage: pRows[0].preferred_language,
-            tonePersona: pRows[0].tone_persona,
-            defaultCurrency: pRows[0].default_currency,
-            quietHoursStart: pRows[0].quiet_hours_start,
-            quietHoursEnd: pRows[0].quiet_hours_end,
-            standingInstructions: pRows[0].standing_instructions,
-          }
-        : null,
-      contacts: cRows.map((r: any) => ({
-        id: String(r.id),
-        personName: r.person_name,
-        relationship: r.relationship,
-        importantDatesJson: r.important_dates_json || "{}",
-        giftIdeasAndSizes: r.gift_ideas_and_sizes,
-        medicalNotes: r.medical_notes,
-        updatedAt: r.updated_at,
-      })),
+      apis: data.externalApiConnectors || [],
+      rules: data.automationRules || [],
+      preferences: data.userPreference || null,
+      contacts: data.personalCrmContacts || [],
     };
-  } catch (dbErr) {
+  } catch (err) {
+    console.error("Failed to load automation data:", err);
     return { apis: [], rules: [], preferences: null, contacts: [] };
   }
 }
 
 export default async function AutomationsPage() {
-  const { apis, rules, preferences, contacts } = await getAutomationData();
+  const { rules, preferences, contacts } = await getAutomationData();
 
   async function registerAPI(formData: FormData) {
     "use server";
-    const name = formData.get("name") as string;
-    const baseUrl = formData.get("baseUrl") as string;
-    const defaultMethod = formData.get("defaultMethod") as string || "GET";
-    const description = formData.get("description") as string || "";
+    const name = (formData.get("name") as string) || "";
+    const baseUrl = (formData.get("baseUrl") as string) || "";
+    const defaultMethod = (formData.get("defaultMethod") as string) || "GET";
+    const description = (formData.get("description") as string) || "";
 
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation RegisterAPI($name: String!, $baseUrl: String!, $defaultMethod: String, $description: String) {
-            registerExternalApi(name: $name, baseUrl: $baseUrl, defaultMethod: $defaultMethod, description: $description) { id }
-          }
-        `,
-        variables: { name, baseUrl, defaultMethod, description },
-      }),
-    });
+    try {
+      await graphqlFetch(REGISTER_API_MUTATION, {
+        familyGroup: "Smith Family",
+        name,
+        baseUrl,
+        defaultMethod,
+        description,
+      });
+    } catch (err) {
+      console.error("registerAPI failed:", err);
+    }
     revalidatePath("/automations");
   }
 
@@ -165,36 +143,23 @@ export default async function AutomationsPage() {
     const id = formData.get("id") as string;
     const isActive = formData.get("isActive") === "true";
 
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation ToggleRule($id: ID!, $isActive: Boolean!) {
-            toggleAutomationRule(id: $id, isActive: $isActive) { id }
-          }
-        `,
-        variables: { id, isActive: !isActive },
-      }),
-    });
+    try {
+      await graphqlFetch(TOGGLE_RULE_MUTATION, { id, isActive: !isActive });
+    } catch (err) {
+      console.error("toggleRule failed:", err);
+    }
     revalidatePath("/automations");
   }
 
   async function deleteRule(formData: FormData) {
     "use server";
     const id = formData.get("id") as string;
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation DeleteRule($id: ID!) {
-            deleteAutomationRule(id: $id)
-          }
-        `,
-        variables: { id },
-      }),
-    });
+
+    try {
+      await graphqlFetch(DELETE_RULE_MUTATION, { id });
+    } catch (err) {
+      console.error("deleteRule failed:", err);
+    }
     revalidatePath("/automations");
   }
 
@@ -207,26 +172,19 @@ export default async function AutomationsPage() {
     const quietHoursEnd = formData.get("quietEnd") as string;
     const standingInstructions = formData.get("instructions") as string;
 
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation SavePref($userId: ID!, $preferredLanguage: String, $tonePersona: String, $defaultCurrency: String, $quietHoursStart: String, $quietHoursEnd: String, $standingInstructions: String) {
-            saveUserPreference(userId: $userId, preferredLanguage: $preferredLanguage, tonePersona: $tonePersona, defaultCurrency: $defaultCurrency, quietHoursStart: $quietHoursStart, quietHoursEnd: $quietHoursEnd, standingInstructions: $standingInstructions) { userId }
-          }
-        `,
-        variables: {
-          userId: "default",
-          preferredLanguage,
-          tonePersona,
-          defaultCurrency,
-          quietHoursStart,
-          quietHoursEnd,
-          standingInstructions,
-        },
-      }),
-    });
+    try {
+      await graphqlFetch(SAVE_PREFERENCES_MUTATION, {
+        userId: "default",
+        preferredLanguage,
+        tonePersona,
+        defaultCurrency,
+        quietHoursStart,
+        quietHoursEnd,
+        standingInstructions,
+      });
+    } catch (err) {
+      console.error("savePreferences failed:", err);
+    }
     revalidatePath("/automations");
   }
 
@@ -408,7 +366,7 @@ export default async function AutomationsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
-              {rules.map((r: any) => (
+              {rules.map((r: AutomationRule) => (
                 <tr key={r.id} className="hover:bg-neutral-50">
                   <td className="px-6 py-4">
                     <span className={`inline-flex items-center text-xs font-medium ${r.isActive ? "text-green-600" : "text-neutral-400"}`}>
@@ -474,11 +432,11 @@ export default async function AutomationsPage() {
           <span className="text-xs text-neutral-400">Important dates, clothing sizes & medical notes</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 p-6">
-          {contacts.map((c: any) => {
+          {contacts.map((c: PersonalCRMContact) => {
             let dates: Record<string, string> = {};
             try {
               dates = JSON.parse(c.importantDatesJson || "{}");
-            } catch (_) {}
+            } catch {}
 
             return (
               <div key={c.id} className="bg-neutral-50 rounded-xl p-4 border border-neutral-200">

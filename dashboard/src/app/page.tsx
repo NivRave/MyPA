@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { 
   Brain, Share2, Baby, Home as HomeIcon, DollarSign, Zap, History,
-  Activity, ArrowRight, ShieldCheck, Users
+  ArrowRight, Users
 } from "lucide-react";
 
 export default function Home() {

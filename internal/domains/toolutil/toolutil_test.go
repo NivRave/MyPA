@@ -125,3 +125,35 @@ func TestToolUtil_PublishMutation(t *testing.T) {
 		t.Fatal("timed out waiting for event")
 	}
 }
+
+func TestParseID(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    uint
+		wantErr bool
+	}{
+		{name: "valid positive", input: "42", want: 42, wantErr: false},
+		{name: "valid with whitespace", input: "  100  ", want: 100, wantErr: false},
+		{name: "empty string", input: "", want: 0, wantErr: true},
+		{name: "whitespace only", input: "   ", want: 0, wantErr: true},
+		{name: "zero", input: "0", want: 0, wantErr: true},
+		{name: "negative", input: "-5", want: 0, wantErr: true},
+		{name: "non-numeric", input: "abc", want: 0, wantErr: true},
+		{name: "float string", input: "3.14", want: 0, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseID(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseID(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("ParseID(%q) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+

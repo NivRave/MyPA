@@ -1,15 +1,15 @@
 import { revalidatePath } from "next/cache";
 import { Baby, Heart, Scale, Ruler, AlertCircle, Plus, Sparkles, Check, Package, Clock } from "lucide-react";
-import { Pool } from "pg";
+import {
+  graphqlFetch,
+  type BabyProfile,
+  type BabyCareLog,
+  type BabyInventoryItem,
+} from "@/lib/graphql";
 
 export const dynamic = "force-dynamic";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable",
-});
-
-function calculateAge(dob: Date): string {
-  const now = new Date();
+function calculateAge(dob: Date, now: Date): string {
   const diffTime = Math.abs(now.getTime() - dob.getTime());
   const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
   
@@ -25,8 +25,8 @@ function calculateAge(dob: Date): string {
   return `${months} months, ${remainingDays} days old`;
 }
 
-function getMilestones(dob: Date): string[] {
-  const diffDays = Math.floor(Math.abs(new Date().getTime() - dob.getTime()) / (1000 * 60 * 60 * 24));
+function getMilestones(dob: Date, now: Date): string[] {
+  const diffDays = Math.floor(Math.abs(now.getTime() - dob.getTime()) / (1000 * 60 * 60 * 24));
   const months = diffDays / 30.4375;
 
   if (months < 2) {
@@ -60,185 +60,150 @@ function getMilestones(dob: Date): string[] {
   }
 }
 
-async function getBabyData(familyGroup: string = "Smith Family") {
-  try {
-    const res = await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          query GetBabyData($familyGroup: String!) {
-            babyProfiles(familyGroup: $familyGroup) {
-              id
-              name
-              dateOfBirth
-              gender
-              birthWeightGrams
-              currentWeightGrams
-              heightCm
-              pediatricianInfo
-              allergiesNotes
-              updatedAt
-            }
-            babyInventory(familyGroup: $familyGroup) {
-              id
-              itemName
-              quantityRemaining
-              unit
-              lowThreshold
-              updatedAt
-            }
-          }
-        `,
-        variables: { familyGroup },
-      }),
-      cache: "no-store",
-    });
-
-    if (res.ok) {
-      const json = await res.json();
-      if (json.data && json.data.babyProfiles && json.data.babyProfiles.length > 0) {
-        const baby = json.data.babyProfiles[0];
-        const logRes = await fetch("http://proxy:8000/graphql", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: `
-              query GetBabyLogs($babyId: ID!) {
-                babyCareLogs(babyId: $babyId, limit: 30) {
-                  id
-                  logType
-                  valueNumeric
-                  unit
-                  details
-                  timestamp
-                  loggedByUserId
-                }
-              }
-            `,
-            variables: { babyId: baby.id },
-          }),
-          cache: "no-store",
-        });
-        const logJson = logRes.ok ? await logRes.json() : {};
-        return {
-          profile: baby,
-          logs: logJson.data?.babyCareLogs || [],
-          inventory: json.data.babyInventory || [],
-        };
-      }
+const GET_BABY_DATA_QUERY = `
+  query GetBabyData($familyGroup: String!) {
+    babyProfiles(familyGroup: $familyGroup) {
+      id
+      name
+      dateOfBirth
+      gender
+      birthWeightGrams
+      currentWeightGrams
+      heightCm
+      pediatricianInfo
+      allergiesNotes
+      updatedAt
     }
-  } catch (err) {}
+    babyInventory(familyGroup: $familyGroup) {
+      id
+      itemName
+      quantityRemaining
+      unit
+      lowThreshold
+      updatedAt
+    }
+  }
+`;
 
+const GET_BABY_LOGS_QUERY = `
+  query GetBabyLogs($babyId: ID!) {
+    babyCareLogs(babyId: $babyId, limit: 30) {
+      id
+      logType
+      valueNumeric
+      unit
+      details
+      timestamp
+      loggedByUserId
+    }
+  }
+`;
+
+const LOG_CARE_MUTATION = `
+  mutation LogCare($babyId: ID!, $familyGroup: String!, $logType: String!, $valueNumeric: Float, $unit: String, $details: String) {
+    logBabyCare(babyId: $babyId, familyGroup: $familyGroup, logType: $logType, valueNumeric: $valueNumeric, unit: $unit, details: $details) { id }
+  }
+`;
+
+const UPDATE_INVENTORY_MUTATION = `
+  mutation UpdateInv($familyGroup: String!, $itemName: String!, $quantityRemaining: Float!, $unit: String!, $lowThreshold: Float!) {
+    updateBabyInventory(familyGroup: $familyGroup, itemName: $itemName, quantityRemaining: $quantityRemaining, unit: $unit, lowThreshold: $lowThreshold) { id }
+  }
+`;
+
+async function getBabyData(familyGroup: string = "Smith Family"): Promise<{
+  profile: BabyProfile | null;
+  logs: BabyCareLog[];
+  inventory: BabyInventoryItem[];
+  dob: Date;
+  ageString: string;
+  milestoneSuggestions: string[];
+}> {
+  const now = new Date();
   try {
-    const { rows: pRows } = await pool.query(
-      "SELECT * FROM baby_profiles WHERE family_group = $1 LIMIT 1",
-      [familyGroup]
-    );
-    const profile = pRows[0] || null;
+    const data = await graphqlFetch<{
+      babyProfiles: BabyProfile[];
+      babyInventory: BabyInventoryItem[];
+    }>(GET_BABY_DATA_QUERY, { familyGroup });
 
-    let logs: any[] = [];
-    if (profile) {
-      const { rows: lRows } = await pool.query(
-        "SELECT * FROM baby_care_logs WHERE baby_id = $1 ORDER BY timestamp DESC LIMIT 30",
-        [profile.id]
+    const baby = data.babyProfiles?.[0] || null;
+    let logs: BabyCareLog[] = [];
+    if (baby) {
+      const logData = await graphqlFetch<{ babyCareLogs: BabyCareLog[] }>(
+        GET_BABY_LOGS_QUERY,
+        { babyId: baby.id }
       );
-      logs = lRows.map((r: any) => ({
-        id: String(r.id),
-        logType: r.log_type,
-        valueNumeric: parseFloat(r.value_numeric || 0),
-        unit: r.unit,
-        details: r.details,
-        timestamp: r.timestamp,
-        loggedByUserId: r.logged_by_user_id,
-      }));
+      logs = logData.babyCareLogs || [];
     }
 
-    const { rows: iRows } = await pool.query(
-      "SELECT * FROM baby_inventory_items WHERE family_group = $1 ORDER BY item_name ASC",
-      [familyGroup]
-    );
-
+    const dob = baby ? new Date(baby.dateOfBirth) : new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
     return {
-      profile: profile
-        ? {
-            id: String(profile.id),
-            name: profile.name,
-            dateOfBirth: profile.date_of_birth,
-            gender: profile.gender,
-            birthWeightGrams: profile.birth_weight_grams,
-            currentWeightGrams: profile.current_weight_grams,
-            heightCm: parseFloat(profile.height_cm || 0),
-            pediatricianInfo: profile.pediatrician_info,
-            allergiesNotes: profile.allergies_notes,
-            updatedAt: profile.updated_at,
-          }
-        : null,
+      profile: baby,
       logs,
-      inventory: iRows.map((r: any) => ({
-        id: String(r.id),
-        itemName: r.item_name,
-        quantityRemaining: parseFloat(r.quantity_remaining || 0),
-        unit: r.unit,
-        lowThreshold: parseFloat(r.low_threshold || 0),
-        updatedAt: r.updated_at,
-      })),
+      inventory: data.babyInventory || [],
+      dob,
+      ageString: calculateAge(dob, now),
+      milestoneSuggestions: getMilestones(dob, now),
     };
-  } catch (dbErr) {
-    return { profile: null, logs: [], inventory: [] };
+  } catch (err) {
+    console.error("Failed to load baby data:", err);
+    const dob = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    return {
+      profile: null,
+      logs: [],
+      inventory: [],
+      dob,
+      ageString: calculateAge(dob, now),
+      milestoneSuggestions: getMilestones(dob, now),
+    };
   }
 }
 
 export default async function BabyTrackerPage() {
   const familyGroup = "Smith Family";
-  const { profile, logs, inventory } = await getBabyData(familyGroup);
-
-  const dob = profile ? new Date(profile.dateOfBirth) : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-  const ageString = calculateAge(dob);
-  const milestoneSuggestions = getMilestones(dob);
+  const { profile, logs, inventory, dob, ageString, milestoneSuggestions } = await getBabyData(familyGroup);
 
   async function logCare(formData: FormData) {
     "use server";
-    const logType = formData.get("logType") as string;
-    const value = parseFloat(formData.get("value") as string) || 0;
-    const unit = formData.get("unit") as string || "";
-    const details = formData.get("details") as string || "";
-    const babyId = formData.get("babyId") as string || "1";
+    const logType = (formData.get("logType") as string) || "";
+    const value = parseFloat((formData.get("value") as string) || "0") || 0;
+    const unit = (formData.get("unit") as string) || "";
+    const details = (formData.get("details") as string) || "";
+    const babyId = (formData.get("babyId") as string) || "1";
 
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation LogCare($babyId: ID!, $familyGroup: String!, $logType: String!, $valueNumeric: Float, $unit: String, $details: String) {
-            logBabyCare(babyId: $babyId, familyGroup: $familyGroup, logType: $logType, valueNumeric: $valueNumeric, unit: $unit, details: $details) { id }
-          }
-        `,
-        variables: { babyId, familyGroup: "Smith Family", logType, valueNumeric: value, unit, details },
-      }),
-    });
+    try {
+      await graphqlFetch(LOG_CARE_MUTATION, {
+        babyId,
+        familyGroup: "Smith Family",
+        logType,
+        valueNumeric: value,
+        unit,
+        details,
+      });
+    } catch (err) {
+      console.error("logCare failed:", err);
+    }
     revalidatePath("/baby");
   }
 
   async function updateStock(formData: FormData) {
     "use server";
-    const itemName = formData.get("itemName") as string;
-    const qty = parseFloat(formData.get("quantity") as string) || 0;
-    const unit = formData.get("unit") as string || "pcs";
-    const lowThreshold = parseFloat(formData.get("threshold") as string) || 5;
+    const itemName = (formData.get("itemName") as string) || "";
+    const qty = parseFloat((formData.get("quantity") as string) || "0") || 0;
+    const unit = (formData.get("unit") as string) || "pcs";
+    const lowThreshold = parseFloat((formData.get("threshold") as string) || "5") || 5;
 
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation UpdateInv($familyGroup: String!, $itemName: String!, $quantityRemaining: Float!, $unit: String!, $lowThreshold: Float!) {
-            updateBabyInventory(familyGroup: $familyGroup, itemName: $itemName, quantityRemaining: $quantityRemaining, unit: $unit, lowThreshold: $lowThreshold) { id }
-          }
-        `,
-        variables: { familyGroup: "Smith Family", itemName, quantityRemaining: qty, unit, lowThreshold },
-      }),
-    });
+    try {
+      await graphqlFetch(UPDATE_INVENTORY_MUTATION, {
+        familyGroup: "Smith Family",
+        itemName,
+        quantityRemaining: qty,
+        unit,
+        lowThreshold,
+      });
+    } catch (err) {
+      console.error("updateStock failed:", err);
+    }
     revalidatePath("/baby");
   }
 
@@ -392,7 +357,7 @@ export default async function BabyTrackerPage() {
             </h2>
           </div>
           <div className="space-y-3 flex-1 overflow-y-auto mb-4">
-            {inventory.map((item: any) => {
+            {inventory.map((item: BabyInventoryItem) => {
               const isLow = item.quantityRemaining <= item.lowThreshold;
               return (
                 <div key={item.id} className="p-3 bg-neutral-50 rounded-lg flex items-center justify-between text-xs">
@@ -463,7 +428,7 @@ export default async function BabyTrackerPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
-              {logs.map((log: any) => (
+              {logs.map((log: BabyCareLog) => (
                 <tr key={log.id} className="hover:bg-neutral-50">
                   <td className="px-6 py-4 whitespace-nowrap text-xs text-neutral-500">
                     <span className="inline-flex items-center">

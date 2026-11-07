@@ -1,75 +1,43 @@
 import { revalidatePath } from "next/cache";
 import { History, RotateCcw, CheckCircle, Clock, AlertTriangle, Filter } from "lucide-react";
-import { Pool } from "pg";
+import { graphqlFetch, type MutationLog } from "@/lib/graphql";
 
 export const dynamic = "force-dynamic";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable",
-});
-
-async function getMutationLogs(topic?: string) {
-  try {
-    const res = await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          query GetMutationLogs($topic: String) {
-            mutationLogs(topic: $topic, limit: 100) {
-              id
-              userId
-              familyGroup
-              topic
-              action
-              entityType
-              entityId
-              beforeJson
-              afterJson
-              summary
-              isUndone
-              createdAt
-            }
-          }
-        `,
-        variables: { topic: topic && topic !== "all" ? topic : null },
-      }),
-      cache: "no-store",
-    });
-
-    if (res.ok) {
-      const json = await res.json();
-      if (json.data && json.data.mutationLogs) {
-        return json.data.mutationLogs;
-      }
+const GET_MUTATION_LOGS = `
+  query GetMutationLogs($topic: String) {
+    mutationLogs(topic: $topic, limit: 100) {
+      id
+      userId
+      familyGroup
+      topic
+      action
+      entityType
+      entityId
+      beforeJson
+      afterJson
+      summary
+      isUndone
+      createdAt
     }
-  } catch (err) {}
+  }
+`;
 
+const ROLLBACK_MUTATION = `
+  mutation Rollback($mutationId: ID!) {
+    rollbackMutation(mutationId: $mutationId)
+  }
+`;
+
+async function getMutationLogs(topic?: string): Promise<MutationLog[]> {
   try {
-    let q = "SELECT * FROM mutation_logs WHERE 1=1";
-    const params: any[] = [];
-    if (topic && topic !== "all") {
-      params.push(topic);
-      q += ` AND topic = $${params.length}`;
-    }
-    q += " ORDER BY created_at DESC LIMIT 100";
-    const { rows } = await pool.query(q, params);
-
-    return rows.map((r: any) => ({
-      id: r.id,
-      userId: r.user_id,
-      familyGroup: r.family_group,
-      topic: r.topic,
-      action: r.action,
-      entityType: r.entity_type,
-      entityId: r.entity_id,
-      beforeJson: r.before_json,
-      afterJson: r.after_json,
-      summary: r.summary,
-      isUndone: !!r.is_undone,
-      createdAt: r.created_at,
-    }));
-  } catch (dbErr) {
+    const data = await graphqlFetch<{ mutationLogs: MutationLog[] }>(
+      GET_MUTATION_LOGS,
+      { topic: topic && topic !== "all" ? topic : null }
+    );
+    return data.mutationLogs || [];
+  } catch (err) {
+    console.error("Failed to fetch mutation logs:", err);
     return [];
   }
 }
@@ -95,18 +63,11 @@ export default async function AuditRollbackPage({
   async function rollback(formData: FormData) {
     "use server";
     const mutationId = formData.get("mutationId") as string;
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation Rollback($mutationId: ID!) {
-            rollbackMutation(mutationId: $mutationId)
-          }
-        `,
-        variables: { mutationId },
-      }),
-    });
+    try {
+      await graphqlFetch(ROLLBACK_MUTATION, { mutationId });
+    } catch (err) {
+      console.error("Rollback failed:", err);
+    }
     revalidatePath("/audit");
   }
 
@@ -169,7 +130,7 @@ export default async function AuditRollbackPage({
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
-              {logs.map((log: any) => {
+              {logs.map((log: MutationLog) => {
                 return (
                   <tr key={log.id} className={`hover:bg-neutral-50 ${log.isUndone ? "opacity-60 bg-neutral-50/50" : ""}`}>
                     <td className="px-6 py-4 whitespace-nowrap text-xs text-neutral-500">

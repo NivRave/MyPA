@@ -1,0 +1,255 @@
+package graph
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/models"
+	"github.com/pgvector/pgvector-go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type mockBabyRepo struct {
+	db.BabyRepository
+	createCareLogCalled bool
+	lastCreatedLog      *models.BabyCareLog
+}
+
+func (m *mockBabyRepo) CreateCareLog(log *models.BabyCareLog) error {
+	m.createCareLogCalled = true
+	log.ID = 101
+	m.lastCreatedLog = log
+	return nil
+}
+
+type mockMemoryRepo struct {
+	db.MemoryV2Repository
+	savedMemories  []*models.TopicMemory
+	deletedIDs     []uint
+	pinnedIDs      []uint
+	mockMem        *models.TopicMemory
+}
+
+func (m *mockMemoryRepo) SaveTopicMemory(ctx context.Context, memory *models.TopicMemory) error {
+	memory.ID = 202
+	m.savedMemories = append(m.savedMemories, memory)
+	return nil
+}
+
+func (m *mockMemoryRepo) GetTopicMemory(ctx context.Context, id uint, familyGroup ...string) (*models.TopicMemory, error) {
+	if m.mockMem != nil && m.mockMem.ID == id {
+		return m.mockMem, nil
+	}
+	return &models.TopicMemory{
+		ID:          id,
+		Topic:       "health",
+		Subtopic:    "test",
+		Fact:        "Test fact",
+		FamilyGroup: "fam-test",
+	}, nil
+}
+
+func (m *mockMemoryRepo) DeleteTopicMemory(ctx context.Context, id uint, familyGroup ...string) error {
+	m.deletedIDs = append(m.deletedIDs, id)
+	return nil
+}
+
+func (m *mockMemoryRepo) PinTopicMemory(ctx context.Context, id uint, isPinned bool, familyGroup ...string) (*models.TopicMemory, error) {
+	m.pinnedIDs = append(m.pinnedIDs, id)
+	return &models.TopicMemory{
+		ID:       id,
+		Topic:    "health",
+		Fact:     "Test fact",
+		IsPinned: isPinned,
+	}, nil
+}
+
+func (m *mockMemoryRepo) ListTopicMemories(ctx context.Context, familyGroup, topic string, includeSuperseded bool) ([]models.TopicMemory, error) {
+	return []models.TopicMemory{
+		{ID: 1, Topic: "health", Fact: "Fact 1", FamilyGroup: familyGroup},
+	}, nil
+}
+
+func (m *mockMemoryRepo) SearchTopicMemories(ctx context.Context, userID, familyGroup, topic, query string, tags []string) ([]models.TopicMemory, error) {
+	return nil, nil
+}
+func (m *mockMemoryRepo) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
+	return nil, nil
+}
+func (m *mockMemoryRepo) SupersedeMemory(ctx context.Context, oldID uint, newID uint) error {
+	return nil
+}
+func (m *mockMemoryRepo) UpsertEntityProfile(ctx context.Context, profile *models.EntityProfile) error {
+	profile.ID = 303
+	return nil
+}
+func (m *mockMemoryRepo) GetEntityProfile(ctx context.Context, familyGroup, topic, entityName string) (*models.EntityProfile, error) {
+	return nil, nil
+}
+func (m *mockMemoryRepo) ListEntityProfiles(ctx context.Context, familyGroup, topic string) ([]models.EntityProfile, error) {
+	return nil, nil
+}
+func (m *mockMemoryRepo) ListActiveMemoriesForConsolidation(ctx context.Context) ([]models.TopicMemory, error) {
+	return nil, nil
+}
+
+type mockAutoRepo struct {
+	db.AutomationRepository
+	createdAPIs  []*models.ExternalAPIConnector
+	createdRules []*models.AutomationRule
+}
+
+func (m *mockAutoRepo) CreateAPIConnector(connector *models.ExternalAPIConnector) error {
+	connector.ID = 404
+	m.createdAPIs = append(m.createdAPIs, connector)
+	return nil
+}
+
+func (m *mockAutoRepo) CreateAutomationRule(rule *models.AutomationRule) error {
+	rule.ID = 505
+	m.createdRules = append(m.createdRules, rule)
+	return nil
+}
+
+func TestResolver_InvalidID_Validation(t *testing.T) {
+	resolver := NewResolver(ResolverConfig{})
+	ctx := context.Background()
+
+	// 1. DeleteTopicMemory invalid ID
+	_, err := resolver.Mutation().DeleteTopicMemory(ctx, "invalid-id")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid topic memory id")
+
+	_, err = resolver.Mutation().DeleteTopicMemory(ctx, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "id cannot be empty")
+
+	// 2. PinTopicMemory invalid ID
+	_, err = resolver.Mutation().PinTopicMemory(ctx, "0", true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid topic memory id")
+
+	// 3. CompleteHomeMaintenance invalid ID
+	_, err = resolver.Mutation().CompleteHomeMaintenance(ctx, "-10")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid home maintenance id")
+
+	// 4. DeleteAutomationRule invalid ID
+	_, err = resolver.Mutation().DeleteAutomationRule(ctx, "abc")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid automation rule id")
+}
+
+func TestResolver_PositiveAuthorization(t *testing.T) {
+	memRepo := &mockMemoryRepo{}
+	resolver := NewResolver(ResolverConfig{
+		MemoryRepo: memRepo,
+	})
+
+	// Non-admin user with FamilyA trying to delete from FamilyB
+	ctxNonAdmin := WithClaims(context.Background(), &AuthClaims{
+		UserID:      "usr-1",
+		Role:        "member",
+		FamilyGroup: "FamilyA",
+	})
+
+	fgTarget := "FamilyB"
+	_, err := resolver.Mutation().SaveTopicMemory(ctxNonAdmin, "health", "diet", "No nuts", nil, nil, &fgTarget)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+
+	// Admin user can access any family group
+	ctxAdmin := WithClaims(context.Background(), &AuthClaims{
+		UserID:      "admin-1",
+		Role:        "admin",
+		FamilyGroup: "default",
+	})
+	res, err := resolver.Mutation().SaveTopicMemory(ctxAdmin, "health", "diet", "No nuts", nil, nil, &fgTarget)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, "FamilyB", res.FamilyGroup)
+}
+
+func TestResolver_Mutations_EmitEvents(t *testing.T) {
+	bus := events.NewEventBus()
+	var publishedEvents []events.MutationEvent
+	bus.Subscribe(func(ctx context.Context, ev events.MutationEvent) error {
+		publishedEvents = append(publishedEvents, ev)
+		return nil
+	})
+
+
+	babyRepo := &mockBabyRepo{}
+	memRepo := &mockMemoryRepo{}
+	autoRepo := &mockAutoRepo{}
+
+	resolver := NewResolver(ResolverConfig{
+		EventBus:       bus,
+		BabyRepo:       babyRepo,
+		MemoryRepo:     memRepo,
+		AutomationRepo: autoRepo,
+	})
+
+	ctx := WithClaims(context.Background(), &AuthClaims{
+		UserID:      "usr-100",
+		Role:        "member",
+		FamilyGroup: "fam-test",
+	})
+
+	// 1. LogBabyCare mutation
+	val := 150.0
+	unit := "ml"
+	bLog, err := resolver.Mutation().LogBabyCare(ctx, "1", "fam-test", "feeding", &val, &unit, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, bLog)
+	assert.True(t, babyRepo.createCareLogCalled)
+
+	// 2. SaveTopicMemory mutation
+	fact := "Prefers oat milk"
+	mLog, err := resolver.Mutation().SaveTopicMemory(ctx, "diet", "milk", fact, nil, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, mLog)
+	require.Len(t, memRepo.savedMemories, 1)
+
+	// 3. RegisterExternalAPI mutation (fixes BUG-03)
+	fg := "fam-test"
+	method := "GET"
+	apiLog, err := resolver.Mutation().RegisterExternalAPI(ctx, "WeatherAPI", "https://api.weather.com", &method, nil, &fg)
+	require.NoError(t, err)
+	require.NotNil(t, apiLog)
+	require.Len(t, autoRepo.createdAPIs, 1)
+	assert.Equal(t, "fam-test", autoRepo.createdAPIs[0].FamilyGroup)
+
+	// 4. SaveAutomationRule mutation (fixes BUG-03)
+	ruleLog, err := resolver.Mutation().SaveAutomationRule(ctx, "BabyRule", "mutation", "baby", "{}", "notify partner", nil, &fg)
+	require.NoError(t, err)
+	require.NotNil(t, ruleLog)
+	require.Len(t, autoRepo.createdRules, 1)
+	assert.Equal(t, "fam-test", autoRepo.createdRules[0].FamilyGroup)
+
+	// Allow brief async event queue processing if any
+	time.Sleep(50 * time.Millisecond)
+
+	require.Len(t, publishedEvents, 4)
+	assert.Equal(t, "baby", publishedEvents[0].Topic)
+	assert.Equal(t, "create", publishedEvents[0].Action)
+	assert.Equal(t, "baby_care_log", publishedEvents[0].EntityType)
+
+	assert.Equal(t, "diet", publishedEvents[1].Topic)
+	assert.Equal(t, "create", publishedEvents[1].Action)
+	assert.Equal(t, "topic_memory", publishedEvents[1].EntityType)
+
+	assert.Equal(t, "automation", publishedEvents[2].Topic)
+	assert.Equal(t, "create", publishedEvents[2].Action)
+	assert.Equal(t, "external_api_connector", publishedEvents[2].EntityType)
+	assert.Equal(t, "fam-test", publishedEvents[2].FamilyGroup)
+
+	assert.Equal(t, "automation", publishedEvents[3].Topic)
+	assert.Equal(t, "create", publishedEvents[3].Action)
+	assert.Equal(t, "automation_rule", publishedEvents[3].EntityType)
+	assert.Equal(t, "fam-test", publishedEvents[3].FamilyGroup)
+}

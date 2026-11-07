@@ -272,7 +272,7 @@ func main() {
 	}()
 
 	// 7. Start HTTP Server for OAuth callbacks and GraphQL
-	mux := setupRouter(oauthCfg, store, tgClient, dbClient, durabilityModule)
+	mux := setupRouter(oauthCfg, store, tgClient, dbClient, durabilityModule, eventBus)
 
 	serverAddr := fmt.Sprintf(":%d", cfg.Server.OrchestratorPort)
 	srv := &http.Server{
@@ -321,7 +321,7 @@ func setupAuthRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClien
 	return setupRouter(oauthCfg, store, tgClient, nil, saver)
 }
 
-func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient, dbClient *db.Client, fallbackSaver CredentialFallbackSaver) *http.ServeMux {
+func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient, dbClient *db.Client, fallbackSaver CredentialFallbackSaver, eventBus ...*events.EventBus) *http.ServeMux {
 	mux := http.NewServeMux()
 	
 	// GraphQL Server
@@ -330,7 +330,24 @@ func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient Au
 		if dMod, ok := fallbackSaver.(durability.RollbackEngine); ok {
 			durEngine = dMod
 		}
-		srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: &graph.Resolver{DB: dbClient, Durability: durEngine}}))
+		var bus *events.EventBus
+		if len(eventBus) > 0 {
+			bus = eventBus[0]
+		}
+		resolvers := graph.NewResolver(graph.ResolverConfig{
+			DB:             dbClient,
+			EventBus:       bus,
+			Durability:     durEngine,
+			BabyRepo:       db.NewBabyRepository(dbClient.DB),
+			HouseRepo:      db.NewHouseRepository(dbClient.DB),
+			FinanceRepo:    db.NewFinanceRepository(dbClient.DB),
+			ScheduleRepo:   db.NewScheduleRepository(dbClient.DB),
+			SharedRepo:     db.NewSharedRepository(dbClient.DB),
+			MemoryRepo:     db.NewMemoryV2Repo(dbClient.DB),
+			AutomationRepo: db.NewAutomationRepository(dbClient.DB),
+		})
+		srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: resolvers}))
+
 
 		dashboardSecret := os.Getenv("DASHBOARD_API_SECRET")
 		jwtSecret := os.Getenv("JWT_SECRET")

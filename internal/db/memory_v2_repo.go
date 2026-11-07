@@ -19,6 +19,10 @@ func init() {
 // MemoryV2Repository defines the interface for managing topic-mapped memories and living entity profiles.
 type MemoryV2Repository interface {
 	SaveTopicMemory(ctx context.Context, memory *models.TopicMemory) error
+	GetTopicMemory(ctx context.Context, id uint, familyGroup ...string) (*models.TopicMemory, error)
+	DeleteTopicMemory(ctx context.Context, id uint, familyGroup ...string) error
+	PinTopicMemory(ctx context.Context, id uint, isPinned bool, familyGroup ...string) (*models.TopicMemory, error)
+	ListTopicMemories(ctx context.Context, familyGroup, topic string, includeSuperseded bool) ([]models.TopicMemory, error)
 	SearchTopicMemories(ctx context.Context, userID, familyGroup, topic, query string, tags []string) ([]models.TopicMemory, error)
 	SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error)
 	SupersedeMemory(ctx context.Context, oldID uint, newID uint) error
@@ -27,6 +31,7 @@ type MemoryV2Repository interface {
 	ListEntityProfiles(ctx context.Context, familyGroup, topic string) ([]models.EntityProfile, error)
 	ListActiveMemoriesForConsolidation(ctx context.Context) ([]models.TopicMemory, error)
 }
+
 
 // MemoryV2Repo implements MemoryV2Repository using GORM.
 type MemoryV2Repo struct {
@@ -58,6 +63,9 @@ func (r *MemoryV2Repo) SaveTopicMemory(ctx context.Context, memory *models.Topic
 		memory.TagsJSON = "[]"
 	}
 	memory.Topic = strings.ToLower(strings.TrimSpace(memory.Topic))
+	if len(memory.Embedding.Slice()) == 0 {
+		memory.Embedding = pgvector.NewVector(make([]float32, 3072))
+	}
 
 	result := r.db.WithContext(ctx).Create(memory)
 	if result.Error != nil {
@@ -343,4 +351,95 @@ func (c *Client) ListActiveMemoriesForConsolidation(ctx context.Context) ([]mode
 func (c *Client) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
 	return c.MemoryV2().SearchSimilarMemories(ctx, userID, familyGroup, embedding, limit)
 }
+
+// GetTopicMemory retrieves a TopicMemory by ID, optionally scoped by familyGroup.
+func (r *MemoryV2Repo) GetTopicMemory(ctx context.Context, id uint, familyGroup ...string) (*models.TopicMemory, error) {
+	var mem models.TopicMemory
+	q := r.db.WithContext(ctx).Where("id = ?", id)
+	if len(familyGroup) > 0 && familyGroup[0] != "" {
+		q = q.Where("family_group = ?", familyGroup[0])
+	}
+	if err := q.First(&mem).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &mem, nil
+}
+
+// DeleteTopicMemory deletes a TopicMemory by ID, optionally scoped by familyGroup.
+func (r *MemoryV2Repo) DeleteTopicMemory(ctx context.Context, id uint, familyGroup ...string) error {
+	q := r.db.WithContext(ctx).Where("id = ?", id)
+	if len(familyGroup) > 0 && familyGroup[0] != "" {
+		q = q.Where("family_group = ?", familyGroup[0])
+	}
+	res := q.Delete(&models.TopicMemory{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("topic memory %d not found", id)
+	}
+	return nil
+}
+
+// PinTopicMemory toggles the pinned state of a TopicMemory.
+func (r *MemoryV2Repo) PinTopicMemory(ctx context.Context, id uint, isPinned bool, familyGroup ...string) (*models.TopicMemory, error) {
+	mem, err := r.GetTopicMemory(ctx, id, familyGroup...)
+	if err != nil {
+		return nil, err
+	}
+	if mem == nil {
+		return nil, fmt.Errorf("topic memory %d not found", id)
+	}
+	mem.IsPinned = isPinned
+	if len(mem.Embedding.Slice()) == 0 {
+		mem.Embedding = pgvector.NewVector(make([]float32, 3072))
+	}
+	if err := r.db.WithContext(ctx).Save(mem).Error; err != nil {
+		return nil, err
+	}
+	return mem, nil
+}
+
+// ListTopicMemories retrieves topic memories optionally filtered by familyGroup and topic, with superseded filter.
+func (r *MemoryV2Repo) ListTopicMemories(ctx context.Context, familyGroup, topic string, includeSuperseded bool) ([]models.TopicMemory, error) {
+	var mems []models.TopicMemory
+	q := r.db.WithContext(ctx).Model(&models.TopicMemory{})
+	if familyGroup != "" {
+		q = q.Where("family_group = ?", familyGroup)
+	}
+	if topic != "" && !strings.EqualFold(topic, "all") {
+		q = q.Where("LOWER(topic) = ?", strings.ToLower(strings.TrimSpace(topic)))
+	}
+	if !includeSuperseded {
+		q = q.Where("superseded_by_id IS NULL")
+	}
+	if err := q.Order("is_pinned DESC, created_at DESC").Find(&mems).Error; err != nil {
+		return nil, err
+	}
+	return mems, nil
+}
+
+// GetTopicMemory provides a direct helper on Client.
+func (c *Client) GetTopicMemory(ctx context.Context, id uint, familyGroup ...string) (*models.TopicMemory, error) {
+	return c.MemoryV2().GetTopicMemory(ctx, id, familyGroup...)
+}
+
+// DeleteTopicMemory provides a direct helper on Client.
+func (c *Client) DeleteTopicMemory(ctx context.Context, id uint, familyGroup ...string) error {
+	return c.MemoryV2().DeleteTopicMemory(ctx, id, familyGroup...)
+}
+
+// PinTopicMemory provides a direct helper on Client.
+func (c *Client) PinTopicMemory(ctx context.Context, id uint, isPinned bool, familyGroup ...string) (*models.TopicMemory, error) {
+	return c.MemoryV2().PinTopicMemory(ctx, id, isPinned, familyGroup...)
+}
+
+// ListTopicMemories provides a direct helper on Client.
+func (c *Client) ListTopicMemories(ctx context.Context, familyGroup, topic string, includeSuperseded bool) ([]models.TopicMemory, error) {
+	return c.MemoryV2().ListTopicMemories(ctx, familyGroup, topic, includeSuperseded)
+}
+
 

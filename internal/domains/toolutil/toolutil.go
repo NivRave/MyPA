@@ -235,3 +235,18 @@ func PublishMutation(ctx context.Context, bus *events.EventBus, ev events.Mutati
 	}
 	return bus.Publish(ctx, ev)
 }
+
+// ParseID converts an external GraphQL or API string ID into a positive uint.
+// Returns an error if the string is empty, non-numeric, or <= 0.
+func ParseID(s string) (uint, error) {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return 0, fmt.Errorf("id cannot be empty")
+	}
+	val, err := strconv.ParseUint(trimmed, 10, 64)
+	if err != nil || val == 0 {
+		return 0, fmt.Errorf("invalid entity id %q: must be a positive integer", s)
+	}
+	return uint(val), nil
+}
+

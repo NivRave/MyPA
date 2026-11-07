@@ -1,0 +1,853 @@
+package graph_test
+
+import (
+	"context"
+	"encoding/json"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/graph"
+	"github.com/nivik/mypa/internal/models"
+	"github.com/pgvector/pgvector-go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// ============================================================================
+// CHALLENGE 1: ADVERSARIAL ID PARSING & INJECTION
+// ============================================================================
+
+func TestAdversarial_M1C_MaliciousIDParsing(t *testing.T) {
+	client := getTestDBClient(t)
+	if client == nil {
+		t.Skip("Database required for full resolver test")
+		return
+	}
+
+	bus := events.NewEventBus()
+	resolver := graph.NewResolver(graph.ResolverConfig{
+		DB:       client,
+		EventBus: bus,
+	})
+
+	ctx := context.Background()
+	authCtx := graph.WithClaims(ctx, &graph.AuthClaims{
+		UserID:      "test-attacker",
+		Role:        "admin", // Use admin to ensure failures are strictly due to ID parsing, not RBAC
+		FamilyGroup: "family-test",
+	})
+
+	maliciousIDs := []struct {
+		name string
+		val  string
+	}{
+		{"EmptyString", ""},
+		{"WhitespaceOnly", "   "},
+		{"AlphaString", "abc"},
+		{"NegativeOne", "-1"},
+		{"NegativeLarge", "-9999999"},
+		{"Zero", "0"},
+		{"TrimmedZero", "  0  "},
+		{"MultiZero", "00000"},
+		{"OverflowUint64_21Digits", "999999999999999999999"},
+		{"OverflowUint64_MaxPlusOne", "18446744073709551616"},
+		{"StringNull", "null"},
+		{"StringUndefined", "undefined"},
+		{"ScientificNotation", "1e10"},
+		{"HexNotation", "0x10"},
+		{"SQLInjectionDrop", "; DROP TABLE topic_memories; --"},
+		{"SQLInjectionTautology", "1' OR '1'='1"},
+		{"XSSPayload", "<script>alert(1)</script>"},
+		{"FloatNaN", "NaN"},
+		{"FloatInf", "Inf"},
+		{"NegativeZero", "-0"},
+		{"PositiveZero", "+0"},
+		{"NullByte", "\x00"},
+	}
+
+	for _, tc := range maliciousIDs {
+		t.Run("ID_"+tc.name, func(t *testing.T) {
+			// 1. DeleteTopicMemory
+			assert.NotPanics(t, func() {
+				res, err := resolver.Mutation().DeleteTopicMemory(authCtx, tc.val)
+				assert.Error(t, err, "DeleteTopicMemory must reject malicious ID %q", tc.val)
+				assert.False(t, res)
+			})
+
+			// 2. PinTopicMemory
+			assert.NotPanics(t, func() {
+				res, err := resolver.Mutation().PinTopicMemory(authCtx, tc.val, true)
+				assert.Error(t, err, "PinTopicMemory must reject malicious ID %q", tc.val)
+				assert.Nil(t, res)
+			})
+
+			// 3. CompleteSharedTask
+			assert.NotPanics(t, func() {
+				res, err := resolver.Mutation().CompleteSharedTask(authCtx, tc.val, "test-user")
+				assert.Error(t, err, "CompleteSharedTask must reject malicious ID %q", tc.val)
+				assert.Nil(t, res)
+			})
+
+			// 4. DeleteScheduleEvent
+			assert.NotPanics(t, func() {
+				res, err := resolver.Mutation().DeleteScheduleEvent(authCtx, tc.val)
+				assert.Error(t, err, "DeleteScheduleEvent must reject malicious ID %q", tc.val)
+				assert.False(t, res)
+			})
+
+			// 5. LogBabyCare (babyID is first param)
+			assert.NotPanics(t, func() {
+				res, err := resolver.Mutation().LogBabyCare(authCtx, tc.val, "family-test", "feeding", nil, nil, nil, nil)
+				assert.Error(t, err, "LogBabyCare must reject malicious babyID %q", tc.val)
+				assert.Nil(t, res)
+			})
+
+			// 6. CompleteHomeMaintenance
+			assert.NotPanics(t, func() {
+				res, err := resolver.Mutation().CompleteHomeMaintenance(authCtx, tc.val)
+				assert.Error(t, err, "CompleteHomeMaintenance must reject malicious ID %q", tc.val)
+				assert.Nil(t, res)
+			})
+
+			// 7. ToggleAutomationRule
+			assert.NotPanics(t, func() {
+				res, err := resolver.Mutation().ToggleAutomationRule(authCtx, tc.val, true)
+				assert.Error(t, err, "ToggleAutomationRule must reject malicious ID %q", tc.val)
+				assert.Nil(t, res)
+			})
+
+			// 8. DeleteAutomationRule
+			assert.NotPanics(t, func() {
+				res, err := resolver.Mutation().DeleteAutomationRule(authCtx, tc.val)
+				assert.Error(t, err, "DeleteAutomationRule must reject malicious ID %q", tc.val)
+				assert.False(t, res)
+			})
+
+			// 9. Query BabyCareLogs (babyID is first param)
+			assert.NotPanics(t, func() {
+				res, err := resolver.Query().BabyCareLogs(authCtx, tc.val, nil, nil, nil)
+				assert.Error(t, err, "BabyCareLogs query must reject malicious babyID %q", tc.val)
+				assert.Nil(t, res)
+			})
+		})
+	}
+}
+
+// ============================================================================
+// CHALLENGE 2: CROSS-TENANT ISOLATION & ADVERSARIAL ACCESS
+// ============================================================================
+
+func TestAdversarial_M1C_CrossTenantIsolation_Mutations(t *testing.T) {
+	client := getTestDBClient(t)
+	if client == nil {
+		t.Skip("Database required for full resolver test")
+		return
+	}
+
+	bus := events.NewEventBus()
+	resolver := graph.NewResolver(graph.ResolverConfig{
+		DB:       client,
+		EventBus: bus,
+	})
+
+	// Non-admin context belonging to FamilyA
+	ctxNonAdmin := graph.WithClaims(context.Background(), &graph.AuthClaims{
+		UserID:      "attacker-usr",
+		Role:        "member", // NOT admin
+		FamilyGroup: "FamilyA",
+	})
+
+	targetFG := "VictimFamily"
+
+	t.Run("Reject_GeneratePairingCode_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().GeneratePairingCode(ctxNonAdmin, "member", targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_SaveTopicMemory_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().SaveTopicMemory(ctxNonAdmin, "finance", "secret", "balance: 100k", nil, nil, &targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_UpsertEntityProfile_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().UpsertEntityProfile(ctxNonAdmin, "people", "contact", "VictimBoss", "{}", &targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_UpdateSharedSpace_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().UpdateSharedSpace(ctxNonAdmin, targetFG, "shared-topic", "attacker-usr", true, true, "always")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_CreateSharedTask_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().CreateSharedTask(ctxNonAdmin, targetFG, "chores", "Clean room", nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_CreateScheduleEvent_CrossTenant", func(t *testing.T) {
+		now := time.Now()
+		later := now.Add(1 * time.Hour)
+		_, err := resolver.Mutation().CreateScheduleEvent(ctxNonAdmin, "work", "Infiltrate", nil, now, later, nil, nil, nil, &targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_SaveTopicCalendarConfig_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().SaveTopicCalendarConfig(ctxNonAdmin, "work", nil, nil, nil, nil, &targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_UpsertBabyProfile_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().UpsertBabyProfile(ctxNonAdmin, targetFG, "VictimBaby", time.Now().AddDate(-1, 0, 0), "male", nil, nil, nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_LogBabyCare_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().LogBabyCare(ctxNonAdmin, "1", targetFG, "feeding", nil, nil, nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_UpdateBabyInventory_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().UpdateBabyInventory(ctxNonAdmin, targetFG, "Diapers", 0, "packs", 2)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_SaveHouseContract_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().SaveHouseContract(ctxNonAdmin, targetFG, "lease", "Fake Lease", nil, nil, nil, nil, nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_SaveHomeMaintenanceItem_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().SaveHomeMaintenanceItem(ctxNonAdmin, targetFG, "Fix AC", "cooling", 30, time.Now(), nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_SaveVehicleAsset_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().SaveVehicleAsset(ctxNonAdmin, targetFG, "VictimCar", "123-ABC", nil, nil, nil, nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_LogFinancialTransaction_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().LogFinancialTransaction(ctxNonAdmin, targetFG, "expense", "groceries", "Supermarket", 500, "USD", nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_SetCategoryBudget_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().SetCategoryBudget(ctxNonAdmin, targetFG, "dining", 500, "USD", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_SaveRecurringBill_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().SaveRecurringBill(ctxNonAdmin, targetFG, "Netflix", "entertainment", 15, "USD", "monthly", 1, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_RegisterExternalAPI_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().RegisterExternalAPI(ctxNonAdmin, "HackedAPI", "https://evil.com/webhook", nil, nil, &targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_SaveAutomationRule_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().SaveAutomationRule(ctxNonAdmin, "Backdoor", "event_mutation", "baby", "{}", "steal data", nil, &targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_SavePersonalCrmContact_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Mutation().SavePersonalCrmContact(ctxNonAdmin, targetFG, "VictimContact", nil, nil, nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+}
+
+func TestAdversarial_M1C_CrossTenantIsolation_Queries(t *testing.T) {
+	client := getTestDBClient(t)
+	if client == nil {
+		t.Skip("Database required for full resolver test")
+		return
+	}
+
+	bus := events.NewEventBus()
+	resolver := graph.NewResolver(graph.ResolverConfig{
+		DB:       client,
+		EventBus: bus,
+	})
+
+	// Non-admin context belonging to FamilyA
+	ctxNonAdmin := graph.WithClaims(context.Background(), &graph.AuthClaims{
+		UserID:      "attacker-usr",
+		Role:        "member", // NOT admin
+		FamilyGroup: "FamilyA",
+	})
+
+	targetFG := "VictimFamily"
+
+	t.Run("Reject_ActivePairingCodes_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().ActivePairingCodes(ctxNonAdmin, &targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_TopicMemories_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().TopicMemories(ctxNonAdmin, nil, &targetFG, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_EntityProfiles_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().EntityProfiles(ctxNonAdmin, nil, nil, &targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_SharedSpaces_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().SharedSpaces(ctxNonAdmin, targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_SharedTasks_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().SharedTasks(ctxNonAdmin, targetFG, nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_ScheduleEvents_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().ScheduleEvents(ctxNonAdmin, nil, &targetFG, nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_BabyProfiles_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().BabyProfiles(ctxNonAdmin, targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_BabyCareLogs_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().BabyCareLogs(ctxNonAdmin, "1", &targetFG, nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_BabyInventory_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().BabyInventory(ctxNonAdmin, targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_HouseContracts_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().HouseContracts(ctxNonAdmin, targetFG, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_HomeMaintenanceItems_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().HomeMaintenanceItems(ctxNonAdmin, targetFG, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_VehicleAssets_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().VehicleAssets(ctxNonAdmin, targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_FinancialTransactions_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().FinancialTransactions(ctxNonAdmin, targetFG, nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_CategoryBudgets_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().CategoryBudgets(ctxNonAdmin, targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_RecurringBills_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().RecurringBills(ctxNonAdmin, targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_ExternalAPIConnectors_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().ExternalAPIConnectors(ctxNonAdmin, &targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_AutomationRules_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().AutomationRules(ctxNonAdmin, &targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_PersonalCrmContacts_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().PersonalCrmContacts(ctxNonAdmin, targetFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+
+	t.Run("Reject_MutationLogs_CrossTenant", func(t *testing.T) {
+		_, err := resolver.Query().MutationLogs(ctxNonAdmin, &targetFG, nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	})
+}
+
+// ============================================================================
+// CHALLENGE 2B: IDOR ON RECORD MUTATIONS (Cross-Tenant Record Modification)
+// ============================================================================
+
+func TestAdversarial_M1C_CrossTenant_RecordIDOR(t *testing.T) {
+	client := getTestDBClient(t)
+	if client == nil {
+		t.Skip("Database required for full resolver test")
+		return
+	}
+
+	bus := events.NewEventBus()
+	resolver := graph.NewResolver(graph.ResolverConfig{
+		DB:       client,
+		EventBus: bus,
+	})
+
+	// Seed records owned by VictimFamily
+	victimFG := "VictimFamily_IDOR"
+	attackerFG := "AttackerFamily_IDOR"
+
+	adminCtx := graph.WithClaims(context.Background(), &graph.AuthClaims{
+		UserID:      "admin-seeder",
+		Role:        "admin",
+		FamilyGroup: "default",
+	})
+
+	attackerCtx := graph.WithClaims(context.Background(), &graph.AuthClaims{
+		UserID:      "attacker-usr",
+		Role:        "member",
+		FamilyGroup: attackerFG,
+	})
+
+	// Test SaveTopicMemory directly against postgres to verify zero-dimension vector remediation
+	t.Run("SaveTopicMemory_PostgresVectorBehavior", func(t *testing.T) {
+		res, err := resolver.Mutation().SaveTopicMemory(adminCtx, "secret", "vault", "Victim secret password", nil, nil, &victimFG)
+		require.NoError(t, err, "SaveTopicMemory without pre-computed embedding must succeed on PostgreSQL without SQLSTATE 22000")
+		require.NotNil(t, res)
+		assert.Equal(t, "Victim secret password", res.Fact)
+	})
+
+	// Seed TopicMemory directly with valid 3072-dim vector for IDOR tests
+	seededMem := models.TopicMemory{
+		UserID:          "victim-usr",
+		FamilyGroup:     victimFG,
+		Topic:           "secret",
+		Subtopic:        "vault",
+		Fact:            "Victim secret password",
+		Scope:           "personal",
+		TagsJSON:        "[]",
+		Embedding:       pgvector.NewVector(make([]float32, 3072)),
+		CreatedAt:       time.Now(),
+		CreatedByUserID: "victim-usr",
+	}
+	require.NoError(t, client.DB.Create(&seededMem).Error)
+	memIDStr := strconv.FormatUint(uint64(seededMem.ID), 10)
+
+	// Attacker tries to Delete Victim's TopicMemory
+	t.Run("IDOR_DeleteTopicMemory_MustFailOrReject", func(t *testing.T) {
+		_, err := resolver.Mutation().DeleteTopicMemory(attackerCtx, memIDStr)
+		assert.Error(t, err, "Attacker in FamilyA must not be able to delete TopicMemory of VictimFamily")
+	})
+
+	// Attacker tries to Pin Victim's TopicMemory
+	t.Run("IDOR_PinTopicMemory_MustFailOrReject", func(t *testing.T) {
+		_, err := resolver.Mutation().PinTopicMemory(attackerCtx, memIDStr, true)
+		assert.Error(t, err, "Attacker in FamilyA must not be able to pin TopicMemory of VictimFamily")
+	})
+
+	// 2. Seed an AutomationRule in VictimFamily
+	rule, err := resolver.Mutation().SaveAutomationRule(adminCtx, "VictimSecurityRule", "event_mutation", "house", "{}", "alert 911", nil, &victimFG)
+	require.NoError(t, err)
+	require.NotNil(t, rule)
+
+	// Attacker tries to Toggle Victim's AutomationRule
+	t.Run("IDOR_ToggleAutomationRule_VulnerabilityCheck", func(t *testing.T) {
+		res, err := resolver.Mutation().ToggleAutomationRule(attackerCtx, rule.ID, false)
+		assert.Error(t, err, "Attacker must be rejected when toggling victim's automation rule")
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to automation rule")
+		assert.Nil(t, res)
+	})
+
+	// Attacker tries to Delete Victim's AutomationRule
+	t.Run("IDOR_DeleteAutomationRule_VulnerabilityCheck", func(t *testing.T) {
+		res, err := resolver.Mutation().DeleteAutomationRule(attackerCtx, rule.ID)
+		assert.Error(t, err, "Attacker must be rejected when deleting victim's automation rule")
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to automation rule")
+		assert.False(t, res)
+		// Check that rule is still present in database
+		var checkRule models.AutomationRule
+		dbErr := client.DB.First(&checkRule, rule.ID).Error
+		require.NoError(t, dbErr, "Victim's rule must remain untouched in the database")
+	})
+
+	// 3. Seed a personal AutomationRule owned by victim (familyGroup == "")
+	personalRule := models.AutomationRule{
+		UserID:            "victim-usr",
+		FamilyGroup:       "",
+		Name:              "VictimPersonalRule",
+		TriggerType:       "event_mutation",
+		TriggerTopic:      "memory",
+		ConditionJSON:     "{}",
+		ActionInstruction: "personal instruction",
+		IsActive:          true,
+		CreatedAt:         time.Now(),
+	}
+	require.NoError(t, client.DB.Create(&personalRule).Error)
+	personalRuleIDStr := strconv.FormatUint(uint64(personalRule.ID), 10)
+
+	// Attacker tries to Toggle Victim's personal AutomationRule
+	t.Run("IDOR_ToggleAutomationRule_PersonalRule_VulnerabilityCheck", func(t *testing.T) {
+		res, err := resolver.Mutation().ToggleAutomationRule(attackerCtx, personalRuleIDStr, false)
+		assert.Error(t, err, "Attacker must be rejected when toggling victim's personal automation rule")
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to automation rule")
+		assert.Nil(t, res)
+	})
+
+	// Attacker tries to Delete Victim's personal AutomationRule
+	t.Run("IDOR_DeleteAutomationRule_PersonalRule_VulnerabilityCheck", func(t *testing.T) {
+		res, err := resolver.Mutation().DeleteAutomationRule(attackerCtx, personalRuleIDStr)
+		assert.Error(t, err, "Attacker must be rejected when deleting victim's personal automation rule")
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to automation rule")
+		assert.False(t, res)
+
+		var checkRule models.AutomationRule
+		dbErr := client.DB.First(&checkRule, personalRule.ID).Error
+		require.NoError(t, dbErr, "Victim's personal rule must remain untouched in database")
+	})
+
+	// 4. Seed UserPreference for victim
+	victimPref := models.UserPreference{
+		UserID:               "victim-usr",
+		PreferredLanguage:    "fr",
+		TonePersona:          "formal",
+		DefaultCurrency:      "EUR",
+		BriefingTopicsJSON:   "[]",
+		StandingInstructions: "Victim private instructions",
+		UpdatedAt:            time.Now(),
+	}
+	require.NoError(t, client.DB.Save(&victimPref).Error)
+
+	// Seed UserPreference for attacker
+	attackerPref := models.UserPreference{
+		UserID:               "attacker-usr",
+		PreferredLanguage:    "en",
+		TonePersona:          "casual",
+		DefaultCurrency:      "USD",
+		BriefingTopicsJSON:   "[]",
+		StandingInstructions: "Attacker instructions",
+		UpdatedAt:            time.Now(),
+	}
+	require.NoError(t, client.DB.Save(&attackerPref).Error)
+
+	// Attacker tries to read victim's preference via UserPreference query
+	t.Run("IDOR_UserPreference_Query_CannotReadVictim", func(t *testing.T) {
+		res, err := resolver.Query().UserPreference(attackerCtx, "victim-usr")
+		require.NoError(t, err)
+		require.NotNil(t, res, "Resolver should return the caller's own preference without error")
+		assert.Equal(t, "attacker-usr", res.UserID, "Caller must only receive their own preference record")
+		assert.Equal(t, "en", res.PreferredLanguage, "Attacker must NOT receive victim's French preference")
+		assert.Equal(t, "USD", res.DefaultCurrency, "Attacker must NOT receive victim's EUR currency")
+		assert.Equal(t, "casual", res.TonePersona, "Attacker must NOT receive victim's formal persona")
+	})
+
+	// Attacker without existing preferences queries victim's preference
+	t.Run("IDOR_UserPreference_Query_AttackerWithoutPref_ReturnsNil", func(t *testing.T) {
+		noPrefCtx := graph.WithClaims(context.Background(), &graph.AuthClaims{
+			UserID:      "attacker-no-pref",
+			Role:        "member",
+			FamilyGroup: attackerFG,
+		})
+		res, err := resolver.Query().UserPreference(noPrefCtx, "victim-usr")
+		require.NoError(t, err)
+		assert.Nil(t, res, "Caller without preference querying victim-usr must receive nil, never victim data")
+	})
+
+	// Attacker tries to overwrite victim's preference via SaveUserPreference mutation
+	t.Run("IDOR_UserPreference_Save_CannotOverwriteVictim", func(t *testing.T) {
+		hackedLang := "ru"
+		hackedCurrency := "RUB"
+		hackedTone := "hacked"
+		res, err := resolver.Mutation().SaveUserPreference(attackerCtx, "victim-usr", &hackedLang, &hackedTone, &hackedCurrency, nil, nil, nil)
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		assert.Equal(t, "attacker-usr", res.UserID, "SaveUserPreference must force targetUserID to actorID")
+
+		// Verify victim's preferences in DB were NOT touched
+		var checkVictimPref models.UserPreference
+		require.NoError(t, client.DB.First(&checkVictimPref, "user_id = ?", "victim-usr").Error)
+		assert.Equal(t, "fr", checkVictimPref.PreferredLanguage, "Victim preference must remain unchanged")
+		assert.Equal(t, "EUR", checkVictimPref.DefaultCurrency, "Victim currency must remain unchanged")
+		assert.Equal(t, "formal", checkVictimPref.TonePersona, "Victim tone must remain unchanged")
+	})
+}
+
+// ============================================================================
+// CHALLENGE 2C: AUDIT SESSIONS & USER SESSIONS TENANT ISOLATION
+// ============================================================================
+
+func TestAdversarial_M1C_AuditSessions_TenantIsolation(t *testing.T) {
+	client := getTestDBClient(t)
+	if client == nil {
+		t.Skip("Database required for full resolver test")
+		return
+	}
+
+	bus := events.NewEventBus()
+	resolver := graph.NewResolver(graph.ResolverConfig{
+		DB:       client,
+		EventBus: bus,
+	})
+
+	attackerCtx := graph.WithClaims(context.Background(), &graph.AuthClaims{
+		UserID:      "attacker-usr",
+		Role:        "member",
+		FamilyGroup: "AttackerFamily",
+	})
+
+	victimFG := "VictimFamily"
+
+	// Seed users with real UUIDs to verify uuid::text type casting and tenant scoping
+	victimUser := models.User{
+		ID:          uuid.New().String(),
+		PlatformID:  "victim-plat-" + uuid.New().String()[:8],
+		Name:        "Victim User",
+		Role:        "family",
+		FamilyGroup: victimFG,
+		CreatedAt:   time.Now(),
+	}
+	require.NoError(t, client.DB.Create(&victimUser).Error)
+
+	attackerUser := models.User{
+		ID:          uuid.New().String(),
+		PlatformID:  "attacker-plat-" + uuid.New().String()[:8],
+		Name:        "Attacker User",
+		Role:        "family",
+		FamilyGroup: "AttackerFamily",
+		CreatedAt:   time.Now(),
+	}
+	require.NoError(t, client.DB.Create(&attackerUser).Error)
+
+	// Seed audit sessions where UserID matches UUID
+	victimSession := models.AuditSession{
+		ID:              uuid.New().String(),
+		UserID:          victimUser.ID,
+		Source:          "telegram",
+		UserPrompt:      "Victim Secret Prompt 12345",
+		Status:          "success",
+		TotalDurationMs: 150,
+		StartTime:       time.Now(),
+	}
+	require.NoError(t, client.DB.Create(&victimSession).Error)
+
+	attackerSession := models.AuditSession{
+		ID:              uuid.New().String(),
+		UserID:          attackerUser.ID,
+		Source:          "web",
+		UserPrompt:      "Attacker Normal Prompt",
+		Status:          "success",
+		TotalDurationMs: 120,
+		StartTime:       time.Now(),
+	}
+	require.NoError(t, client.DB.Create(&attackerSession).Error)
+
+	t.Run("AuditSessions_CrossTenantAccessCheck", func(t *testing.T) {
+		res, err := resolver.Query().AuditSessions(attackerCtx, &victimFG, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+		assert.Nil(t, res)
+	})
+
+	t.Run("AuditSessions_NilFamilyGroup_ScopesToCallerAndExcludesVictim", func(t *testing.T) {
+		res, err := resolver.Query().AuditSessions(attackerCtx, nil, nil)
+		require.NoError(t, err, "Postgres must not fail with SQLSTATE 42883 on uuid::text join")
+		require.NotEmpty(t, res, "Must return caller's own audit session")
+		for _, s := range res {
+			assert.NotEqual(t, victimSession.ID, s.ID, "Must NEVER return victim session to attacker")
+			assert.NotEqual(t, "Victim Secret Prompt 12345", s.UserPrompt, "Must NEVER leak victim prompt")
+		}
+	})
+
+	t.Run("UserSessions_CrossTenantAccessCheck", func(t *testing.T) {
+		res, err := resolver.Query().UserSessions(attackerCtx, &victimFG)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+		assert.Nil(t, res)
+	})
+
+	t.Run("UserSessions_NilFamilyGroup_ScopesToCallerAndExcludesVictim", func(t *testing.T) {
+		res, err := resolver.Query().UserSessions(attackerCtx, nil)
+		require.NoError(t, err, "Postgres must not fail with SQLSTATE 42883 on uuid::text join")
+		require.NotEmpty(t, res, "Must return caller's own user session")
+		for _, s := range res {
+			assert.NotEqual(t, victimUser.ID, s.UserID, "Must NEVER return victim user summary to attacker")
+			assert.NotEqual(t, victimUser.PlatformID, s.UserID, "Must NEVER return victim platform ID to attacker")
+		}
+	})
+
+	t.Run("AdminAuditSessions_NilFamilyGroup_ReturnsAllTenants", func(t *testing.T) {
+		adminCtx := graph.WithClaims(context.Background(), &graph.AuthClaims{
+			UserID:      "super-admin",
+			Role:        "admin",
+			FamilyGroup: "default",
+		})
+		res, err := resolver.Query().AuditSessions(adminCtx, nil, nil)
+		require.NoError(t, err)
+		var foundVictim, foundAttacker bool
+		for _, s := range res {
+			if s.ID == victimSession.ID {
+				foundVictim = true
+			}
+			if s.ID == attackerSession.ID {
+				foundAttacker = true
+			}
+		}
+		assert.True(t, foundVictim, "Admin unscoped audit sessions query must include victim")
+		assert.True(t, foundAttacker, "Admin unscoped audit sessions query must include attacker")
+	})
+}
+
+// ============================================================================
+// CHALLENGE 3: MUTATION EVENT EMISSION & SNAPSHOT DURABILITY
+// ============================================================================
+
+func TestAdversarial_M1C_MutationEventEmission_Snapshots(t *testing.T) {
+	client := getTestDBClient(t)
+	if client == nil {
+		t.Skip("Database required for full resolver test")
+		return
+	}
+
+	bus := events.NewEventBus()
+	var publishedEvents []events.MutationEvent
+	bus.Subscribe(func(ctx context.Context, ev events.MutationEvent) error {
+		publishedEvents = append(publishedEvents, ev)
+		return nil
+	})
+
+	resolver := graph.NewResolver(graph.ResolverConfig{
+		DB:       client,
+		EventBus: bus,
+	})
+
+	fg := "DurabilityTestFamily"
+	adminCtx := graph.WithClaims(context.Background(), &graph.AuthClaims{
+		UserID:      "durability-admin",
+		Role:        "admin",
+		FamilyGroup: fg,
+	})
+
+	// 1. TopicMemory Lifecycle: Pin (Update) -> Delete
+	seededMem := models.TopicMemory{
+		UserID:          "durability-admin",
+		FamilyGroup:     fg,
+		Topic:           "durability",
+		Subtopic:        "test",
+		Fact:            "Durability Fact",
+		Scope:           "personal",
+		TagsJSON:        "[]",
+		Embedding:       pgvector.NewVector(make([]float32, 3072)),
+		CreatedAt:       time.Now(),
+		CreatedByUserID: "durability-admin",
+	}
+	require.NoError(t, client.DB.Create(&seededMem).Error)
+	memIDStr := strconv.FormatUint(uint64(seededMem.ID), 10)
+
+	// Pin (Update)
+	publishedEvents = nil
+	pinned, err := resolver.Mutation().PinTopicMemory(adminCtx, memIDStr, true)
+	require.NoError(t, err)
+	require.NotNil(t, pinned)
+
+	require.Len(t, publishedEvents, 1)
+	updateEv := publishedEvents[0]
+	assert.Equal(t, "update", updateEv.Action)
+	assert.NotEmpty(t, updateEv.BeforeJSON, "BeforeJSON for update must be populated")
+	assert.NotEmpty(t, updateEv.AfterJSON, "AfterJSON for update must be populated")
+	var memBeforeUpdate, memAfterUpdate map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(updateEv.BeforeJSON), &memBeforeUpdate), "BeforeJSON must be valid JSON")
+	require.NoError(t, json.Unmarshal([]byte(updateEv.AfterJSON), &memAfterUpdate), "AfterJSON must be valid JSON")
+
+	// Delete
+	publishedEvents = nil
+	deleted, err := resolver.Mutation().DeleteTopicMemory(adminCtx, memIDStr)
+	require.NoError(t, err)
+	assert.True(t, deleted)
+
+	require.Len(t, publishedEvents, 1)
+	deleteEv := publishedEvents[0]
+	assert.Equal(t, "delete", deleteEv.Action)
+	assert.NotEmpty(t, deleteEv.BeforeJSON, "BeforeJSON for delete must be populated with deleted entity state")
+	assert.Empty(t, deleteEv.AfterJSON, "AfterJSON for delete should be empty string")
+	var memBeforeDelete map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(deleteEv.BeforeJSON), &memBeforeDelete), "BeforeJSON must be valid JSON")
+
+	// 2. CompleteSharedTask: Check BeforeJSON and AfterJSON
+	publishedEvents = nil
+	task, err := resolver.Mutation().CreateSharedTask(adminCtx, fg, "groceries", "Buy Milk", nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, task)
+
+	require.Len(t, publishedEvents, 1)
+	taskCreateEv := publishedEvents[0]
+	assert.Equal(t, "create", taskCreateEv.Action)
+	assert.NotEmpty(t, taskCreateEv.AfterJSON)
+
+	// Complete Shared Task
+	publishedEvents = nil
+	completedTask, err := resolver.Mutation().CompleteSharedTask(adminCtx, task.ID, "durability-admin")
+	require.NoError(t, err)
+	require.NotNil(t, completedTask)
+
+	require.Len(t, publishedEvents, 1)
+	taskCompleteEv := publishedEvents[0]
+	assert.Equal(t, "update", taskCompleteEv.Action)
+	assert.NotEmpty(t, taskCompleteEv.BeforeJSON, "BeforeJSON must be populated on CompleteSharedTask")
+	assert.NotEmpty(t, taskCompleteEv.AfterJSON, "AfterJSON must be populated on CompleteSharedTask")
+
+	// 3. CompleteHomeMaintenance: Check BeforeJSON and AfterJSON
+	publishedEvents = nil
+	homeItem, err := resolver.Mutation().SaveHomeMaintenanceItem(adminCtx, fg, "Clean Gutters", "exterior", 90, time.Now(), nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, homeItem)
+
+	publishedEvents = nil
+	completedHome, err := resolver.Mutation().CompleteHomeMaintenance(adminCtx, homeItem.ID)
+	require.NoError(t, err)
+	require.NotNil(t, completedHome)
+
+	require.Len(t, publishedEvents, 1)
+	homeEv := publishedEvents[0]
+	assert.Equal(t, "update", homeEv.Action)
+	assert.NotEmpty(t, homeEv.BeforeJSON, "CompleteHomeMaintenance must populate BeforeJSON")
+	assert.NotEmpty(t, homeEv.AfterJSON, "CompleteHomeMaintenance must populate AfterJSON")
+}

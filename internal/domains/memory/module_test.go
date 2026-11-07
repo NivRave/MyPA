@@ -3,7 +3,9 @@ package memory_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
+
 	"strings"
 	"sync"
 	"testing"
@@ -309,9 +311,76 @@ func (r *inMemoryRepo) ListActiveMemoriesForConsolidation(ctx context.Context) (
 	return result, nil
 }
 
+func (r *inMemoryRepo) GetTopicMemory(ctx context.Context, id uint, familyGroup ...string) (*models.TopicMemory, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, m := range r.topicMemories {
+		if m.ID == id {
+			if len(familyGroup) > 0 && familyGroup[0] != "" && m.FamilyGroup != familyGroup[0] {
+				return nil, nil
+			}
+			copyMem := m
+			return &copyMem, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *inMemoryRepo) DeleteTopicMemory(ctx context.Context, id uint, familyGroup ...string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, m := range r.topicMemories {
+		if m.ID == id {
+			if len(familyGroup) > 0 && familyGroup[0] != "" && m.FamilyGroup != familyGroup[0] {
+				return fmt.Errorf("topic memory %d not found", id)
+			}
+			r.topicMemories = append(r.topicMemories[:i], r.topicMemories[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("topic memory %d not found", id)
+}
+
+func (r *inMemoryRepo) PinTopicMemory(ctx context.Context, id uint, isPinned bool, familyGroup ...string) (*models.TopicMemory, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, m := range r.topicMemories {
+		if m.ID == id {
+			if len(familyGroup) > 0 && familyGroup[0] != "" && m.FamilyGroup != familyGroup[0] {
+				return nil, fmt.Errorf("topic memory %d not found", id)
+			}
+			r.topicMemories[i].IsPinned = isPinned
+			copyMem := r.topicMemories[i]
+			return &copyMem, nil
+		}
+	}
+	return nil, fmt.Errorf("topic memory %d not found", id)
+}
+
+func (r *inMemoryRepo) ListTopicMemories(ctx context.Context, familyGroup, topic string, includeSuperseded bool) ([]models.TopicMemory, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var result []models.TopicMemory
+	normTopic := strings.ToLower(strings.TrimSpace(topic))
+	for _, m := range r.topicMemories {
+		if !includeSuperseded && m.SupersededByID != nil {
+			continue
+		}
+		if familyGroup != "" && m.FamilyGroup != familyGroup {
+			continue
+		}
+		if normTopic != "" && !strings.EqualFold(normTopic, "all") && strings.ToLower(m.Topic) != normTopic {
+			continue
+		}
+		result = append(result, m)
+	}
+	return result, nil
+}
+
 // ---------------------------------------------------------------------------
 // Unit Tests
 // ---------------------------------------------------------------------------
+
 
 func TestMemoryV2Repository_CRUD(t *testing.T) {
 	ctx := context.Background()

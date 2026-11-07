@@ -1,119 +1,101 @@
 import { revalidatePath } from "next/cache";
-import { Home, FileText, Wrench, Car, Calendar, AlertTriangle, CheckCircle, Plus } from "lucide-react";
-import { Pool } from "pg";
+import { Home, FileText, Wrench, Car, AlertTriangle, CheckCircle, Plus } from "lucide-react";
+import {
+  graphqlFetch,
+  type HouseContractRecord,
+  type HomeMaintenanceItem,
+  type VehicleAsset,
+} from "@/lib/graphql";
 
 export const dynamic = "force-dynamic";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable",
-});
-
-async function getHouseData(familyGroup: string = "Smith Family") {
-  try {
-    const res = await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          query GetHouseData($familyGroup: String!) {
-            houseContracts(familyGroup: $familyGroup) {
-              id
-              recordType
-              title
-              vendorOrLandlord
-              amount
-              currency
-              expirationOrRenewalDate
-              noticePeriodDays
-              createdAt
-            }
-            homeMaintenanceItems(familyGroup: $familyGroup) {
-              id
-              taskName
-              category
-              intervalDays
-              lastCompletedAt
-              nextDueAt
-              contractorInfo
-              notes
-            }
-            vehicleAssets(familyGroup: $familyGroup) {
-              id
-              name
-              licensePlate
-              insuranceExpiry
-              annualTestExpiry
-              currentMileageKm
-              nextServiceMileageKm
-              notes
-            }
-          }
-        `,
-        variables: { familyGroup },
-      }),
-      cache: "no-store",
-    });
-
-    if (res.ok) {
-      const json = await res.json();
-      if (json.data) {
-        return {
-          contracts: json.data.houseContracts || [],
-          maintenance: json.data.homeMaintenanceItems || [],
-          vehicles: json.data.vehicleAssets || [],
-        };
-      }
+const GET_HOUSE_DATA_QUERY = `
+  query GetHouseData($familyGroup: String!) {
+    houseContracts(familyGroup: $familyGroup) {
+      id
+      recordType
+      title
+      vendorOrLandlord
+      amount
+      currency
+      expirationOrRenewalDate
+      noticePeriodDays
+      createdAt
     }
-  } catch (err) {}
+    homeMaintenanceItems(familyGroup: $familyGroup) {
+      id
+      taskName
+      category
+      intervalDays
+      lastCompletedAt
+      nextDueAt
+      contractorInfo
+      notes
+    }
+    vehicleAssets(familyGroup: $familyGroup) {
+      id
+      name
+      licensePlate
+      insuranceExpiry
+      annualTestExpiry
+      currentMileageKm
+      nextServiceMileageKm
+      notes
+    }
+  }
+`;
 
+const COMPLETE_MAINTENANCE_MUTATION = `
+  mutation CompleteMaintenance($id: ID!) {
+    completeHomeMaintenance(id: $id) { id }
+  }
+`;
+
+const SAVE_CONTRACT_MUTATION = `
+  mutation SaveContract(
+    $familyGroup: String!
+    $recordType: String!
+    $title: String!
+    $vendorOrLandlord: String
+    $amount: Float
+    $currency: String
+    $expirationOrRenewalDate: Time
+    $noticePeriodDays: Int
+  ) {
+    saveHouseContract(
+      familyGroup: $familyGroup
+      recordType: $recordType
+      title: $title
+      vendorOrLandlord: $vendorOrLandlord
+      amount: $amount
+      currency: $currency
+      expirationOrRenewalDate: $expirationOrRenewalDate
+      noticePeriodDays: $noticePeriodDays
+    ) {
+      id
+    }
+  }
+`;
+
+async function getHouseData(familyGroup: string = "Smith Family"): Promise<{
+  contracts: HouseContractRecord[];
+  maintenance: HomeMaintenanceItem[];
+  vehicles: VehicleAsset[];
+}> {
   try {
-    const { rows: cRows } = await pool.query(
-      "SELECT * FROM house_contract_records WHERE family_group = $1 ORDER BY expiration_or_renewal_date ASC, created_at DESC",
-      [familyGroup]
-    );
-    const { rows: mRows } = await pool.query(
-      "SELECT * FROM home_maintenance_items WHERE family_group = $1 ORDER BY next_due_at ASC",
-      [familyGroup]
-    );
-    const { rows: vRows } = await pool.query(
-      "SELECT * FROM vehicle_assets WHERE family_group = $1 ORDER BY name ASC",
-      [familyGroup]
-    );
+    const data = await graphqlFetch<{
+      houseContracts: HouseContractRecord[];
+      homeMaintenanceItems: HomeMaintenanceItem[];
+      vehicleAssets: VehicleAsset[];
+    }>(GET_HOUSE_DATA_QUERY, { familyGroup });
 
     return {
-      contracts: cRows.map((r: any) => ({
-        id: String(r.id),
-        recordType: r.record_type,
-        title: r.title,
-        vendorOrLandlord: r.vendor_or_landlord,
-        amount: parseFloat(r.amount || 0),
-        currency: r.currency || "USD",
-        expirationOrRenewalDate: r.expiration_or_renewal_date,
-        noticePeriodDays: r.notice_period_days || 0,
-        createdAt: r.created_at,
-      })),
-      maintenance: mRows.map((r: any) => ({
-        id: String(r.id),
-        taskName: r.task_name,
-        category: r.category,
-        intervalDays: r.interval_days,
-        lastCompletedAt: r.last_completed_at,
-        nextDueAt: r.next_due_at,
-        contractorInfo: r.contractor_info,
-        notes: r.notes,
-      })),
-      vehicles: vRows.map((r: any) => ({
-        id: String(r.id),
-        name: r.name,
-        licensePlate: r.license_plate,
-        insuranceExpiry: r.insurance_expiry,
-        annualTestExpiry: r.annual_test_expiry,
-        currentMileageKm: r.current_mileage_km || 0,
-        nextServiceMileageKm: r.next_service_mileage_km || 0,
-        notes: r.notes,
-      })),
+      contracts: data.houseContracts || [],
+      maintenance: data.homeMaintenanceItems || [],
+      vehicles: data.vehicleAssets || [],
     };
-  } catch (dbErr) {
+  } catch (err) {
+    console.error("Failed to load house data:", err);
     return { contracts: [], maintenance: [], vehicles: [] };
   }
 }
@@ -125,52 +107,38 @@ export default async function HousePage() {
   async function completeTask(formData: FormData) {
     "use server";
     const id = formData.get("id") as string;
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation CompleteMaintenance($id: ID!) {
-            completeHomeMaintenance(id: $id) { id }
-          }
-        `,
-        variables: { id },
-      }),
-    });
+    try {
+      await graphqlFetch(COMPLETE_MAINTENANCE_MUTATION, { id });
+    } catch (err) {
+      console.error("completeTask failed:", err);
+    }
     revalidatePath("/house");
   }
 
   async function addContract(formData: FormData) {
     "use server";
-    const recordType = formData.get("recordType") as string;
-    const title = formData.get("title") as string;
-    const vendor = formData.get("vendor") as string || "";
-    const amount = parseFloat(formData.get("amount") as string) || 0;
-    const currency = formData.get("currency") as string || "USD";
+    const recordType = (formData.get("recordType") as string) || "warranty";
+    const title = (formData.get("title") as string) || "";
+    const vendor = (formData.get("vendor") as string) || "";
+    const amount = parseFloat((formData.get("amount") as string) || "0") || 0;
+    const currency = (formData.get("currency") as string) || "USD";
     const expiry = formData.get("expiry") ? new Date(formData.get("expiry") as string) : null;
-    const noticeDays = parseInt(formData.get("noticeDays") as string) || 30;
+    const noticeDays = parseInt((formData.get("noticeDays") as string) || "30", 10) || 30;
 
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation SaveContract($familyGroup: String!, $recordType: String!, $title: String!, $vendorOrLandlord: String, $amount: Float, $currency: String, $expirationOrRenewalDate: Time, $noticePeriodDays: Int) {
-            saveHouseContract(familyGroup: $familyGroup, recordType: $recordType, title: $title, vendorOrLandlord: $vendorOrLandlord, amount: $amount, currency: $currency, expirationOrRenewalDate: $expirationOrRenewalDate, noticePeriodDays: $noticePeriodDays) { id }
-          }
-        `,
-        variables: {
-          familyGroup: "Smith Family",
-          recordType,
-          title,
-          vendorOrLandlord: vendor,
-          amount,
-          currency,
-          expirationOrRenewalDate: expiry,
-          noticePeriodDays: noticeDays,
-        },
-      }),
-    });
+    try {
+      await graphqlFetch(SAVE_CONTRACT_MUTATION, {
+        familyGroup: "Smith Family",
+        recordType,
+        title,
+        vendorOrLandlord: vendor,
+        amount,
+        currency,
+        expirationOrRenewalDate: expiry,
+        noticePeriodDays: noticeDays,
+      });
+    } catch (err) {
+      console.error("addContract failed:", err);
+    }
     revalidatePath("/house");
   }
 
@@ -246,7 +214,7 @@ export default async function HousePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
-              {contracts.map((c: any) => {
+              {contracts.map((c: HouseContractRecord) => {
                 const exp = c.expirationOrRenewalDate ? new Date(c.expirationOrRenewalDate) : null;
                 const isExpiringSoon = exp && (exp.getTime() - now.getTime()) / (1000 * 60 * 60 * 24) < (c.noticePeriodDays || 30);
 
@@ -304,7 +272,7 @@ export default async function HousePage() {
           </div>
 
           <div className="divide-y divide-neutral-200">
-            {maintenance.map((m: any) => {
+            {maintenance.map((m: HomeMaintenanceItem) => {
               const due = new Date(m.nextDueAt);
               const isOverdue = now > due;
 
@@ -363,7 +331,7 @@ export default async function HousePage() {
           </div>
 
           <div className="p-6 space-y-6">
-            {vehicles.map((v: any) => {
+            {vehicles.map((v: VehicleAsset) => {
               const testExp = v.annualTestExpiry ? new Date(v.annualTestExpiry) : null;
               const insExp = v.insuranceExpiry ? new Date(v.insuranceExpiry) : null;
               const serviceDue = v.nextServiceMileageKm > 0 && v.currentMileageKm >= v.nextServiceMileageKm;

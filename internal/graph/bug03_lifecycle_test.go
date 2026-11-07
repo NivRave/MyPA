@@ -1,0 +1,168 @@
+package graph
+
+import (
+	"context"
+	"testing"
+
+	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/netguard"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// lifecycleAutoRepo simulates in-memory persistence for BUG-03 lifecycle testing
+type lifecycleAutoRepo struct {
+	mockAutoRepo
+	apis  []models.ExternalAPIConnector
+	rules []models.AutomationRule
+}
+
+func (r *lifecycleAutoRepo) CreateAPIConnector(connector *models.ExternalAPIConnector) error {
+	connector.ID = uint(len(r.apis) + 1)
+	r.apis = append(r.apis, *connector)
+	return nil
+}
+
+func (r *lifecycleAutoRepo) ListAPIConnectors(userID, familyGroup string) ([]models.ExternalAPIConnector, error) {
+	var result []models.ExternalAPIConnector
+	for _, api := range r.apis {
+		if api.FamilyGroup == familyGroup {
+			result = append(result, api)
+		}
+	}
+	return result, nil
+}
+
+func (r *lifecycleAutoRepo) CreateAutomationRule(rule *models.AutomationRule) error {
+	rule.ID = uint(len(r.rules) + 1)
+	r.rules = append(r.rules, *rule)
+	return nil
+}
+
+func (r *lifecycleAutoRepo) ListAutomationRules(userID, familyGroup, triggerTopic string) ([]models.AutomationRule, error) {
+	var result []models.AutomationRule
+	for _, rule := range r.rules {
+		if rule.FamilyGroup == familyGroup {
+			if triggerTopic == "" || rule.TriggerTopic == triggerTopic {
+				result = append(result, rule)
+			}
+		}
+	}
+	return result, nil
+}
+
+// TestBUG03_Lifecycle_RetentionAndImmediateVisibility verifies that newly created
+// external APIs and automation rules retain their familyGroup and appear immediately in tenant queries
+func TestBUG03_Lifecycle_RetentionAndImmediateVisibility(t *testing.T) {
+	netguard.SetAllowLoopbackForTesting(true)
+	defer netguard.SetAllowLoopbackForTesting(false)
+
+	bus := events.NewEventBus()
+	autoRepo := &lifecycleAutoRepo{}
+
+	resolver := NewResolver(ResolverConfig{
+		EventBus:       bus,
+		AutomationRepo: autoRepo,
+	})
+
+	tenantFamily := "Smith Family"
+	otherFamily := "Jones Family"
+
+	ctxTenantUser := WithClaims(context.Background(), &AuthClaims{
+		UserID:      "user-smith-1",
+		Role:        "member",
+		FamilyGroup: tenantFamily,
+	})
+
+	// --- 1. Test External API Registration & Query Visibility ---
+	apiName := "SmartHomeWebhook"
+	apiURL := "http://127.0.0.1:9090/webhook"
+	apiMethod := "POST"
+	apiDesc := "Controls living room lighting"
+
+	// Register API with explicit familyGroup
+	createdAPI, err := resolver.Mutation().RegisterExternalAPI(
+		ctxTenantUser,
+		apiName,
+		apiURL,
+		&apiMethod,
+		&apiDesc,
+		&tenantFamily,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, createdAPI)
+	assert.Equal(t, tenantFamily, createdAPI.FamilyGroup, "Created API must retain familyGroup")
+	assert.Equal(t, apiName, createdAPI.Name)
+
+	// Query immediately as tenant user for tenantFamily
+	tenantAPIs, err := resolver.Query().ExternalAPIConnectors(ctxTenantUser, &tenantFamily)
+	require.NoError(t, err)
+	require.Len(t, tenantAPIs, 1, "Registered API must appear immediately in tenant queries")
+	assert.Equal(t, apiName, tenantAPIs[0].Name)
+	assert.Equal(t, tenantFamily, tenantAPIs[0].FamilyGroup)
+
+	// --- 2. Test Automation Rule Creation & Query Visibility ---
+	ruleName := "BabyCareTelegramAlert"
+	triggerType := "mutation"
+	triggerTopic := "baby"
+	condition := `{"logType":"feeding"}`
+	action := "Send notification to partner"
+
+	createdRule, err := resolver.Mutation().SaveAutomationRule(
+		ctxTenantUser,
+		ruleName,
+		triggerType,
+		triggerTopic,
+		condition,
+		action,
+		nil,
+		&tenantFamily,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, createdRule)
+	assert.Equal(t, tenantFamily, createdRule.FamilyGroup, "Created rule must retain familyGroup")
+	assert.Equal(t, ruleName, createdRule.Name)
+
+	// Query immediately as tenant user for tenantFamily
+	tenantRules, err := resolver.Query().AutomationRules(ctxTenantUser, &tenantFamily)
+	require.NoError(t, err)
+	require.Len(t, tenantRules, 1, "Registered rule must appear immediately in tenant queries")
+	assert.Equal(t, ruleName, tenantRules[0].Name)
+	assert.Equal(t, tenantFamily, tenantRules[0].FamilyGroup)
+
+	// --- 3. Verify Isolation: Other Tenant Querying Never Sees Smith Family Data ---
+	ctxOtherUser := WithClaims(context.Background(), &AuthClaims{
+		UserID:      "user-jones-1",
+		Role:        "member",
+		FamilyGroup: otherFamily,
+	})
+
+	otherAPIs, err := resolver.Query().ExternalAPIConnectors(ctxOtherUser, &otherFamily)
+	require.NoError(t, err)
+	assert.Empty(t, otherAPIs, "Other tenant must not see Smith Family APIs")
+
+	otherRules, err := resolver.Query().AutomationRules(ctxOtherUser, &otherFamily)
+	require.NoError(t, err)
+	assert.Empty(t, otherRules, "Other tenant must not see Smith Family automation rules")
+
+	// Other tenant attempting to access Smith Family directly is denied
+	_, err = resolver.Query().ExternalAPIConnectors(ctxOtherUser, &tenantFamily)
+	require.Error(t, err, "Cross-tenant query must be rejected by positive authorization")
+	assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+
+	// --- 4. Verify Admin Can Query Distinct Tenants Correctly ---
+	ctxAdmin := WithClaims(context.Background(), &AuthClaims{
+		UserID:      "admin-sys",
+		Role:        "admin",
+		FamilyGroup: "admin-system",
+	})
+
+	adminSmithAPIs, err := resolver.Query().ExternalAPIConnectors(ctxAdmin, &tenantFamily)
+	require.NoError(t, err)
+	require.Len(t, adminSmithAPIs, 1)
+
+	adminJonesAPIs, err := resolver.Query().ExternalAPIConnectors(ctxAdmin, &otherFamily)
+	require.NoError(t, err)
+	assert.Empty(t, adminJonesAPIs)
+}

@@ -1,112 +1,70 @@
 import { revalidatePath } from "next/cache";
 import { Brain, Pin, Trash2, Tag, ShieldAlert, Sparkles, Filter } from "lucide-react";
-import { Pool } from "pg";
+import {
+  graphqlFetch,
+  type TopicMemory,
+  type EntityProfile,
+} from "@/lib/graphql";
 
 export const dynamic = "force-dynamic";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable",
-});
+const GET_MEMORY_DATA_QUERY = `
+  query GetMemoryData($topic: String, $includeSuperseded: Boolean) {
+    topicMemories(topic: $topic, includeSuperseded: $includeSuperseded) {
+      id
+      topic
+      subtopic
+      fact
+      tagsJson
+      scope
+      isPinned
+      supersededById
+      validFrom
+      validUntil
+      createdAt
+    }
+    entityProfiles(topic: $topic) {
+      id
+      topic
+      entityType
+      entityName
+      attributesJson
+      updatedAt
+    }
+  }
+`;
 
-async function getMemoriesAndProfiles(selectedTopic?: string, showSuperseded?: boolean) {
+const PIN_MEMORY_MUTATION = `
+  mutation PinMemory($id: ID!, $isPinned: Boolean!) {
+    pinTopicMemory(id: $id, isPinned: $isPinned) { id }
+  }
+`;
+
+const DELETE_MEMORY_MUTATION = `
+  mutation DeleteMemory($id: ID!) {
+    deleteTopicMemory(id: $id)
+  }
+`;
+
+async function getMemoriesAndProfiles(
+  selectedTopic?: string,
+  showSuperseded?: boolean
+): Promise<{ memories: TopicMemory[]; profiles: EntityProfile[] }> {
   try {
-    // Primary: fetch via GraphQL
-    const res = await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          query GetMemoryData($topic: String, $includeSuperseded: Boolean) {
-            topicMemories(topic: $topic, includeSuperseded: $includeSuperseded) {
-              id
-              topic
-              subtopic
-              fact
-              tagsJson
-              scope
-              isPinned
-              supersededById
-              validFrom
-              validUntil
-              createdAt
-            }
-            entityProfiles(topic: $topic) {
-              id
-              topic
-              entityType
-              entityName
-              attributesJson
-              updatedAt
-            }
-          }
-        `,
-        variables: {
-          topic: selectedTopic && selectedTopic !== "all" ? selectedTopic : null,
-          includeSuperseded: !!showSuperseded,
-        },
-      }),
-      cache: "no-store",
+    const data = await graphqlFetch<{
+      topicMemories: TopicMemory[];
+      entityProfiles: EntityProfile[];
+    }>(GET_MEMORY_DATA_QUERY, {
+      topic: selectedTopic && selectedTopic !== "all" ? selectedTopic : null,
+      includeSuperseded: !!showSuperseded,
     });
 
-    if (res.ok) {
-      const json = await res.json();
-      if (json.data && json.data.topicMemories) {
-        return {
-          memories: json.data.topicMemories,
-          profiles: json.data.entityProfiles || [],
-        };
-      }
-    }
-  } catch (err) {
-    // Fallback to direct DB query
-  }
-
-  try {
-    let memQuery = "SELECT * FROM topic_memories WHERE 1=1";
-    const memParams: any[] = [];
-    if (selectedTopic && selectedTopic !== "all") {
-      memParams.push(selectedTopic);
-      memQuery += ` AND topic = $${memParams.length}`;
-    }
-    if (!showSuperseded) {
-      memQuery += " AND superseded_by_id IS NULL";
-    }
-    memQuery += " ORDER BY is_pinned DESC, created_at DESC LIMIT 100";
-    const { rows: memRows } = await pool.query(memQuery, memParams);
-
-    let profQuery = "SELECT * FROM entity_profiles WHERE 1=1";
-    const profParams: any[] = [];
-    if (selectedTopic && selectedTopic !== "all") {
-      profParams.push(selectedTopic);
-      profQuery += ` AND topic = $${profParams.length}`;
-    }
-    profQuery += " ORDER BY updated_at DESC LIMIT 50";
-    const { rows: profRows } = await pool.query(profQuery, profParams);
-
     return {
-      memories: memRows.map((r: any) => ({
-        id: String(r.id),
-        topic: r.topic,
-        subtopic: r.subtopic,
-        fact: r.fact,
-        tagsJson: r.tags_json || "[]",
-        scope: r.scope,
-        isPinned: !!r.is_pinned,
-        supersededById: r.superseded_by_id,
-        validFrom: r.valid_from,
-        validUntil: r.valid_until,
-        createdAt: r.created_at,
-      })),
-      profiles: profRows.map((r: any) => ({
-        id: String(r.id),
-        topic: r.topic,
-        entityType: r.entity_type,
-        entityName: r.entity_name,
-        attributesJson: r.attributes_json || "{}",
-        updatedAt: r.updated_at,
-      })),
+      memories: data.topicMemories || [],
+      profiles: data.entityProfiles || [],
     };
-  } catch (dbErr) {
+  } catch (err) {
+    console.error("Failed to fetch memory data:", err);
     return { memories: [], profiles: [] };
   }
 }
@@ -136,36 +94,22 @@ export default async function MemoryExplorerPage({
     "use server";
     const id = formData.get("id") as string;
     const currentPinned = formData.get("isPinned") === "true";
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation PinMemory($id: ID!, $isPinned: Boolean!) {
-            pinTopicMemory(id: $id, isPinned: $isPinned) { id }
-          }
-        `,
-        variables: { id, isPinned: !currentPinned },
-      }),
-    });
+    try {
+      await graphqlFetch(PIN_MEMORY_MUTATION, { id, isPinned: !currentPinned });
+    } catch (err) {
+      console.error("togglePin failed:", err);
+    }
     revalidatePath("/memory");
   }
 
   async function deleteMemory(formData: FormData) {
     "use server";
     const id = formData.get("id") as string;
-    await fetch("http://proxy:8000/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          mutation DeleteMemory($id: ID!) {
-            deleteTopicMemory(id: $id)
-          }
-        `,
-        variables: { id },
-      }),
-    });
+    try {
+      await graphqlFetch(DELETE_MEMORY_MUTATION, { id });
+    } catch (err) {
+      console.error("deleteMemory failed:", err);
+    }
     revalidatePath("/memory");
   }
 
@@ -226,11 +170,11 @@ export default async function MemoryExplorerPage({
             Living Entity Profiles (Topic Knowledge Graph)
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {profiles.map((p: any) => {
-              let attrs: Record<string, any> = {};
+            {profiles.map((p: EntityProfile) => {
+              let attrs: Record<string, unknown> = {};
               try {
                 attrs = JSON.parse(p.attributesJson || "{}");
-              } catch (_) {}
+              } catch {}
 
               return (
                 <div key={p.id} className="bg-white rounded-xl p-5 border border-neutral-200 shadow-sm">
@@ -290,11 +234,11 @@ export default async function MemoryExplorerPage({
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
-              {memories.map((m: any) => {
+              {memories.map((m: TopicMemory) => {
                 let tags: string[] = [];
                 try {
                   tags = JSON.parse(m.tagsJson || "[]");
-                } catch (_) {}
+                } catch {}
 
                 const isSuperseded = !!m.supersededById;
 
