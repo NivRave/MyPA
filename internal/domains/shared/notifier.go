@@ -42,7 +42,7 @@ func (n *Notifier) SetSender(sender NotificationSender) {
 // RegisterWithBus registers the Notifier's HandleMutationEvent method with an EventBus.
 func (n *Notifier) RegisterWithBus(bus *events.EventBus) {
 	if bus != nil {
-		bus.Subscribe(n.HandleMutationEvent)
+		bus.SubscribeAsync(n.HandleMutationEvent)
 	}
 }
 

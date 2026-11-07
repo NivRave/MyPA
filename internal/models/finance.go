@@ -39,14 +39,14 @@ const (
 // originating from conversation, receipt photos, or automated email parsing.
 type FinancialTransaction struct {
 	ID              uint      `json:"id" gorm:"primaryKey"`
-	UserID          string    `json:"user_id" gorm:"index"`
-	FamilyGroup     string    `json:"family_group" gorm:"index"`
+	UserID          string    `json:"user_id" gorm:"index;index:idx_financial_transactions_user_date,priority:1"`
+	FamilyGroup     string    `json:"family_group" gorm:"index;index:idx_financial_transactions_family_date,priority:1;index:idx_financial_transactions_fam_cat,priority:1"`
 	Type            string    `json:"type" gorm:"index"` // "expense", "income"
-	Category        string    `json:"category" gorm:"index"` // "baby", "house", "groceries", "utilities", "dining", "health", "other"
+	Category        string    `json:"category" gorm:"index;index:idx_financial_transactions_fam_cat,priority:2"` // "baby", "house", "groceries", "utilities", "dining", "health", "other"
 	Merchant        string    `json:"merchant" gorm:"index"`
 	Amount          float64   `json:"amount"`
 	Currency        string    `json:"currency"`
-	TransactionDate time.Time `json:"transaction_date" gorm:"index"`
+	TransactionDate time.Time `json:"transaction_date" gorm:"index;index:idx_financial_transactions_family_date,priority:2,sort:desc;index:idx_financial_transactions_user_date,priority:2,sort:desc"`
 	IsShared        bool      `json:"is_shared" gorm:"default:true"`
 	Source          string    `json:"source"` // "chat", "receipt_photo", "email"
 	Notes           string    `json:"notes"`

@@ -317,6 +317,12 @@ func TestNotifier_CrossUserRouting(t *testing.T) {
 	err := bus.Publish(ctx, ev)
 	require.NoError(t, err)
 
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(notifiedUsers) == 1
+	}, 2*time.Second, 10*time.Millisecond)
+
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -334,8 +340,11 @@ func TestNotifier_SilentAndPrivateTopics(t *testing.T) {
 		{ID: "user-john", PlatformID: "tg-200", Name: "John", FamilyGroup: "TheSmiths"},
 	})
 
+	var mu sync.Mutex
 	var notifiedUsers []string
 	mockSender := func(ctx context.Context, recipientID, text string) error {
+		mu.Lock()
+		defer mu.Unlock()
 		notifiedUsers = append(notifiedUsers, recipientID)
 		return nil
 	}
@@ -355,7 +364,11 @@ func TestNotifier_SilentAndPrivateTopics(t *testing.T) {
 	}
 	err := bus.Publish(ctx, evPrivate)
 	require.NoError(t, err)
+	time.Sleep(20 * time.Millisecond)
+
+	mu.Lock()
 	assert.Empty(t, notifiedUsers)
+	mu.Unlock()
 
 	// 2. Baby topic configured explicitly with NotifyMode = "silent"
 	err = repo.UpsertSharedSpace(&models.SharedSpace{
@@ -376,7 +389,11 @@ func TestNotifier_SilentAndPrivateTopics(t *testing.T) {
 	}
 	err = bus.Publish(ctx, evSilent)
 	require.NoError(t, err)
+	time.Sleep(20 * time.Millisecond)
+
+	mu.Lock()
 	assert.Empty(t, notifiedUsers)
+	mu.Unlock()
 }
 
 func TestNotifier_TargetedPartner(t *testing.T) {
@@ -387,8 +404,11 @@ func TestNotifier_TargetedPartner(t *testing.T) {
 		{ID: "user-bob", PlatformID: "tg-300", Name: "Bob", FamilyGroup: "TheSmiths"},
 	})
 
+	var mu sync.Mutex
 	var notifiedUsers []string
 	mockSender := func(ctx context.Context, recipientID, text string) error {
+		mu.Lock()
+		defer mu.Unlock()
 		notifiedUsers = append(notifiedUsers, recipientID)
 		return nil
 	}
@@ -419,6 +439,15 @@ func TestNotifier_TargetedPartner(t *testing.T) {
 
 	err = bus.Publish(ctx, ev)
 	require.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(notifiedUsers) == 1
+	}, 2*time.Second, 10*time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
 
 	// Only John should be notified; Bob is excluded
 	require.Len(t, notifiedUsers, 1)
@@ -512,6 +541,13 @@ func TestToolModule_ExecuteTools(t *testing.T) {
 	require.NotNil(t, sp)
 	assert.True(t, sp.CanView)
 
+	// Verify John got notified of the configured space before proceeding
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(notifiedUsers) >= 1
+	}, 2*time.Second, 10*time.Millisecond)
+
 	// 2. Tool: create_shared_reminder
 	resCreate, err := mod.Execute(ctx, callCtxSarah, "create_shared_reminder", map[string]interface{}{
 		"topic":    "baby",
@@ -522,6 +558,12 @@ func TestToolModule_ExecuteTools(t *testing.T) {
 	assert.Contains(t, resCreate, "Created shared task/reminder #1")
 
 	// Verify John got notified of the created reminder
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(notifiedUsers) >= 2
+	}, 2*time.Second, 10*time.Millisecond)
+
 	mu.Lock()
 	assert.Len(t, notifiedUsers, 2) // 1 from configure, 1 from create reminder
 	assert.Equal(t, "tg-200", notifiedUsers[1])
@@ -544,6 +586,12 @@ func TestToolModule_ExecuteTools(t *testing.T) {
 	assert.Contains(t, resComplete, "marked as completed by John")
 
 	// Verify Sarah got notified of the completion
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(notifiedUsers) >= 3
+	}, 2*time.Second, 10*time.Millisecond)
+
 	mu.Lock()
 	assert.Len(t, notifiedUsers, 3)
 	assert.Equal(t, "tg-100", notifiedUsers[2]) // Sarah notified!

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
+	"time"
 
 	"github.com/nivik/mypa/internal/models"
 	"google.golang.org/genai"
@@ -32,6 +34,13 @@ func NewClient(ctx context.Context, apiKey, model string, opts ...func(*genai.Cl
 	}
 	for _, opt := range opts {
 		opt(cfg)
+	}
+
+	// Enforce explicit client timeout if not provided via functional options
+	if cfg.HTTPClient == nil {
+		cfg.HTTPClient = &http.Client{
+			Timeout: 90 * time.Second,
+		}
 	}
 
 	client, err := genai.NewClient(ctx, cfg)

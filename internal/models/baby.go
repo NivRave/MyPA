@@ -26,13 +26,13 @@ type BabyProfile struct {
 // "medication", "milestone", "measurement".
 type BabyCareLog struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
-	BabyID         uint      `json:"baby_id" gorm:"index"`
-	FamilyGroup    string    `json:"family_group" gorm:"index"`
-	LogType        string    `json:"log_type" gorm:"index"`
+	BabyID         uint      `json:"baby_id" gorm:"index;index:idx_baby_care_logs_lookup,priority:2;index:idx_baby_care_logs_baby_timestamp,priority:1"`
+	FamilyGroup    string    `json:"family_group" gorm:"index;index:idx_baby_care_logs_family_timestamp,priority:1;index:idx_baby_care_logs_lookup,priority:1"`
+	LogType        string    `json:"log_type" gorm:"index;index:idx_baby_care_logs_lookup,priority:3"`
 	ValueNumeric   float64   `json:"value_numeric"`
 	Unit           string    `json:"unit"`
 	Details        string    `json:"details"`
-	Timestamp      time.Time `json:"timestamp" gorm:"index"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index;index:idx_baby_care_logs_family_timestamp,priority:2,sort:desc;index:idx_baby_care_logs_lookup,priority:4,sort:desc;index:idx_baby_care_logs_baby_timestamp,priority:2,sort:desc"`
 	LoggedByUserID string    `json:"logged_by_user_id"`
 }
 

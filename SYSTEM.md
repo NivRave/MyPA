@@ -258,10 +258,25 @@ type MutationEvent struct {
 }
 ```
 
-**Active Global `EventBus` Subscribers (wired in [`cmd/orchestrator/main.go`](file:///d:/MyPA/cmd/orchestrator/main.go#L156-L210)):**
-1. **[`durability.Module`](file:///d:/MyPA/internal/domains/durability/module.go#L95-L115):** Records every `MutationEvent` (except `Action == "undo"`) into the `mutation_logs` PostgreSQL table to power `/undo` (`undo_last_action`) and Dashboard rollbacks.
-2. **[`shared.Notifier`](file:///d:/MyPA/internal/domains/shared/notifier.go#L50-L152):** Checks if `event.Topic` is shared via `shared_spaces` for `event.FamilyGroup` with `NotifyMode == "instant"`, and pushes a real-time notification (`"📢 [Shared • <Topic>] <Summary>"`) to partner users via Telegram/WhatsApp.
-3. **[`automation.Runner`](file:///d:/MyPA/internal/domains/automation/runner.go#L593-L667):** Evaluates active `AutomationRule` records matching `event.Topic`, checks `ConditionJSON` (`action`, `keyword`, `min_amount`, `field`/`equals`), and executes the configured webhook or notification action.
+**Dual-Lane EventBus Architecture (SCALE-05 Part A):**
+To prevent slow network I/O, external partner notifications, and automation webhooks from blocking the synchronous LLM tool execution pipeline while guaranteeing ACID durability, `EventBus` operates two distinct execution lanes:
+1. **Sync Lane (`SubscribeSync`, `SubscribeSyncTopic`, `Subscribe`, `SubscribeTopic`):**
+   - Executes synchronously on the publisher's goroutine with full error propagation via `errors.Join`.
+   - Dedicated exclusively to ACID audit logging and rollback consistency.
+   - Guarded by panic recovery (`recover()`) logging the stack trace without crashing the server.
+    - **Active Subscribers:**
+      - [`durability.Module.HandleMutationEvent`](file:///d:/MyPA/internal/domains/durability/module.go): Writes immutable audit snapshots to `mutation_logs` before tool completion.
+      - [`orchestrator.RegisterPromptInvalidator`](file:///d:/MyPA/internal/orchestrator/prompt_cache.go): Evicts cached Redis system prompt sections (`ctx_prompt:<fg>:<mod>`) synchronously to guarantee cache consistency.
+2. **Async Lane (`SubscribeAsync`, `SubscribeAsyncTopic`):**
+   - Dispatches jobs to a bounded background worker pool (default: **4 workers**, configurable via `WithWorkerCount`).
+   - Buffered job queue with default capacity of **1,024 events** (`WithQueueCapacity`).
+   - **Non-blocking Backpressure:** If the queue is saturated, incoming async events are dropped without blocking callers, logging a warning and incrementing the atomic drop counter (`DroppedCount()`).
+   - **Detached Context:** Jobs run under a detached context (`context.WithoutCancel` with default **30s timeout**, `WithAsyncTimeout`), preventing cancellation of the parent chat turn from aborting background webhooks or partner notifications.
+   - **Per-Worker Panic Isolation:** Each worker catches panics with stack trace logging, ensuring rogue handlers cannot terminate background workers.
+   - **Graceful Drain & Shutdown:** `Close(ctx ...context.Context) error` and `Shutdown(ctx context.Context) error` stop new submissions, close the queue, drain pending jobs, and await worker completion within the supplied context timeout.
+   - **Active Subscribers:**
+     - [`shared.Notifier.HandleMutationEvent`](file:///d:/MyPA/internal/domains/shared/notifier.go): Sends instant Telegram/WhatsApp notifications to partner family members.
+     - [`automation.Runner.HandleMutationEvent`](file:///d:/MyPA/internal/domains/automation/runner.go): Evaluates triggered `AutomationRule` conditions and executes external webhook HTTP calls.
 
 ### 3.4 Security Architecture & Defense-in-Depth
 
@@ -338,12 +353,54 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
 | `rate_limit:pairing:lockout:<userID>` | String | 1 hour | Lockout flag set after 5 failed pairing attempts |
 | `ctx_prompt:<familyGroup>:<module>` | String | 10 minutes | Dynamic system prompt section cached per tenant family group, invalidated on domain `MutationEvent`s |
 
+### 3.6 RabbitMQ Enterprise Broker Topology & Resilience (SCALE-04)
+
+The message broker layer ([`internal/broker/`](file:///d:/MyPA/internal/broker/)) provides decoupled, thread-safe asynchronous messaging between the API gateway, orchestrator, and background workers:
+
+1. **Exchange & Dead Letter Queue (DLQ) Topology ([`topology.go`](file:///d:/MyPA/internal/broker/topology.go)):**
+   - **Exchanges:** Primary direct exchange `mypa.direct` and dedicated Dead Letter Exchange `mypa.dlx` (both durable, direct).
+   - **Primary Queues:** `telemetry`, `reminders`, `workflows`, and `chat-ingress` are declared durable with dead-letter attributes:
+     - `x-dead-letter-exchange`: `"mypa.dlx"`
+     - `x-dead-letter-routing-key`: `"<queue>.dlq"` (e.g. `telemetry.dlq`)
+     - `x-max-priority`: `10`
+   - **DLQ Queues:** Dedicated durable dead-letter queues (`<queue>.dlq`) bound to `mypa.dlx` with routing key `<queue>.dlq`.
+   - **Idempotency:** Topology initialization is idempotent and runs automatically upon broker client startup.
+
+2. **Thread-Safe `SafePublisher` with Confirms ([`publisher.go`](file:///d:/MyPA/internal/broker/publisher.go)):**
+   - RabbitMQ channels are not concurrent-safe. `SafePublisher` wraps the AMQP channel with a `sync.Mutex` around all channel operations.
+   - **Publisher Confirms:** Enables AMQP publisher confirms (`ch.Confirm(false)`) and uses `PublishWithDeferredConfirmWithContext` to block until the RabbitMQ broker acknowledges (`Ack`) persistent storage, eliminating message loss during broker failovers.
+   - **Automatic Reconnection:** Subscribes to `ch.NotifyClose` in a background monitor goroutine and provides lazy on-demand reconnection in `PublishWithPriority` if the connection or channel drops.
+   - Type alias `Publisher = SafePublisher` guarantees complete backward compatibility across all call sites.
+
+3. **Resilient `Consumer` with Supervisor & Backoff Retries ([`consumer.go`](file:///d:/MyPA/internal/broker/consumer.go)):**
+   - **Supervisor Loop:** Wraps message consumption in an auto-reconnecting loop with exponential backoff (1s up to 30s) on connection loss.
+   - **Bounded Retries:** Transient handler failures are retried up to 3 times with exponential delays (1s, 2s, 4s) tracked via AMQP headers (`x-retries`, `x-last-error`). Upon exhausting retries, messages are rejected without requeue (`Reject(false)`), routing them directly to the corresponding DLQ.
+   - **Poison-Pill Protection:** Malformed JSON payloads that fail deserialization are immediately rejected without requeue (`Reject(false)`), instantly shunting toxic payloads to the DLQ without stalling consumers.
+   - **Graceful Shutdown:** `Stop()` cancels the consumption context and closes the AMQP channel cleanly.
+
 ---
 
 ## 4. PostgreSQL + `pgvector` Database Schema Reference
 
 ### 4.1 Migration Registration Mechanism ([`internal/db/migrations.go`](file:///d:/MyPA/internal/db/migrations.go))
 - On startup, [`db.NewClient(dsn)`](file:///d:/MyPA/internal/db/db.go#L23-L53) enables `pgvector` (`CREATE EXTENSION IF NOT EXISTS vector`) and runs `db.AutoMigrate(allModels...)` combining core Wave 0 models with all models registered via `db.RegisterModel(...)`, `db.RegisterWave1Models()`, and `db.RegisterWave2Models()`. Models are automatically deduplicated by `reflect.TypeOf`, guaranteeing idempotent execution.
+- **Connection Pool Sizing (SCALE-05 Part B):** Configures production-grade pool limits on `*sql.DB`:
+  - `SetMaxOpenConns(25)`: Prevents exhausting PostgreSQL's `max_connections` (100) across services (`orchestrator` 25 + `audit-worker` 10 + headroom 65).
+  - `SetMaxIdleConns(10)`: Maintains warm connections for instantaneous tool queries.
+  - `SetConnMaxLifetime(30 * time.Minute)`: Replaces stale connections before infrastructure firewall timeouts.
+  - `SetConnMaxIdleTime(5 * time.Minute)`: Reclaims unused idle connections after traffic bursts.
+  - `Ping()` & `Close()`: Startup verifies connectivity via `sqlDB.Ping()`, and `Close()` safely drains the connection pool on orchestrator shutdown.
+- **Multi-Tenant Composite B-Tree Indexes ([`internal/db/migrations.go`](file:///d:/MyPA/internal/db/migrations.go)):**
+  - `idx_audit_sessions_tenant_time`: `(family_group, user_id, start_time DESC)` on `audit_sessions`
+  - `idx_baby_care_logs_tenant_time`: `(family_group, baby_id, logged_at DESC)` on `baby_care_logs`
+  - `idx_financial_transactions_tenant_date`: `(family_group, transaction_date DESC)` on `financial_transactions`
+  - `idx_schedule_events_tenant_time`: `(family_group, start_time)` on `schedule_events`
+  - `idx_shared_task_reminders_tenant_due`: `(family_group, due_time, is_completed)` on `shared_task_reminders`
+  - `idx_mutation_logs_tenant_created`: `(family_group, created_at DESC)` on `mutation_logs`
+- **pgvector HNSW Cosine Distance Vector Indexes:**
+  - `idx_topic_memories_embedding_hnsw`: `CREATE INDEX IF NOT EXISTS idx_topic_memories_embedding_hnsw ON topic_memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`
+  - `idx_memories_embedding_hnsw`: `CREATE INDEX IF NOT EXISTS idx_memories_embedding_hnsw ON memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`
+  - Uses `halfvec(3072)` casting to enable HNSW indexing on 3,072-dimensional Gemini embeddings within PostgreSQL pgvector's 2,000-dimension limit for standard vector indexes. Fallback logging ensures compatibility with pgvector versions lacking halfvec.
 - **Total Database Tables:** **29 tables** across 9 model files in [`internal/models/`](file:///d:/MyPA/internal/models/).
 
 ### 4.2 Complete Table & GORM Model Inventory (29 Tables)
@@ -423,6 +480,30 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
 | 28 | **`UserPreference`** (`L38`) | `user_preferences` | `UserID` (`string`) | `PreferredLanguage` (`string`), `TonePersona` (`string`), `DefaultCurrency` (`string`), `QuietHoursStart` (`string`), `QuietHoursEnd` (`string`), `BriefingTopicsJSON` (`jsonb`), `StandingInstructions` (`string`), `UpdatedAt` (`time.Time`) |
 | 29 | **`PersonalCRMContact`** (`L52`) | `personal_crm_contacts` | `ID` (`uint`) | `UserID` (`string`, `index`), `FamilyGroup` (`string`, `index`), `PersonName` (`string`, `index`), `Relationship` (`string`), `ImportantDatesJSON` (`jsonb`), `GiftIdeasAndSizes` (`string`), `MedicalNotes` (`string`), `UpdatedAt` (`time.Time`) |
 
+### 4.3 Database Performance Optimization & Index Architecture (SCALE-05 Part B)
+
+#### Connection Pool Sizing & Lifecycle ([`internal/db/db.go`](file:///d:/MyPA/internal/db/db.go))
+The underlying `*sql.DB` connection pool is explicitly tuned on initialization to eliminate connection starvation and TCP handshake churn:
+- **`MaxOpenConns = 25`:** Caps open database connections well within PostgreSQL's `max_connections` (100) across all services.
+- **`MaxIdleConns = 10`:** Retains a hot pool of idle connections to handle sudden bursts of concurrent LLM tool executions without reconnect overhead.
+- **`ConnMaxLifetime = 30m`:** Recycles long-lived connections periodically to clear server-side resource state and balance across Postgres restarts.
+- **`ConnMaxIdleTime = 5m`:** Closes idle connections after 5 minutes of inactivity to conserve database memory.
+- **Startup Verification & Client Lifecycle:** `NewClient` immediately runs `sqlDB.Ping()` to fail fast if credentials or connectivity are invalid. Clean process shutdown is supported via `Client.Close() error` and `Client.Ping() error`.
+
+#### Vector HNSW & Composite Multi-Tenant Database Indexes ([`internal/db/migrations.go`](file:///d:/MyPA/internal/db/migrations.go))
+Applied automatically during migration initialization via `ApplyCustomIndexes`:
+1. **`pgvector` HNSW `halfvec(3072)` Indexes:**
+   - `idx_topic_memories_embedding_hnsw` on `topic_memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops) WITH (m = 16, ef_construction = 64)`.
+   - `idx_memories_embedding_hnsw` on `memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops) WITH (m = 16, ef_construction = 64)`.
+   - *Impact:* Uses 16-bit float representation to fit high-dimensional 3,072 embeddings within PostgreSQL's 2,000-byte index tuple limit while delivering sub-millisecond approximate nearest neighbor searches without table scans.
+2. **Composite Multi-Tenant B-Tree Indexes:**
+   - `idx_mutation_logs_fam_undone_created`: `mutation_logs (family_group, is_undone, created_at DESC)` — Accelerates `/undo` and Dashboard mutation queries.
+   - `idx_financial_transactions_fam_cat`: `financial_transactions (family_group, category)` — Accelerates category budget aggregations.
+   - `idx_financial_transactions_fam_type_cat_date`: `financial_transactions (family_group, type, category, transaction_date DESC)` — Accelerates monthly spending summaries and 30% anomaly detection.
+   - `idx_baby_care_logs_baby_timestamp`: `baby_care_logs (baby_id, timestamp DESC)` — Accelerates baby trend analysis and feeding intervals.
+   - `idx_schedule_events_fam_topic_start`: `schedule_events (family_group, topic, start_time)` — Accelerates topic calendar listings.
+   - `idx_house_contracts_fam_exp`: `house_contract_records (family_group, expiration_or_renewal_date)` — Accelerates upcoming expiry and renewal alerts.
+
 ---
 
 ## 5. Redis State & RabbitMQ Message Broker Reference
@@ -439,14 +520,32 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
 | `rate_limit:pairing:<userID>` | `STRING` | Integer counter of failed pairing attempts | 1 integer counter per user | `15m` (rolling from 1st failure) | `RecordFailedPairingAttempt`, `ResetPairingRateLimit` |
 | `rate_limit:pairing:lockout:<userID>` | `STRING` | String sentinel (`"locked"`) | Set upon 5 consecutive failed attempts | `1h` | `CheckPairingLockout`, `RecordFailedPairingAttempt`, `ResetPairingRateLimit` |
 
-### 5.2 RabbitMQ Queues & Payloads ([`internal/broker/`](file:///d:/MyPA/internal/broker/publisher.go))
+### 5.2 RabbitMQ Queues, Topology & Reliable Messaging ([`internal/broker/`](file:///d:/MyPA/internal/broker/))
 
-Both queues are declared on the default direct exchange (`""`) with `durable: true`, `autoDelete: false`, `DeliveryMode: amqp.Persistent`, and consumer QoS `prefetchCount: 1`.
+#### Queue & DLQ Topology Architecture (SCALE-04)
+Primary queues are declared with dead-letter exchange bindings ensuring zero message loss and complete poison-pill isolation:
+- **Dead-Letter Exchange (DLX):** Direct exchange `mypa.dlx` (`durable: true`, `autoDelete: false`).
+- **Primary Queue Bindings:** Declared with `x-dead-letter-exchange: mypa.dlx` and `x-dead-letter-routing-key: <queue>.dlq`.
+- **Dead-Letter Queues (DLQs):** Dedicated durable queues (`telegram.inbound.dlq`, `audit.events.dlq`) bound to `mypa.dlx` with routing keys matching their primary queue names plus `.dlq`.
+- **Consumer QoS:** Enforces `prefetchCount: 1` on consumers to guarantee fair dispatching across worker replicas.
 
-| Queue Name | Producer | Consumer | Go Payload Struct | JSON Fields |
-| :--- | :--- | :--- | :--- | :--- |
-| **`telegram.inbound`** | `cmd/gateway` (`/webhook/telegram` & `/webhook/twilio`) | `cmd/orchestrator` (`Engine.Start`) | [`models.Message`](file:///d:/MyPA/internal/models/models.go#L9-L22) | `id`, `user_id`, `chat_id`, `text`, `voice_file_id`, `photo_file_id`, `audio_file_id`, `media_url`, `media_content_type`, `source` (`"telegram"`\|`"whatsapp"`), `timestamp` |
-| **`audit.events`** | `cmd/orchestrator` (`Engine.ProcessMessage` defer) | `cmd/audit-worker` | [`models.AuditSession`](file:///d:/MyPA/internal/models/models.go#L80-L92) | `id`, `user_id`, `chat_id`, `source`, `user_prompt`, `final_response`, `start_time`, `end_time`, `total_duration_ms`, `total_tokens`, `status` |
+| Queue Name | Dead-Letter Queue | Producer | Consumer | Go Payload Struct | JSON Fields |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`telegram.inbound`** | `telegram.inbound.dlq` | `cmd/gateway` (`/webhook/telegram` & `/webhook/twilio`) | `cmd/orchestrator` (`Engine.Start`) | [`models.Message`](file:///d:/MyPA/internal/models/models.go#L9-L22) | `id`, `user_id`, `chat_id`, `text`, `voice_file_id`, `photo_file_id`, `audio_file_id`, `media_url`, `media_content_type`, `source` (`"telegram"`\|`"whatsapp"`), `timestamp` |
+| **`audit.events`** | `audit.events.dlq` | `cmd/orchestrator` (`Engine.ProcessMessage` defer) | `cmd/audit-worker` | [`models.AuditSession`](file:///d:/MyPA/internal/models/models.go#L80-L92) | `id`, `user_id`, `chat_id`, `source`, `user_prompt`, `final_response`, `start_time`, `end_time`, `total_duration_ms`, `total_tokens`, `status` |
+
+#### SafePublisher: Thread-Safety, Confirms & Auto-Reconnect ([`internal/broker/publisher.go`](file:///d:/MyPA/internal/broker/publisher.go))
+All message publishing across the gateway and orchestrator utilizes `SafePublisher` (`broker.NewSafePublisher`):
+- **Concurrency Guard:** All channel access is protected by an internal `sync.Mutex`, preventing AMQP race conditions under concurrent webhook ingestion or parallel tool executions.
+- **Publisher Confirms:** AMQP channels are initialized with `ch.Confirm(false)`. Each publish invokes `PublishWithDeferredConfirmWithContext` and awaits broker acknowledgment (`confirmation.Wait()`), ensuring durability before acknowledging upstream webhook clients.
+- **Dual-Listener Auto-Reconnect:** Concurrently monitors `NotifyClose` channels on both `*amqp.Connection` and `*amqp.Channel`. Upon broker restarts or TCP drops, a background supervisor loop re-establishes the connection and channel with exponential backoff while blocking in-flight publishers until recovery.
+
+#### Consumer Supervisor, Bounded Retries & Poison Pill Protection ([`internal/broker/consumer.go`](file:///d:/MyPA/internal/broker/consumer.go))
+The consumer loop guarantees resilient, bounded message processing:
+- **Auto-Reconnect Supervisor:** Automatically recovers consumer channels upon broker disconnection or unexpected channel closures.
+- **Bounded Retries with Exponential Backoff:** Transient processing errors retry up to **3 attempts** (`DefaultMaxRetries = 3`). Retries publish to the tail of the primary queue with exponential delay (`2^attempt * 500ms`) and increment the AMQP header `x-retries`.
+- **Poison Pill Isolation:** If processing fails after 3 attempts, the message is rejected with `d.Reject(false)` (requeue disabled), immediately routing the payload to its designated dead-letter queue without broker redelivery loops.
+- **Malformed JSON Handling:** Unparseable payloads fail immediately on the first attempt and are rejected directly to the DLQ (`d.Reject(false)`), protecting consumers from infinite JSON unmarshal loops.
 
 ---
 

@@ -148,7 +148,7 @@ func main() {
 	tavilyClient := tavily.NewClient(cfg.Tavily.APIKey)
 
 	// 8.5 Initialize Telemetry Publisher
-	telemetryPublisher, err := broker.NewPublisher(cfg.RabbitMQ.URL, "audit.events")
+	telemetryPublisher, err := broker.NewSafePublisher(cfg.RabbitMQ.URL, "audit.events")
 	if err != nil {
 		slog.Error("failed to initialize telemetry publisher", "error", err)
 		os.Exit(1)
@@ -163,8 +163,8 @@ func main() {
 		}
 	}
 
-	// 8.6 Initialize Wave 1 EventBus and Domain ToolModules
-	eventBus := events.NewEventBus()
+	// 8.6 Initialize Wave 1 EventBus with dual-lane worker pool and Domain ToolModules
+	eventBus := events.NewEventBus(events.WithWorkerCount(4), events.WithQueueCapacity(1024))
 	registry := orchestrator.NewRegistry()
 	if store != nil {
 		orchestrator.RegisterPromptInvalidator(eventBus, store)
@@ -260,11 +260,11 @@ func main() {
 		WithEventBus(eventBus)
 
 	// Start Cron jobs
-	c := scheduler.StartCronJobs(engine, dbClient, automationRunner)
+	c := scheduler.StartCronJobs(engine, dbClient, automationRunner, cfg.Server.DefaultTimezone)
 	defer c.Stop()
 	
 	engine.SetWorkflowsChangedCallback(func() {
-		scheduler.ReloadWorkflows(engine, dbClient, automationRunner)
+		scheduler.ReloadWorkflows(engine, dbClient, automationRunner, cfg.Server.DefaultTimezone)
 	})
 
 	// Run engine in a goroutine
@@ -302,10 +302,29 @@ func main() {
 
 	slog.Info("orchestrator shutting down")
 	cancel()
-	_ = srv.Shutdown(context.Background())
 
-	// Wait for engine background tasks
+	// 1. Stop HTTP server
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	_ = srv.Shutdown(shutdownCtx)
+
+	// 2. Drain and close EventBus worker pool
+	eventBusShutdownCtx, eventBusCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer eventBusCancel()
+	if err := eventBus.Close(eventBusShutdownCtx); err != nil {
+		slog.Error("failed to gracefully drain event bus", "error", err)
+	}
+
+	// 3. Wait for engine background tasks
 	engine.Wait()
+
+	// 4. Close database connection pool
+	if dbClient != nil {
+		if err := dbClient.Close(); err != nil {
+			slog.Error("failed to close db connection pool", "error", err)
+		}
+	}
+
 	slog.Info("orchestrator shutdown complete")
 }
 

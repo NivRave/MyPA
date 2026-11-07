@@ -178,12 +178,28 @@ func Bool(args map[string]interface{}, key string, defaultVal bool) bool {
 	return defaultVal
 }
 
-// ParseTime parses a flexible date/time string against common ISO 8601 / RFC 3339 formats.
-func ParseTime(str string) (time.Time, error) {
+// ParseTimeInLocation parses a date/time string in the specified timezone location.
+// If loc is nil, UTC is used. RFC3339 timestamps with explicit zone offsets respect their offset,
+// whereas naive date/time strings ("2006-01-02 15:04:05") are interpreted in loc before converting to UTC.
+func ParseTimeInLocation(str string, loc *time.Location) (time.Time, error) {
 	s := strings.TrimSpace(str)
 	if s == "" {
 		return time.Time{}, fmt.Errorf("empty time string")
 	}
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	// 1. If string contains timezone/offset (Z or +03:00), parse directly via RFC3339
+	if strings.HasSuffix(s, "Z") || strings.Contains(s, "+") || (strings.Count(s, "-") > 2) {
+		for _, f := range []string{time.RFC3339, time.RFC3339Nano} {
+			if t, err := time.Parse(f, s); err == nil {
+				return t.UTC(), nil
+			}
+		}
+	}
+
+	// 2. Parse against formats in the given location
 	formats := []string{
 		time.RFC3339,
 		time.RFC3339Nano,
@@ -193,20 +209,30 @@ func ParseTime(str string) (time.Time, error) {
 		"2006-01-02",
 	}
 	for _, f := range formats {
-		if t, err := time.Parse(f, s); err == nil {
-			return t, nil
+		if t, err := time.ParseInLocation(f, s, loc); err == nil {
+			return t.UTC(), nil
 		}
 	}
-	return time.Time{}, fmt.Errorf("unable to parse time string %q", str)
+	return time.Time{}, fmt.Errorf("unable to parse time string %q in location %v", str, loc)
+}
+
+// ParseTime parses a flexible date/time string against common ISO 8601 / RFC 3339 formats.
+func ParseTime(str string) (time.Time, error) {
+	return ParseTimeInLocation(str, time.UTC)
 }
 
 // Time extracts a time.Time from args at key. Returns (nil, nil) if key is missing or empty.
-func Time(args map[string]interface{}, key string) (*time.Time, error) {
+// If an optional *time.Location is provided, naive timestamps are parsed in that location before conversion to UTC.
+func Time(args map[string]interface{}, key string, loc ...*time.Location) (*time.Time, error) {
 	val := String(args, key)
 	if val == "" {
 		return nil, nil
 	}
-	t, err := ParseTime(val)
+	var l *time.Location = time.UTC
+	if len(loc) > 0 && loc[0] != nil {
+		l = loc[0]
+	}
+	t, err := ParseTimeInLocation(val, l)
 	if err != nil {
 		return nil, err
 	}

@@ -58,7 +58,7 @@ func (c *Client) ListTaskLists(ctx context.Context, userID string) ([]*tasksapi.
 		return nil, err
 	}
 
-	res, err := srv.Tasklists.List().Do()
+	res, err := srv.Tasklists.List().Context(ctx).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list task lists: %w", err)
 	}
@@ -77,7 +77,7 @@ func (c *Client) CreateTaskList(ctx context.Context, userID, title string) (*tas
 		Title: title,
 	}
 
-	res, err := srv.Tasklists.Insert(taskList).Do()
+	res, err := srv.Tasklists.Insert(taskList).Context(ctx).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create task list: %w", err)
 	}
@@ -97,7 +97,7 @@ func (c *Client) ListTasks(ctx context.Context, userID, listID string) ([]*tasks
 
 	// Fetch tasks from the specified list
 	// ShowHidden = true to optionally see completed if desired, but default is false
-	res, err := srv.Tasks.List(listID).ShowHidden(false).Do()
+	res, err := srv.Tasks.List(listID).ShowHidden(false).Context(ctx).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tasks: %w", err)
 	}
@@ -126,7 +126,7 @@ func (c *Client) CreateTask(ctx context.Context, userID, listID, title, notes, d
 		listID = "@default"
 	}
 
-	_, err = srv.Tasks.Insert(listID, task).Do()
+	_, err = srv.Tasks.Insert(listID, task).Context(ctx).Do()
 	return err
 }
 
@@ -141,13 +141,13 @@ func (c *Client) CompleteTask(ctx context.Context, userID, listID, taskID string
 		listID = "@default"
 	}
 
-	task, err := srv.Tasks.Get(listID, taskID).Do()
+	task, err := srv.Tasks.Get(listID, taskID).Context(ctx).Do()
 	if err != nil {
 		return fmt.Errorf("failed to fetch task to complete: %w", err)
 	}
 
 	task.Status = "completed"
-	_, err = srv.Tasks.Update(listID, task.Id, task).Do()
+	_, err = srv.Tasks.Update(listID, task.Id, task).Context(ctx).Do()
 	return err
 }
 
@@ -162,6 +162,6 @@ func (c *Client) DeleteTask(ctx context.Context, userID, listID, taskID string) 
 		listID = "@default"
 	}
 
-	err = srv.Tasks.Delete(listID, taskID).Do()
+	err = srv.Tasks.Delete(listID, taskID).Context(ctx).Do()
 	return err
 }

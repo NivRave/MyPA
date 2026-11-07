@@ -35,13 +35,13 @@ type SharedSpace struct {
 // under a family shared topic with claim/complete hand-off tracking.
 type SharedTaskReminder struct {
 	ID                uint       `json:"id" gorm:"primarykey"`
-	FamilyGroup       string     `json:"family_group" gorm:"index;size:100;not null"`
+	FamilyGroup       string     `json:"family_group" gorm:"index;index:idx_shared_task_reminders_family_completed_due,priority:1;size:100;not null"`
 	Topic             string     `json:"topic" gorm:"index;size:100;not null"`
 	Title             string     `json:"title" gorm:"type:text;not null"`
-	DueTime           *time.Time `json:"due_time,omitempty" gorm:"index"`
+	DueTime           *time.Time `json:"due_time,omitempty" gorm:"index;index:idx_shared_task_reminders_due_completed,priority:1;index:idx_shared_task_reminders_family_completed_due,priority:3,sort:asc"`
 	CreatedByUserID   string     `json:"created_by_user_id" gorm:"size:100;not null"`
 	AssignedToUserID  string     `json:"assigned_to_user_id,omitempty" gorm:"size:100"`
-	IsCompleted       bool       `json:"is_completed" gorm:"index;default:false"`
+	IsCompleted       bool       `json:"is_completed" gorm:"index;index:idx_shared_task_reminders_due_completed,priority:2;index:idx_shared_task_reminders_family_completed_due,priority:2;default:false"`
 	CompletedByUserID string     `json:"completed_by_user_id,omitempty" gorm:"size:100"`
 	CompletedAt       *time.Time `json:"completed_at,omitempty"`
 	IsSent            bool       `json:"is_sent" gorm:"index;default:false"`

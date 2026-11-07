@@ -22,10 +22,16 @@ var (
 )
 
 // StartCronJobs initializes and starts background scheduling tasks.
-func StartCronJobs(engine *orchestrator.Engine, dbClient *db.Client, runner *automation.Runner) *cron.Cron {
-	loc, err := time.LoadLocation("Asia/Jerusalem")
+func StartCronJobs(engine *orchestrator.Engine, dbClient *db.Client, runner *automation.Runner, defaultTimezone ...string) *cron.Cron {
+	tz := "Asia/Jerusalem"
+	if len(defaultTimezone) > 0 && defaultTimezone[0] != "" {
+		tz = defaultTimezone[0]
+	} else if envTz := os.Getenv("DEFAULT_TIMEZONE"); envTz != "" {
+		tz = envTz
+	}
+	loc, err := time.LoadLocation(tz)
 	if err != nil {
-		slog.Warn("Failed to load timezone, using local time", "error", err)
+		slog.Warn("Failed to load timezone, using local time", "tz", tz, "error", err)
 		loc = time.Local
 	}
 	c := cron.New(cron.WithLocation(loc))
@@ -83,7 +89,7 @@ func StartCronJobs(engine *orchestrator.Engine, dbClient *db.Client, runner *aut
 
 // ReloadWorkflows fetches all active workflows and cron automation rules from the DB and rebuilds the workflow cron.
 // Concurrency-safe via workflowMu.
-func ReloadWorkflows(engine *orchestrator.Engine, dbClient *db.Client, runner *automation.Runner) {
+func ReloadWorkflows(engine *orchestrator.Engine, dbClient *db.Client, runner *automation.Runner, defaultTimezone ...string) {
 	workflowMu.Lock()
 	defer workflowMu.Unlock()
 
@@ -91,7 +97,13 @@ func ReloadWorkflows(engine *orchestrator.Engine, dbClient *db.Client, runner *a
 		workflowCron.Stop()
 	}
 
-	loc, err := time.LoadLocation("Asia/Jerusalem")
+	tz := "Asia/Jerusalem"
+	if len(defaultTimezone) > 0 && defaultTimezone[0] != "" {
+		tz = defaultTimezone[0]
+	} else if envTz := os.Getenv("DEFAULT_TIMEZONE"); envTz != "" {
+		tz = envTz
+	}
+	loc, err := time.LoadLocation(tz)
 	if err != nil {
 		loc = time.Local
 	}

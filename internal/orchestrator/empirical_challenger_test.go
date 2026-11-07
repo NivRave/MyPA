@@ -560,6 +560,9 @@ func TestEmpirical_PromptCache_SimultaneousMutationsAndReads(t *testing.T) {
 			defer wg.Done()
 			for ctx.Err() == nil {
 				prompt := reg.CombinedSystemPrompt(ctx, callCtx)
+				if ctx.Err() != nil {
+					break
+				}
 				if prompt == "" || !strings.Contains(prompt, "Section Ver") {
 					atomic.AddInt64(&readErrors, 1)
 				} else {

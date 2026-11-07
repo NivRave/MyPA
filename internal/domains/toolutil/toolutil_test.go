@@ -87,6 +87,17 @@ func TestToolUtil_Parsers(t *testing.T) {
 		t.Errorf("Time(time_val) err = %v, tPtr = %v", err, tPtr)
 	}
 
+	// Test ParseTimeInLocation with specific timezone (e.g. UTC+2)
+	loc := time.FixedZone("UTC+2", 2*3600)
+	locTime, err := ParseTimeInLocation("2026-11-05 14:00:00", loc)
+	if err != nil {
+		t.Errorf("ParseTimeInLocation failed: %v", err)
+	}
+	// 14:00 at UTC+2 is 12:00 UTC
+	if locTime.Hour() != 12 || locTime.Location() != time.UTC {
+		t.Errorf("ParseTimeInLocation hour = %d (loc: %v), want 12 UTC", locTime.Hour(), locTime.Location())
+	}
+
 	jsonStr := FormatJSON(map[string]string{"foo": "bar"})
 	if jsonStr != `{"foo":"bar"}` {
 		t.Errorf("FormatJSON = %s", jsonStr)

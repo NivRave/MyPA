@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"sync"
@@ -172,6 +173,26 @@ func (r *Registry) allDeclarationsLocked() []*genai.FunctionDeclaration {
 // - handled: true if a registered module matched toolName, false otherwise
 // - err: any execution error returned by the module
 func (r *Registry) Execute(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, bool, error) {
+	if toolName == "get_current_time" {
+		loc := time.UTC
+		if args != nil {
+			if tzVal, ok := args["timezone"].(string); ok && strings.TrimSpace(tzVal) != "" {
+				if l, err := time.LoadLocation(strings.TrimSpace(tzVal)); err == nil {
+					loc = l
+				}
+			}
+		}
+		now := time.Now().In(loc)
+		resp := map[string]interface{}{
+			"current_time": now.Format(time.RFC3339),
+			"timezone":     loc.String(),
+			"day_of_week":  now.Weekday().String(),
+			"unix":         now.Unix(),
+		}
+		b, _ := json.Marshal(resp)
+		return string(b), true, nil
+	}
+
 	r.mu.RLock()
 	mod, ok := r.byTool[toolName]
 	r.mu.RUnlock()

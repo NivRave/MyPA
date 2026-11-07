@@ -17,9 +17,9 @@ type EncryptedCredential struct {
 // enabling full auditability, rollback ("undo last action"), and partner notification sync.
 type MutationLog struct {
 	ID          string    `json:"id" gorm:"primaryKey"`
-	UserID      string    `json:"user_id" gorm:"index"`
-	FamilyGroup string    `json:"family_group" gorm:"index"`
-	Topic       string    `json:"topic" gorm:"index"`       // e.g. "baby", "house", "finance", "schedule", "memory"
+	UserID      string    `json:"user_id" gorm:"index;index:idx_mutation_logs_user_created,priority:1"`
+	FamilyGroup string    `json:"family_group" gorm:"index;index:idx_mutation_logs_family_created,priority:1;index:idx_mutation_logs_family_topic_created,priority:1"`
+	Topic       string    `json:"topic" gorm:"index;index:idx_mutation_logs_family_topic_created,priority:2"`       // e.g. "baby", "house", "finance", "schedule", "memory"
 	Action      string    `json:"action"`                  // e.g. "create", "update", "delete", "complete", "undo"
 	EntityType  string    `json:"entity_type" gorm:"index"` // e.g. "BabyCareLog", "ScheduleEvent"
 	EntityID    string    `json:"entity_id" gorm:"index"`
@@ -27,7 +27,7 @@ type MutationLog struct {
 	AfterJSON   string    `json:"after_json" gorm:"type:jsonb"`
 	Summary     string    `json:"summary"`
 	IsUndone    bool      `json:"is_undone" gorm:"default:false;index"`
-	CreatedAt   time.Time `json:"created_at" gorm:"index"`
+	CreatedAt   time.Time `json:"created_at" gorm:"index;index:idx_mutation_logs_family_created,priority:2,sort:desc;index:idx_mutation_logs_user_created,priority:2,sort:desc;index:idx_mutation_logs_family_topic_created,priority:3,sort:desc"`
 }
 
 // IdempotencyRecord stores execution tokens to guard against duplicate tool execution

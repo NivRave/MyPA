@@ -87,7 +87,7 @@ func (m *Module) AttachEventBus(bus *events.EventBus) {
 	m.bus = bus
 	m.mu.Unlock()
 
-	bus.Subscribe(m.HandleMutationEvent)
+	bus.SubscribeSync(m.HandleMutationEvent)
 }
 
 // HandleMutationEvent processes incoming MutationEvents and persists them to the audit log.

@@ -490,6 +490,12 @@ func TestAutomationRule_MatchingAgainstMutationEvents(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(executedRules) >= 2
+	}, 2*time.Second, 10*time.Millisecond)
+
 	mu.Lock()
 	assert.Contains(t, executedRules, "Finance Create Watcher")
 	assert.Contains(t, executedRules, "High Threshold Alert")
@@ -505,6 +511,7 @@ func TestAutomationRule_MatchingAgainstMutationEvents(t *testing.T) {
 		Summary:     "Fed 120ml milk formula",
 	})
 	require.NoError(t, err)
+	time.Sleep(30 * time.Millisecond)
 
 	mu.Lock()
 	assert.Empty(t, executedRules)
@@ -518,6 +525,12 @@ func TestAutomationRule_MatchingAgainstMutationEvents(t *testing.T) {
 		Summary:     "Baby has a high fever of 39.1C",
 	})
 	require.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(executedRules) >= 1
+	}, 2*time.Second, 10*time.Millisecond)
 
 	mu.Lock()
 	assert.Contains(t, executedRules, "Baby Fever Alert")

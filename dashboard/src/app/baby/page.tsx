@@ -115,7 +115,7 @@ async function getBabyData(familyGroup: string = "Smith Family"): Promise<{
   profile: BabyProfile | null;
   logs: BabyCareLog[];
   inventory: BabyInventoryItem[];
-  dob: Date;
+  dob: Date | null;
   ageString: string;
   milestoneSuggestions: string[];
 }> {
@@ -136,25 +136,24 @@ async function getBabyData(familyGroup: string = "Smith Family"): Promise<{
       logs = logData.babyCareLogs || [];
     }
 
-    const dob = baby ? new Date(baby.dateOfBirth) : new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const dob = baby ? new Date(baby.dateOfBirth) : null;
     return {
       profile: baby,
       logs,
       inventory: data.babyInventory || [],
       dob,
-      ageString: calculateAge(dob, now),
-      milestoneSuggestions: getMilestones(dob, now),
+      ageString: dob ? calculateAge(dob, now) : "No profile registered",
+      milestoneSuggestions: dob ? getMilestones(dob, now) : [],
     };
   } catch (err) {
     console.error("Failed to load baby data:", err);
-    const dob = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
     return {
       profile: null,
       logs: [],
       inventory: [],
-      dob,
-      ageString: calculateAge(dob, now),
-      milestoneSuggestions: getMilestones(dob, now),
+      dob: null,
+      ageString: "No profile registered",
+      milestoneSuggestions: [],
     };
   }
 }
@@ -169,7 +168,11 @@ export default async function BabyTrackerPage() {
     const value = parseFloat((formData.get("value") as string) || "0") || 0;
     const unit = (formData.get("unit") as string) || "";
     const details = (formData.get("details") as string) || "";
-    const babyId = (formData.get("babyId") as string) || "1";
+    const babyId = (formData.get("babyId") as string) || "";
+    if (!babyId) {
+      console.warn("logCare aborted: no baby profile registered");
+      return;
+    }
 
     try {
       await graphqlFetch(LOG_CARE_MUTATION, {
@@ -224,51 +227,70 @@ export default async function BabyTrackerPage() {
 
       {/* Child Profile Card */}
       <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 mb-8">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="flex items-center space-x-4">
-            <div className="w-16 h-16 rounded-full bg-pink-100 flex items-center justify-center text-pink-600 text-2xl font-bold">
-              {profile ? profile.name[0] : "B"}
+        {profile ? (
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="flex items-center space-x-4">
+              <div className="w-16 h-16 rounded-full bg-pink-100 flex items-center justify-center text-pink-600 text-2xl font-bold">
+                {profile.name[0]}
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-neutral-900">{profile.name}</h2>
+                <p className="text-sm font-medium text-pink-600">{ageString}</p>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  DOB: {dob?.toLocaleDateString()} • Gender: {profile.gender}
+                </p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-xl font-bold text-neutral-900">{profile ? profile.name : "Liam Smith"}</h2>
-              <p className="text-sm font-medium text-pink-600">{ageString}</p>
-              <p className="text-xs text-neutral-400 mt-0.5">
-                DOB: {dob.toLocaleDateString()} • Gender: {profile?.gender || "male"}
-              </p>
-            </div>
-          </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-            <div className="p-3 bg-neutral-50 rounded-lg">
-              <Scale className="w-4 h-4 mx-auto text-neutral-500 mb-1" />
-              <div className="text-xs text-neutral-500">Weight</div>
-              <div className="text-sm font-bold text-neutral-800">
-                {profile?.currentWeightGrams ? `${(profile.currentWeightGrams / 1000).toFixed(2)} kg` : "6.20 kg"}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+              <div className="p-3 bg-neutral-50 rounded-lg">
+                <Scale className="w-4 h-4 mx-auto text-neutral-500 mb-1" />
+                <div className="text-xs text-neutral-500">Weight</div>
+                <div className="text-sm font-bold text-neutral-800">
+                  {profile.currentWeightGrams ? `${(profile.currentWeightGrams / 1000).toFixed(2)} kg` : "—"}
+                </div>
               </div>
-            </div>
-            <div className="p-3 bg-neutral-50 rounded-lg">
-              <Ruler className="w-4 h-4 mx-auto text-neutral-500 mb-1" />
-              <div className="text-xs text-neutral-500">Height</div>
-              <div className="text-sm font-bold text-neutral-800">
-                {profile?.heightCm ? `${profile.heightCm} cm` : "62.0 cm"}
+              <div className="p-3 bg-neutral-50 rounded-lg">
+                <Ruler className="w-4 h-4 mx-auto text-neutral-500 mb-1" />
+                <div className="text-xs text-neutral-500">Height</div>
+                <div className="text-sm font-bold text-neutral-800">
+                  {profile.heightCm ? `${profile.heightCm} cm` : "—"}
+                </div>
               </div>
-            </div>
-            <div className="p-3 bg-neutral-50 rounded-lg">
-              <Heart className="w-4 h-4 mx-auto text-neutral-500 mb-1" />
-              <div className="text-xs text-neutral-500">Pediatrician</div>
-              <div className="text-sm font-bold text-neutral-800 truncate max-w-[100px]" title={profile?.pediatricianInfo || "Dr. Cohen"}>
-                {profile?.pediatricianInfo || "Dr. Cohen"}
+              <div className="p-3 bg-neutral-50 rounded-lg">
+                <Heart className="w-4 h-4 mx-auto text-neutral-500 mb-1" />
+                <div className="text-xs text-neutral-500">Pediatrician</div>
+                <div className="text-sm font-bold text-neutral-800 truncate max-w-[100px]" title={profile.pediatricianInfo || "None"}>
+                  {profile.pediatricianInfo || "—"}
+                </div>
               </div>
-            </div>
-            <div className="p-3 bg-neutral-50 rounded-lg">
-              <AlertCircle className="w-4 h-4 mx-auto text-neutral-500 mb-1" />
-              <div className="text-xs text-neutral-500">Allergies</div>
-              <div className="text-sm font-bold text-neutral-800">
-                {profile?.allergiesNotes || "None"}
+              <div className="p-3 bg-neutral-50 rounded-lg">
+                <AlertCircle className="w-4 h-4 mx-auto text-neutral-500 mb-1" />
+                <div className="text-xs text-neutral-500">Allergies</div>
+                <div className="text-sm font-bold text-neutral-800">
+                  {profile.allergiesNotes || "None"}
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4 py-2">
+            <div className="flex items-center space-x-4">
+              <div className="w-14 h-14 rounded-full bg-neutral-100 flex items-center justify-center text-neutral-400">
+                <Baby className="w-7 h-7" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-neutral-800">No Baby Profile Registered</h2>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  Register a child profile via chat (e.g. &quot;Our baby Maya was born on...&quot;) to start tracking growth, care logs, and pediatric milestones.
+                </p>
+              </div>
+            </div>
+            <div className="text-xs px-3 py-1.5 bg-neutral-100 text-neutral-600 rounded-md font-medium">
+              Family: {familyGroup}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
@@ -279,7 +301,7 @@ export default async function BabyTrackerPage() {
             Log Care Routine
           </h2>
           <form action={logCare} className="space-y-4 text-sm">
-            <input type="hidden" name="babyId" value={profile?.id || "1"} />
+            <input type="hidden" name="babyId" value={profile?.id || ""} />
             <div>
               <label className="block text-xs font-medium text-neutral-700 mb-1">Routine Type</label>
               <select name="logType" className="w-full border border-neutral-300 rounded-md p-2 text-sm bg-white">
@@ -323,9 +345,14 @@ export default async function BabyTrackerPage() {
             </div>
             <button
               type="submit"
-              className="w-full py-2 bg-pink-600 text-white rounded-md text-sm font-medium hover:bg-pink-700 transition-colors"
+              disabled={!profile}
+              className={`w-full py-2 rounded-md text-sm font-medium transition-colors ${
+                profile
+                  ? "bg-pink-600 text-white hover:bg-pink-700"
+                  : "bg-neutral-200 text-neutral-400 cursor-not-allowed"
+              }`}
             >
-              Save Care Log
+              {profile ? "Save Care Log" : "Register Child Profile First"}
             </button>
           </form>
         </div>
@@ -339,12 +366,18 @@ export default async function BabyTrackerPage() {
             </h2>
           </div>
           <div className="space-y-3 flex-1 overflow-y-auto">
-            {milestoneSuggestions.map((m, idx) => (
-              <div key={idx} className="p-3 bg-amber-50/60 border border-amber-100 rounded-lg flex items-start space-x-3 text-xs text-amber-900">
-                <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <span>{m}</span>
+            {milestoneSuggestions.length > 0 ? (
+              milestoneSuggestions.map((m, idx) => (
+                <div key={idx} className="p-3 bg-amber-50/60 border border-amber-100 rounded-lg flex items-start space-x-3 text-xs text-amber-900">
+                  <Check className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <span>{m}</span>
+                </div>
+              ))
+            ) : (
+              <div className="text-xs text-neutral-400 text-center py-8">
+                Age-specific developmental milestones and vaccination schedules will appear here once a baby profile is registered.
               </div>
-            ))}
+            )}
           </div>
         </div>
 

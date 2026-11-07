@@ -14,13 +14,13 @@ type ScheduleEvent struct {
 	ID                    uint      `json:"id" gorm:"primaryKey"`
 	ExternalGoogleEventID string    `json:"external_google_event_id" gorm:"index"`
 	PartnerGoogleEventID  string    `json:"partner_google_event_id" gorm:"index"`
-	UserID                string    `json:"user_id" gorm:"index"`
-	FamilyGroup           string    `json:"family_group" gorm:"index"`
+	UserID                string    `json:"user_id" gorm:"index;index:idx_schedule_events_user_start,priority:1"`
+	FamilyGroup           string    `json:"family_group" gorm:"index;index:idx_schedule_events_family_start,priority:1"`
 	Topic                 string    `json:"topic" gorm:"index"`
 	TagsJSON              string    `json:"tags_json" gorm:"type:jsonb"`
 	Title                 string    `json:"title"`
 	Description           string    `json:"description"`
-	StartTime             time.Time `json:"start_time" gorm:"index"`
+	StartTime             time.Time `json:"start_time" gorm:"index;index:idx_schedule_events_family_start,priority:2,sort:asc;index:idx_schedule_events_user_start,priority:2,sort:asc"`
 	EndTime               time.Time `json:"end_time" gorm:"index"`
 	RecurrenceRule        string    `json:"recurrence_rule"`
 	SyncToGoogle          bool      `json:"sync_to_google" gorm:"default:true"`

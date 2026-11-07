@@ -107,7 +107,7 @@ func RegisterPromptInvalidator(bus *events.EventBus, cache PromptCache) {
 		return
 	}
 
-	bus.Subscribe(func(ctx context.Context, ev events.MutationEvent) error {
+	bus.SubscribeSync(func(ctx context.Context, ev events.MutationEvent) error {
 		keys := BuildPromptInvalidationKeys(ev)
 		if len(keys) == 0 {
 			return nil

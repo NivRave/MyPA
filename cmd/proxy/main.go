@@ -74,6 +74,15 @@ func setupProxy(gatewayStr, orchestratorStr string) (*http.ServeMux, error) {
 	gatewayProxy := httputil.NewSingleHostReverseProxy(gatewayURL)
 	orchestratorProxy := httputil.NewSingleHostReverseProxy(orchestratorURL)
 
+	proxyTransport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		ResponseHeaderTimeout: 15 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+	}
+	gatewayProxy.Transport = proxyTransport
+	orchestratorProxy.Transport = proxyTransport
+
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/webhook/telegram") || strings.HasPrefix(r.URL.Path, "/webhook/twilio") {

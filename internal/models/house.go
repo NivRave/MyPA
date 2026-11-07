@@ -30,7 +30,7 @@ const (
 // insurance policies, and purchase/repair receipts.
 type HouseContractRecord struct {
 	ID                      uint       `json:"id" gorm:"primaryKey"`
-	FamilyGroup             string     `json:"family_group" gorm:"index"`
+	FamilyGroup             string     `json:"family_group" gorm:"index;index:idx_house_contracts_fam_exp,priority:1"`
 	RecordType              string     `json:"record_type" gorm:"index"` // lease, mortgage, utility, warranty, insurance, receipt
 	Title                   string     `json:"title"`
 	VendorOrLandlord        string     `json:"vendor_or_landlord"`
@@ -38,7 +38,7 @@ type HouseContractRecord struct {
 	Amount                  float64    `json:"amount"`
 	Currency                string     `json:"currency"`
 	StartDate               *time.Time `json:"start_date,omitempty"`
-	ExpirationOrRenewalDate *time.Time `json:"expiration_or_renewal_date,omitempty" gorm:"index"`
+	ExpirationOrRenewalDate *time.Time `json:"expiration_or_renewal_date,omitempty" gorm:"index;index:idx_house_contracts_fam_exp,priority:2"`
 	NoticePeriodDays        int        `json:"notice_period_days"`
 	KeyTermsJSON            string     `json:"key_terms_json" gorm:"type:jsonb"`
 	CreatedByUserID         string     `json:"created_by_user_id"`

@@ -35,7 +35,7 @@ func main() {
 	// Initialize RabbitMQ Publisher with retry
 	var pub *broker.Publisher
 	for i := 0; i < 5; i++ {
-		pub, err = broker.NewPublisher(cfg.RabbitMQ.URL, "telegram.inbound")
+		pub, err = broker.NewSafePublisher(cfg.RabbitMQ.URL, "telegram.inbound")
 		if err == nil {
 			break
 		}

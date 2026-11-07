@@ -312,3 +312,51 @@ func TestSharedReminders_DueAndSent(t *testing.T) {
 	assert.Empty(t, dueAfter)
 }
 
+func TestDB_ConnectionPoolSizing(t *testing.T) {
+	client, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	sqlDB, err := client.DB.DB()
+	require.NoError(t, err)
+
+	stats := sqlDB.Stats()
+	assert.Equal(t, 25, stats.MaxOpenConnections, "MaxOpenConnections must be configured to 25")
+}
+
+func TestDB_CustomIndexesApplied(t *testing.T) {
+	client, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	expectedIndexes := []string{
+		"idx_audit_sessions_start_time",
+		"idx_audit_sessions_user_start",
+		"idx_mutation_logs_family_created",
+		"idx_mutation_logs_user_created",
+		"idx_financial_transactions_family_date",
+		"idx_baby_care_logs_family_timestamp",
+		"idx_schedule_events_family_start",
+		"idx_shared_task_reminders_due_completed",
+	}
+
+	for _, idxName := range expectedIndexes {
+		var count int64
+		err := client.DB.Raw(
+			"SELECT count(*) FROM pg_indexes WHERE indexname = ?", idxName,
+		).Scan(&count).Error
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), count, "Index %s must exist in PostgreSQL", idxName)
+	}
+}
+
+func TestDB_PingAndClose(t *testing.T) {
+	client, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := client.Ping()
+	require.NoError(t, err, "Ping must succeed on healthy connection")
+
+	err = client.Close()
+	require.NoError(t, err, "Close must succeed on connection pool")
+}
+
+

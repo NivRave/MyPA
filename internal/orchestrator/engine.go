@@ -232,9 +232,8 @@ func (e *Engine) Start(ctx context.Context) error {
 			// Try to notify the user of the error
 			_ = e.sendMessage(msgCtx, msg, "⚠️ Sorry, I encountered an internal error while processing your request.")
 			
-			// We return nil here so the broker ACKs the message. 
-			// We don't want poison pills to crash the consumer loop indefinitely.
-			return nil 
+			// Return err so the broker consumer retries with backoff and routes to DLQ upon reaching max attempts
+			return err 
 		}
 		
 		return nil
@@ -995,6 +994,31 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 			}
 			return res
 		}
+	}
+
+	if toolCall.Name == "get_current_time" {
+		loc := time.UTC
+		if strings.TrimSpace(e.timezone) != "" {
+			if l, err := time.LoadLocation(strings.TrimSpace(e.timezone)); err == nil {
+				loc = l
+			}
+		}
+		if toolCall.Args != nil {
+			if tzVal, ok := toolCall.Args["timezone"].(string); ok && strings.TrimSpace(tzVal) != "" {
+				if l, err := time.LoadLocation(strings.TrimSpace(tzVal)); err == nil {
+					loc = l
+				}
+			}
+		}
+		now := time.Now().In(loc)
+		resp := map[string]interface{}{
+			"current_time": now.Format(time.RFC3339),
+			"timezone":     loc.String(),
+			"day_of_week":  now.Weekday().String(),
+			"unix":         now.Unix(),
+		}
+		b, _ := json.Marshal(resp)
+		return string(b)
 	}
 
 	return "⚠️ LLM tried to call an unknown tool."

@@ -178,7 +178,7 @@ func NewRunner(repo db.AutomationRepository, bus *events.EventBus, opts ...Runne
 	}
 
 	if bus != nil {
-		bus.Subscribe(r.HandleMutationEvent)
+		bus.SubscribeAsync(r.HandleMutationEvent)
 	}
 
 	return r
