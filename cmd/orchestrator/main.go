@@ -166,6 +166,10 @@ func main() {
 	// 8.6 Initialize Wave 1 EventBus and Domain ToolModules
 	eventBus := events.NewEventBus()
 	registry := orchestrator.NewRegistry()
+	if store != nil {
+		orchestrator.RegisterPromptInvalidator(eventBus, store)
+		registry.WithPromptCache(store)
+	}
 
 	// Track 1A: Durability Module (audit logs, undo, data export)
 	durabilityModule := durability.NewModule(dbClient, eventBus)

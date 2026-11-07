@@ -200,6 +200,31 @@ func TestClient_ExtraTools(t *testing.T) {
 	assert.Equal(t, "custom_tool_2", client.extraTools[1].Name)
 }
 
+func TestActiveTools_Context(t *testing.T) {
+	ctx := context.Background()
+	_, ok := ActiveToolsFromContext(ctx)
+	assert.False(t, ok)
+
+	decls := []*genai.FunctionDeclaration{
+		{Name: "tool_alpha"},
+		{Name: "tool_beta"},
+	}
+	ctxWithTools := WithActiveTools(ctx, decls)
+	retrieved, ok := ActiveToolsFromContext(ctxWithTools)
+	assert.True(t, ok)
+	require.Len(t, retrieved, 2)
+	assert.Equal(t, "tool_alpha", retrieved[0].Name)
+	assert.Equal(t, "tool_beta", retrieved[1].Name)
+}
+
+func TestNoTools_Context(t *testing.T) {
+	ctx := context.Background()
+	assert.False(t, isNoTools(ctx))
+
+	ctxNoTools := WithNoTools(ctx)
+	assert.True(t, isNoTools(ctxNoTools))
+}
+
 
 type rewriteTransport struct {
 	URL string

@@ -245,3 +245,127 @@ func TestStagePendingMetaTool_RoundTrip(t *testing.T) {
 	assert.Nil(t, retrieved2)
 }
 
+func TestAppendChatHistory_StripsPhotoData(t *testing.T) {
+	store, _, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	userID := "test-user-photo"
+	largePhoto := make([]byte, 1024*1024*2) // 2 MB
+
+	msg := models.ChatMessage{
+		Role:          "user",
+		Content:       "Check this receipt",
+		PhotoData:     largePhoto,
+		PhotoMimeType: "image/jpeg",
+	}
+
+	err := store.AppendChatHistory(ctx, userID, msg)
+	require.NoError(t, err)
+
+	history, err := store.GetChatHistory(ctx, userID)
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+
+	assert.Nil(t, history[0].PhotoData)
+	assert.Empty(t, history[0].PhotoMimeType)
+	assert.Contains(t, history[0].Content, "[Attachment: image/jpeg (2.0 MB)]")
+	assert.Contains(t, history[0].Content, "Check this receipt")
+}
+
+func TestGetChatHistory_ClearsLegacyPhotoData(t *testing.T) {
+	store, mr, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	userID := "test-user-legacy"
+
+	// Pre-seed raw JSON with PhotoData directly into Redis
+	legacyJSON := `{"role":"user","content":"Old photo","photo_data":"AQIDBA==","photo_mime_type":"image/png"}`
+	mr.RPush("chat:"+userID, legacyJSON)
+
+	history, err := store.GetChatHistory(ctx, userID)
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, "Old photo", history[0].Content)
+	assert.Nil(t, history[0].PhotoData)
+	assert.Empty(t, history[0].PhotoMimeType)
+}
+
+func TestPromptCache_SetAndGet(t *testing.T) {
+	store, _, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	familyGroup := "fam-101"
+	module := "baby"
+	content := "Baby Liam is 8 months old. Last feeding at 08:30."
+
+	// Initial get: cache miss
+	cached, found, err := store.GetPromptSection(ctx, familyGroup, module)
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Empty(t, cached)
+
+	// Set prompt section with 10m TTL
+	err = store.SetPromptSection(ctx, familyGroup, module, content, 10*time.Minute)
+	require.NoError(t, err)
+
+	// Subsequent get: cache hit
+	cached, found, err = store.GetPromptSection(ctx, familyGroup, module)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, content, cached)
+
+	// Empty familyGroup or module error validation
+	assert.Error(t, store.SetPromptSection(ctx, "", module, content, 0))
+	assert.Error(t, store.SetPromptSection(ctx, familyGroup, "", content, 0))
+}
+
+func TestPromptCache_GetSections_MGet(t *testing.T) {
+	store, _, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	familyGroup := "fam-202"
+
+	// Pre-populate some sections
+	require.NoError(t, store.SetPromptSection(ctx, familyGroup, "baby", "Baby section", 10*time.Minute))
+	require.NoError(t, store.SetPromptSection(ctx, familyGroup, "finance", "Finance section", 10*time.Minute))
+
+	// Query 4 modules: 2 hits, 2 misses
+	modules := []string{"baby", "house", "finance", "schedule"}
+	hits, misses, err := store.GetPromptSections(ctx, familyGroup, modules)
+	require.NoError(t, err)
+
+	assert.Len(t, hits, 2)
+	assert.Equal(t, "Baby section", hits["baby"])
+	assert.Equal(t, "Finance section", hits["finance"])
+
+	assert.ElementsMatch(t, []string{"house", "schedule"}, misses)
+}
+
+func TestPromptCache_InvalidateSections(t *testing.T) {
+	store, _, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	familyGroup := "fam-303"
+
+	require.NoError(t, store.SetPromptSection(ctx, familyGroup, "baby", "Baby section", 10*time.Minute))
+	require.NoError(t, store.SetPromptSection(ctx, familyGroup, "house", "House section", 10*time.Minute))
+
+	// Invalidate both
+	key1 := "ctx_prompt:" + familyGroup + ":baby"
+	key2 := "ctx_prompt:" + familyGroup + ":house"
+	err := store.InvalidatePromptSections(ctx, key1, key2)
+	require.NoError(t, err)
+
+	// Verify both evicted
+	_, found1, _ := store.GetPromptSection(ctx, familyGroup, "baby")
+	_, found2, _ := store.GetPromptSection(ctx, familyGroup, "house")
+	assert.False(t, found1)
+	assert.False(t, found2)
+}
+
+

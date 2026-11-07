@@ -60,6 +60,39 @@ func (c *Client) AddFunctionDeclarations(tools ...*genai.FunctionDeclaration) {
 	c.extraTools = append(c.extraTools, tools...)
 }
 
+type activeToolsKey struct{}
+type noToolsContextKey struct{}
+
+// WithActiveTools stores the turn-scoped tool declarations in context.
+func WithActiveTools(ctx context.Context, tools []*genai.FunctionDeclaration) context.Context {
+	return context.WithValue(ctx, activeToolsKey{}, tools)
+}
+
+// ActiveToolsFromContext retrieves the turn-scoped tool declarations from context.
+func ActiveToolsFromContext(ctx context.Context) ([]*genai.FunctionDeclaration, bool) {
+	val := ctx.Value(activeToolsKey{})
+	if val == nil {
+		return nil, false
+	}
+	tools, ok := val.([]*genai.FunctionDeclaration)
+	return tools, ok
+}
+
+// WithNoTools returns a context instructing the LLM client to omit tool schemas.
+func WithNoTools(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noToolsContextKey{}, true)
+}
+
+// IsNoTools checks whether the context specifies that no tools should be passed.
+func IsNoTools(ctx context.Context) bool {
+	v, _ := ctx.Value(noToolsContextKey{}).(bool)
+	return v
+}
+
+func isNoTools(ctx context.Context) bool {
+	return IsNoTools(ctx)
+}
+
 
 // ContentBlockedError indicates that Gemini blocked the prompt or output due to a safety or content policy filter.
 type ContentBlockedError struct {
@@ -132,31 +165,37 @@ func (c *Client) Chat(ctx context.Context, systemInstruction string, history []m
 		Parts: newParts,
 	})
 
-	// Configure the model with built-in CalendarEventTool plus any registered extra tools
-	c.toolsMu.RLock()
+	// Configure tools: check WithNoTools and WithActiveTools first, fallback to extraTools/CalendarEventTool
 	var tools []*genai.Tool
-	if CalendarEventTool != nil {
-		if len(c.extraTools) > 0 {
-			seenNames := make(map[string]bool)
-			combinedDecls := make([]*genai.FunctionDeclaration, 0, len(CalendarEventTool.FunctionDeclarations)+len(c.extraTools))
-			for _, d := range c.extraTools {
-				if d != nil && d.Name != "" && !seenNames[d.Name] {
-					seenNames[d.Name] = true
-					combinedDecls = append(combinedDecls, d)
+	if isNoTools(ctx) {
+		tools = nil
+	} else if scopedTools, ok := ActiveToolsFromContext(ctx); ok && len(scopedTools) > 0 {
+		tools = []*genai.Tool{{FunctionDeclarations: scopedTools}}
+	} else {
+		c.toolsMu.RLock()
+		if CalendarEventTool != nil {
+			if len(c.extraTools) > 0 {
+				seenNames := make(map[string]bool)
+				combinedDecls := make([]*genai.FunctionDeclaration, 0, len(CalendarEventTool.FunctionDeclarations)+len(c.extraTools))
+				for _, d := range c.extraTools {
+					if d != nil && d.Name != "" && !seenNames[d.Name] {
+						seenNames[d.Name] = true
+						combinedDecls = append(combinedDecls, d)
+					}
 				}
-			}
-			for _, d := range CalendarEventTool.FunctionDeclarations {
-				if d != nil && d.Name != "" && !seenNames[d.Name] {
-					seenNames[d.Name] = true
-					combinedDecls = append(combinedDecls, d)
+				for _, d := range CalendarEventTool.FunctionDeclarations {
+					if d != nil && d.Name != "" && !seenNames[d.Name] {
+						seenNames[d.Name] = true
+						combinedDecls = append(combinedDecls, d)
+					}
 				}
+				tools = []*genai.Tool{{FunctionDeclarations: combinedDecls}}
+			} else {
+				tools = []*genai.Tool{CalendarEventTool}
 			}
-			tools = []*genai.Tool{{FunctionDeclarations: combinedDecls}}
-		} else {
-			tools = []*genai.Tool{CalendarEventTool}
 		}
+		c.toolsMu.RUnlock()
 	}
-	c.toolsMu.RUnlock()
 
 	config := &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{

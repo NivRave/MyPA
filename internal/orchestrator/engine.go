@@ -26,6 +26,7 @@ import (
 	"github.com/nivik/mypa/internal/state"
 	"github.com/pgvector/pgvector-go"
 	"golang.org/x/oauth2"
+	"golang.org/x/sync/errgroup"
 
 	"google.golang.org/genai"
 )
@@ -51,6 +52,7 @@ type Engine struct {
 	onWorkflowsChanged func()
 	toolRegistry    *Registry
 	eventBus        *events.EventBus
+	intentMatcher   IntentMatcher
 }
 
 var hebrewPrepositionRegex = regexp.MustCompile(`(^|[^\p{Hebrew}\w])([בלמכ])(\d+)`)
@@ -74,6 +76,10 @@ func (e *Engine) SetToolRegistry(reg *Registry) {
 			toolSetter.SetExtraTools(reg.AllDeclarations())
 		}
 	}
+	if reg != nil && e.store != nil && e.eventBus != nil {
+		RegisterPromptInvalidator(e.eventBus, e.store)
+		reg.WithPromptCache(e.store)
+	}
 }
 
 // WithToolRegistry configures the tool registry in a builder pattern.
@@ -85,12 +91,34 @@ func (e *Engine) WithToolRegistry(reg *Registry) *Engine {
 // SetEventBus sets the internal event bus.
 func (e *Engine) SetEventBus(bus *events.EventBus) {
 	e.eventBus = bus
+	if e.toolRegistry != nil && e.store != nil && bus != nil {
+		RegisterPromptInvalidator(bus, e.store)
+		e.toolRegistry.WithPromptCache(e.store)
+	}
 }
 
 // WithEventBus configures the event bus in a builder pattern.
 func (e *Engine) WithEventBus(bus *events.EventBus) *Engine {
 	e.SetEventBus(bus)
 	return e
+}
+
+// WithIntentMatcher sets a custom IntentMatcher on the engine.
+func (e *Engine) WithIntentMatcher(im IntentMatcher) *Engine {
+	e.intentMatcher = im
+	return e
+}
+
+// formatAttachmentMarker formats a concise human-readable metadata marker for stripped attachments.
+func formatAttachmentMarker(mimeType string, dataLen int) string {
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	sizeKB := float64(dataLen) / 1024.0
+	if sizeKB >= 1024.0 {
+		return fmt.Sprintf("[Attachment: %s (%.1f MB)]", mimeType, sizeKB/1024.0)
+	}
+	return fmt.Sprintf("[Attachment: %s (%.1f KB)]", mimeType, sizeKB)
 }
 
 // buildCallContext constructs a CallContext for the given user and incoming message.
@@ -168,6 +196,7 @@ func NewEngine(
 		audioClient:     audio,
 		publisher:       pub,
 		timezone:        tz,
+		intentMatcher:   NewKeywordIntentMatcher(),
 	}
 
 	e.calendarFactory = func(ctx context.Context, userID string) (CalendarClient, error) {
@@ -653,6 +682,16 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		}
 	}
 
+	// Dynamic Two-Tier Tool Context Selection (SCALE-01)
+	if e.toolRegistry != nil {
+		var matchedDomains []DomainGroup
+		if e.intentMatcher != nil {
+			matchedDomains = e.intentMatcher.MatchDomains(msg.Text)
+		}
+		activeTools := e.toolRegistry.SelectDeclarations(matchedDomains, false)
+		ctx = llm.WithActiveTools(ctx, activeTools)
+	}
+
 	// 4. Call LLM
 	promptText := msg.Text
 	resp, err := e.llm.Chat(ctx, systemPrompt, history, promptText, photoData, photoMimeType)
@@ -693,7 +732,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 			PhotoMimeType: photoMimeType,
 		})
 		
-		replyText, _ = e.handleToolCalls(ctx, msg, loopHistory, systemPrompt, resp.ToolCalls)
+		replyText, _ = e.handleToolCalls(ctx, msg, loopHistory, systemPrompt, resp.ToolCalls, 1)
 	} else {
 		// No tool call
 		replyText = resp.Text
@@ -709,48 +748,166 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		return fmt.Errorf("failed to send reply message: %w", err)
 	}
 
-	// 7. Update conversation history
+	// 7. Update conversation history (SCALE-02: strip PhotoData bytes)
+	persistedContent := msg.Text
+	if len(photoData) > 0 {
+		marker := formatAttachmentMarker(photoMimeType, len(photoData))
+		if strings.TrimSpace(persistedContent) == "" {
+			persistedContent = marker
+		} else {
+			persistedContent = fmt.Sprintf("%s\n%s", strings.TrimSpace(persistedContent), marker)
+		}
+	}
+
 	_ = e.store.AppendChatHistory(ctx, msg.UserID, models.ChatMessage{
-		Role: "user", 
-		Content: msg.Text,
-		PhotoData: photoData,
-		PhotoMimeType: photoMimeType,
+		Role:    "user",
+		Content: persistedContent,
 	})
 	_ = e.store.AppendChatHistory(ctx, msg.UserID, models.ChatMessage{Role: "assistant", Content: replyText})
 
 	return nil
 }
 
+// MaxToolRecursionDepth is the maximum number of recursive tool loops allowed per turn.
+const MaxToolRecursionDepth = 8
 
-func (e *Engine) handleToolCalls(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCalls []*genai.FunctionCall) (string, error) {
-	var funcCalls []models.FunctionCall
-	var funcResponses []models.FunctionResponse
+// MaxConcurrentTools is the maximum number of tool calls executed in parallel within a single turn.
+const MaxConcurrentTools = 8
 
-	for _, tc := range toolCalls {
-		resultStr := e.executeSingleTool(ctx, msg, history, systemPrompt, tc)
-		
-		funcCalls = append(funcCalls, models.FunctionCall{Name: tc.Name, Args: tc.Args})
-		funcResponses = append(funcResponses, models.FunctionResponse{
-			Name: tc.Name,
-			Response: map[string]interface{}{"result": resultStr},
+const maxToolIterations = MaxToolRecursionDepth
+
+// executeToolsConcurrently executes a batch of function calls in parallel using errgroup.
+// It guarantees deterministic indexing, context cancellation, panic recovery, and bounded concurrency.
+func (e *Engine) executeToolsConcurrently(
+	ctx context.Context,
+	msg models.Message,
+	history []models.ChatMessage,
+	systemPrompt string,
+	toolCalls []*genai.FunctionCall,
+) ([]models.FunctionCall, []models.FunctionResponse) {
+	n := len(toolCalls)
+	if n == 0 {
+		return nil, nil
+	}
+
+	funcCalls := make([]models.FunctionCall, n)
+	funcResponses := make([]models.FunctionResponse, n)
+
+	for i, tc := range toolCalls {
+		funcCalls[i] = models.FunctionCall{Name: tc.Name, Args: tc.Args}
+	}
+
+	if n == 1 {
+		tc := toolCalls[0]
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic recovered during single tool execution",
+						"tool", tc.Name,
+						"panic", r,
+						"user_id", msg.UserID,
+					)
+					funcResponses[0] = models.FunctionResponse{
+						Name: tc.Name,
+						Response: map[string]interface{}{
+							"result": fmt.Sprintf("❌ Internal panic during tool execution: %v", r),
+						},
+					}
+				}
+			}()
+			resultStr := e.executeSingleTool(ctx, msg, history, systemPrompt, tc)
+			funcResponses[0] = models.FunctionResponse{
+				Name:     tc.Name,
+				Response: map[string]interface{}{"result": resultStr},
+			}
+		}()
+		return funcCalls, funcResponses
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(MaxConcurrentTools)
+
+	for i, tc := range toolCalls {
+		idx := i
+		call := tc
+		g.Go(func() error {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic recovered during concurrent tool execution",
+						"tool", call.Name,
+						"panic", r,
+						"user_id", msg.UserID,
+					)
+					funcResponses[idx] = models.FunctionResponse{
+						Name: call.Name,
+						Response: map[string]interface{}{
+							"result": fmt.Sprintf("❌ Internal panic during tool execution: %v", r),
+						},
+					}
+				}
+			}()
+
+			resultStr := e.executeSingleTool(gctx, msg, history, systemPrompt, call)
+			funcResponses[idx] = models.FunctionResponse{
+				Name:     call.Name,
+				Response: map[string]interface{}{"result": resultStr},
+			}
+			return nil
 		})
 	}
+	_ = g.Wait()
+
+	return funcCalls, funcResponses
+}
+
+func (e *Engine) handleToolCalls(
+	ctx context.Context,
+	msg models.Message,
+	history []models.ChatMessage,
+	systemPrompt string,
+	toolCalls []*genai.FunctionCall,
+	iteration int,
+) (string, error) {
+	if iteration <= 0 {
+		iteration = 1
+	}
+
+	funcCalls, funcResponses := e.executeToolsConcurrently(ctx, msg, history, systemPrompt, toolCalls)
 
 	// Add the actual assistant tool calls natively
 	extendedHistory := append(history, models.ChatMessage{
-		Role: "assistant",
+		Role:      "assistant",
 		ToolCalls: funcCalls,
 	})
-	
+
 	// Add the function responses natively
 	extendedHistory = append(extendedHistory, models.ChatMessage{
-		Role: "function",
+		Role:          "function",
 		ToolResponses: funcResponses,
 	})
 
-	// Prompt the LLM to continue
+	// Check iteration limit (SCALE-03: bound to 8 iterations)
+	if iteration >= maxToolIterations {
+		slog.Warn("max tool recursion reached, requesting terminal summary without tools",
+			"user_id", msg.UserID, "iteration", iteration)
+
+		terminalPrompt := "Maximum tool execution limit reached (8 steps). Do NOT call any more tools. " +
+			"Please provide a friendly, clear, and comprehensive final summary of all actions completed so far directly to the user."
+
+		// Force no-tools call to guarantee conversational termination
+		summaryResp, err := e.llm.Chat(llm.WithNoTools(ctx), systemPrompt, extendedHistory, terminalPrompt, nil, "")
+		if err != nil {
+			return "✅ Actions were executed (maximum 8 steps reached).", nil
+		}
+		if summaryResp != nil && summaryResp.Text != "" {
+			return summaryResp.Text, nil
+		}
+		return "✅ All requested actions have been completed up to the maximum iteration limit.", nil
+	}
+
+	// Normal continuation prompt
 	prompt := "Please continue fulfilling the user's request. What's next? If you are completely done, provide a friendly, nicely formatted final summary of all your actions directly to the user."
-	
+
 	summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, prompt, nil, "")
 	if err != nil {
 		var blockedErr *llm.ContentBlockedError
@@ -759,13 +916,16 @@ func (e *Engine) handleToolCalls(ctx context.Context, msg models.Message, histor
 		}
 		return "❌ Failed to process: " + err.Error(), nil
 	}
-	
-	if len(summaryResp.ToolCalls) > 0 {
+
+	if summaryResp != nil && len(summaryResp.ToolCalls) > 0 {
 		extendedHistory = append(extendedHistory, models.ChatMessage{Role: "user", Content: prompt})
-		return e.handleToolCalls(ctx, msg, extendedHistory, systemPrompt, summaryResp.ToolCalls)
+		return e.handleToolCalls(ctx, msg, extendedHistory, systemPrompt, summaryResp.ToolCalls, iteration+1)
 	}
 
-	return summaryResp.Text, nil
+	if summaryResp != nil {
+		return summaryResp.Text, nil
+	}
+	return "", nil
 }
 
 func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) (string, error) {
@@ -778,7 +938,7 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			return res, nil
 		}
 	}
-	return e.handleToolCalls(ctx, msg, history, systemPrompt, []*genai.FunctionCall{toolCall})
+	return e.handleToolCalls(ctx, msg, history, systemPrompt, []*genai.FunctionCall{toolCall}, 1)
 }
 
 func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) string {

@@ -15,6 +15,7 @@ import (
 	"github.com/nivik/mypa/internal/orchestrator/mocks"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/genai"
 )
@@ -640,6 +641,304 @@ func TestCheckAndSendReminders_SharedTaskReminders(t *testing.T) {
 
 	engine.CheckAndSendReminders()
 }
+
+func TestProcessMessage_PhotoDataStrippedFromRedis(t *testing.T) {
+	engine, tgMock, llmMock, dbMock, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	userID := "user-photo-strip"
+	photo := []byte("fake-photo-data-bytes-for-receipt")
+
+	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
+	tgMock.EXPECT().GetFile(gomock.Any(), "photo-123").Return("path/to/photo.jpg", nil)
+	tgMock.EXPECT().DownloadFile(gomock.Any(), "path/to/photo.jpg").Return(photo, nil)
+	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+	// Verify LLM receives photoData during active turn
+	llmMock.EXPECT().Chat(
+		gomock.Any(),
+		gomock.Any(),
+		gomock.Any(),
+		"Here is my receipt",
+		photo,
+		"image/jpeg",
+	).Return(&llm.Response{Text: "Receipt processed."}, nil)
+
+	msg := models.Message{
+		UserID:      userID,
+		ChatID:      "chat-photo",
+		Text:        "Here is my receipt",
+		Source:      "telegram",
+		PhotoFileID: "photo-123",
+	}
+
+	err := engine.ProcessMessage(ctx, msg)
+	assert.NoError(t, err)
+
+	// Inspect persistent Redis chat history: PhotoData must be stripped
+	history, err := engine.store.GetChatHistory(ctx, userID)
+	assert.NoError(t, err)
+	assert.Len(t, history, 2) // user + assistant
+
+	assert.Equal(t, "user", history[0].Role)
+	assert.Nil(t, history[0].PhotoData)
+	assert.Empty(t, history[0].PhotoMimeType)
+	assert.Contains(t, history[0].Content, "Here is my receipt")
+	assert.Contains(t, history[0].Content, "[Attachment: image/jpeg")
+}
+
+func TestHandleToolCalls_BoundedRecursion(t *testing.T) {
+	engine, _, llmMock, _, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	msg := models.Message{UserID: "user-loop", Text: "do recursive actions"}
+
+	reg := NewRegistry()
+	mockMod := &mockToolModule{
+		name: "test_loop",
+		declarations: []*genai.FunctionDeclaration{
+			{Name: "loop_tool"},
+		},
+		executeFunc: func(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
+			return "step done", nil
+		},
+	}
+	reg.Register(mockMod)
+	engine.SetToolRegistry(reg)
+
+	// LLM keeps returning tool calls for 7 iterations
+	for i := 1; i <= 7; i++ {
+		llmMock.EXPECT().Chat(
+			gomock.Any(),
+			gomock.Any(),
+			gomock.Any(),
+			gomock.Any(),
+			nil,
+			"",
+		).Return(&llm.Response{
+			ToolCalls: []*genai.FunctionCall{
+				{Name: "loop_tool", Args: map[string]interface{}{"query": "recursive step"}},
+			},
+		}, nil).Times(1)
+	}
+
+	// Iteration 8 (maximum reached): Engine must invoke terminal summary with WithNoTools
+	llmMock.EXPECT().Chat(
+		gomock.Cond(func(x any) bool {
+			c, ok := x.(context.Context)
+			return ok && llm.IsNoTools(c)
+		}),
+		gomock.Any(),
+		gomock.Any(),
+		gomock.Cond(func(x any) bool {
+			prompt, ok := x.(string)
+			return ok && strings.Contains(prompt, "Maximum tool execution limit reached")
+		}),
+		nil,
+		"",
+	).Return(&llm.Response{Text: "Final summary: 8 iterations executed."}, nil).Times(1)
+
+	toolCall := &genai.FunctionCall{Name: "loop_tool", Args: map[string]interface{}{"query": "start"}}
+	result, err := engine.handleToolCalls(ctx, msg, nil, "system prompt", []*genai.FunctionCall{toolCall}, 1)
+	assert.NoError(t, err)
+	assert.Equal(t, "Final summary: 8 iterations executed.", result)
+}
+
+func TestHandleToolCalls_ConcurrentExecution(t *testing.T) {
+	engine, _, llmMock, _, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	msg := models.Message{UserID: "user-parallel", Text: "parallel actions"}
+
+	// Register 3 custom tools that take 50ms each
+	reg := NewRegistry()
+	customMod := &mockToolModule{
+		name: "concurrent_tools",
+		declarations: []*genai.FunctionDeclaration{
+			{Name: "slow_tool_1"},
+			{Name: "slow_tool_2"},
+			{Name: "slow_tool_3"},
+		},
+		executeFunc: func(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
+			time.Sleep(50 * time.Millisecond)
+			return "done " + toolName, nil
+		},
+	}
+	reg.Register(customMod)
+	engine.SetToolRegistry(reg)
+
+	// In the continuation turn, verify extendedHistory contains assistant tool calls and function responses in exact 1:1 order
+	llmMock.EXPECT().Chat(
+		gomock.Any(),
+		gomock.Any(),
+		gomock.Cond(func(x any) bool {
+			history, ok := x.([]models.ChatMessage)
+			if !ok || len(history) < 2 {
+				return false
+			}
+			// Last message is function responses
+			funcMsg := history[len(history)-1]
+			if funcMsg.Role != "function" || len(funcMsg.ToolResponses) != 3 {
+				return false
+			}
+			return funcMsg.ToolResponses[0].Name == "slow_tool_1" &&
+				funcMsg.ToolResponses[1].Name == "slow_tool_2" &&
+				funcMsg.ToolResponses[2].Name == "slow_tool_3" &&
+				funcMsg.ToolResponses[0].Response["result"] == "done slow_tool_1" &&
+				funcMsg.ToolResponses[1].Response["result"] == "done slow_tool_2" &&
+				funcMsg.ToolResponses[2].Response["result"] == "done slow_tool_3"
+		}),
+		gomock.Any(),
+		nil,
+		"",
+	).Return(&llm.Response{Text: "All 3 tools executed."}, nil).Times(1)
+
+	toolCalls := []*genai.FunctionCall{
+		{Name: "slow_tool_1"},
+		{Name: "slow_tool_2"},
+		{Name: "slow_tool_3"},
+	}
+
+	start := time.Now()
+	res, err := engine.handleToolCalls(ctx, msg, nil, "system", toolCalls, 1)
+	elapsed := time.Since(start)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "All 3 tools executed.", res)
+	// If sequential: 3 * 50ms = 150ms+. If parallel: ~50-80ms.
+	assert.Less(t, elapsed, 130*time.Millisecond, "Parallel execution must run concurrently in < 130ms")
+}
+
+func TestProcessMessage_TwoTierToolScoping(t *testing.T) {
+	engine, tgMock, llmMock, dbMock, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+	// Register baby and finance modules
+	reg := NewRegistry()
+	babyMod := &mockToolModule{
+		name: "baby",
+		declarations: []*genai.FunctionDeclaration{
+			{Name: "upsert_baby_profile"},
+			{Name: "log_baby_care"},
+		},
+	}
+	finMod := &mockToolModule{
+		name: "finance",
+		declarations: []*genai.FunctionDeclaration{
+			{Name: "log_financial_transaction"},
+		},
+	}
+	reg.Register(babyMod)
+	reg.Register(finMod)
+	engine.SetToolRegistry(reg)
+
+	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
+
+	// When user mentions baby, LLM must receive baby tools via WithActiveTools
+	llmMock.EXPECT().Chat(
+		gomock.Cond(func(x any) bool {
+			c, ok := x.(context.Context)
+			if !ok {
+				return false
+			}
+			tools, ok := llm.ActiveToolsFromContext(c)
+			if !ok {
+				return false
+			}
+			toolNames := make(map[string]bool)
+			for _, d := range tools {
+				toolNames[d.Name] = true
+			}
+			// Should contain baby tool and core tool, but NOT finance tool
+			return toolNames["log_baby_care"] && toolNames["get_current_time"] && !toolNames["log_financial_transaction"]
+		}),
+		gomock.Any(),
+		gomock.Any(),
+		"Liam ate 120ml of formula",
+		nil,
+		"",
+	).Return(&llm.Response{Text: "Logged baby feeding."}, nil).Times(1)
+
+	msg := models.Message{
+		UserID: "user-baby-1",
+		ChatID: "chat-1",
+		Text:   "Liam ate 120ml of formula",
+		Source: "telegram",
+	}
+
+	err := engine.ProcessMessage(ctx, msg)
+	assert.NoError(t, err)
+}
+
+func TestExecuteToolsConcurrently_PanicRecovery(t *testing.T) {
+	engine, _, _, _, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	msg := models.Message{UserID: "user-panic-test"}
+
+	reg := NewRegistry()
+	testMod := &mockToolModule{
+		name: "test_panic_mod",
+		declarations: []*genai.FunctionDeclaration{
+			{Name: "good_tool"},
+			{Name: "panicking_tool"},
+		},
+		executeFunc: func(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
+			if toolName == "panicking_tool" {
+				panic("simulated fatal crash in tool handler")
+			}
+			return "good tool success", nil
+		},
+	}
+	reg.Register(testMod)
+	engine.SetToolRegistry(reg)
+
+	toolCalls := []*genai.FunctionCall{
+		{Name: "good_tool"},
+		{Name: "panicking_tool"},
+	}
+
+	funcCalls, funcResponses := engine.executeToolsConcurrently(ctx, msg, nil, "system", toolCalls)
+
+	require.Len(t, funcCalls, 2)
+	require.Len(t, funcResponses, 2)
+
+	assert.Equal(t, "good_tool", funcResponses[0].Name)
+	assert.Equal(t, "good tool success", funcResponses[0].Response["result"])
+
+	assert.Equal(t, "panicking_tool", funcResponses[1].Name)
+	assert.Contains(t, funcResponses[1].Response["result"], "Internal panic during tool execution")
+}
+
+func TestExecuteToolsConcurrently_ContextCancellation(t *testing.T) {
+	engine, _, _, _, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Pre-cancel context
+
+	msg := models.Message{UserID: "user-cancel-test"}
+	toolCalls := []*genai.FunctionCall{
+		{Name: "tool_1"},
+		{Name: "tool_2"},
+	}
+
+	funcCalls, funcResponses := engine.executeToolsConcurrently(ctx, msg, nil, "system", toolCalls)
+	require.Len(t, funcCalls, 2)
+	require.Len(t, funcResponses, 2)
+}
+
+
 
 
 

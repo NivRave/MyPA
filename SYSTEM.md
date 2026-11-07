@@ -172,17 +172,18 @@ d:\MyPA\
    - Voice messages (`VoiceFileID` or WhatsApp `audio/*`) are downloaded and transcribed via Groq Whisper (`whisper-large-v3`).
    - Images and PDFs (`PhotoFileID` or WhatsApp `image/*`, `application/pdf`) are downloaded into `photoData []byte` for multimodal Gemini input; text attachments (`text/*`, `json`, `csv`, `yaml`) are appended directly to `msg.Text`.
 3. **Authorization & Pairing:** `e.db.GetUser(msg.UserID)` checks if the user's `PlatformID` exists in `users`. If not, `msg.Text` is checked against active 6-digit `pairing_codes` (`RedeemPairingCode`).
-4. **System Prompt Assembly:**
+4. **System Prompt Assembly & Dynamic Two-Tier Tool Selection:**
    - Base persona, user role/family group, current timestamp, timezone, and workspace tool instructions ([`engine.go:515-537`](file:///d:/MyPA/internal/orchestrator/engine.go#L515-L537)).
    - Semantic vector memory retrieval: embeds `msg.Text` via `gemini-embedding-001` (3072 dims) and queries top-5 cosine matches from `TopicMemory` vector embeddings (falling back to legacy `memories`) across the user and their `FamilyGroup`.
-   - Dynamic Domain Sections: calls [`e.toolRegistry.CombinedSystemPrompt(ctx, callCtx)`](file:///d:/MyPA/internal/orchestrator/registry.go#L144-L163), concatenating live state from all registered `ToolModule` plugins.
-5. **LLM Chat & Multi-Turn Dynamic Dispatch Loop:**
+   - Dynamic Domain Sections (SCALE-01): calls [`e.toolRegistry.CombinedSystemPrompt(ctx, callCtx)`](file:///d:/MyPA/internal/orchestrator/registry.go), leveraging Redis `MGet` dynamic prompt caching (`ctx_prompt:<familyGroup>:<module>`, 10m TTL) with `EventBus` cache invalidation and concurrent `errgroup.Group` evaluation bounded to an 800ms context timeout on cache misses.
+   - Dynamic Two-Tier Tool Scoping (SCALE-01): [`KeywordIntentMatcher`](file:///d:/MyPA/internal/orchestrator/intent_matcher.go) inspects query text across English and Hebrew prefixes to classify intent into Domain Groups (`baby`, `finance`, `house`, `calendar`, `gmail`, `tasks`, `contacts`, `automation`, `shared`). [`SelectDeclarations`](file:///d:/MyPA/internal/orchestrator/registry.go) injects Tier 1 Core Tools (8 ubiquitous tools) + only matching Tier 2 Domain Groups via `llm.WithActiveTools(ctx, activeTools)`, dropping tool schema overhead from ~9,500 to ~1,680–2,380 tokens per call (75%–82% reduction).
+5. **LLM Chat & Bounded Multi-Turn Execution Loop (SCALE-03):**
    - Calls `e.llm.Chat(ctx, systemPrompt, history, promptText, photoData, photoMimeType)` (with automatic retry normalizing Hebrew preposition numbers like `ב18` -> `ב-18` via [`NormalizeHebrewPrepositionNumbers`](file:///d:/MyPA/internal/orchestrator/engine.go#L58-L60) if flagged by safety filters).
-   - If `resp.ToolCalls` is non-empty, [`handleToolCalls`](file:///d:/MyPA/internal/orchestrator/engine.go#L648-L692) executes each tool via `executeSingleTool`. After checking the SEC-09 interactive confirmation gate for meta-tools, `executeSingleTool` dynamically dispatches the call via `e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)`. All tools receive standardized canonical identity through `callCtx.ActorID()` and `callCtx.TenantFamilyGroup()`.
-   - Tool execution appends `Role: "assistant"` (`ToolCalls`) and `Role: "function"` (`ToolResponses`), and recurses until Gemini produces a final text summary.
-6. **Delivery, State & Telemetry:**
+   - If `resp.ToolCalls` is non-empty, [`handleToolCalls`](file:///d:/MyPA/internal/orchestrator/engine.go) delegates to `executeToolsConcurrently` which executes parallel tool calls concurrently via `errgroup.WithContext(ctx)` bounded by `MaxConcurrentTools = 8` with index-based slice assignment preserving strict 1:1 ordering and per-goroutine panic recovery. After checking the SEC-09 interactive confirmation gate for meta-tools, `executeSingleTool` dynamically dispatches the call via `e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)`. All tools receive standardized canonical identity through `callCtx.ActorID()` and `callCtx.TenantFamilyGroup()`.
+   - Tool execution appends `Role: "assistant"` (`ToolCalls`) and `Role: "function"` (`ToolResponses`), and recurses up to a strict limit of 8 iterations (`const MaxToolRecursionDepth = 8`). Upon reaching iteration 8, the engine forces a final summary call via `llm.WithNoTools(ctx)` to guarantee clean conversational termination without further tool loops.
+6. **Delivery, State & Telemetry (SCALE-02):**
    - Formats markdown for WhatsApp (`markdown.ToWhatsApp`) or single-pass Telegram HTML (`markdown.ToTelegramHTML`), safely chunking messages via `markdown.SafeChunkTelegramHTML` (which preserves balanced HTML open-tag stacks across chunks up to 4,000 characters) and sends via `twClient` or `tgClient`.
-   - Appends user and assistant [`models.ChatMessage`](file:///d:/MyPA/internal/models/models.go#L58-L66) turns to Redis (`chat:<userID>`).
+   - Appends user and assistant [`models.ChatMessage`](file:///d:/MyPA/internal/models/models.go#L58-L66) turns to Redis (`chat:<userID>`). SCALE-02 strips raw `PhotoData` bytes and formats a concise attachment metadata marker (`[Attachment: <mime> (<size>)]`), keeping Redis list size < 10KB while preserving active-turn vision reasoning.
    - Asynchronously publishes [`models.AuditSession`](file:///d:/MyPA/internal/models/models.go#L80-L92) to RabbitMQ `audit.events` via `defer`.
 
 ### 3.2 `ToolModule` & `Registry` Contract ([`internal/orchestrator/registry.go`](file:///d:/MyPA/internal/orchestrator/registry.go))
@@ -211,6 +212,26 @@ type ToolModule interface {
 **Registered Domain Modules (13 total wired in [`cmd/orchestrator/main.go`](file:///d:/MyPA/cmd/orchestrator/main.go)):**
 - **5 Workspace Base Modules:** `workspace_calendar` (4 tools), `workspace_gmail` (9 tools), `workspace_tasks` (6 tools), `workspace_contacts` (2 tools), `web_research` (2 tools).
 - **8 Life Domain Modules:** `durability` (Topic 1 & `/undo`), `memory` (Topic 2 & `remember_fact`), `shared` (Topic 9 & `schedule_reminder`), `schedule` (Topic 3), `baby` (Topic 4), `house` (Topic 5 & 8.1), `finance` (Topic 6), `automation` (Topics 7, 8.2, 8.3 & workflow management).
+
+**Two-Tier Tool Domain Grouping (SCALE-01):**
+Rather than injecting all 67 registered tool schemas on every call (~9,500 input tokens), the orchestrator dynamically scopes tools into two tiers:
+1. **Tier 1 Core Tools (8 ubiquitous tools, ~1,120 tokens):** Always injected into every user turn.
+   - `remember_fact`, `save_topic_memory`, `search_topic_memories` (`memory`)
+   - `schedule_reminder` (`shared`)
+   - `search_web`, `fetch_webpage` (`web_research`)
+   - `undo_last_action` (`durability`)
+   - `get_current_time` (`registry`)
+2. **Tier 2 Domain Groups (Injected on-demand via `KeywordIntentMatcher`):**
+   - `DomainBaby` (5 tools): `upsert_baby_profile`, `log_baby_care`, `query_baby_logs_and_trends`, `get_baby_milestone_suggestions`, `manage_baby_inventory`.
+   - `DomainFinance` (4 tools): `log_financial_transaction`, `get_financial_summary`, `set_category_budget`, `manage_recurring_bills`.
+   - `DomainHouse` (4 tools): `save_house_contract_or_receipt`, `list_house_contracts`, `manage_home_maintenance`, `manage_vehicle_asset`.
+   - `DomainCalendar` (9 tools): `create_calendar_event`, `list_calendar_events`, `update_calendar_event`, `delete_calendar_event`, `schedule_topic_event`, `list_topic_schedule`, `configure_topic_calendar`, `delete_topic_event`, `update_topic_event`.
+   - `DomainGmail` (9 tools): `search_emails`, `read_email`, `draft_email_reply`, `archive_emails`, `soft_delete_emails`, `list_email_labels`, `apply_email_labels`, `create_email_label`, `unsubscribe_email`.
+   - `DomainTasks` (6 tools): `list_task_lists`, `create_task_list`, `list_tasks`, `create_task`, `complete_task`, `delete_task`.
+   - `DomainContacts` (4 tools): `search_contacts`, `create_contact`, `upsert_personal_crm`, `query_personal_crm`.
+   - `DomainAutomation` (11 tools): `register_external_api`, `list_external_apis`, `call_external_api`, `create_automation_rule`, `list_automation_rules`, `delete_automation_rule`, `update_user_preferences`, `get_user_preferences`, `schedule_workflow`, `list_workflows`, `delete_workflow`.
+   - `DomainShared` (4 tools): `configure_shared_topic`, `create_shared_reminder`, `complete_shared_reminder`, `list_shared_activity`.
+   - *Token Savings:* Average turn consumes ~1,680 to ~2,380 tokens across 12–20 tools, representing a 75% to 82% token reduction per LLM interaction.
 
 **Unified Durability Rollback Engine (`internal/domains/durability`):**
 All undo paths—the `/undo` chat command, LLM `undo_last_action` tool, and GraphQL `RollbackMutation`—delegate to `durability.Module.Rollback(ctx, actorID, familyGroup, mutationID)` and `RollbackLast(ctx, actorID, familyGroup)`.
@@ -309,12 +330,13 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
 
 | Key Pattern | Type | TTL | Purpose |
 | :--- | :---: | :---: | :--- |
-| `chat:<userID>` | List | None / Rolling | Rolling conversational history (`models.ChatMessage` JSON) |
+| `chat:<userID>` | List | 1 hour / Rolling (last 20) | Rolling conversational history (`models.ChatMessage` JSON, raw `PhotoData` bytes stripped, metadata markers preserved) |
 | `token:<userID>` | String | None | AES-256-GCM encrypted Google OAuth2 token JSON |
 | `oauth_state:<nonce>` | String | 10 minutes | CSRF protection nonce mapping to `userID` |
 | `pending_meta_tool:<userID>` | String | 5 minutes | Staged privileged tool action pending `CONFIRM` redemption |
 | `rate_limit:pairing:<userID>` | String (Int) | 15 minutes | Failed pairing code attempts counter |
 | `rate_limit:pairing:lockout:<userID>` | String | 1 hour | Lockout flag set after 5 failed pairing attempts |
+| `ctx_prompt:<familyGroup>:<module>` | String | 10 minutes | Dynamic system prompt section cached per tenant family group, invalidated on domain `MutationEvent`s |
 
 ---
 
@@ -409,8 +431,11 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
 
 | Key Pattern | Redis Type | Value Schema | Capacity / Retention | TTL | Methods |
 | :--- | :---: | :--- | :--- | :---: | :--- |
-| `chat:<userID>` | `LIST` | JSON [`models.ChatMessage`](file:///d:/MyPA/internal/models/models.go#L58-L66) (`role`, `content`, `tool_calls`, `tool_responses`, `photo_data`, `photo_mime_type`) | Last **20** messages (`LTRIM -20 -1`) | `1h` (sliding on write) | `AppendChatHistory`, `GetChatHistory` |
-| `token:<userID>` | `STRING` | JSON `oauth2.Token` (`access_token`, `token_type`, `refresh_token`, `expiry`) | 1 JSON object per user | `0` (no expiry) | `SetOAuthToken`, `GetOAuthToken` |
+| `chat:<userID>` | `LIST` | JSON [`models.ChatMessage`](file:///d:/MyPA/internal/models/models.go#L58-L66) (`role`, `content`, `tool_calls`, `tool_responses`). *SCALE-02:* Raw `PhotoData` bytes are stripped before Redis persistence to avoid memory bloat, replaced with a concise `[Attachment: <mime> (<size>)]` metadata tag. | Last **20** messages (`LTRIM -20 -1`) | `1h` (sliding on write) | `AppendChatHistory`, `GetChatHistory` |
+| `token:<userID>` | `STRING` | Encrypted AES-256-GCM token bytes (`oauth2.Token` JSON) | 1 encrypted payload per user | `0` (no expiry) | `SetOAuthToken`, `GetOAuthToken` |
+| `ctx_prompt:<familyGroup>:<module>` | `STRING` | Dynamic system prompt section text for a tenant life domain (*SCALE-01*) | 1 cached section per domain module | `10m` | `SetPromptSection`, `GetPromptSection`, `GetPromptSections` (`MGET`), `InvalidatePromptSections` (`DEL`) |
+| `oauth_state:<nonce>` | `STRING` | Hex string mapping to `userID` | 1 nonce per in-flight OAuth exchange | `10m` | `SaveOAuthState`, `ValidateAndDeleteOAuthState` (`GETDEL`) |
+| `pending_meta_tool:<userID>` | `STRING` | JSON `PendingMetaToolAction` interactive confirmation payload (*SEC-09*) | 1 pending action per user | `5m` | `StagePendingMetaTool`, `GetAndClearPendingMetaTool` (`GETDEL`) |
 | `rate_limit:pairing:<userID>` | `STRING` | Integer counter of failed pairing attempts | 1 integer counter per user | `15m` (rolling from 1st failure) | `RecordFailedPairingAttempt`, `ResetPairingRateLimit` |
 | `rate_limit:pairing:lockout:<userID>` | `STRING` | String sentinel (`"locked"`) | Set upon 5 consecutive failed attempts | `1h` | `CheckPairingLockout`, `RecordFailedPairingAttempt`, `ResetPairingRateLimit` |
 

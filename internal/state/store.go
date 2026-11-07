@@ -46,8 +46,32 @@ func (s *Store) Close() error {
 	return s.client.Close()
 }
 
+// formatAttachmentMarker formats a concise human-readable metadata marker for stripped attachments.
+func formatAttachmentMarker(mimeType string, dataLen int) string {
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	sizeKB := float64(dataLen) / 1024.0
+	if sizeKB >= 1024.0 {
+		return fmt.Sprintf("[Attachment: %s (%.1f MB)]", mimeType, sizeKB/1024.0)
+	}
+	return fmt.Sprintf("[Attachment: %s (%.1f KB)]", mimeType, sizeKB)
+}
+
 // AppendChatHistory adds a message to the user's conversation history.
+// SCALE-02 Defense-in-depth: guarantees raw PhotoData bytes are never persisted to Redis.
 func (s *Store) AppendChatHistory(ctx context.Context, userID string, msg models.ChatMessage) error {
+	if len(msg.PhotoData) > 0 {
+		marker := formatAttachmentMarker(msg.PhotoMimeType, len(msg.PhotoData))
+		if strings.TrimSpace(msg.Content) == "" {
+			msg.Content = marker
+		} else if !strings.Contains(msg.Content, "[Attachment:") {
+			msg.Content = fmt.Sprintf("%s\n%s", strings.TrimSpace(msg.Content), marker)
+		}
+		msg.PhotoData = nil
+		msg.PhotoMimeType = ""
+	}
+
 	key := fmt.Sprintf("chat:%s", userID)
 	
 	bytes, err := json.Marshal(msg)
@@ -72,6 +96,7 @@ func (s *Store) AppendChatHistory(ctx context.Context, userID string, msg models
 }
 
 // GetChatHistory retrieves the recent conversation history for a user.
+// SCALE-02 Defense-in-depth: clears any legacy PhotoData bytes on unmarshal.
 func (s *Store) GetChatHistory(ctx context.Context, userID string) ([]models.ChatMessage, error) {
 	key := fmt.Sprintf("chat:%s", userID)
 
@@ -86,6 +111,10 @@ func (s *Store) GetChatHistory(ctx context.Context, userID string) ([]models.Cha
 		if err := json.Unmarshal([]byte(res), &msg); err != nil {
 			// Skip corrupted messages but log it in real app
 			continue
+		}
+		if len(msg.PhotoData) > 0 {
+			msg.PhotoData = nil
+			msg.PhotoMimeType = ""
 		}
 		history = append(history, msg)
 	}
@@ -242,5 +271,93 @@ func (s *Store) ResetPairingRateLimit(ctx context.Context, userID string) error 
 	lockoutKey := fmt.Sprintf("rate_limit:pairing:lockout:%s", userID)
 	return s.client.Del(ctx, key, lockoutKey).Err()
 }
+
+const (
+	PromptCachePrefix     = "ctx_prompt"
+	DefaultPromptCacheTTL = 10 * time.Minute
+)
+
+// SetPromptSection stores a generated system prompt section in Redis with a TTL.
+func (s *Store) SetPromptSection(ctx context.Context, familyGroup, module, content string, ttl time.Duration) error {
+	fg := strings.TrimSpace(familyGroup)
+	mod := strings.TrimSpace(module)
+	if fg == "" || mod == "" {
+		return errors.New("familyGroup and module cannot be empty")
+	}
+	if ttl <= 0 {
+		ttl = DefaultPromptCacheTTL
+	}
+	key := fmt.Sprintf("%s:%s:%s", PromptCachePrefix, fg, mod)
+	return s.client.Set(ctx, key, content, ttl).Err()
+}
+
+// GetPromptSection retrieves a cached system prompt section for a familyGroup and module.
+func (s *Store) GetPromptSection(ctx context.Context, familyGroup, module string) (string, bool, error) {
+	fg := strings.TrimSpace(familyGroup)
+	mod := strings.TrimSpace(module)
+	if fg == "" || mod == "" {
+		return "", false, nil
+	}
+	key := fmt.Sprintf("%s:%s:%s", PromptCachePrefix, fg, mod)
+	val, err := s.client.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return "", false, nil
+	} else if err != nil {
+		return "", false, fmt.Errorf("failed to get prompt section: %w", err)
+	}
+	return val, true, nil
+}
+
+// GetPromptSections fetches multiple prompt sections in a single roundtrip via MGet.
+// On Redis error, it degrades gracefully and treats all requested modules as cache misses.
+func (s *Store) GetPromptSections(ctx context.Context, familyGroup string, modules []string) (map[string]string, []string, error) {
+	hits := make(map[string]string)
+	if len(modules) == 0 {
+		return hits, nil, nil
+	}
+	fg := strings.TrimSpace(familyGroup)
+	if fg == "" {
+		return hits, modules, nil
+	}
+
+	keys := make([]string, len(modules))
+	for i, m := range modules {
+		keys[i] = fmt.Sprintf("%s:%s:%s", PromptCachePrefix, fg, strings.TrimSpace(m))
+	}
+
+	vals, err := s.client.MGet(ctx, keys...).Result()
+	if err != nil {
+		// On Redis network error, degrade gracefully: treat all as cache misses
+		return hits, modules, err
+	}
+
+	var misses []string
+	for i, val := range vals {
+		mod := modules[i]
+		if val != nil {
+			if str, ok := val.(string); ok {
+				hits[mod] = str
+				continue
+			}
+		}
+		misses = append(misses, mod)
+	}
+	return hits, misses, nil
+}
+
+// InvalidatePromptSections removes cached prompt sections for multiple keys in a single DEL command.
+func (s *Store) InvalidatePromptSections(ctx context.Context, keys ...string) error {
+	var validKeys []string
+	for _, k := range keys {
+		if strings.TrimSpace(k) != "" {
+			validKeys = append(validKeys, strings.TrimSpace(k))
+		}
+	}
+	if len(validKeys) == 0 {
+		return nil
+	}
+	return s.client.Del(ctx, validKeys...).Err()
+}
+
 
 
