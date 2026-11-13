@@ -144,6 +144,9 @@ func ApplyCustomIndexes(db *gorm.DB) error {
 
 		// 7. House Contracts (Lease / Warranty Expirations)
 		`CREATE INDEX IF NOT EXISTS idx_house_contracts_fam_exp ON house_contract_records (family_group, expiration_or_renewal_date);`,
+
+		// 8. Topic Memories (Tenant Memory Retrieval)
+		`CREATE INDEX IF NOT EXISTS idx_topic_memories_family_created ON topic_memories (family_group, created_at DESC);`,
 	}
 
 	for _, stmt := range standardIndexes {

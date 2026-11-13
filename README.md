@@ -1,32 +1,70 @@
 # MyPA — Multi-Channel Personal & Family AI Operating System
 
-An event-driven, multi-tenant personal and family AI operating system accessible via **WhatsApp**, **Telegram**, and a **Next.js 15 Web Control Dashboard**. Built in Go and powered by Google Gemini tool-calling, PostgreSQL (`pgvector`), Redis, and RabbitMQ, MyPA combines core productivity integrations (Google Calendar, Gmail, Google Tasks, Web Search, Voice & Vision) with specialized life-domain intelligence across **Baby & Child Care**, **House & Vehicle Assets**, **Finance & Budgets**, **Shared Family Spaces**, **Topic-Mapped Memory & Living Entity Profiles**, **On-Demand External APIs & Event-Driven Automations**, and **Transactional Durability with Conversational Undo (`/undo`)**.
+An event-driven, multi-tenant personal and family AI operating system accessible via **WhatsApp**, **Telegram**, and a **Next.js 16 (React 19) Web Control Dashboard**. Built in Go and powered by Google Gemini tool-calling, PostgreSQL (`pgvector`), Redis, and RabbitMQ, MyPA combines core productivity integrations (Google Calendar, Gmail, Google Tasks, Web Search, Voice & Vision) with specialized life-domain intelligence across **Baby & Child Care**, **House & Vehicle Assets**, **Finance & Budgets**, **Shared Family Spaces**, **Topic-Mapped Memory & Living Entity Profiles**, **On-Demand External APIs & Event-Driven Automations**, and **Transactional Durability with Conversational Undo (`/undo`)**.
 
 ---
 
 ## Architecture
 
 ```text
-Telegram / WhatsApp Webhooks ──► ngrok (4040) ──► Proxy (8000) ──► Gateway (8080) ──► RabbitMQ
-                                                       │                                  │
-Next.js 15 Dashboard (3030)  ──────────────────────────┤                                  ▼
-                                                       ▼                        Orchestrator (8081)
-                                              GraphQL API (8081) ◄────────────────────────┤
-                                              OAuth Callbacks (8081)                      ├──► Gemini API (Multi-Turn + Parallel Tools)
-                                                                                          ├──► Modular ToolRegistry & Domain Modules
-                                                                                          ├──► Internal MutationEvent Bus (Undo / Partner Sync / Rules)
-                                                                                          ├──► Google Calendar, Gmail, Tasks & Tavily APIs
-                                                                                          ├──► Redis (Conversation State & Hot Tokens)
-                                                                                          └──► PostgreSQL + pgvector (Encrypted Fallback, Audit, Domains)
++-----------------------+     +------------------------+
+| Telegram Bot Webhook  |     | Twilio WhatsApp Webhook|
++-----------------------+     +------------------------+
+            \                             /
+             \                           /
+              v                         v
+       +---------------------------------------+
+       |             ngrok (:4040)             |
+       +---------------------------------------+
+                           |
+                           v
+       +---------------------------------------+
+       |             Proxy (:8000)             |
+       |  - Unified reverse proxy edge gateway |
+       +---------------------------------------+
+             /                         \
+            /                           \  /graphql (Auth Guard)
+           v                             v
++-----------------------+      +-----------------------------------------------------------+
+|    Gateway (:8080)    |      |                   Orchestrator (:8081)                    |
+| - Secret token check  |      | - Pre-Auth Rejection & Admin RBAC (/backup, /restore)     |
+| - Twilio HMAC verify  |      | - 70 Modular ToolModules across 13 Domain Packages        |
+| - MaxBytesReader limit|      | - Two-Tier Intent Tool Grouping (8 Core + Active Tier 2)  |
++-----------------------+      | - Bounded Multi-Turn Recursion (max 8) & Concurrent Tools |
+           |                   | - Dual-Lane EventBus (Sync Durability + 4 Async Workers)  |
+           |                   | - GraphQL Server (28 Queries/Mutations via Domain Repos)  |
+           v                   +-----------------------------------------------------------+
++-----------------------+             |                            |                       ^
+|   RabbitMQ (:5672)    |             |                            |                       |
+| - SafePublisher mutex |             v                            v                       |
+| - mypa.dlx & DLQs     |     +-------------------+       +--------------------+           |
+| - 3 bounded retries   |     |   Redis 7 (:6379) |       | PostgreSQL (:5432) |           |
++-----------------------+     | - Encrypted tokens|       | - MaxOpenConns(25) |           |
+      |         |             | - 32B CSRF nonces |       | - halfvec(3072)    |           |
+      |         |             | - Stripped photos |       |   HNSW indexes     |           |
+      v         v             | - Prompt cache    |       | - 6 Composite      |           |
++-----------------------+     +-------------------+       |   B-Tree indexes   |           |
+| Audit Worker          |                                 +--------------------+           |
+| - 30-day archiving    |                                                                  |
++-----------------------+                                                                  |
+                                                                                           |
+                                       +-----------------------------------+               |
+                                       |      Next.js Dashboard (:3030)    |               |
+                                       | - Zero direct pg.Pool connections |               |
+                                       | - Centralized graphql.ts client   |---------------+
+                                       | - Clean empty states, 0 mock data |
+                                       | - Vitest test suite (31 tests)    |
+                                       +-----------------------------------+
 ```
 
 ### Core Architectural Pillars
-- **Modular `ToolModule` Registry (`internal/orchestrator/registry.go`)**: Domain modules self-register their Gemini `FunctionDeclaration` schemas, execution handlers, and dynamic per-turn system prompt injections.
-- **Internal `MutationEvent` Bus (`internal/events/bus.go`)**: Every domain state change emits a typed `MutationEvent` with `BeforeJSON` and `AfterJSON` snapshots, simultaneously powering:
-  1. **Conversational Undo & Audit Trail** (`internal/domains/durability`)
-  2. **Instant Partner Notifications** across WhatsApp/Telegram (`internal/domains/shared`)
-  3. **Reactive `When -> If -> Then` User Automations** (`internal/domains/automation`)
-- **AES-256-GCM Encryption at Rest (`internal/crypto/aes.go`)**: Protects PostgreSQL-persisted OAuth credentials and external API connector authorization headers using PBKDF2/SHA-256 key derivation (`ENCRYPTION_KEY`).
+- **70 Modular `ToolModule` Plugins (`internal/orchestrator/registry.go`)**: 28 migrated base workspace tools + 42 domain tools across 8 life domains with dynamic Two-Tier Intent Routing (8 Tier 1 Core Tools + Tier 2 matched domain groups based on intent classification, reducing prompt tokens by ~75%).
+- **Bounded Recursion & Concurrent Tool Execution (`internal/orchestrator/engine.go`)**: Multi-turn tool calls capped at `MaxToolRecursionDepth = 8` iterations with Gemini natural-language summary fallback, and parallel tool executions run concurrently via `errgroup.Group` bounded to `MaxConcurrentTools = 8`.
+- **Dual-Lane `EventBus` (`internal/events/bus.go`)**: Synchronous lane for ACID durability logging and instant prompt cache eviction, paired with a 4-worker asynchronous pool (1,024-event queue) for cross-user partner notifications and external automation webhooks, with deterministic FIFO ordering and race-free `closeMu sync.RWMutex` draining.
+- **Production PostgreSQL Connection Pool & pgvector (`internal/db/`)**: Sized at `MaxOpenConns(25)` and `MaxIdleConns(10)`, featuring `((embedding::halfvec(3072)) halfvec_cosine_ops)` HNSW vector indexes and 6 high-volume composite multi-tenant B-Tree indexes.
+- **Enterprise RabbitMQ Topology (`internal/broker/`)**: Mutex-serialized `SafePublisher` with publisher confirms (`ch.Confirm(false)`), auto-reconnect supervisor, declarative DLQ topology (`mypa.dlx`), and 3-attempt bounded retries with poison-pill rejection.
+- **Decoupled Next.js Dashboard**: Direct database access (`pg.Pool`) completely eliminated in favor of a centralized `graphql.ts` client routed through `http://proxy:8000/graphql`, clean empty states without mock data, client error boundaries, and 31 Vitest component tests.
+
 
 ---
 
@@ -86,7 +124,7 @@ Next.js 15 Dashboard (3030)  ─────────────────
 
 ## Web Control Dashboard (`:3030`)
 
-The Next.js 15 Dashboard communicates with the Orchestrator's `gqlgen` GraphQL API via the Proxy (`http://localhost:8000/graphql`) and provides dedicated interactive consoles:
+The Next.js 16 Dashboard communicates with the Orchestrator's `gqlgen` GraphQL API via the Proxy (`http://localhost:8000/graphql`) and provides dedicated interactive consoles:
 
 | Route | Console Description |
 |---|---|
@@ -98,6 +136,76 @@ The Next.js 15 Dashboard communicates with the Orchestrator's `gqlgen` GraphQL A
 | `/finance` | **Finance & Budgets**: Transaction ledger, monthly category budget bars, and recurring bills |
 | `/automations` | **Automations & CRM**: External API connectors, event-driven rules, and Personal CRM |
 | `/audit` | **Audit & Rollback**: Full mutation log with `BeforeJSON`/`AfterJSON` inspection and one-click Rollback |
+
+---
+
+## Security Architecture & Defense-in-Depth
+
+MyPA enforces defense-in-depth security across all edge ingress, compute, data persistence, and outbound integration layers:
+
+1. **NetGuard SSRF Defense (`internal/netguard`):**
+   - All outbound HTTP requests (`fetch_webpage`, `unsubscribe_email`, `call_external_api`, `register_external_api`) execute through `netguard.SafeClient(timeout)`.
+   - Pre-connection DNS resolution blocks IPv4/IPv6 loopback (`127.0.0.0/8`, `::1`), RFC1918 private subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), cloud metadata IP (`169.254.169.254`), carrier-grade NAT (`100.64.0.0/10`), link-local multicast, and internal Docker single-label container names.
+   - Redirect targets are inspected and validated prior to each hop.
+
+2. **Webhook Ingress Signatures & Edge Protection (`cmd/gateway`, `internal/twilio`):**
+   - **Telegram:** Enforces `X-Telegram-Bot-Api-Secret-Token` matching `TELEGRAM_SECRET_TOKEN` using constant-time comparison (`subtle.ConstantTimeCompare`).
+   - **Twilio WhatsApp:** Calculates and verifies HMAC-SHA1 signatures (`X-Twilio-Signature`) across full request URLs and sorted parameters using `TWILIO_AUTH_TOKEN`.
+   - **Edge Proxy:** Rejects unauthenticated `/graphql` calls at the reverse proxy layer, restricts `/playground` in production, and bounds HTTP request bodies with `http.MaxBytesReader` (10MB gateway, 1MB GraphQL).
+
+3. **GraphQL Authentication & Tenant Authorization (`internal/graph/auth_middleware.go`):**
+   - Rejects unauthenticated `/graphql` requests with HTTP 401.
+   - Validates `Authorization: Bearer <token>` via constant-time `DASHBOARD_API_SECRET` check or HMAC-SHA256 Bearer JWT claims (`user_id`, `role`, `family_group`).
+   - Resolvers strictly enforce positive tenant authorization (`resolveTenantAndActor`) preventing cross-tenant IDOR access.
+
+4. **Cryptographic Key Management & Storage Encryption (`internal/crypto/aes.go`):**
+   - Encrypts OAuth credentials in Redis (`token:<userID>`) and PostgreSQL fallback (`encrypted_credentials`), as well as API connector authorization headers, using AES-256-GCM.
+   - Employs HKDF-SHA256 salted key derivation (`[16-byte Salt][12-byte Nonce][Ciphertext + 16-byte Tag]`) with automatic backward compatibility for legacy unsalted payloads.
+   - Fails fast on application startup (`crypto.ValidateKeyConfigured()`), panicking if `ENCRYPTION_KEY` is empty in production.
+
+5. **OAuth CSRF State Defense:**
+   - Generates 32-byte cryptographically random hex nonces stored in Redis (`oauth_state:<nonce> -> userID`) with a 10-minute TTL.
+   - The `/auth/google/callback` endpoint atomically validates and deletes the nonce via `GETDEL` before exchanging authorization codes.
+
+6. **Positive Tenant Scoping & Anti-IDOR Defense:**
+   - Multi-tenant database queries enforce compound scoping: `WHERE ((family_group = ? AND family_group != '') OR user_id = ?)`.
+   - Modifying and deleting records verifies ownership positively:
+     `isAuthorized := record != nil && ((familyGroup != "" && record.FamilyGroup == familyGroup) || (record.UserID != "" && record.UserID == userID))`
+   - Prohibits tool arguments from overriding caller tenant boundaries (`ActorID()` and `TenantFamilyGroup()`).
+
+7. **Prompt Injection Boundaries & Meta-Tool Gates:**
+   - Ingested external content (`read_email`, `fetch_webpage`, attachments) is demarcated with semantic XML delimiters: `<untrusted_external_content source="..."> ... </untrusted_external_content>`.
+   - When untrusted external content is ingested during a conversation turn, privileged meta-tools (`update_user_preferences`, `create_automation_rule`, `schedule_workflow`, `register_external_api`) require explicit conversational confirmation (`CONFIRM <TOOL_NAME>`).
+
+---
+
+## Environment Variables Reference
+
+| Variable | Description | Required? | Default / Example |
+| :--- | :--- | :---: | :--- |
+| **`ENCRYPTION_KEY`** | Primary 32-byte secret for HKDF-SHA256 salted AES-256-GCM encryption at rest; fails fast on boot in production if missing. | **Yes** (Prod) | `32-byte-hex-or-passphrase` |
+| **`DASHBOARD_API_SECRET`** | Secret bearer token used by the Next.js Web Dashboard and Proxy to authenticate requests to `/graphql`. | **Yes** | `super-secret-dashboard-key` |
+| **`TELEGRAM_SECRET_TOKEN`** | Webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header on Telegram ingress. | **Yes** | `random-webhook-secret-token` |
+| **`TWILIO_AUTH_TOKEN`** | Twilio Auth Token used to calculate and verify HMAC-SHA1 signatures (`X-Twilio-Signature`) on WhatsApp webhooks. | **Yes** | `twilio-account-auth-token` |
+| **`RABBITMQ_URL`** | AMQP 0-9-1 connection string for RabbitMQ broker. | **Yes** | `amqp://user:password@rabbitmq:5672/` |
+| **`DATABASE_URL`** | PostgreSQL connection string (`postgres://...`). | **Yes** | `postgres://mypa:mypa@postgres:5432/mypa?sslmode=disable` |
+| **`REDIS_URL`** | Redis connection string (`redis://...`). | **Yes** | `redis://redis:6379/0` |
+| `ALLOWED_USERS` | Bootstrap allowed users formatted as `"platform_id:Name:Role:FamilyGroup"`. | No | `123456789:Admin:admin:TheFamily` |
+| `DEFAULT_TIMEZONE` | Default IANA timezone used for system prompts and localized datetime parsing. | No | `"Asia/Jerusalem"` / `"UTC"` |
+| `GRAPHQL_ENDPOINT` | Upstream GraphQL URL used by Next.js server actions and SSR data fetching. | No | `http://proxy:8000/graphql` |
+| `GEMINI_API_KEY` | Google AI Studio API key for Gemini chat and tool-calling models. | **Yes** | `AIzaSy...` |
+| `GEMINI_MODEL` | Primary Gemini model identifier. | No | `"gemini-2.5-flash"` |
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot token obtained from [@BotFather](https://t.me/BotFather). | If TG active | `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11` |
+| `TWILIO_ACCOUNT_SID` | Twilio Account SID for WhatsApp messaging. | If WA active | `ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` |
+| `TWILIO_FROM_NUMBER` | Twilio WhatsApp sender number. | If WA active | `whatsapp:+14155238886` |
+| `GOOGLE_CLIENT_ID` | Google OAuth2 Client ID for Workspace tools (Calendar, Gmail, Tasks). | If OAuth active | `...apps.googleusercontent.com` |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth2 Client Secret. | If OAuth active | `GOCSPX-...` |
+| `GOOGLE_REDIRECT_URL` | OAuth2 callback URL for Google integration. | If OAuth active | `https://your-domain/auth/google/callback` |
+| `GROQ_API_KEY` | Groq API key for Groq Whisper (`whisper-large-v3`) voice note transcription. | No | `gsk_...` |
+| `TAVILY_API_KEY` | Tavily API key for real-time web research (`search_web`). | No | `tvly-...` |
+| `AUDIT_ARCHIVE_DIR` | Directory path for persisting 30-day session archive JSONL files in `audit-worker`. | No | `"/app/archives"` |
+| `NGROK_AUTHTOKEN` | Ngrok authentication token for public ingress tunneling. | No | `ngrok-token` |
+| `NGROK_DOMAIN` | Reserved static Ngrok domain tunneling to `proxy:8000`. | No | `your-domain.ngrok-free.dev` |
 
 ---
 
@@ -162,19 +270,25 @@ The Next.js 15 Dashboard communicates with the Orchestrator's `gqlgen` GraphQL A
 
 ---
 
-## Testing
+## Testing & Quality Verification
 
-Unit tests cover all core packages and domain modules (`crypto`, `events`, `orchestrator`, `db`, `durability`, `memory`, `shared`, `schedule`, `baby`, `house`, `finance`, `automation`). End-to-End (E2E) tests use [Testcontainers](https://golang.testcontainers.org/).
+MyPA includes a comprehensive, multi-tier automated test suite covering unit logic, data races, database repository integration, GraphQL resolvers, frontend React components, and multi-stage container builds:
 
 ```bash
-# Run all unit and domain tests
-go test -v ./internal/...
+# 1. Run all unit tests with Go data race detector
+go test -v -race ./internal/...
 
-# Run E2E tests (requires Docker running)
-go test -v ./tests/...
+# 2. Run database repository and GraphQL resolver integration tests
+go test -v ./internal/db/... ./internal/graph/...
 
-# Verify full multi-stage container build
+# 3. Run Next.js Dashboard Vitest component tests (31 tests across 4 test suites)
+npm test --prefix dashboard
+
+# 4. Verify full multi-stage container build
 docker-compose build
+
+# 5. Run end-to-end integration tests (requires Docker daemon)
+go test -v ./tests/...
 ```
 
 ---
@@ -187,7 +301,7 @@ docker-compose build
 | `gateway` | `8080` | Telegram & Twilio WhatsApp webhook ingestion and RabbitMQ publisher |
 | `orchestrator` | `8081` | Gemini reasoning engine, `ToolModule` registry, `EventBus`, OAuth, GraphQL API, and Cron Scheduler |
 | `audit-worker` | N/A | Asynchronous RabbitMQ consumer persisting system audit logs to PostgreSQL |
-| `dashboard` | `3030` | Next.js 15 web application for multi-domain management and audit rollback |
+| `dashboard` | `3030` | Next.js 16 (React 19) web application for multi-domain management and audit rollback |
 | `rabbitmq` | `5672` | Message broker (`15672` management UI) |
 | `redis` | `6379` | Hot conversation state and OAuth token cache |
 | `postgres` | `5432` | PostgreSQL 15 with `pgvector` for domain tables, encrypted credentials, and semantic memory |
@@ -199,7 +313,7 @@ docker-compose build
 ## Project Structure
 
 ```text
-dashboard/                  # Next.js 15 Web Control Dashboard (App Router)
+dashboard/                  # Next.js 16 (React 19) Web Control Dashboard (App Router)
   src/app/
     audit/                  # Mutation audit log & one-click rollback console
     automations/            # External APIs, EventBus rules & Personal CRM console
@@ -218,9 +332,9 @@ internal/
   broker/                   # RabbitMQ publisher/consumer
   calendar/                 # Google Calendar API + OAuth
   config/                   # Viper configuration loader
-  crypto/                   # AES-256-GCM encryption at rest (PBKDF2/SHA-256)
+  crypto/                   # AES-256-GCM encryption at rest (HKDF-SHA256 salted derivation)
   db/                       # PostgreSQL + pgvector client, dynamic migrations & domain repos
-  domains/                  # Modular ToolModule implementations (Topics 1–9)
+  domains/                  # Modular ToolModule implementations (70 tools / 13 modules)
     automation/             # External REST connectors (SSRF-guarded), rules runner & CRM
     baby/                   # Baby tracker, Wonder Weeks milestones & medication guardrails
     durability/             # Encrypted token fallback, mutation log, undo & CSV/JSON export
@@ -229,11 +343,18 @@ internal/
     memory/                 # Topic-mapped memory v2, living entities & consolidation
     schedule/               # Virtual [Topic] sub-calendars & partner Google Calendar sync
     shared/                 # Family shared spaces, shared reminders & partner notifier
-  events/                   # Thread-safe internal MutationEvent pub/sub bus
+    toolutil/               # Centralized typed argument parsing & timezone normalization
+    web_research/           # Web search (Tavily) & SSRF-guarded webpage scraper
+    workspace_calendar/     # Google Calendar workspace CRUD tools
+    workspace_contacts/     # Google Contacts workspace CRUD tools
+    workspace_gmail/        # Gmail workspace CRUD & unsubscribe tools
+    workspace_tasks/        # Google Tasks workspace CRUD tools
+  events/                   # Thread-safe dual-lane MutationEvent pub/sub bus
   gmail/                    # Gmail API integration & automation flows
   graph/                    # gqlgen GraphQL schema, generated server & resolvers
   llm/                      # Gemini API client & base tool declarations
   models/                   # Shared domain & GORM database models
+  netguard/                 # SSRF defense validator blocking private CIDRs & metadata
   orchestrator/             # Multi-turn agent engine & dynamic ToolModule Registry
   scheduler/                # Cron scheduler & proactive morning briefings
   state/                    # Redis state management

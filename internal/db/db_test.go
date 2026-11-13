@@ -2,7 +2,10 @@ package db
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"net/url"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,44 +17,96 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+	postgresDriver "gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
+var (
+	testPgOnce      sync.Once
+	testPgContainer *postgres.PostgresContainer
+	testPgAdminDSN  string
+	testPgAdminDB   *gorm.DB
+	testPgErr       error
+)
+
+func getTestSingletonPostgres(ctx context.Context) (string, *gorm.DB, error) {
+	testPgOnce.Do(func() {
+		dbName := "testdb"
+		dbUser := "user"
+		dbPassword := "password"
+
+		container, err := postgres.Run(ctx,
+			"pgvector/pgvector:pg16",
+			postgres.WithDatabase(dbName),
+			postgres.WithUsername(dbUser),
+			postgres.WithPassword(dbPassword),
+			testcontainers.WithWaitStrategy(
+				wait.ForLog("database system is ready to accept connections").
+					WithOccurrence(2).
+					WithStartupTimeout(60*time.Second),
+			),
+		)
+		if err != nil {
+			testPgErr = fmt.Errorf("failed to start postgres container: %w", err)
+			return
+		}
+
+		connStr, err := container.ConnectionString(ctx, "sslmode=disable")
+		if err != nil {
+			testPgErr = fmt.Errorf("failed to get connection string: %w", err)
+			return
+		}
+
+		adminDB, err := gorm.Open(postgresDriver.Open(connStr), &gorm.Config{})
+		if err != nil {
+			testPgErr = fmt.Errorf("failed to connect admin gorm db: %w", err)
+			return
+		}
+
+		testPgContainer = container
+		testPgAdminDSN = connStr
+		testPgAdminDB = adminDB
+	})
+
+	return testPgAdminDSN, testPgAdminDB, testPgErr
+}
 
 func setupTestDB(t *testing.T) (*Client, func()) {
+	t.Helper()
 	ctx := context.Background()
 
-	dbName := "testdb"
-	dbUser := "user"
-	dbPassword := "password"
-
-	postgresContainer, err := postgres.Run(ctx,
-		"pgvector/pgvector:pg16",
-		postgres.WithDatabase(dbName),
-		postgres.WithUsername(dbUser),
-		postgres.WithPassword(dbPassword),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(60*time.Second),
-		),
-	)
+	adminDSN, adminDB, err := getTestSingletonPostgres(ctx)
 	if err != nil {
-		t.Fatalf("failed to start container: %v", err)
+		t.Fatalf("failed to initialize postgres testcontainer: %v", err)
 	}
 
-	connStr, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("failed to get connection string: %v", err)
+	uniqueID := strings.ReplaceAll(uuid.New().String(), "-", "")
+	dbName := fmt.Sprintf("testdb_%s", uniqueID)
+
+	if err := adminDB.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName)).Error; err != nil {
+		t.Fatalf("failed to create isolated test database %s: %v", dbName, err)
 	}
 
-	client, err := NewClient(connStr)
+	u, err := url.Parse(adminDSN)
 	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
+		_ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
+		t.Fatalf("failed to parse admin DSN: %v", err)
+	}
+	u.Path = "/" + dbName
+	testDSN := u.String()
+
+	client, err := NewClient(testDSN)
+	if err != nil {
+		_ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
+		t.Fatalf("failed to create db client for %s: %v", dbName, err)
 	}
 
 	cleanup := func() {
-		if err := postgresContainer.Terminate(ctx); err != nil {
-			log.Fatalf("failed to terminate container: %s", err)
+		if client != nil {
+			_ = client.Close()
+		}
+		if adminDB != nil {
+			_ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
 		}
 	}
 

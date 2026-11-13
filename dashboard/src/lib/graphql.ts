@@ -74,10 +74,10 @@ export async function graphqlFetch<TData = unknown, TVariables = Record<string, 
 
   const response = await fetch(endpoint, {
     method: "POST",
-    headers,
-    body: JSON.stringify({ query, variables }),
     cache: "no-store",
     ...init,
+    headers,
+    body: JSON.stringify({ query, variables }),
   });
 
   if (!response.ok) {

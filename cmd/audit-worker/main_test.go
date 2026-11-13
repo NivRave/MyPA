@@ -1,62 +1,23 @@
 package main
 
 import (
-	"context"
 	"io"
-	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 func setupTestDB(t *testing.T) (*db.Client, func()) {
-	ctx := context.Background()
-
-	dbName := "testdb"
-	dbUser := "user"
-	dbPassword := "password"
-
-	postgresContainer, err := postgres.Run(ctx,
-		"pgvector/pgvector:pg16",
-		postgres.WithDatabase(dbName),
-		postgres.WithUsername(dbUser),
-		postgres.WithPassword(dbPassword),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(60*time.Second),
-		),
-	)
-	if err != nil {
-		t.Fatalf("failed to start container: %v", err)
-	}
-
-	connStr, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("failed to get connection string: %v", err)
-	}
-
-	client, err := db.NewClient(connStr)
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
-
-	cleanup := func() {
-		if err := postgresContainer.Terminate(ctx); err != nil {
-			log.Fatalf("failed to terminate container: %s", err)
-		}
-	}
-
-	return client, cleanup
+	return testutil.NewTestDB(t)
 }
 
 func TestArchiveOldSessions(t *testing.T) {
@@ -85,8 +46,11 @@ func TestArchiveOldSessions(t *testing.T) {
 	}
 	require.NoError(t, client.InsertAuditSession(newSession))
 
-	// Run archiver
-	archiveOldSessions(client)
+	tempDir := t.TempDir()
+
+	// Run archiver targeting isolated tempDir
+	err := archiveOldSessions(client, tempDir)
+	require.NoError(t, err)
 
 	// Verify old session is gone
 	var checkOld models.AuditSession
@@ -98,25 +62,23 @@ func TestArchiveOldSessions(t *testing.T) {
 	res = client.DB.Where("id = ?", newSession.ID).First(&checkNew)
 	assert.NoError(t, res.Error, "New session should not be deleted")
 
-	// Check if file was created. We can use filepath.Glob("audit_archive_*.jsonl")
-	// But it's easier to just find the newest file in the current directory starting with audit_archive_
-	files, err := os.ReadDir(".")
+	// Verify archive file was created in tempDir
+	files, err := os.ReadDir(tempDir)
 	require.NoError(t, err)
 
-	var archiveFile string
+	var archiveFilePath string
 	for _, f := range files {
-		if !f.IsDir() && len(f.Name()) > 14 && f.Name()[:14] == "audit_archive_" {
-			archiveFile = f.Name()
+		if !f.IsDir() && strings.HasPrefix(f.Name(), "audit_archive_") {
+			archiveFilePath = filepath.Join(tempDir, f.Name())
 			break
 		}
 	}
-	require.NotEmpty(t, archiveFile, "Archive file should be created")
+	require.NotEmpty(t, archiveFilePath, "Archive file should be created in tempDir")
 
 	// Verify content of the file
-	file, err := os.Open(archiveFile)
+	file, err := os.Open(archiveFilePath)
 	require.NoError(t, err)
 	defer file.Close()
-	defer os.Remove(archiveFile)
 
 	b, _ := io.ReadAll(file)
 	assert.Contains(t, string(b), "Old prompt")

@@ -17,9 +17,15 @@ type dummyModelB struct {
 	Value int
 }
 
+func restoreRegisteredModels() {
+	ResetRegisteredModels()
+	RegisterWave1Models()
+	RegisterWave2Models()
+}
+
 func TestRegisterModel_ThreadSafetyAndDeduplication(t *testing.T) {
 	ResetRegisteredModels()
-	defer ResetRegisteredModels()
+	defer restoreRegisteredModels()
 
 	assert.Empty(t, GetRegisteredModels())
 
@@ -62,7 +68,7 @@ func TestRegisterModel_ThreadSafetyAndDeduplication(t *testing.T) {
 
 func TestRegisterWave1Models(t *testing.T) {
 	ResetRegisteredModels()
-	defer ResetRegisteredModels()
+	defer restoreRegisteredModels()
 
 	RegisterWave1Models()
 	// Multiple registrations are idempotent
@@ -73,7 +79,7 @@ func TestRegisterWave1Models(t *testing.T) {
 
 func TestRegisterWave2Models(t *testing.T) {
 	ResetRegisteredModels()
-	defer ResetRegisteredModels()
+	defer restoreRegisteredModels()
 
 	RegisterWave2Models()
 	// Multiple registrations are idempotent

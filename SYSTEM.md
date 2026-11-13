@@ -29,7 +29,7 @@ flowchart LR
 
     subgraph Core["Orchestrator & Workers"]
         Orch["Orchestrator (:8081)"]
-        Registry["ToolModule Registry (8 Domains)"]
+        Registry["ToolModule Registry (70 Tools / 13 Modules)"]
         Bus["Internal MutationEvent Bus"]
         Cron["Cron Scheduler (Asia/Jerusalem)"]
         AuditW["Audit Worker"]
@@ -74,7 +74,7 @@ flowchart LR
 | :--- | :--- | :--- | :---: | :--- |
 | **`proxy`** | [`cmd/proxy/main.go`](file:///d:/MyPA/cmd/proxy/main.go) | `gcr.io/distroless/static-debian12` | `8000` | Unified reverse proxy routing `/webhook/*` to `gateway:8080` and `/graphql`, `/playground`, `/auth/google/*` to `orchestrator:8081`. |
 | **`gateway`** | [`cmd/gateway/main.go`](file:///d:/MyPA/cmd/gateway/main.go) | `gcr.io/distroless/static-debian12` | `8080` | High-throughput HTTP webhook receiver for Telegram (`/webhook/telegram`) and Twilio WhatsApp (`/webhook/twilio`); normalizes payloads into [`models.Message`](file:///d:/MyPA/internal/models/models.go#L9-L22) and publishes to RabbitMQ `telegram.inbound`. |
-| **`orchestrator`** | [`cmd/orchestrator/main.go`](file:///d:/MyPA/cmd/orchestrator/main.go) | `debian:12-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8081` | Core brain: consumes `telegram.inbound`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](file:///d:/MyPA/internal/orchestrator/registry.go#L30-L43) registry, [`EventBus`](file:///d:/MyPA/internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](file:///d:/MyPA/internal/scheduler/scheduler.go). |
+| **`orchestrator`** | [`cmd/orchestrator/main.go`](file:///d:/MyPA/cmd/orchestrator/main.go) | `debian:12-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8081` | Core brain: consumes `telegram.inbound`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](file:///d:/MyPA/internal/orchestrator/registry.go#L30-L43) registry (70 modular tools across 13 modules), dual-lane [`EventBus`](file:///d:/MyPA/internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](file:///d:/MyPA/internal/scheduler/scheduler.go). |
 | **`audit-worker`** | [`cmd/audit-worker/main.go`](file:///d:/MyPA/cmd/audit-worker/main.go) | `gcr.io/distroless/static-debian12` | — | Consumes `audit.events` from RabbitMQ, persists [`models.AuditSession`](file:///d:/MyPA/internal/models/models.go#L80-L92) rows to PostgreSQL, and runs a 24h ticker archiving sessions older than 30 days. |
 | **`dashboard`** | [`dashboard/`](file:///d:/MyPA/dashboard/package.json) | `node:20-alpine` (Next.js standalone) | `3030:3000` | Next.js App Router web console for managing family spaces, memories, baby logs, house assets, finances, automations, pairing codes, and mutation rollbacks. |
 | **`postgres`** | `pgvector/pgvector:pg15` | Official Postgres 15 + `pgvector` | `5432` | Primary relational + vector store (29 tables). |
@@ -214,7 +214,7 @@ type ToolModule interface {
 - **8 Life Domain Modules:** `durability` (Topic 1 & `/undo`), `memory` (Topic 2 & `remember_fact`), `shared` (Topic 9 & `schedule_reminder`), `schedule` (Topic 3), `baby` (Topic 4), `house` (Topic 5 & 8.1), `finance` (Topic 6), `automation` (Topics 7, 8.2, 8.3 & workflow management).
 
 **Two-Tier Tool Domain Grouping (SCALE-01):**
-Rather than injecting all 67 registered tool schemas on every call (~9,500 input tokens), the orchestrator dynamically scopes tools into two tiers:
+Rather than injecting all 70 registered tool schemas on every call (~9,500 input tokens), the orchestrator dynamically scopes tools into two tiers:
 1. **Tier 1 Core Tools (8 ubiquitous tools, ~1,120 tokens):** Always injected into every user turn.
    - `remember_fact`, `save_topic_memory`, `search_topic_memories` (`memory`)
    - `schedule_reminder` (`shared`)
@@ -262,18 +262,19 @@ type MutationEvent struct {
 To prevent slow network I/O, external partner notifications, and automation webhooks from blocking the synchronous LLM tool execution pipeline while guaranteeing ACID durability, `EventBus` operates two distinct execution lanes:
 1. **Sync Lane (`SubscribeSync`, `SubscribeSyncTopic`, `Subscribe`, `SubscribeTopic`):**
    - Executes synchronously on the publisher's goroutine with full error propagation via `errors.Join`.
+   - Strictly deterministic FIFO subscriber ordering via sequential `[]orderedHandler` slice iteration.
    - Dedicated exclusively to ACID audit logging and rollback consistency.
    - Guarded by panic recovery (`recover()`) logging the stack trace without crashing the server.
-    - **Active Subscribers:**
-      - [`durability.Module.HandleMutationEvent`](file:///d:/MyPA/internal/domains/durability/module.go): Writes immutable audit snapshots to `mutation_logs` before tool completion.
-      - [`orchestrator.RegisterPromptInvalidator`](file:///d:/MyPA/internal/orchestrator/prompt_cache.go): Evicts cached Redis system prompt sections (`ctx_prompt:<fg>:<mod>`) synchronously to guarantee cache consistency.
+   - **Active Subscribers:**
+     - [`durability.Module.HandleMutationEvent`](file:///d:/MyPA/internal/domains/durability/module.go): Writes immutable audit snapshots to `mutation_logs` before tool completion.
+     - [`orchestrator.RegisterPromptInvalidator`](file:///d:/MyPA/internal/orchestrator/prompt_cache.go): Evicts cached Redis system prompt sections (`ctx_prompt:<fg>:<mod>`) synchronously to guarantee cache consistency.
 2. **Async Lane (`SubscribeAsync`, `SubscribeAsyncTopic`):**
    - Dispatches jobs to a bounded background worker pool (default: **4 workers**, configurable via `WithWorkerCount`).
-   - Buffered job queue with default capacity of **1,024 events** (`WithQueueCapacity`).
+   - Buffered job queue with default capacity of **1,024 events** (`WithQueueCapacity`) preserving deterministic FIFO task submission.
    - **Non-blocking Backpressure:** If the queue is saturated, incoming async events are dropped without blocking callers, logging a warning and incrementing the atomic drop counter (`DroppedCount()`).
    - **Detached Context:** Jobs run under a detached context (`context.WithoutCancel` with default **30s timeout**, `WithAsyncTimeout`), preventing cancellation of the parent chat turn from aborting background webhooks or partner notifications.
-   - **Per-Worker Panic Isolation:** Each worker catches panics with stack trace logging, ensuring rogue handlers cannot terminate background workers.
-   - **Graceful Drain & Shutdown:** `Close(ctx ...context.Context) error` and `Shutdown(ctx context.Context) error` stop new submissions, close the queue, drain pending jobs, and await worker completion within the supplied context timeout.
+   - **Per-Worker Panic Isolation:** Each worker catches panics with stack trace logging (`debug.Stack()`), ensuring rogue handlers cannot terminate background workers.
+   - **Race-Free Draining & Shutdown:** `Close(ctx ...context.Context) error` and `Shutdown(ctx context.Context) error` synchronize via `closeMu sync.RWMutex` and an atomic `closed` flag, safely rejecting new submissions, closing the channel, draining pending queued jobs, and awaiting worker completion within the supplied context timeout.
    - **Active Subscribers:**
      - [`shared.Notifier.HandleMutationEvent`](file:///d:/MyPA/internal/domains/shared/notifier.go): Sends instant Telegram/WhatsApp notifications to partner family members.
      - [`automation.Runner.HandleMutationEvent`](file:///d:/MyPA/internal/domains/automation/runner.go): Evaluates triggered `AutomationRule` conditions and executes external webhook HTTP calls.
@@ -391,15 +392,16 @@ The message broker layer ([`internal/broker/`](file:///d:/MyPA/internal/broker/)
   - `SetConnMaxIdleTime(5 * time.Minute)`: Reclaims unused idle connections after traffic bursts.
   - `Ping()` & `Close()`: Startup verifies connectivity via `sqlDB.Ping()`, and `Close()` safely drains the connection pool on orchestrator shutdown.
 - **Multi-Tenant Composite B-Tree Indexes ([`internal/db/migrations.go`](file:///d:/MyPA/internal/db/migrations.go)):**
-  - `idx_audit_sessions_tenant_time`: `(family_group, user_id, start_time DESC)` on `audit_sessions`
-  - `idx_baby_care_logs_tenant_time`: `(family_group, baby_id, logged_at DESC)` on `baby_care_logs`
-  - `idx_financial_transactions_tenant_date`: `(family_group, transaction_date DESC)` on `financial_transactions`
-  - `idx_schedule_events_tenant_time`: `(family_group, start_time)` on `schedule_events`
-  - `idx_shared_task_reminders_tenant_due`: `(family_group, due_time, is_completed)` on `shared_task_reminders`
-  - `idx_mutation_logs_tenant_created`: `(family_group, created_at DESC)` on `mutation_logs`
+  - `idx_mutation_logs_family_created`: `(family_group, created_at DESC)` on `mutation_logs`
+  - `idx_financial_transactions_family_date`: `(family_group, transaction_date DESC)` on `financial_transactions`
+  - `idx_baby_care_logs_family_timestamp`: `(family_group, timestamp DESC)` on `baby_care_logs`
+  - `idx_schedule_events_family_start`: `(family_group, start_time ASC)` on `schedule_events`
+  - `idx_topic_memories_family_created`: `(family_group, created_at DESC)` on `topic_memories`
+  - `idx_shared_task_reminders_due_completed`: `(due_time, is_completed)` on `shared_task_reminders`
+  - *Secondary Composite Lookups:* `idx_audit_sessions_user_start`, `idx_financial_transactions_fam_cat`, `idx_baby_care_logs_baby_timestamp`, `idx_house_contracts_fam_exp`.
 - **pgvector HNSW Cosine Distance Vector Indexes:**
-  - `idx_topic_memories_embedding_hnsw`: `CREATE INDEX IF NOT EXISTS idx_topic_memories_embedding_hnsw ON topic_memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`
-  - `idx_memories_embedding_hnsw`: `CREATE INDEX IF NOT EXISTS idx_memories_embedding_hnsw ON memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`
+  - `idx_topic_memories_embedding`: `CREATE INDEX IF NOT EXISTS idx_topic_memories_embedding ON topic_memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`
+  - `idx_memories_embedding`: `CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`
   - Uses `halfvec(3072)` casting to enable HNSW indexing on 3,072-dimensional Gemini embeddings within PostgreSQL pgvector's 2,000-dimension limit for standard vector indexes. Fallback logging ensures compatibility with pgvector versions lacking halfvec.
 - **Total Database Tables:** **29 tables** across 9 model files in [`internal/models/`](file:///d:/MyPA/internal/models/).
 
@@ -549,12 +551,13 @@ The consumer loop guarantees resilient, bounded message processing:
 
 ---
 
-## 6. Complete AI Agent Tool Catalog (All 69 Tools)
+## 6. Complete AI Agent Tool Catalog (All 70 Tools)
 
-### 6.1 Base Workspace & System Tools (28 Tools — [`internal/llm/tools.go`](file:///d:/MyPA/internal/llm/tools.go) & [`internal/orchestrator/engine.go`](file:///d:/MyPA/internal/orchestrator/engine.go#L707-L1203))
+### 6.1 Base Workspace & System Tools (28 Base Tools + Built-in System Tools — [`internal/llm/tools.go`](file:///d:/MyPA/internal/llm/tools.go) & [`internal/orchestrator/registry.go`](file:///d:/MyPA/internal/orchestrator/registry.go))
 
 | Tool Name | Category | Required & Optional Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
+| `get_current_time` | System / Time | `timezone` (optional IANA timezone, e.g. `'Asia/Jerusalem'`) | Returns the current ISO8601 date, time, weekday, and unix timestamp in the requested or default timezone. |
 | `create_calendar_event` | Google Calendar | `title`*, `start_time`* (RFC3339), `end_time`* (RFC3339), `timezone`*, `description`, `recurrence` (`[]string`) | Creates an event on the user's primary Google Calendar. |
 | `list_calendar_events` | Google Calendar | `time_min` (RFC3339), `time_max` (RFC3339), `query` | Lists/searches events from primary Google Calendar. |
 | `update_calendar_event` | Google Calendar | `id`*, `title`, `start_time`, `end_time`, `description`, `timezone`, `recurrence` | Updates an existing Google Calendar event. |
@@ -627,6 +630,9 @@ The consumer loop guarantees resilient, bounded message processing:
 
 - **Decoupled Frontend Tier (Milestone 1C):** Direct `pg.Pool` usage, raw SQL queries, and local database connection strings are 100% eliminated from Next.js. `pg` and `@types/pg` packages are removed from `dashboard/package.json`.
 - **Centralized Typed Client ([`dashboard/src/lib/graphql.ts`](file:///d:/MyPA/dashboard/src/lib/graphql.ts)):** Implements `graphqlFetch<TData, TVariables>` with automatic `Authorization: Bearer <DASHBOARD_API_SECRET>` header injection, endpoint discovery via `GRAPHQL_ENDPOINT` / `NEXT_PUBLIC_PROXY_URL`, and complete TypeScript type declarations for all domain entities.
+- **Clean Empty States & Zero Mock Data:** Hardcoded mock statistics in `dashboard/src/app/baby/page.tsx` and other life domain consoles are completely removed. All pages render clean empty states when database records are absent.
+- **Client Error Boundary ([`dashboard/src/app/error.tsx`](file:///d:/MyPA/dashboard/src/app/error.tsx)):** React client error boundary component catching uncaught rendering errors, displaying user-friendly diagnostics, and providing a clean reset/retry action.
+- **Comprehensive Vitest Component Test Suite:** Automated component testing with Vitest and `@testing-library/react` (31 tests across 4 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`), verifying typed GraphQL client queries, error boundaries, empty states, and form interactions.
 
 | Route | Source File | Primary GraphQL Operations Used |
 | :--- | :--- | :--- |
@@ -688,46 +694,140 @@ All cron schedules run in the `Asia/Jerusalem` timezone (`scheduler.go:20`):
 
 ---
 
-## 9. Step-by-Step Playbook: Adding a New Feature or Life Domain
+## 9. Step-by-Step Feature Development Playbook (8 Architectural Sections)
 
-Follow this exact 8-step checklist whenever adding a new domain module or extending an existing domain so that **AI tools, persistence, undo/rollback, partner notifications, automations, GraphQL, Dashboard UI, and documentation** stay completely synchronized:
+Follow this canonical 8-section playbook whenever adding a new feature or life domain so that **domain modeling, typed parsing, AI tools, persistence, undo/rollback, partner notifications, automations, GraphQL, Dashboard UI, and documentation** stay completely synchronized with the MyPA production architecture:
 
-### Step 1: Define GORM Models & Register Migrations
-1. Create or update the model file in [`internal/models/<domain>.go`](file:///d:/MyPA/internal/models/).
-   - Include `FamilyGroup string` (`gorm:"index"`) and `UserID string` (`gorm:"index"`) on all multi-tenant entities.
-   - Add JSON tags (`snake_case`) matching your GraphQL and snapshot conventions.
-2. Register the new model struct(s) in [`internal/db/migrations.go`](file:///d:/MyPA/internal/db/migrations.go) (inside `Wave2Models()` or `RegisterModel()`).
+### Section 1: Domain Modeling, PostgreSQL Migrations & Index Architecture
+1. **Model Definition (`internal/models/<domain>.go`):**
+   - Include multi-tenant identifiers on all domain entities: `FamilyGroup string` (`gorm:"index"`) and `UserID string` (`gorm:"index"`).
+   - Use `snake_case` JSON tags matching GraphQL schemas and snapshot conventions.
+   - For high-dimensional vector fields, declare `Embedding pgvector.Vector` (`gorm:"type:vector(3072)"`) and attach `BeforeCreate` / `BeforeSave` hooks initializing zero vectors to prevent PostgreSQL `SQLSTATE 22000`.
+2. **Deduplicated Model Registration (`internal/db/migrations.go`):**
+   - Register models via `RegisterModel(...)`, `RegisterWave1Models()`, or `RegisterWave2Models()`.
+   - Registration is protected by `registeredModelsMu sync.RWMutex` and automatically deduplicates structs by `reflect.TypeOf`, guaranteeing idempotent execution on startup.
+3. **Database Connection Pool Tuning (`internal/db/db.go`):**
+   - Always operate within production pool limits: `SetMaxOpenConns(25)` (capped to avoid exhausting Postgres 100-connection ceiling across microservices), `SetMaxIdleConns(10)` (warm pool for instant tool responses), `SetConnMaxLifetime(30m)`, and `SetConnMaxIdleTime(5m)`.
+   - Enforce fail-fast startup health checks via `sqlDB.Ping()` and clean connection draining via `Client.Close()`.
+4. **pgvector Halfvec Vector Indexes (`ApplyCustomIndexes`):**
+   - Because standard PostgreSQL pgvector indexes enforce a hard 2,000-dimension ceiling, 3,072-dimensional Gemini embeddings must be cast to `halfvec(3072)`:
+     ```sql
+     CREATE INDEX IF NOT EXISTS idx_topic_memories_embedding ON topic_memories 
+     USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops);
+     ```
+   - Wrap creation in graceful warning logging to ensure backward compatibility with older pgvector environments without aborting startup.
+5. **High-Volume Multi-Tenant Composite B-Tree Indexes:**
+   - Define composite indexes on tenant and temporal/lookup keys to eliminate sequential scans:
+     - `idx_mutation_logs_family_created`: `(family_group, created_at DESC)` on `mutation_logs`
+     - `idx_financial_transactions_family_date`: `(family_group, transaction_date DESC)` on `financial_transactions`
+     - `idx_baby_care_logs_family_timestamp`: `(family_group, timestamp DESC)` on `baby_care_logs`
+     - `idx_schedule_events_family_start`: `(family_group, start_time ASC)` on `schedule_events`
+     - `idx_topic_memories_family_created`: `(family_group, created_at DESC)` on `topic_memories`
+     - `idx_shared_task_reminders_due_completed`: `(due_time, is_completed)` on `shared_task_reminders`
 
-### Step 2: Implement the GORM Repository
-1. Create [`internal/db/<domain>_repo.go`](file:///d:/MyPA/internal/db/) defining a `<Domain>Repository` interface and implementing its CRUD/query methods.
-2. **Security Rule:** Every read, update, and delete method **MUST** scope queries by `family_group` (and/or `user_id`) and reject empty tenant identifiers to prevent cross-tenant IDOR.
+### Section 2: Domain Services, Repositories & Tool Utilities
+1. **Decoupled Domain Repositories (`internal/db/<domain>_repo.go`):**
+   - Define explicit repository interfaces (`<Domain>Repository`) decoupling data access from business logic and GraphQL resolvers.
+   - Every read, update, and delete query **MUST** enforce positive tenant authorization:
+     ```go
+     isAuthorized := record != nil && ((familyGroup != "" && record.FamilyGroup == familyGroup) || (record.UserID != "" && record.UserID == userID))
+     ```
+   - For family-level assets without a user ID (`VehicleAsset`, `RecurringBill`):
+     ```go
+     isAuthorized := record != nil && record.FamilyGroup != "" && record.FamilyGroup == familyGroup
+     ```
+2. **Centralized Typed Argument Parsing (`internal/domains/toolutil/toolutil.go`):**
+   - Eliminate duplicated type assertions across domain modules by utilizing `toolutil` parsers:
+     - `toolutil.String(args, key, defaultVal)`
+     - `toolutil.StringSlice(args, key)`
+     - `toolutil.Int(args, key, defaultVal)`
+     - `toolutil.Float64(args, key, defaultVal)`
+     - `toolutil.Bool(args, key, defaultVal)`
+     - `toolutil.ParseID(idStr)`: Positively validates primary key IDs (rejects empty, non-numeric, or `<= 0` IDs).
+3. **Timezone Normalization (`toolutil.ParseTimeInLocation`):**
+   - Parse all user and tool timestamps with `toolutil.ParseTimeInLocation(str, loc)`:
+     - Explicit RFC3339 zone offsets (e.g. `2026-11-07T15:00:00+03:00`) take absolute precedence.
+     - Naive date/time strings (e.g. `2026-11-07 15:00:00` or `2026-11-07`) are interpreted within the user's localized timezone (`loc`) and normalized to UTC.
 
-### Step 3: Implement `orchestrator.ToolModule` & Emit `MutationEvent`s
-1. Create [`internal/domains/<domain>/module.go`](file:///d:/MyPA/internal/domains/) implementing `orchestrator.ToolModule`:
-   - `Name() string`: Unique lowercase topic identifier (e.g., `"health"`, `"travel"`).
-   - `Declarations() []*genai.FunctionDeclaration`: Clear tool names (`snake_case`), descriptions, and typed parameter schemas.
-   - `Execute(ctx, callCtx, toolName, args) (string, error)`:
-     - Resolve tenant identity exclusively from `callCtx.User` (never allow tool `args` to override `family_group` or `user_id`).
-     - For every create/update/delete operation, capture `BeforeJSON` (for updates/deletes) and `AfterJSON` (for creates/updates) and publish an [`events.MutationEvent`](file:///d:/MyPA/internal/events/bus.go#L16-L28) to `callCtx.EventBus`. This automatically gives your feature **Audit Logging, `/undo` Rollback, Partner Notifications, and `When -> If -> Then` Automation triggers**!
-   - `SystemPromptSection(ctx, callCtx) string`: Return a concise summary of active/urgent domain state for the user's family group (or `""` if none).
+### Section 3: Modular LLM Tool Integration & Two-Tier Routing
+1. **Unified `orchestrator.ToolModule` Plugin Contract:**
+   - Implement `orchestrator.ToolModule` across all 70 modular tools (28 migrated base workspace tools + 42 domain tools across 8 life domains):
+     - `Name() string`: Unique domain identifier (e.g., `"baby"`, `"finance"`, `"durability"`).
+     - `Declarations() []*genai.FunctionDeclaration`: Standardized schemas without tool-arg tenant overrides.
+     - `Execute(ctx, callCtx, toolName, args) (string, error)`: Resolves tenant identity strictly from `callCtx.ActorID()` and `callCtx.TenantFamilyGroup()`.
+     - `SystemPromptSection(ctx, callCtx) string`: Concise domain briefing.
+2. **Two-Tier Intent Routing (`internal/orchestrator/registry.go`):**
+   - **Tier 1 Core Tools (8 tools):** Always injected into every prompt turn (`remember_fact`, `save_topic_memory`, `search_topic_memories`, `schedule_reminder`, `search_web`, `fetch_webpage`, `undo_last_action`, `get_current_time`).
+   - **Tier 2 Domain Groups:** Injected on-demand via `KeywordIntentMatcher` based on English and Hebrew query intent prefixes, reducing prompt token overhead by ~75% (from ~9,500 to ~1,680–2,380 tokens).
+3. **Bounded Multi-Turn Tool Recursion (`internal/orchestrator/engine.go`):**
+   - Enforce a strict ceiling of `MaxToolRecursionDepth = 8` iterations per conversational turn.
+   - Upon reaching iteration 8, terminate tool execution and force a final natural-language summary from Gemini via `llm.WithNoTools(ctx)`.
+4. **Concurrent Tool Execution (`errgroup.Group`):**
+   - Parallel tool calls generated by Gemini are executed concurrently using `errgroup.WithContext(ctx)` bounded to `MaxConcurrentTools = 8`.
+   - Use index-based slice assignment to preserve strict 1:1 response ordering with per-goroutine panic recovery.
 
-### Step 4: Wire Module & Rollback Mapping in `cmd/orchestrator` & `internal/graph`
-1. In [`cmd/orchestrator/main.go`](file:///d:/MyPA/cmd/orchestrator/main.go#L159-L221), instantiate `<domain>.NewModule(dbClient, <domain>.WithEventBus(eventBus))` and register it with `registry.Register(<domain>Module)`.
-2. Register the new `EntityType -> table_name` mapping in [`tableNameForEntity`](file:///d:/MyPA/internal/graph/schema.resolvers.go#L27-L71) and any custom `UndoHandler` on `durabilityModule` if external API side effects need reversal.
+### Section 4: GraphQL Schema, Resolvers & Mutation Durability
+1. **Schema & Code Generation (`internal/graph/`):**
+   - Define Object types, queries, and mutations in `schema.graphqls`.
+   - Always run `go run github.com/99designs/gqlgen generate` with files saved in **UTF-8 without BOM**.
+2. **Resolver Delegation & Positive Authorization:**
+   - Route all 28 GraphQL queries and mutations through injected Domain Repositories (`r.babyRepo()`, `r.financeRepo()`, etc.).
+   - Zero direct SQL queries or database handles (`r.DB.DB`) in resolvers.
+   - Enforce tenant isolation via `resolveTenantAndActor`: non-admin callers are strictly bounded to their authenticated context `familyGroup`.
+3. **State Mutation Durability:**
+   - Every mutating resolver pre-fetches `BeforeJSON` snapshots, performs the repository mutation, captures `AfterJSON`, and publishes an `events.MutationEvent` to `r.EventBus`.
+   - Rollback operations delegate to `durability.Module.Rollback` with strict entity allowlist validation.
 
-### Step 5: Expose via GraphQL (`internal/graph/`)
-1. Add the new Object types, `Query` fields, and `Mutation` fields to [`internal/graph/schema.graphqls`](file:///d:/MyPA/internal/graph/schema.graphqls) (always include `familyGroup: String!` on tenant-scoped queries and mutations).
-2. Run `go run github.com/99designs/gqlgen generate` (ensure `gqlgen.yml` and `.graphqls` files are saved as **UTF-8 without BOM** per `AGENTS.md` Rule 7).
-3. Implement the resolver methods in [`internal/graph/schema.resolvers.go`](file:///d:/MyPA/internal/graph/schema.resolvers.go), delegating to the domain repository/module and publishing `MutationEvent`s on mutations.
+### Section 5: Dual-Lane EventBus & Asynchronous Workflows
+1. **Dual-Lane Execution Architecture (`internal/events/bus.go`):**
+   - **Sync Lane (`SubscribeSync`):** Executes on publisher goroutine for ACID durability logging (`durability.Module.HandleMutationEvent`) and instant prompt cache eviction (`RegisterPromptInvalidator`).
+   - **Async Lane (`SubscribeAsync`):** Dispatches to a bounded worker pool (4 workers, 1,024 queue buffer) for cross-user partner notifications (`shared.Notifier`) and external automation webhooks (`automation.Runner`).
+2. **Deterministic FIFO Ordering:**
+   - Subscriptions are held in sequential `[]orderedHandler` slices, guaranteeing strictly deterministic first-registered, first-executed sequence.
+3. **Panic Isolation & Detached Context:**
+   - Each worker catches panics with `debug.Stack()` logging without terminating the worker pool.
+   - Async tasks execute under detached contexts (`context.WithoutCancel` with 30s timeout), ensuring background partner notifications survive chat turn cancellations.
+4. **Race-Free Draining & Shutdown:**
+   - Bus termination coordinates via `closeMu sync.RWMutex` and an atomic `closed` flag, rejecting new submissions, closing channels, draining pending queue items, and awaiting worker completion within the context timeout.
 
-### Step 6: Add or Update the Next.js Dashboard Console
-1. Add or update the route in `dashboard/src/app/<domain>/page.tsx` and link it in the sidebar in [`dashboard/src/app/layout.tsx`](file:///d:/MyPA/dashboard/src/app/layout.tsx).
-2. Communicate exclusively through the Proxy GraphQL endpoint (`http://proxy:8000/graphql`) per `AGENTS.md` Rule 7—do not create new direct `pg.Pool` connections in the frontend.
+### Section 6: Redis State, Token Encryption & Session Management
+1. **AES-256-GCM Token Encryption (`internal/crypto/aes.go`):**
+   - Encrypt OAuth tokens and API headers using HKDF-SHA256 salted key derivation (`[16-byte Salt][12-byte Nonce][Ciphertext + 16-byte Tag]`).
+   - Validate `ENCRYPTION_KEY` on startup (`crypto.ValidateKeyConfigured()`), failing fast (panicking) in production if missing.
+2. **Cryptographic CSRF Nonces (`oauth_state:<nonce>`):**
+   - Generate 32-byte cryptographically random hex nonces stored in Redis with 10-minute TTL.
+   - Atomically validate and delete nonces via `GETDEL` on OAuth callback.
+3. **PhotoData Stripping (`SCALE-02`):**
+   - Strip raw `PhotoData` bytes from `models.ChatMessage` prior to Redis persistence, storing lightweight metadata tags (`[Attachment: <mime> (<size>)]`) to drop chat list memory from >5MB to <10KB per user.
+4. **Dynamic Prompt Caching (`ctx_prompt:<familyGroup>:<module>`):**
+   - Cache domain system prompt sections in Redis with 10-minute TTL.
+   - Check cache with Redis `MGet` (< 1ms); on cache miss, evaluate concurrently via `errgroup.Group` bounded to 800ms.
+   - Synchronously invalidate prompt cache via EventBus subscribers on any state mutation.
 
-### Step 7: Write Unit & Integration Tests and Verify Container Build
-1. Add unit tests in `internal/domains/<domain>/module_test.go` covering tool declarations, execution, validation errors, `MutationEvent` emission, and `SystemPromptSection`.
-2. Run `go test -v ./internal/...` and `docker-compose build` (`AGENTS.md` Rule 1) to verify all container stages compile cleanly.
+### Section 7: RabbitMQ Broker, SafePublisher & DLQ Topology
+1. **Thread-Safe `SafePublisher` (`internal/broker/publisher.go`):**
+   - Mutex-serialize all channel operations (`sync.Mutex`) to prevent AMQP channel race conditions.
+   - Enable AMQP publisher confirms (`ch.Confirm(false)`) and wait for broker acknowledgment on publish.
+   - Provide dual-listener auto-reconnect monitoring `NotifyClose` channels on both connection and channel.
+2. **Declarative Exchange & DLQ Topology (`internal/broker/topology.go`):**
+   - Direct primary exchange `mypa.direct` and dead-letter exchange `mypa.dlx`.
+   - Queues declared durable with dead-letter attributes routing failed messages to `telegram.inbound.dlq` and `audit.events.dlq`.
+3. **Resilient Consumer Supervisor (`internal/broker/consumer.go`):**
+   - Auto-reconnecting consumer loop with exponential backoff on broker loss.
+   - Bounded retries: transient errors retry up to 3 times with exponential backoff tracked via `x-retries` headers.
+   - Poison-pill rejection: unrecoverable or malformed JSON payloads are immediately rejected without requeue (`Reject(false)`), shunting them directly to the DLQ.
 
-### Step 8: Update `SYSTEM.md` & `README.md` (Mandatory)
-1. Update **Section 4** (Database Tables), **Section 6** (Tool Catalog), and **Section 7** (GraphQL & Dashboard Routes) in this [`SYSTEM.md`](file:///d:/MyPA/SYSTEM.md) file.
-2. Update [`README.md`](file:///d:/MyPA/README.md) if user-facing capabilities or setup steps changed.
+### Section 8: Next.js Web Dashboard & Client Verification
+1. **Decoupled GraphQL Frontend (`dashboard/src/lib/graphql.ts`):**
+   - Connect exclusively through the Proxy GraphQL endpoint (`http://proxy:8000/graphql`) with automatic `Authorization: Bearer <DASHBOARD_API_SECRET>` header injection.
+   - Zero direct `pg.Pool` or local SQL connections; `pg` package completely removed from `dashboard/package.json`.
+2. **Clean Empty States & Zero Mock Data:**
+   - Eliminate all hardcoded mock figures and placeholder charts from domain consoles (`/baby`, `/finance`, `/house`, etc.).
+   - Render clean empty states displaying helpful onboarding prompts when no data is present.
+3. **Client Error Boundary (`dashboard/src/app/error.tsx`):**
+   - Implement React client error boundaries displaying user-friendly error diagnostics with a recovery button.
+4. **Comprehensive Vitest Component Test Suites:**
+   - Maintain and run Vitest component tests (31 tests across 4 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`).
+   - Run tests before completion: `npm test --prefix dashboard`.
+5. **Full Container Build Verification:**
+   - Always verify the complete multi-stage container build succeeds: `docker-compose build`.

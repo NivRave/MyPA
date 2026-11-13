@@ -159,7 +159,7 @@ func (r *SharedRepository) GetSharedReminder(id uint, familyGroup ...string) (*m
 func (r *SharedRepository) ListSharedReminders(familyGroup string, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error) {
 	var reminders []models.SharedTaskReminder
 	q := r.db.Where("family_group = ?", familyGroup)
-	if topic != "" && topic != "*" {
+	if topic != "" && topic != "*" && !strings.EqualFold(topic, "all") {
 		q = q.Where("LOWER(topic) = ?", strings.ToLower(strings.TrimSpace(topic)))
 	}
 	if !includeCompleted {

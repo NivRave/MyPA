@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/pgvector/pgvector-go"
 	"github.com/stretchr/testify/assert"
@@ -140,3 +141,99 @@ func TestMemoryV2Repo_GetDeletePinList(t *testing.T) {
 	err = repo.DeleteTopicMemory(ctx, 999999)
 	require.Error(t, err)
 }
+
+func TestMemoryV2Repo_EntityProfilesAndSearch(t *testing.T) {
+	client, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := client.MemoryV2()
+
+	famA := "fam-" + uuid.New().String()
+	famB := "fam-" + uuid.New().String()
+	userA := "usr-" + uuid.New().String()
+	userB := "usr-" + uuid.New().String()
+
+	// 1. Upsert EntityProfile for Family A
+	profileA := models.EntityProfile{
+		UserID:          userA,
+		FamilyGroup:     famA,
+		Topic:           models.TopicBaby,
+		EntityType:      models.EntityTypeBaby,
+		EntityName:      "Emma",
+		AttributesJSON:  `{"favorite_toy":"teddy bear"}`,
+		UpdatedByUserID: userA,
+		UpdatedAt:       time.Now(),
+	}
+	require.NoError(t, repo.UpsertEntityProfile(ctx, &profileA))
+	require.NotZero(t, profileA.ID)
+
+	// 2. Upsert EntityProfile for Family B
+	profileB := models.EntityProfile{
+		UserID:          userB,
+		FamilyGroup:     famB,
+		Topic:           models.TopicBaby,
+		EntityType:      models.EntityTypeBaby,
+		EntityName:      "Lucas",
+		AttributesJSON:  `{"favorite_toy":"train set"}`,
+		UpdatedByUserID: userB,
+		UpdatedAt:       time.Now(),
+	}
+	require.NoError(t, repo.UpsertEntityProfile(ctx, &profileB))
+	require.NotZero(t, profileB.ID)
+
+	// 3. Positive read and cross-tenant isolation
+	gotA, err := repo.GetEntityProfile(ctx, famA, models.TopicBaby, "Emma")
+	require.NoError(t, err)
+	require.NotNil(t, gotA)
+	assert.Equal(t, "Emma", gotA.EntityName)
+	assert.Contains(t, gotA.AttributesJSON, "teddy bear")
+
+	// Cross-tenant lookup: Family A querying Lucas returns nil
+	gotLeak, err := repo.GetEntityProfile(ctx, famA, models.TopicBaby, "Lucas")
+	require.NoError(t, err)
+	assert.Nil(t, gotLeak, "Family A must not access Family B's entity profile")
+
+	// 4. ListEntityProfiles isolation
+	listA, err := repo.ListEntityProfiles(ctx, famA, models.TopicBaby)
+	require.NoError(t, err)
+	require.Len(t, listA, 1)
+	assert.Equal(t, "Emma", listA[0].EntityName)
+
+	listB, err := repo.ListEntityProfiles(ctx, famB, models.TopicBaby)
+	require.NoError(t, err)
+	require.Len(t, listB, 1)
+	assert.Equal(t, "Lucas", listB[0].EntityName)
+
+	// 5. SearchTopicMemories
+	vec := pgvector.NewVector(make([]float32, 3072))
+	mem := models.TopicMemory{
+		UserID:      userA,
+		FamilyGroup: famA,
+		Topic:       models.TopicBaby,
+		Subtopic:    "milestone",
+		Fact:        "Emma took her first steps today",
+		Scope:       "family",
+		TagsJSON:    `["steps","walking"]`,
+		Embedding:   vec,
+		ValidFrom:   time.Now(),
+		CreatedAt:   time.Now(),
+	}
+	require.NoError(t, repo.SaveTopicMemory(ctx, &mem))
+
+	searchResults, err := repo.SearchTopicMemories(ctx, userA, famA, models.TopicBaby, "first steps", nil)
+	require.NoError(t, err)
+	require.Len(t, searchResults, 1)
+	assert.Equal(t, mem.ID, searchResults[0].ID)
+
+	// Isolation: userB from famB cannot find famA memory
+	searchLeak, err := repo.SearchTopicMemories(ctx, userB, famB, models.TopicBaby, "first steps", nil)
+	require.NoError(t, err)
+	assert.Empty(t, searchLeak, "Family B should not find Family A memories")
+
+	// 6. ListActiveMemoriesForConsolidation
+	activeMems, err := repo.ListActiveMemoriesForConsolidation(ctx)
+	require.NoError(t, err)
+	assert.NotEmpty(t, activeMems)
+}
+

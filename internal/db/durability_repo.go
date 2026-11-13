@@ -52,6 +52,12 @@ func (c *Client) InsertMutationLog(log models.MutationLog) error {
 	if log.CreatedAt.IsZero() {
 		log.CreatedAt = time.Now()
 	}
+	if log.BeforeJSON == "" {
+		log.BeforeJSON = "{}"
+	}
+	if log.AfterJSON == "" {
+		log.AfterJSON = "{}"
+	}
 	result := c.DB.Create(&log)
 	if result.Error != nil {
 		return fmt.Errorf("failed to insert mutation log: %w", result.Error)
