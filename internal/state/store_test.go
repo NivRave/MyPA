@@ -282,7 +282,7 @@ func TestGetChatHistory_ClearsLegacyPhotoData(t *testing.T) {
 
 	// Pre-seed raw JSON with PhotoData directly into Redis
 	legacyJSON := `{"role":"user","content":"Old photo","photo_data":"AQIDBA==","photo_mime_type":"image/png"}`
-	mr.RPush("chat:"+userID, legacyJSON)
+	_, _ = mr.RPush("chat:"+userID, legacyJSON)
 
 	history, err := store.GetChatHistory(ctx, userID)
 	require.NoError(t, err)

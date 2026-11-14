@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
+	// stateless: sync delegated to repository
 	"time"
 
 	"github.com/nivik/mypa/internal/db"
@@ -30,7 +30,7 @@ func WithEventBus(bus *events.EventBus) Option {
 type Module struct {
 	repo db.BabyRepository
 	bus  *events.EventBus
-	mu   sync.RWMutex
+	// concurrency managed by repository
 }
 
 // NewModule constructs a new baby ToolModule.

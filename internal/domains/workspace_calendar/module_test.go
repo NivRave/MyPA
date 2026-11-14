@@ -107,7 +107,7 @@ func TestWorkspaceCalendar_Operations(t *testing.T) {
 	}
 
 	// 2. Update Event
-	res, err = mod.Execute(context.Background(), callCtx, "update_calendar_event", map[string]interface{}{
+	_, err = mod.Execute(context.Background(), callCtx, "update_calendar_event", map[string]interface{}{
 		"id":         "evt_123",
 		"title":      "Doctor Appointment (Rescheduled)",
 		"start_time": "2026-11-06T11:00:00Z",
@@ -121,7 +121,7 @@ func TestWorkspaceCalendar_Operations(t *testing.T) {
 	}
 
 	// 3. Delete Event
-	res, err = mod.Execute(context.Background(), callCtx, "delete_calendar_event", map[string]interface{}{
+	_, err = mod.Execute(context.Background(), callCtx, "delete_calendar_event", map[string]interface{}{
 		"id": "evt_123",
 	})
 	if err != nil {
@@ -132,7 +132,7 @@ func TestWorkspaceCalendar_Operations(t *testing.T) {
 	}
 
 	// 4. List Events
-	res, err = mod.Execute(context.Background(), callCtx, "list_calendar_events", map[string]interface{}{
+	_, err = mod.Execute(context.Background(), callCtx, "list_calendar_events", map[string]interface{}{
 		"query": "Team",
 	})
 	if err != nil {

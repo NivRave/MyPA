@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
+	// stateless: sync delegated to repository
 	"time"
 
 	"github.com/nivik/mypa/internal/db"
@@ -32,7 +32,7 @@ func WithEventBus(bus *events.EventBus) Option {
 type Module struct {
 	repo db.FinanceRepository
 	bus  *events.EventBus
-	mu   sync.RWMutex
+	// concurrency managed by repository
 }
 
 // NewModule initializes a new finance ToolModule.

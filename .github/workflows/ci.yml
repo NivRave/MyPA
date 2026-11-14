@@ -22,9 +22,10 @@ jobs:
         go build -v ./cmd/gateway
         go build -v ./cmd/orchestrator
         go build -v ./cmd/proxy
+        go build -v ./cmd/audit-worker
 
     - name: Test
-      run: go test -v ./...
+      run: go test -v -p 1 ./cmd/... ./internal/... ./tests/...
 
     - name: Install and run golangci-lint
       run: |

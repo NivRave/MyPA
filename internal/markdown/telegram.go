@@ -15,7 +15,7 @@ import (
 
 var (
 	htmlTagRegex            = regexp.MustCompile(`^</?([a-zA-Z0-9]+)(\s+[^>]*)?>`)
-	htmlEntityRegex         = regexp.MustCompile(`^&[a-zA-Z0-9#]+;`)
+	// htmlEntityRegex is handled via telegramHTMLEntityRegex below
 	telegramHTMLTagRegex    = regexp.MustCompile(`(?i)</?(?:b|strong|i|em|u|ins|s|strike|del|code|pre|blockquote|tg-spoiler|tg-emoji|span|a)(?:\s+[^>]*)?>`)
 	telegramHTMLEntityRegex = regexp.MustCompile(`&(?:[a-zA-Z]+|#[0-9]+|#x[0-9a-fA-F]+);`)
 )
@@ -191,7 +191,7 @@ func SafeChunkTelegramHTML(htmlText string, maxLen int) []string {
 		}
 
 		searchWindow := remaining[:targetCut]
-		breakIdx := -1
+		var breakIdx int
 
 		// 1. Paragraph break \n\n
 		if idx := strings.LastIndex(searchWindow, "\n\n"); idx > targetCut-800 && idx > 0 {

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
+	// stateless: sync delegated to repository
 	"time"
 
 	"github.com/google/uuid"
@@ -31,7 +31,7 @@ func WithEventBus(bus *events.EventBus) Option {
 type Module struct {
 	repo db.HouseRepository
 	bus  *events.EventBus
-	mu   sync.RWMutex
+	// concurrency managed by repository
 }
 
 // NewModule constructs a new House ToolModule.
@@ -784,7 +784,7 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("### Home Maintenance Tasks (%d items)\n", len(items)))
 		for _, item := range items {
-			status := "🟢 Scheduled"
+			var status string
 			if now.After(item.NextDueAt) {
 				daysOverdue := int(now.Sub(item.NextDueAt).Hours() / 24)
 				status = fmt.Sprintf("🔴 OVERDUE by %d days (Due: %s)", daysOverdue, item.NextDueAt.Format("2006-01-02"))
