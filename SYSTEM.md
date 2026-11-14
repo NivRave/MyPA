@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > **Living Architecture Reference (Mandatory Maintenance):**  
-> This document is the canonical technical blueprint for the **MyPA** codebase, referenced by [`AGENTS.md`](file:///d:/MyPA/AGENTS.md).  
+> This document is the canonical technical blueprint for the **MyPA** codebase, referenced by [`AGENTS.md`](./AGENTS.md).  
 > - **Before implementing any feature, bug fix, schema change, or API:** Read the relevant sections of this document to align with existing conventions, interfaces, and storage schemas.  
 > - **Whenever adding or modifying models, database tables, Redis keys, RabbitMQ queues, `ToolModule` tools, GraphQL types/resolvers, or Dashboard routes:** You **MUST** update this `SYSTEM.md` file in the same commit/milestone so it remains 100% accurate.
 
@@ -68,15 +68,15 @@ flowchart LR
     Orch <--> Gemini & GSuite & Groq & Tavily
 ```
 
-### 1.1 Service & Container Topology ([`docker-compose.yml`](file:///d:/MyPA/docker-compose.yml) & [`Dockerfile`](file:///d:/MyPA/Dockerfile))
+### 1.1 Service & Container Topology ([`docker-compose.yml`](./docker-compose.yml) & [`Dockerfile`](./Dockerfile))
 
 | Service | Entrypoint | Runtime Base Image | Port(s) | Responsibility |
 | :--- | :--- | :--- | :---: | :--- |
-| **`proxy`** | [`cmd/proxy/main.go`](file:///d:/MyPA/cmd/proxy/main.go) | `gcr.io/distroless/static-debian12` | `8000` | Unified reverse proxy routing `/webhook/*` to `gateway:8080` and `/graphql`, `/playground`, `/auth/google/*` to `orchestrator:8081`. |
-| **`gateway`** | [`cmd/gateway/main.go`](file:///d:/MyPA/cmd/gateway/main.go) | `gcr.io/distroless/static-debian12` | `8080` | High-throughput HTTP webhook receiver for Telegram (`/webhook/telegram`) and Twilio WhatsApp (`/webhook/twilio`); normalizes payloads into [`models.Message`](file:///d:/MyPA/internal/models/models.go#L9-L22) and publishes to RabbitMQ `telegram.inbound`. |
-| **`orchestrator`** | [`cmd/orchestrator/main.go`](file:///d:/MyPA/cmd/orchestrator/main.go) | `debian:12-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8081` | Core brain: consumes `telegram.inbound`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](file:///d:/MyPA/internal/orchestrator/registry.go#L30-L43) registry (70 modular tools across 13 modules), dual-lane [`EventBus`](file:///d:/MyPA/internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](file:///d:/MyPA/internal/scheduler/scheduler.go). |
-| **`audit-worker`** | [`cmd/audit-worker/main.go`](file:///d:/MyPA/cmd/audit-worker/main.go) | `gcr.io/distroless/static-debian12` | — | Consumes `audit.events` from RabbitMQ, persists [`models.AuditSession`](file:///d:/MyPA/internal/models/models.go#L80-L92) rows to PostgreSQL, and runs a 24h ticker archiving sessions older than 30 days. |
-| **`dashboard`** | [`dashboard/`](file:///d:/MyPA/dashboard/package.json) | `node:20-alpine` (Next.js standalone) | `3030:3000` | Next.js App Router web console for managing family spaces, memories, baby logs, house assets, finances, automations, pairing codes, and mutation rollbacks. |
+| **`proxy`** | [`cmd/proxy/main.go`](./cmd/proxy/main.go) | `gcr.io/distroless/static-debian12` | `8000` | Unified reverse proxy routing `/webhook/*` to `gateway:8080` and `/graphql`, `/playground`, `/auth/google/*` to `orchestrator:8081`. |
+| **`gateway`** | [`cmd/gateway/main.go`](./cmd/gateway/main.go) | `gcr.io/distroless/static-debian12` | `8080` | High-throughput HTTP webhook receiver for Telegram (`/webhook/telegram`) and Twilio WhatsApp (`/webhook/twilio`); normalizes payloads into [`models.Message`](./internal/models/models.go#L9-L22) and publishes to RabbitMQ `telegram.inbound`. |
+| **`orchestrator`** | [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go) | `debian:12-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8081` | Core brain: consumes `telegram.inbound`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](./internal/orchestrator/registry.go#L30-L43) registry (70 modular tools across 13 modules), dual-lane [`EventBus`](./internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](./internal/scheduler/scheduler.go). |
+| **`audit-worker`** | [`cmd/audit-worker/main.go`](./cmd/audit-worker/main.go) | `gcr.io/distroless/static-debian12` | — | Consumes `audit.events` from RabbitMQ, persists [`models.AuditSession`](./internal/models/models.go#L80-L92) rows to PostgreSQL, and runs a 24h ticker archiving sessions older than 30 days. |
+| **`dashboard`** | [`dashboard/`](./dashboard/package.json) | `node:20-alpine` (Next.js standalone) | `3030:3000` | Next.js App Router web console for managing family spaces, memories, baby logs, house assets, finances, automations, pairing codes, and mutation rollbacks. |
 | **`postgres`** | `pgvector/pgvector:pg15` | Official Postgres 15 + `pgvector` | `5432` | Primary relational + vector store (29 tables). |
 | **`redis`** | `redis:7-alpine` | Official Redis 7 (`--appendonly yes`) | `6379` | Hot rolling conversation state (`chat:<userID>`) and OAuth token cache (`token:<userID>`). |
 | **`rabbitmq`** | `rabbitmq:3.13-management-alpine` | Official RabbitMQ 3.13 | `5672`, `15672` | Durable AMQP 0-9-1 broker decoupling webhook ingestion and audit telemetry. |
@@ -88,10 +88,9 @@ flowchart LR
 ## 2. Repository & Package Structure
 
 ```text
-d:\MyPA\
+mypa/
 ├── AGENTS.md                       # Global AI agent development rules & guardrails
 ├── SYSTEM.md                       # THIS FILE: Canonical architecture, schema, API & feature playbook
-├── REVIEW.md                       # Senior Principal Engineer code & security audit report
 ├── README.md                       # User-facing overview & quickstart guide
 ├── Dockerfile                      # Unified multi-target Go Dockerfile (gateway, orchestrator, proxy, audit-worker)
 ├── docker-compose.yml              # Full stack container orchestration
@@ -164,31 +163,31 @@ d:\MyPA\
 
 ## 3. Core Architectural Contracts & Conventions
 
-### 3.1 Multi-Turn Agent Execution Lifecycle ([`internal/orchestrator/engine.go`](file:///d:/MyPA/internal/orchestrator/engine.go))
+### 3.1 Multi-Turn Agent Execution Lifecycle ([`internal/orchestrator/engine.go`](./internal/orchestrator/engine.go))
 
-1. **Ingress & Queuing:** Telegram or Twilio sends an HTTP POST to `proxy:8000` -> `gateway:8080`, which parses it into a [`models.Message`](file:///d:/MyPA/internal/models/models.go#L9-L22) (`ID`, `UserID`, `ChatID`, `Text`, `VoiceFileID`, `PhotoFileID`, `MediaURL`, `MediaContentType`, `Source`) and publishes to RabbitMQ queue `telegram.inbound`.
-2. **Consumption & Pre-Processing:** `orchestrator` consumes `models.Message` with a 5-minute context timeout ([`engine.go:184`](file:///d:/MyPA/internal/orchestrator/engine.go#L184)).
+1. **Ingress & Queuing:** Telegram or Twilio sends an HTTP POST to `proxy:8000` -> `gateway:8080`, which parses it into a [`models.Message`](./internal/models/models.go#L9-L22) (`ID`, `UserID`, `ChatID`, `Text`, `VoiceFileID`, `PhotoFileID`, `MediaURL`, `MediaContentType`, `Source`) and publishes to RabbitMQ queue `telegram.inbound`.
+2. **Consumption & Pre-Processing:** `orchestrator` consumes `models.Message` with a 5-minute context timeout ([`engine.go:184`](./internal/orchestrator/engine.go#L184)).
    - Slash commands (`/help`, `/connect`, `/backup`, `/restore`, `/undo`) are handled directly (`/undo` invokes `durability.Module.RollbackLast` or rolls back a specific mutation ID).
    - Voice messages (`VoiceFileID` or WhatsApp `audio/*`) are downloaded and transcribed via Groq Whisper (`whisper-large-v3`).
    - Images and PDFs (`PhotoFileID` or WhatsApp `image/*`, `application/pdf`) are downloaded into `photoData []byte` for multimodal Gemini input; text attachments (`text/*`, `json`, `csv`, `yaml`) are appended directly to `msg.Text`.
 3. **Authorization & Pairing:** `e.db.GetUser(msg.UserID)` checks if the user's `PlatformID` exists in `users`. If not, `msg.Text` is checked against active 6-digit `pairing_codes` (`RedeemPairingCode`).
 4. **System Prompt Assembly & Dynamic Two-Tier Tool Selection:**
-   - Base persona, user role/family group, current timestamp, timezone, and workspace tool instructions ([`engine.go:515-537`](file:///d:/MyPA/internal/orchestrator/engine.go#L515-L537)).
+   - Base persona, user role/family group, current timestamp, timezone, and workspace tool instructions ([`engine.go:515-537`](./internal/orchestrator/engine.go#L515-L537)).
    - Semantic vector memory retrieval: embeds `msg.Text` via `gemini-embedding-001` (3072 dims) and queries top-5 cosine matches from `TopicMemory` vector embeddings (falling back to legacy `memories`) across the user and their `FamilyGroup`.
-   - Dynamic Domain Sections (SCALE-01): calls [`e.toolRegistry.CombinedSystemPrompt(ctx, callCtx)`](file:///d:/MyPA/internal/orchestrator/registry.go), leveraging Redis `MGet` dynamic prompt caching (`ctx_prompt:<familyGroup>:<module>`, 10m TTL) with `EventBus` cache invalidation and concurrent `errgroup.Group` evaluation bounded to an 800ms context timeout on cache misses.
-   - Dynamic Two-Tier Tool Scoping (SCALE-01): [`KeywordIntentMatcher`](file:///d:/MyPA/internal/orchestrator/intent_matcher.go) inspects query text across English and Hebrew prefixes to classify intent into Domain Groups (`baby`, `finance`, `house`, `calendar`, `gmail`, `tasks`, `contacts`, `automation`, `shared`). [`SelectDeclarations`](file:///d:/MyPA/internal/orchestrator/registry.go) injects Tier 1 Core Tools (8 ubiquitous tools) + only matching Tier 2 Domain Groups via `llm.WithActiveTools(ctx, activeTools)`, dropping tool schema overhead from ~9,500 to ~1,680–2,380 tokens per call (75%–82% reduction).
+   - Dynamic Domain Sections (SCALE-01): calls [`e.toolRegistry.CombinedSystemPrompt(ctx, callCtx)`](./internal/orchestrator/registry.go), leveraging Redis `MGet` dynamic prompt caching (`ctx_prompt:<familyGroup>:<module>`, 10m TTL) with `EventBus` cache invalidation and concurrent `errgroup.Group` evaluation bounded to an 800ms context timeout on cache misses.
+   - Dynamic Two-Tier Tool Scoping (SCALE-01): [`KeywordIntentMatcher`](./internal/orchestrator/intent_matcher.go) inspects query text across English and Hebrew prefixes to classify intent into Domain Groups (`baby`, `finance`, `house`, `calendar`, `gmail`, `tasks`, `contacts`, `automation`, `shared`). [`SelectDeclarations`](./internal/orchestrator/registry.go) injects Tier 1 Core Tools (8 ubiquitous tools) + only matching Tier 2 Domain Groups via `llm.WithActiveTools(ctx, activeTools)`, dropping tool schema overhead from ~9,500 to ~1,680–2,380 tokens per call (75%–82% reduction).
 5. **LLM Chat & Bounded Multi-Turn Execution Loop (SCALE-03):**
-   - Calls `e.llm.Chat(ctx, systemPrompt, history, promptText, photoData, photoMimeType)` (with automatic retry normalizing Hebrew preposition numbers like `ב18` -> `ב-18` via [`NormalizeHebrewPrepositionNumbers`](file:///d:/MyPA/internal/orchestrator/engine.go#L58-L60) if flagged by safety filters).
-   - If `resp.ToolCalls` is non-empty, [`handleToolCalls`](file:///d:/MyPA/internal/orchestrator/engine.go) delegates to `executeToolsConcurrently` which executes parallel tool calls concurrently via `errgroup.WithContext(ctx)` bounded by `MaxConcurrentTools = 8` with index-based slice assignment preserving strict 1:1 ordering and per-goroutine panic recovery. After checking the SEC-09 interactive confirmation gate for meta-tools, `executeSingleTool` dynamically dispatches the call via `e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)`. All tools receive standardized canonical identity through `callCtx.ActorID()` and `callCtx.TenantFamilyGroup()`.
+   - Calls `e.llm.Chat(ctx, systemPrompt, history, promptText, photoData, photoMimeType)` (with automatic retry normalizing Hebrew preposition numbers like `ב18` -> `ב-18` via [`NormalizeHebrewPrepositionNumbers`](./internal/orchestrator/engine.go#L58-L60) if flagged by safety filters).
+   - If `resp.ToolCalls` is non-empty, [`handleToolCalls`](./internal/orchestrator/engine.go) delegates to `executeToolsConcurrently` which executes parallel tool calls concurrently via `errgroup.WithContext(ctx)` bounded by `MaxConcurrentTools = 8` with index-based slice assignment preserving strict 1:1 ordering and per-goroutine panic recovery. After checking the SEC-09 interactive confirmation gate for meta-tools, `executeSingleTool` dynamically dispatches the call via `e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)`. All tools receive standardized canonical identity through `callCtx.ActorID()` and `callCtx.TenantFamilyGroup()`.
    - Tool execution appends `Role: "assistant"` (`ToolCalls`) and `Role: "function"` (`ToolResponses`), and recurses up to a strict limit of 8 iterations (`const MaxToolRecursionDepth = 8`). Upon reaching iteration 8, the engine forces a final summary call via `llm.WithNoTools(ctx)` to guarantee clean conversational termination without further tool loops.
 6. **Delivery, State & Telemetry (SCALE-02):**
    - Formats markdown for WhatsApp (`markdown.ToWhatsApp`) or single-pass Telegram HTML (`markdown.ToTelegramHTML`), safely chunking messages via `markdown.SafeChunkTelegramHTML` (which preserves balanced HTML open-tag stacks across chunks up to 4,000 characters) and sends via `twClient` or `tgClient`.
-   - Appends user and assistant [`models.ChatMessage`](file:///d:/MyPA/internal/models/models.go#L58-L66) turns to Redis (`chat:<userID>`). SCALE-02 strips raw `PhotoData` bytes and formats a concise attachment metadata marker (`[Attachment: <mime> (<size>)]`), keeping Redis list size < 10KB while preserving active-turn vision reasoning.
-   - Asynchronously publishes [`models.AuditSession`](file:///d:/MyPA/internal/models/models.go#L80-L92) to RabbitMQ `audit.events` via `defer`.
+   - Appends user and assistant [`models.ChatMessage`](./internal/models/models.go#L58-L66) turns to Redis (`chat:<userID>`). SCALE-02 strips raw `PhotoData` bytes and formats a concise attachment metadata marker (`[Attachment: <mime> (<size>)]`), keeping Redis list size < 10KB while preserving active-turn vision reasoning.
+   - Asynchronously publishes [`models.AuditSession`](./internal/models/models.go#L80-L92) to RabbitMQ `audit.events` via `defer`.
 
-### 3.2 `ToolModule` & `Registry` Contract ([`internal/orchestrator/registry.go`](file:///d:/MyPA/internal/orchestrator/registry.go))
+### 3.2 `ToolModule` & `Registry` Contract ([`internal/orchestrator/registry.go`](./internal/orchestrator/registry.go))
 
-Every life domain in `internal/domains/<domain>/` implements the [`orchestrator.ToolModule`](file:///d:/MyPA/internal/orchestrator/registry.go#L30-L43) interface:
+Every life domain in `internal/domains/<domain>/` implements the [`orchestrator.ToolModule`](./internal/orchestrator/registry.go#L30-L43) interface:
 
 ```go
 type CallContext struct {
@@ -209,7 +208,7 @@ type ToolModule interface {
 }
 ```
 
-**Registered Domain Modules (13 total wired in [`cmd/orchestrator/main.go`](file:///d:/MyPA/cmd/orchestrator/main.go)):**
+**Registered Domain Modules (13 total wired in [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go)):**
 - **5 Workspace Base Modules:** `workspace_calendar` (4 tools), `workspace_gmail` (9 tools), `workspace_tasks` (6 tools), `workspace_contacts` (2 tools), `web_research` (2 tools).
 - **8 Life Domain Modules:** `durability` (Topic 1 & `/undo`), `memory` (Topic 2 & `remember_fact`), `shared` (Topic 9 & `schedule_reminder`), `schedule` (Topic 3), `baby` (Topic 4), `house` (Topic 5 & 8.1), `finance` (Topic 6), `automation` (Topics 7, 8.2, 8.3 & workflow management).
 
@@ -238,9 +237,9 @@ All undo paths—the `/undo` chat command, LLM `undo_last_action` tool, and Grap
 - **Entity Allowlist (`allowlist.go`):** Centralized `ResolveRollbackTable` validates 19 allowed domain entity types and rejects system tables (`users`, `pairing_codes`, `encrypted_credentials`, `audit_sessions`, `audit_events`, `schema_migrations`).
 - **Snapshot Restoration (`durability_repo.go`):** Executes in an atomic ACID transaction (`RollbackSnapshot`). For `action == "create"`, deletes the inserted record; for `action == "delete"`, recreates the record from `before_json`; for `action == "update"`, restores the exact prior state from `before_json`. Upon commit, marks `is_undone = true`.
 
-### 3.3 Internal `EventBus` & `MutationEvent` Contract ([`internal/events/bus.go`](file:///d:/MyPA/internal/events/bus.go))
+### 3.3 Internal `EventBus` & `MutationEvent` Contract ([`internal/events/bus.go`](./internal/events/bus.go))
 
-Whenever a domain tool creates, updates, completes, or deletes state, it publishes a [`MutationEvent`](file:///d:/MyPA/internal/events/bus.go#L16-L28) to `callCtx.EventBus`:
+Whenever a domain tool creates, updates, completes, or deletes state, it publishes a [`MutationEvent`](./internal/events/bus.go#L16-L28) to `callCtx.EventBus`:
 
 ```go
 type MutationEvent struct {
@@ -266,8 +265,8 @@ To prevent slow network I/O, external partner notifications, and automation webh
    - Dedicated exclusively to ACID audit logging and rollback consistency.
    - Guarded by panic recovery (`recover()`) logging the stack trace without crashing the server.
    - **Active Subscribers:**
-     - [`durability.Module.HandleMutationEvent`](file:///d:/MyPA/internal/domains/durability/module.go): Writes immutable audit snapshots to `mutation_logs` before tool completion.
-     - [`orchestrator.RegisterPromptInvalidator`](file:///d:/MyPA/internal/orchestrator/prompt_cache.go): Evicts cached Redis system prompt sections (`ctx_prompt:<fg>:<mod>`) synchronously to guarantee cache consistency.
+     - [`durability.Module.HandleMutationEvent`](./internal/domains/durability/module.go): Writes immutable audit snapshots to `mutation_logs` before tool completion.
+     - [`orchestrator.RegisterPromptInvalidator`](./internal/orchestrator/prompt_cache.go): Evicts cached Redis system prompt sections (`ctx_prompt:<fg>:<mod>`) synchronously to guarantee cache consistency.
 2. **Async Lane (`SubscribeAsync`, `SubscribeAsyncTopic`):**
    - Dispatches jobs to a bounded background worker pool (default: **4 workers**, configurable via `WithWorkerCount`).
    - Buffered job queue with default capacity of **1,024 events** (`WithQueueCapacity`) preserving deterministic FIFO task submission.
@@ -276,8 +275,8 @@ To prevent slow network I/O, external partner notifications, and automation webh
    - **Per-Worker Panic Isolation:** Each worker catches panics with stack trace logging (`debug.Stack()`), ensuring rogue handlers cannot terminate background workers.
    - **Race-Free Draining & Shutdown:** `Close(ctx ...context.Context) error` and `Shutdown(ctx context.Context) error` synchronize via `closeMu sync.RWMutex` and an atomic `closed` flag, safely rejecting new submissions, closing the channel, draining pending queued jobs, and awaiting worker completion within the supplied context timeout.
    - **Active Subscribers:**
-     - [`shared.Notifier.HandleMutationEvent`](file:///d:/MyPA/internal/domains/shared/notifier.go): Sends instant Telegram/WhatsApp notifications to partner family members.
-     - [`automation.Runner.HandleMutationEvent`](file:///d:/MyPA/internal/domains/automation/runner.go): Evaluates triggered `AutomationRule` conditions and executes external webhook HTTP calls.
+     - [`shared.Notifier.HandleMutationEvent`](./internal/domains/shared/notifier.go): Sends instant Telegram/WhatsApp notifications to partner family members.
+     - [`automation.Runner.HandleMutationEvent`](./internal/domains/automation/runner.go): Evaluates triggered `AutomationRule` conditions and executes external webhook HTTP calls.
 
 ### 3.4 Security Architecture & Defense-in-Depth
 
@@ -356,9 +355,9 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
 
 ### 3.6 RabbitMQ Enterprise Broker Topology & Resilience (SCALE-04)
 
-The message broker layer ([`internal/broker/`](file:///d:/MyPA/internal/broker/)) provides decoupled, thread-safe asynchronous messaging between the API gateway, orchestrator, and background workers:
+The message broker layer ([`internal/broker/`](./internal/broker/)) provides decoupled, thread-safe asynchronous messaging between the API gateway, orchestrator, and background workers:
 
-1. **Exchange & Dead Letter Queue (DLQ) Topology ([`topology.go`](file:///d:/MyPA/internal/broker/topology.go)):**
+1. **Exchange & Dead Letter Queue (DLQ) Topology ([`topology.go`](./internal/broker/topology.go)):**
    - **Exchanges:** Primary direct exchange `mypa.direct` and dedicated Dead Letter Exchange `mypa.dlx` (both durable, direct).
    - **Primary Queues:** `telemetry`, `reminders`, `workflows`, and `chat-ingress` are declared durable with dead-letter attributes:
      - `x-dead-letter-exchange`: `"mypa.dlx"`
@@ -367,13 +366,13 @@ The message broker layer ([`internal/broker/`](file:///d:/MyPA/internal/broker/)
    - **DLQ Queues:** Dedicated durable dead-letter queues (`<queue>.dlq`) bound to `mypa.dlx` with routing key `<queue>.dlq`.
    - **Idempotency:** Topology initialization is idempotent and runs automatically upon broker client startup.
 
-2. **Thread-Safe `SafePublisher` with Confirms ([`publisher.go`](file:///d:/MyPA/internal/broker/publisher.go)):**
+2. **Thread-Safe `SafePublisher` with Confirms ([`publisher.go`](./internal/broker/publisher.go)):**
    - RabbitMQ channels are not concurrent-safe. `SafePublisher` wraps the AMQP channel with a `sync.Mutex` around all channel operations.
    - **Publisher Confirms:** Enables AMQP publisher confirms (`ch.Confirm(false)`) and uses `PublishWithDeferredConfirmWithContext` to block until the RabbitMQ broker acknowledges (`Ack`) persistent storage, eliminating message loss during broker failovers.
    - **Automatic Reconnection:** Subscribes to `ch.NotifyClose` in a background monitor goroutine and provides lazy on-demand reconnection in `PublishWithPriority` if the connection or channel drops.
    - Type alias `Publisher = SafePublisher` guarantees complete backward compatibility across all call sites.
 
-3. **Resilient `Consumer` with Supervisor & Backoff Retries ([`consumer.go`](file:///d:/MyPA/internal/broker/consumer.go)):**
+3. **Resilient `Consumer` with Supervisor & Backoff Retries ([`consumer.go`](./internal/broker/consumer.go)):**
    - **Supervisor Loop:** Wraps message consumption in an auto-reconnecting loop with exponential backoff (1s up to 30s) on connection loss.
    - **Bounded Retries:** Transient handler failures are retried up to 3 times with exponential delays (1s, 2s, 4s) tracked via AMQP headers (`x-retries`, `x-last-error`). Upon exhausting retries, messages are rejected without requeue (`Reject(false)`), routing them directly to the corresponding DLQ.
    - **Poison-Pill Protection:** Malformed JSON payloads that fail deserialization are immediately rejected without requeue (`Reject(false)`), instantly shunting toxic payloads to the DLQ without stalling consumers.
@@ -383,15 +382,15 @@ The message broker layer ([`internal/broker/`](file:///d:/MyPA/internal/broker/)
 
 ## 4. PostgreSQL + `pgvector` Database Schema Reference
 
-### 4.1 Migration Registration Mechanism ([`internal/db/migrations.go`](file:///d:/MyPA/internal/db/migrations.go))
-- On startup, [`db.NewClient(dsn)`](file:///d:/MyPA/internal/db/db.go#L23-L53) enables `pgvector` (`CREATE EXTENSION IF NOT EXISTS vector`) and runs `db.AutoMigrate(allModels...)` combining core Wave 0 models with all models registered via `db.RegisterModel(...)`, `db.RegisterWave1Models()`, and `db.RegisterWave2Models()`. Models are automatically deduplicated by `reflect.TypeOf`, guaranteeing idempotent execution.
+### 4.1 Migration Registration Mechanism ([`internal/db/migrations.go`](./internal/db/migrations.go))
+- On startup, [`db.NewClient(dsn)`](./internal/db/db.go#L23-L53) enables `pgvector` (`CREATE EXTENSION IF NOT EXISTS vector`) and runs `db.AutoMigrate(allModels...)` combining core Wave 0 models with all models registered via `db.RegisterModel(...)`, `db.RegisterWave1Models()`, and `db.RegisterWave2Models()`. Models are automatically deduplicated by `reflect.TypeOf`, guaranteeing idempotent execution.
 - **Connection Pool Sizing (SCALE-05 Part B):** Configures production-grade pool limits on `*sql.DB`:
   - `SetMaxOpenConns(25)`: Prevents exhausting PostgreSQL's `max_connections` (100) across services (`orchestrator` 25 + `audit-worker` 10 + headroom 65).
   - `SetMaxIdleConns(10)`: Maintains warm connections for instantaneous tool queries.
   - `SetConnMaxLifetime(30 * time.Minute)`: Replaces stale connections before infrastructure firewall timeouts.
   - `SetConnMaxIdleTime(5 * time.Minute)`: Reclaims unused idle connections after traffic bursts.
   - `Ping()` & `Close()`: Startup verifies connectivity via `sqlDB.Ping()`, and `Close()` safely drains the connection pool on orchestrator shutdown.
-- **Multi-Tenant Composite B-Tree Indexes ([`internal/db/migrations.go`](file:///d:/MyPA/internal/db/migrations.go)):**
+- **Multi-Tenant Composite B-Tree Indexes ([`internal/db/migrations.go`](./internal/db/migrations.go)):**
   - `idx_mutation_logs_family_created`: `(family_group, created_at DESC)` on `mutation_logs`
   - `idx_financial_transactions_family_date`: `(family_group, transaction_date DESC)` on `financial_transactions`
   - `idx_baby_care_logs_family_timestamp`: `(family_group, timestamp DESC)` on `baby_care_logs`
@@ -403,11 +402,11 @@ The message broker layer ([`internal/broker/`](file:///d:/MyPA/internal/broker/)
   - `idx_topic_memories_embedding`: `CREATE INDEX IF NOT EXISTS idx_topic_memories_embedding ON topic_memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`
   - `idx_memories_embedding`: `CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`
   - Uses `halfvec(3072)` casting to enable HNSW indexing on 3,072-dimensional Gemini embeddings within PostgreSQL pgvector's 2,000-dimension limit for standard vector indexes. Fallback logging ensures compatibility with pgvector versions lacking halfvec.
-- **Total Database Tables:** **29 tables** across 9 model files in [`internal/models/`](file:///d:/MyPA/internal/models/).
+- **Total Database Tables:** **29 tables** across 9 model files in [`internal/models/`](./internal/models/).
 
 ### 4.2 Complete Table & GORM Model Inventory (29 Tables)
 
-#### A. Core / Wave 0 Models ([`internal/models/models.go`](file:///d:/MyPA/internal/models/models.go))
+#### A. Core / Wave 0 Models ([`internal/models/models.go`](./internal/models/models.go))
 
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
 | :---: | :--- | :--- | :--- | :--- |
@@ -419,7 +418,7 @@ The message broker layer ([`internal/broker/`](file:///d:/MyPA/internal/broker/)
 | 6 | **`AuditSession`** (`L80`) | `audit_sessions` | `ID` (`uuid`) | `UserID` (`string`, `index`), `ChatID` (`string`), `Source` (`string`), `UserPrompt` (`string`), `FinalResponse` (`string`), `StartTime` (`time.Time`), `EndTime` (`time.Time`), `TotalDurationMs` (`int64`), `TotalTokens` (`int`), `Status` (`string`) |
 | 7 | **`AuditEvent`** (`L95`) | `audit_events` | `ID` (`uuid`) | `SessionID` (`string`, `index`), `EventType` (`string`), `ActionName` (`string`), `RequestPayload` (`jsonb`), `ResponsePayload` (`jsonb`), `ErrorMessage` (`string`), `StartTime` (`time.Time`), `EndTime` (`time.Time`), `DurationMs` (`int64`), `PromptTokens` (`int`), `CompletionTokens` (`int`) |
 
-#### B. Topic 1: Durability & Rollback Models ([`internal/models/durability.go`](file:///d:/MyPA/internal/models/durability.go)) — Repo: [`internal/db/durability_repo.go`](file:///d:/MyPA/internal/db/durability_repo.go)
+#### B. Topic 1: Durability & Rollback Models ([`internal/models/durability.go`](./internal/models/durability.go)) — Repo: [`internal/db/durability_repo.go`](./internal/db/durability_repo.go)
 
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
 | :---: | :--- | :--- | :--- | :--- |
@@ -427,14 +426,14 @@ The message broker layer ([`internal/broker/`](file:///d:/MyPA/internal/broker/)
 | 9 | **`MutationLog`** (`L18`) | `mutation_logs` | `ID` (`string`) | `UserID` (`string`, `index`), `FamilyGroup` (`string`, `index`), `Topic` (`string`, `index`), `Action` (`string`), `EntityType` (`string`, `index`), `EntityID` (`string`, `index`), `BeforeJSON` (`jsonb`), `AfterJSON` (`jsonb`), `Summary` (`string`), `IsUndone` (`bool`, `default:false;index`), `CreatedAt` (`time.Time`, `index`) |
 | 10 | **`IdempotencyRecord`** (`L35`) | `idempotency_records` | `Key` (`string`) | `UserID` (`string`, `index`), `ToolName` (`string`), `ResponseSummary` (`string`), `ExpiresAt` (`time.Time`, `index`) |
 
-#### C. Topic 2: Topic-Mapped Memory & Knowledge Graph ([`internal/models/memory_v2.go`](file:///d:/MyPA/internal/models/memory_v2.go)) — Repo: [`internal/db/memory_v2_repo.go`](file:///d:/MyPA/internal/db/memory_v2_repo.go)
+#### C. Topic 2: Topic-Mapped Memory & Knowledge Graph ([`internal/models/memory_v2.go`](./internal/models/memory_v2.go)) — Repo: [`internal/db/memory_v2_repo.go`](./internal/db/memory_v2_repo.go)
 
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
 | :---: | :--- | :--- | :--- | :--- |
 | 11 | **`TopicMemory`** (`L30`) | `topic_memories` | `ID` (`uint`) | `UserID` (`string`, `index`), `FamilyGroup` (`string`, `index`), `Topic` (`string`, `index`), `Subtopic` (`string`, `index`), `TagsJSON` (`jsonb`), `Fact` (`string`), `Scope` (`string`, `index;default:'personal'`), `CreatedByUserID` (`string`), `SupersededByID` (`*uint`, `index`), `ValidFrom` (`time.Time`), `ValidUntil` (`*time.Time`), `IsPinned` (`bool`, `default:false`), `Embedding` (`pgvector.Vector`, `type:vector(3072)`), `CreatedAt` (`time.Time`). *Lifecycle Hooks: `BeforeCreate` & `BeforeSave` auto-populate uninitialized vectors with 3072-dimensional zero vectors (`pgvector.NewVector(make([]float32, 3072))`) to prevent PostgreSQL SQLSTATE 22000.* |
 | 12 | **`EntityProfile`** (`L91`) | `entity_profiles` | `ID` (`uint`) | `UserID` (`string`, `index`), `FamilyGroup` (`string`, `index`), `Topic` (`string`, `index`), `EntityType` (`string`, `index`), `EntityName` (`string`, `index`), `AttributesJSON` (`jsonb`), `UpdatedByUserID` (`string`), `UpdatedAt` (`time.Time`) |
 
-#### D. Topic 9: Shared Family Spaces ([`internal/models/shared.go`](file:///d:/MyPA/internal/models/shared.go)) — Repo: [`internal/db/shared_repo.go`](file:///d:/MyPA/internal/db/shared_repo.go)
+#### D. Topic 9: Shared Family Spaces ([`internal/models/shared.go`](./internal/models/shared.go)) — Repo: [`internal/db/shared_repo.go`](./internal/db/shared_repo.go)
 *Repository & Client API: Provides `UpsertSharedSpace`, `GetSharedSpacesForFamily`, `GetSharedSpace`, `CreateSharedReminder`, `GetSharedReminder(id uint, familyGroup ...string)` (tenant-scoped single reminder query), `CompleteSharedReminder`, `ListSharedReminders`, `GetDueSharedReminders`, `MarkSharedReminderSent`.*
 
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
@@ -442,14 +441,14 @@ The message broker layer ([`internal/broker/`](file:///d:/MyPA/internal/broker/)
 | 13 | **`SharedSpace`** (`L22`) | `shared_spaces` | `ID` (`uint`) | `FamilyGroup` (`string`, `index;size:100;not null`), `Topic` (`string`, `index;size:100;not null`), `OwnerUserID` (`string`, `size:100`), `SharedWithUserID` (`string`, `size:100`), `CanView` (`bool`, `default:true`), `CanEdit` (`bool`, `default:true`), `NotifyMode` (`string`, `size:20;default:'instant'`: `"instant"`\|`"digest"`\|`"silent"`), `UpdatedAt` (`time.Time`) |
 | 14 | **`SharedTaskReminder`** (`L36`) | `shared_task_reminders` | `ID` (`uint`) | `FamilyGroup` (`string`, `index;size:100;not null`), `Topic` (`string`, `index;size:100;not null`), `Title` (`text;not null`), `DueTime` (`*time.Time`, `index`), `CreatedByUserID` (`string`, `size:100;not null`), `AssignedToUserID` (`string`, `size:100`), `IsCompleted` (`bool`, `index;default:false`), `CompletedByUserID` (`string`, `size:100`), `CompletedAt` (`*time.Time`), `IsSent` (`bool`, `index;default:false`), `RemindedAt` (`*time.Time`), `CreatedAt` (`time.Time`) |
 
-#### E. Topic 3: Multi-Schedule Engine ([`internal/models/schedule.go`](file:///d:/MyPA/internal/models/schedule.go)) — Repo: [`internal/db/schedule_repo.go`](file:///d:/MyPA/internal/db/schedule_repo.go)
+#### E. Topic 3: Multi-Schedule Engine ([`internal/models/schedule.go`](./internal/models/schedule.go)) — Repo: [`internal/db/schedule_repo.go`](./internal/db/schedule_repo.go)
 
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
 | :---: | :--- | :--- | :--- | :--- |
 | 15 | **`ScheduleEvent`** (`L13`) | `schedule_events` | `ID` (`uint`) | `ExternalGoogleEventID` (`string`, `index`), `PartnerGoogleEventID` (`string`, `index`), `UserID` (`string`, `index`), `FamilyGroup` (`string`, `index`), `Topic` (`string`, `index`), `TagsJSON` (`jsonb`), `Title` (`string`), `Description` (`string`), `StartTime` (`time.Time`, `index`), `EndTime` (`time.Time`, `index`), `RecurrenceRule` (`string`), `SyncToGoogle` (`bool`, `default:true`), `IsShared` (`bool`, `default:false`), `CreatedByUserID` (`string`), `CreatedAt` (`time.Time`) |
 | 16 | **`TopicCalendarConfig`** (`L34`) | `topic_calendar_configs` | `ID` (`uint`) | `UserID` (`string`, `uniqueIndex:idx_user_topic`), `Topic` (`string`, `uniqueIndex:idx_user_topic`), `ColorID` (`string`), `PrefixTag` (`string`), `TargetCalendarID` (`string`), `IncludeInMorningBriefing` (`bool`, `default:true`), `SyncToGoogleDefault` (`*bool`), `UpdatedAt` (`time.Time`) |
 
-#### F. Topic 4: Baby & Family Care Tracker ([`internal/models/baby.go`](file:///d:/MyPA/internal/models/baby.go)) — Repo: [`internal/db/baby_repo.go`](file:///d:/MyPA/internal/db/baby_repo.go)
+#### F. Topic 4: Baby & Family Care Tracker ([`internal/models/baby.go`](./internal/models/baby.go)) — Repo: [`internal/db/baby_repo.go`](./internal/db/baby_repo.go)
 
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
 | :---: | :--- | :--- | :--- | :--- |
@@ -457,7 +456,7 @@ The message broker layer ([`internal/broker/`](file:///d:/MyPA/internal/broker/)
 | 18 | **`BabyCareLog`** (`L27`) | `baby_care_logs` | `ID` (`uint`) | `BabyID` (`uint`, `index`), `FamilyGroup` (`string`, `index`), `LogType` (`string`, `index`: `"feeding"`\|`"sleep"`\|`"diaper"`\|`"temperature"`\|`"medication"`\|`"milestone"`\|`"measurement"`), `ValueNumeric` (`float64`), `Unit` (`string`), `Details` (`string`), `Timestamp` (`time.Time`, `index`), `LoggedByUserID` (`string`) |
 | 19 | **`BabyInventoryItem`** (`L40`) | `baby_inventory_items` | `ID` (`uint`) | `FamilyGroup` (`string`, `index`), `ItemName` (`string`), `QuantityRemaining` (`float64`), `Unit` (`string`), `LowThreshold` (`float64`), `UpdatedAt` (`time.Time`) |
 
-#### G. Topic 5 & 8.1: House Maintenance, Contracts & Vehicles ([`internal/models/house.go`](file:///d:/MyPA/internal/models/house.go)) — Repo: [`internal/db/house_repo.go`](file:///d:/MyPA/internal/db/house_repo.go)
+#### G. Topic 5 & 8.1: House Maintenance, Contracts & Vehicles ([`internal/models/house.go`](./internal/models/house.go)) — Repo: [`internal/db/house_repo.go`](./internal/db/house_repo.go)
 
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
 | :---: | :--- | :--- | :--- | :--- |
@@ -465,7 +464,7 @@ The message broker layer ([`internal/broker/`](file:///d:/MyPA/internal/broker/)
 | 21 | **`HomeMaintenanceItem`** (`L94`) | `home_maintenance_items` | `ID` (`uint`) | `FamilyGroup` (`string`, `index`), `TaskName` (`string`), `Category` (`string`: `"hvac"`\|`"plumbing"`\|`"appliance"`\|`"pest_control"`\|`"general"`), `IntervalDays` (`int`), `LastCompletedAt` (`*time.Time`), `NextDueAt` (`time.Time`, `index`), `ContractorInfo` (`string`), `Notes` (`string`), `UpdatedByUserID` (`string`) |
 | 22 | **`VehicleAsset`** (`L129`) | `vehicle_assets` | `ID` (`uint`) | `FamilyGroup` (`string`, `index`), `Name` (`string`), `LicensePlate` (`string`), `InsuranceExpiry` (`*time.Time`), `AnnualTestExpiry` (`*time.Time`), `LastServiceDate` (`*time.Time`), `CurrentMileageKm` (`int`), `NextServiceMileageKm` (`int`), `Notes` (`string`) |
 
-#### H. Topic 6: Financial Tracking & Budgets ([`internal/models/finance.go`](file:///d:/MyPA/internal/models/finance.go)) — Repo: [`internal/db/finance_repo.go`](file:///d:/MyPA/internal/db/finance_repo.go)
+#### H. Topic 6: Financial Tracking & Budgets ([`internal/models/finance.go`](./internal/models/finance.go)) — Repo: [`internal/db/finance_repo.go`](./internal/db/finance_repo.go)
 
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
 | :---: | :--- | :--- | :--- | :--- |
@@ -473,7 +472,7 @@ The message broker layer ([`internal/broker/`](file:///d:/MyPA/internal/broker/)
 | 24 | **`CategoryBudget`** (`L58`) | `category_budgets` | `ID` (`uint`) | `FamilyGroup` (`string`, `index;uniqueIndex:idx_fam_cat`), `Category` (`string`, `uniqueIndex:idx_fam_cat`), `MonthlyLimit` (`float64`), `Currency` (`string`), `AlertThresholdPct` (`float64`), `CreatedAt` (`time.Time`), `UpdatedAt` (`time.Time`) |
 | 25 | **`RecurringBill`** (`L82`) | `recurring_bills` | `ID` (`uint`) | `FamilyGroup` (`string`, `index`), `Name` (`string`), `Category` (`string`), `ExpectedAmount` (`float64`), `Currency` (`string`), `BillingCycle` (`string`: `"monthly"`\|`"yearly"`), `NextDueDay` (`int`: 1..31), `AutoRenew` (`bool`, `default:true`), `CreatedAt` (`time.Time`), `UpdatedAt` (`time.Time`) |
 
-#### I. Topics 7, 8.2 & 8.3: External APIs, Automations, Preferences & CRM ([`internal/models/automation.go`](file:///d:/MyPA/internal/models/automation.go)) — Repo: [`internal/db/automation_repo.go`](file:///d:/MyPA/internal/db/automation_repo.go)
+#### I. Topics 7, 8.2 & 8.3: External APIs, Automations, Preferences & CRM ([`internal/models/automation.go`](./internal/models/automation.go)) — Repo: [`internal/db/automation_repo.go`](./internal/db/automation_repo.go)
 
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
 | :---: | :--- | :--- | :--- | :--- |
@@ -484,7 +483,7 @@ The message broker layer ([`internal/broker/`](file:///d:/MyPA/internal/broker/)
 
 ### 4.3 Database Performance Optimization & Index Architecture (SCALE-05 Part B)
 
-#### Connection Pool Sizing & Lifecycle ([`internal/db/db.go`](file:///d:/MyPA/internal/db/db.go))
+#### Connection Pool Sizing & Lifecycle ([`internal/db/db.go`](./internal/db/db.go))
 The underlying `*sql.DB` connection pool is explicitly tuned on initialization to eliminate connection starvation and TCP handshake churn:
 - **`MaxOpenConns = 25`:** Caps open database connections well within PostgreSQL's `max_connections` (100) across all services.
 - **`MaxIdleConns = 10`:** Retains a hot pool of idle connections to handle sudden bursts of concurrent LLM tool executions without reconnect overhead.
@@ -492,7 +491,7 @@ The underlying `*sql.DB` connection pool is explicitly tuned on initialization t
 - **`ConnMaxIdleTime = 5m`:** Closes idle connections after 5 minutes of inactivity to conserve database memory.
 - **Startup Verification & Client Lifecycle:** `NewClient` immediately runs `sqlDB.Ping()` to fail fast if credentials or connectivity are invalid. Clean process shutdown is supported via `Client.Close() error` and `Client.Ping() error`.
 
-#### Vector HNSW & Composite Multi-Tenant Database Indexes ([`internal/db/migrations.go`](file:///d:/MyPA/internal/db/migrations.go))
+#### Vector HNSW & Composite Multi-Tenant Database Indexes ([`internal/db/migrations.go`](./internal/db/migrations.go))
 Applied automatically during migration initialization via `ApplyCustomIndexes`:
 1. **`pgvector` HNSW `halfvec(3072)` Indexes:**
    - `idx_topic_memories_embedding_hnsw` on `topic_memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops) WITH (m = 16, ef_construction = 64)`.
@@ -510,11 +509,11 @@ Applied automatically during migration initialization via `ApplyCustomIndexes`:
 
 ## 5. Redis State & RabbitMQ Message Broker Reference
 
-### 5.1 Redis Key Schema ([`internal/state/store.go`](file:///d:/MyPA/internal/state/store.go))
+### 5.1 Redis Key Schema ([`internal/state/store.go`](./internal/state/store.go))
 
 | Key Pattern | Redis Type | Value Schema | Capacity / Retention | TTL | Methods |
 | :--- | :---: | :--- | :--- | :---: | :--- |
-| `chat:<userID>` | `LIST` | JSON [`models.ChatMessage`](file:///d:/MyPA/internal/models/models.go#L58-L66) (`role`, `content`, `tool_calls`, `tool_responses`). *SCALE-02:* Raw `PhotoData` bytes are stripped before Redis persistence to avoid memory bloat, replaced with a concise `[Attachment: <mime> (<size>)]` metadata tag. | Last **20** messages (`LTRIM -20 -1`) | `1h` (sliding on write) | `AppendChatHistory`, `GetChatHistory` |
+| `chat:<userID>` | `LIST` | JSON [`models.ChatMessage`](./internal/models/models.go#L58-L66) (`role`, `content`, `tool_calls`, `tool_responses`). *SCALE-02:* Raw `PhotoData` bytes are stripped before Redis persistence to avoid memory bloat, replaced with a concise `[Attachment: <mime> (<size>)]` metadata tag. | Last **20** messages (`LTRIM -20 -1`) | `1h` (sliding on write) | `AppendChatHistory`, `GetChatHistory` |
 | `token:<userID>` | `STRING` | Encrypted AES-256-GCM token bytes (`oauth2.Token` JSON) | 1 encrypted payload per user | `0` (no expiry) | `SetOAuthToken`, `GetOAuthToken` |
 | `ctx_prompt:<familyGroup>:<module>` | `STRING` | Dynamic system prompt section text for a tenant life domain (*SCALE-01*) | 1 cached section per domain module | `10m` | `SetPromptSection`, `GetPromptSection`, `GetPromptSections` (`MGET`), `InvalidatePromptSections` (`DEL`) |
 | `oauth_state:<nonce>` | `STRING` | Hex string mapping to `userID` | 1 nonce per in-flight OAuth exchange | `10m` | `SaveOAuthState`, `ValidateAndDeleteOAuthState` (`GETDEL`) |
@@ -522,7 +521,7 @@ Applied automatically during migration initialization via `ApplyCustomIndexes`:
 | `rate_limit:pairing:<userID>` | `STRING` | Integer counter of failed pairing attempts | 1 integer counter per user | `15m` (rolling from 1st failure) | `RecordFailedPairingAttempt`, `ResetPairingRateLimit` |
 | `rate_limit:pairing:lockout:<userID>` | `STRING` | String sentinel (`"locked"`) | Set upon 5 consecutive failed attempts | `1h` | `CheckPairingLockout`, `RecordFailedPairingAttempt`, `ResetPairingRateLimit` |
 
-### 5.2 RabbitMQ Queues, Topology & Reliable Messaging ([`internal/broker/`](file:///d:/MyPA/internal/broker/))
+### 5.2 RabbitMQ Queues, Topology & Reliable Messaging ([`internal/broker/`](./internal/broker/))
 
 #### Queue & DLQ Topology Architecture (SCALE-04)
 Primary queues are declared with dead-letter exchange bindings ensuring zero message loss and complete poison-pill isolation:
@@ -533,16 +532,16 @@ Primary queues are declared with dead-letter exchange bindings ensuring zero mes
 
 | Queue Name | Dead-Letter Queue | Producer | Consumer | Go Payload Struct | JSON Fields |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`telegram.inbound`** | `telegram.inbound.dlq` | `cmd/gateway` (`/webhook/telegram` & `/webhook/twilio`) | `cmd/orchestrator` (`Engine.Start`) | [`models.Message`](file:///d:/MyPA/internal/models/models.go#L9-L22) | `id`, `user_id`, `chat_id`, `text`, `voice_file_id`, `photo_file_id`, `audio_file_id`, `media_url`, `media_content_type`, `source` (`"telegram"`\|`"whatsapp"`), `timestamp` |
-| **`audit.events`** | `audit.events.dlq` | `cmd/orchestrator` (`Engine.ProcessMessage` defer) | `cmd/audit-worker` | [`models.AuditSession`](file:///d:/MyPA/internal/models/models.go#L80-L92) | `id`, `user_id`, `chat_id`, `source`, `user_prompt`, `final_response`, `start_time`, `end_time`, `total_duration_ms`, `total_tokens`, `status` |
+| **`telegram.inbound`** | `telegram.inbound.dlq` | `cmd/gateway` (`/webhook/telegram` & `/webhook/twilio`) | `cmd/orchestrator` (`Engine.Start`) | [`models.Message`](./internal/models/models.go#L9-L22) | `id`, `user_id`, `chat_id`, `text`, `voice_file_id`, `photo_file_id`, `audio_file_id`, `media_url`, `media_content_type`, `source` (`"telegram"`\|`"whatsapp"`), `timestamp` |
+| **`audit.events`** | `audit.events.dlq` | `cmd/orchestrator` (`Engine.ProcessMessage` defer) | `cmd/audit-worker` | [`models.AuditSession`](./internal/models/models.go#L80-L92) | `id`, `user_id`, `chat_id`, `source`, `user_prompt`, `final_response`, `start_time`, `end_time`, `total_duration_ms`, `total_tokens`, `status` |
 
-#### SafePublisher: Thread-Safety, Confirms & Auto-Reconnect ([`internal/broker/publisher.go`](file:///d:/MyPA/internal/broker/publisher.go))
+#### SafePublisher: Thread-Safety, Confirms & Auto-Reconnect ([`internal/broker/publisher.go`](./internal/broker/publisher.go))
 All message publishing across the gateway and orchestrator utilizes `SafePublisher` (`broker.NewSafePublisher`):
 - **Concurrency Guard:** All channel access is protected by an internal `sync.Mutex`, preventing AMQP race conditions under concurrent webhook ingestion or parallel tool executions.
 - **Publisher Confirms:** AMQP channels are initialized with `ch.Confirm(false)`. Each publish invokes `PublishWithDeferredConfirmWithContext` and awaits broker acknowledgment (`confirmation.Wait()`), ensuring durability before acknowledging upstream webhook clients.
 - **Dual-Listener Auto-Reconnect:** Concurrently monitors `NotifyClose` channels on both `*amqp.Connection` and `*amqp.Channel`. Upon broker restarts or TCP drops, a background supervisor loop re-establishes the connection and channel with exponential backoff while blocking in-flight publishers until recovery.
 
-#### Consumer Supervisor, Bounded Retries & Poison Pill Protection ([`internal/broker/consumer.go`](file:///d:/MyPA/internal/broker/consumer.go))
+#### Consumer Supervisor, Bounded Retries & Poison Pill Protection ([`internal/broker/consumer.go`](./internal/broker/consumer.go))
 The consumer loop guarantees resilient, bounded message processing:
 - **Auto-Reconnect Supervisor:** Automatically recovers consumer channels upon broker disconnection or unexpected channel closures.
 - **Bounded Retries with Exponential Backoff:** Transient processing errors retry up to **3 attempts** (`DefaultMaxRetries = 3`). Retries publish to the tail of the primary queue with exponential delay (`2^attempt * 500ms`) and increment the AMQP header `x-retries`.
@@ -553,7 +552,7 @@ The consumer loop guarantees resilient, bounded message processing:
 
 ## 6. Complete AI Agent Tool Catalog (All 70 Tools)
 
-### 6.1 Base Workspace & System Tools (28 Base Tools + Built-in System Tools — [`internal/llm/tools.go`](file:///d:/MyPA/internal/llm/tools.go) & [`internal/orchestrator/registry.go`](file:///d:/MyPA/internal/orchestrator/registry.go))
+### 6.1 Base Workspace & System Tools (28 Base Tools + Built-in System Tools — [`internal/llm/tools.go`](./internal/llm/tools.go) & [`internal/orchestrator/registry.go`](./internal/orchestrator/registry.go))
 
 | Tool Name | Category | Required & Optional Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
@@ -591,27 +590,27 @@ The consumer loop guarantees resilient, bounded message processing:
 
 | Module (`Name()`) | Package Path | `SystemPromptSection` Injects | Registered Tools (`*` = required param) | Emits `MutationEvent`? |
 | :--- | :--- | :--- | :--- | :---: |
-| **`durability`** | [`internal/domains/durability`](file:///d:/MyPA/internal/domains/durability/module.go) | Undo (`undo_last_action`), change history, and JSON/CSV export instructions. | • `undo_last_action` (`reason`, `mutation_id`)<br>• `list_recent_changes` (`topic`, `limit`)<br>• `export_topic_data` (`topic`*, `format`, `limit`) | `undo_last_action`: Yes (`action: "undo"`) |
-| **`memory`** | [`internal/domains/memory`](file:///d:/MyPA/internal/domains/memory/module.go) | Active `EntityProfile` cards + pinned `TopicMemory` facts for the user/family. | • `save_topic_memory` (`topic`*, `fact`*, `subtopic`, `tags`, `scope`, `is_pinned`, `supersedes_memory_id`)<br>• `search_topic_memories` (`topic`, `query`, `tags`, `scope`)<br>• `upsert_entity_profile` (`topic`*, `entity_type`*, `entity_name`*, `attributes`*)<br>• `get_entity_profile` (`topic`*, `entity_name`*) | `save_topic_memory`: Yes<br>`upsert_entity_profile`: Yes |
-| **`shared`** | [`internal/domains/shared`](file:///d:/MyPA/internal/domains/shared/module.go) | Configured `SharedSpace` topics, permissions, and notify modes for the family. | • `configure_shared_topic` (`topic`*, `can_view`, `can_edit`, `notify_mode`, `shared_with_user_id`)<br>• `create_shared_reminder` (`title`*, `topic`, `due_time`, `assigned_to_user_id`)<br>• `complete_shared_reminder` (`id`*)<br>• `list_shared_activity` (`topic`, `include_completed`) | `configure_shared_topic`: Yes<br>`create_shared_reminder`: Yes<br>`complete_shared_reminder`: Yes |
-| **`schedule`** | [`internal/domains/schedule`](file:///d:/MyPA/internal/domains/schedule/module.go) | Configured `TopicCalendarConfig` prefixes/colors + upcoming 7-day `ScheduleEvent` items. | • `schedule_topic_event` (`title`*, `topic`*, `start_time`*, `end_time`, `description`, `tags`, `sync_to_google`, `is_shared`, `recurrence`)<br>• `list_topic_schedule` (`topic`, `tags`, `start_time`, `end_time`, `include_google`)<br>• `configure_topic_calendar` (`topic`*, `prefix_tag`, `color_id`, `target_calendar_id`, `sync_to_google_default`, `include_in_morning_briefing`)<br>• `delete_topic_event` (`event_id`*)<br>• `update_topic_event` (`event_id`*, `title`, `start_time`, `end_time`, `description`, `tags`) | All except `list_topic_schedule`: Yes |
-| **`baby`** | [`internal/domains/baby`](file:///d:/MyPA/internal/domains/baby/module.go) | Exact baby age (days/weeks/months + adjusted age), current developmental leap, medication cooldown status, and low inventory alerts. | • `upsert_baby_profile` (`name`*, `date_of_birth`*, `id`, `due_date`, `gender`, `birth_weight_grams`, `current_weight_grams`, `height_cm`, `pediatrician_info`, `allergies_notes`)<br>• `log_baby_care` (`log_type`*, `baby_id`, `baby_name`, `value_numeric`, `unit`, `details`, `timestamp`, `force`)<br>• `query_baby_logs_and_trends` (`baby_id`, `baby_name`, `log_type`, `time_range`, `start_time`, `end_time`, `limit`)<br>• `get_baby_milestone_suggestions` (`baby_id`, `baby_name`, `category`)<br>• `manage_baby_inventory` (`action`*, `item_name`, `quantity`, `delta`, `unit`, `low_threshold`) | `upsert_baby_profile`: Yes<br>`log_baby_care`: Yes<br>`manage_baby_inventory` (`set`/`adjust`): Yes |
-| **`house`** | [`internal/domains/house`](file:///d:/MyPA/internal/domains/house/module.go) | Expiring contracts/warranties within notice window, overdue/upcoming maintenance tasks, and vehicle test/insurance/service alerts. | • `save_house_contract_or_receipt` (`record_type`*, `title`*, `contract_id`, `vendor_or_landlord`, `contact_details`, `amount`, `currency`, `start_date`, `expiration_date`, `notice_period_days`, `key_terms`)<br>• `list_house_contracts` (`record_type`, `expiring_within_days`, `search_query`)<br>• `manage_home_maintenance` (`action`*, `item_id`, `task_name`, `category`, `interval_days`, `next_due_at`, `contractor_info`, `notes`, `overdue_only`)<br>• `manage_vehicle_asset` (`action`*, `asset_id`, `name`, `license_plate`, `insurance_expiry`, `annual_test_expiry`, `last_service_date`, `current_mileage_km`, `next_service_mileage_km`, `notes`) | All mutating actions: Yes |
-| **`finance`** | [`internal/domains/finance`](file:///d:/MyPA/internal/domains/finance/module.go) | Current month spending vs. `CategoryBudget` thresholds and upcoming `RecurringBill` due dates (next 7 days). | • `log_financial_transaction` (`amount`*, `category`*, `merchant`, `type`, `currency`, `transaction_date`, `notes`, `source`, `is_shared`)<br>• `get_financial_summary` (`start_date`, `end_date`, `category`)<br>• `set_category_budget` (`category`*, `monthly_limit`*, `currency`, `alert_threshold_pct`)<br>• `manage_recurring_bills` (`action`*, `bill_id`, `name`, `category`, `expected_amount`, `currency`, `billing_cycle`, `next_due_day`, `auto_renew`) | All mutating actions: Yes |
-| **`automation`** | [`internal/domains/automation`](file:///d:/MyPA/internal/domains/automation/module.go) | User's `PreferredLanguage`, `TonePersona`, `DefaultCurrency`, `QuietHours`, `StandingInstructions`, and upcoming 30-day CRM birthdays/anniversaries. | • `register_external_api` (`name`*, `base_url`*, `default_method`, `auth_headers`, `description`)<br>• `list_external_apis` (`family_group`)<br>• `call_external_api` (`connector_name`, `connector_id`, `url`, `path`, `method`, `query_params`, `body`)<br>• `create_automation_rule` (`name`*, `trigger_type`*, `trigger_topic`*, `action_instruction`*, `condition_json`, `is_active`)<br>• `list_automation_rules` (`trigger_topic`)<br>• `delete_automation_rule` (`rule_id`*)<br>• `update_user_preferences` (`preferred_language`, `tone_persona`, `default_currency`, `quiet_hours_start`, `quiet_hours_end`, `briefing_topics`, `standing_instructions`)<br>• `get_user_preferences` ()<br>• `upsert_personal_crm` (`person_name`*, `id`, `relationship`, `important_dates`, `gift_ideas_and_sizes`, `medical_notes`)<br>• `query_personal_crm` (`query`, `relationship`) | `register_external_api`, `create_automation_rule`, `delete_automation_rule`, `update_user_preferences`, `upsert_personal_crm`: Yes |
+| **`durability`** | [`internal/domains/durability`](./internal/domains/durability/module.go) | Undo (`undo_last_action`), change history, and JSON/CSV export instructions. | • `undo_last_action` (`reason`, `mutation_id`)<br>• `list_recent_changes` (`topic`, `limit`)<br>• `export_topic_data` (`topic`*, `format`, `limit`) | `undo_last_action`: Yes (`action: "undo"`) |
+| **`memory`** | [`internal/domains/memory`](./internal/domains/memory/module.go) | Active `EntityProfile` cards + pinned `TopicMemory` facts for the user/family. | • `save_topic_memory` (`topic`*, `fact`*, `subtopic`, `tags`, `scope`, `is_pinned`, `supersedes_memory_id`)<br>• `search_topic_memories` (`topic`, `query`, `tags`, `scope`)<br>• `upsert_entity_profile` (`topic`*, `entity_type`*, `entity_name`*, `attributes`*)<br>• `get_entity_profile` (`topic`*, `entity_name`*) | `save_topic_memory`: Yes<br>`upsert_entity_profile`: Yes |
+| **`shared`** | [`internal/domains/shared`](./internal/domains/shared/module.go) | Configured `SharedSpace` topics, permissions, and notify modes for the family. | • `configure_shared_topic` (`topic`*, `can_view`, `can_edit`, `notify_mode`, `shared_with_user_id`)<br>• `create_shared_reminder` (`title`*, `topic`, `due_time`, `assigned_to_user_id`)<br>• `complete_shared_reminder` (`id`*)<br>• `list_shared_activity` (`topic`, `include_completed`) | `configure_shared_topic`: Yes<br>`create_shared_reminder`: Yes<br>`complete_shared_reminder`: Yes |
+| **`schedule`** | [`internal/domains/schedule`](./internal/domains/schedule/module.go) | Configured `TopicCalendarConfig` prefixes/colors + upcoming 7-day `ScheduleEvent` items. | • `schedule_topic_event` (`title`*, `topic`*, `start_time`*, `end_time`, `description`, `tags`, `sync_to_google`, `is_shared`, `recurrence`)<br>• `list_topic_schedule` (`topic`, `tags`, `start_time`, `end_time`, `include_google`)<br>• `configure_topic_calendar` (`topic`*, `prefix_tag`, `color_id`, `target_calendar_id`, `sync_to_google_default`, `include_in_morning_briefing`)<br>• `delete_topic_event` (`event_id`*)<br>• `update_topic_event` (`event_id`*, `title`, `start_time`, `end_time`, `description`, `tags`) | All except `list_topic_schedule`: Yes |
+| **`baby`** | [`internal/domains/baby`](./internal/domains/baby/module.go) | Exact baby age (days/weeks/months + adjusted age), current developmental leap, medication cooldown status, and low inventory alerts. | • `upsert_baby_profile` (`name`*, `date_of_birth`*, `id`, `due_date`, `gender`, `birth_weight_grams`, `current_weight_grams`, `height_cm`, `pediatrician_info`, `allergies_notes`)<br>• `log_baby_care` (`log_type`*, `baby_id`, `baby_name`, `value_numeric`, `unit`, `details`, `timestamp`, `force`)<br>• `query_baby_logs_and_trends` (`baby_id`, `baby_name`, `log_type`, `time_range`, `start_time`, `end_time`, `limit`)<br>• `get_baby_milestone_suggestions` (`baby_id`, `baby_name`, `category`)<br>• `manage_baby_inventory` (`action`*, `item_name`, `quantity`, `delta`, `unit`, `low_threshold`) | `upsert_baby_profile`: Yes<br>`log_baby_care`: Yes<br>`manage_baby_inventory` (`set`/`adjust`): Yes |
+| **`house`** | [`internal/domains/house`](./internal/domains/house/module.go) | Expiring contracts/warranties within notice window, overdue/upcoming maintenance tasks, and vehicle test/insurance/service alerts. | • `save_house_contract_or_receipt` (`record_type`*, `title`*, `contract_id`, `vendor_or_landlord`, `contact_details`, `amount`, `currency`, `start_date`, `expiration_date`, `notice_period_days`, `key_terms`)<br>• `list_house_contracts` (`record_type`, `expiring_within_days`, `search_query`)<br>• `manage_home_maintenance` (`action`*, `item_id`, `task_name`, `category`, `interval_days`, `next_due_at`, `contractor_info`, `notes`, `overdue_only`)<br>• `manage_vehicle_asset` (`action`*, `asset_id`, `name`, `license_plate`, `insurance_expiry`, `annual_test_expiry`, `last_service_date`, `current_mileage_km`, `next_service_mileage_km`, `notes`) | All mutating actions: Yes |
+| **`finance`** | [`internal/domains/finance`](./internal/domains/finance/module.go) | Current month spending vs. `CategoryBudget` thresholds and upcoming `RecurringBill` due dates (next 7 days). | • `log_financial_transaction` (`amount`*, `category`*, `merchant`, `type`, `currency`, `transaction_date`, `notes`, `source`, `is_shared`)<br>• `get_financial_summary` (`start_date`, `end_date`, `category`)<br>• `set_category_budget` (`category`*, `monthly_limit`*, `currency`, `alert_threshold_pct`)<br>• `manage_recurring_bills` (`action`*, `bill_id`, `name`, `category`, `expected_amount`, `currency`, `billing_cycle`, `next_due_day`, `auto_renew`) | All mutating actions: Yes |
+| **`automation`** | [`internal/domains/automation`](./internal/domains/automation/module.go) | User's `PreferredLanguage`, `TonePersona`, `DefaultCurrency`, `QuietHours`, `StandingInstructions`, and upcoming 30-day CRM birthdays/anniversaries. | • `register_external_api` (`name`*, `base_url`*, `default_method`, `auth_headers`, `description`)<br>• `list_external_apis` (`family_group`)<br>• `call_external_api` (`connector_name`, `connector_id`, `url`, `path`, `method`, `query_params`, `body`)<br>• `create_automation_rule` (`name`*, `trigger_type`*, `trigger_topic`*, `action_instruction`*, `condition_json`, `is_active`)<br>• `list_automation_rules` (`trigger_topic`)<br>• `delete_automation_rule` (`rule_id`*)<br>• `update_user_preferences` (`preferred_language`, `tone_persona`, `default_currency`, `quiet_hours_start`, `quiet_hours_end`, `briefing_topics`, `standing_instructions`)<br>• `get_user_preferences` ()<br>• `upsert_personal_crm` (`person_name`*, `id`, `relationship`, `important_dates`, `gift_ideas_and_sizes`, `medical_notes`)<br>• `query_personal_crm` (`query`, `relationship`) | `register_external_api`, `create_automation_rule`, `delete_automation_rule`, `update_user_preferences`, `upsert_personal_crm`: Yes |
 
 ---
 
 ## 7. GraphQL API & Next.js Dashboard Reference
 
-### 7.1 GraphQL Schema ([`internal/graph/schema.graphqls`](file:///d:/MyPA/internal/graph/schema.graphqls)) & Resolvers ([`internal/graph/schema.resolvers.go`](file:///d:/MyPA/internal/graph/schema.resolvers.go))
+### 7.1 GraphQL Schema ([`internal/graph/schema.graphqls`](./internal/graph/schema.graphqls)) & Resolvers ([`internal/graph/schema.resolvers.go`](./internal/graph/schema.resolvers.go))
 
 - **Endpoint:** `POST /graphql` (proxied via `http://proxy:8000/graphql` to `http://orchestrator:8081/graphql`).
-- **Code Generation:** Configured via [`gqlgen.yml`](file:///d:/MyPA/gqlgen.yml). Run `go run github.com/99designs/gqlgen generate` after editing `internal/graph/schema.graphqls` (always save files with UTF-8 encoding without BOM).
+- **Code Generation:** Configured via [`gqlgen.yml`](./gqlgen.yml). Run `go run github.com/99designs/gqlgen generate` after editing `internal/graph/schema.graphqls` (always save files with UTF-8 encoding without BOM).
 - **Resolver Decoupling & Positive Authorization (Milestone 1C):** `graph.Resolver` receives explicit domain repository interfaces (`BabyRepo`, `FinanceRepo`, `HouseRepo`, `ScheduleRepo`, `SharedRepo`, `MemoryRepo`, `AutomationRepo`, `UserRepo`), `durability.RollbackEngine`, and `events.EventBus`. Direct `r.DB.DB` calls are eliminated across domain resolvers.
-  - **Safe ID Parsing:** All string entity IDs are strictly validated via [`toolutil.ParseID`](file:///d:/MyPA/internal/domains/toolutil/toolutil.go), rejecting empty, non-numeric, or `<= 0` values.
+  - **Safe ID Parsing:** All string entity IDs are strictly validated via [`toolutil.ParseID`](./internal/domains/toolutil/toolutil.go), rejecting empty, non-numeric, or `<= 0` values.
   - **Positive Multi-Tenant Authorization:** Enforced via `resolveTenantAndActor`. Admin roles can target any `familyGroup`; non-admin callers are strictly bounded to their authenticated JWT/Context `familyGroup`.
-  - **MutationEvent Emission:** Every state-changing GraphQL mutation captures `BeforeJSON` and `AfterJSON` snapshots and publishes an [`events.MutationEvent`](file:///d:/MyPA/internal/events/bus.go) to `r.EventBus`, triggering audit logging, partner sync notifications, and automation rules across the system.
+  - **MutationEvent Emission:** Every state-changing GraphQL mutation captures `BeforeJSON` and `AfterJSON` snapshots and publishes an [`events.MutationEvent`](./internal/events/bus.go) to `r.EventBus`, triggering audit logging, partner sync notifications, and automation rules across the system.
 
 | Domain | GraphQL Object Types | Queries (`type Query`) | Mutations (`type Mutation`) |
 | :--- | :--- | :--- | :--- |
@@ -626,34 +625,34 @@ The consumer loop guarantees resilient, bounded message processing:
 | **Topics 7 & 8: Automation & CRM** | `ExternalAPIConnector`, `AutomationRule`, `UserPreference`, `PersonalCRMContact` | `externalApiConnectors`, `automationRules`, `userPreference`, `personalCrmContacts` | `registerExternalApi`, `saveAutomationRule`, `toggleAutomationRule`, `deleteAutomationRule`, `saveUserPreference`, `savePersonalCrmContact` |
 | **Topic 9: Shared** | `SharedSpace`, `SharedTaskReminder` | `sharedSpaces`, `sharedTasks` | `updateSharedSpace`, `createSharedTask`, `completeSharedTask` |
 
-### 7.2 Next.js Dashboard Architecture & Routes ([`dashboard/`](file:///d:/MyPA/dashboard/))
+### 7.2 Next.js Dashboard Architecture & Routes ([`dashboard/`](./dashboard/))
 
 - **Decoupled Frontend Tier (Milestone 1C):** Direct `pg.Pool` usage, raw SQL queries, and local database connection strings are 100% eliminated from Next.js. `pg` and `@types/pg` packages are removed from `dashboard/package.json`.
-- **Centralized Typed Client ([`dashboard/src/lib/graphql.ts`](file:///d:/MyPA/dashboard/src/lib/graphql.ts)):** Implements `graphqlFetch<TData, TVariables>` with automatic `Authorization: Bearer <DASHBOARD_API_SECRET>` header injection, endpoint discovery via `GRAPHQL_ENDPOINT` / `NEXT_PUBLIC_PROXY_URL`, and complete TypeScript type declarations for all domain entities.
+- **Centralized Typed Client ([`dashboard/src/lib/graphql.ts`](./dashboard/src/lib/graphql.ts)):** Implements `graphqlFetch<TData, TVariables>` with automatic `Authorization: Bearer <DASHBOARD_API_SECRET>` header injection, endpoint discovery via `GRAPHQL_ENDPOINT` / `NEXT_PUBLIC_PROXY_URL`, and complete TypeScript type declarations for all domain entities.
 - **Clean Empty States & Zero Mock Data:** Hardcoded mock statistics in `dashboard/src/app/baby/page.tsx` and other life domain consoles are completely removed. All pages render clean empty states when database records are absent.
-- **Client Error Boundary ([`dashboard/src/app/error.tsx`](file:///d:/MyPA/dashboard/src/app/error.tsx)):** React client error boundary component catching uncaught rendering errors, displaying user-friendly diagnostics, and providing a clean reset/retry action.
+- **Client Error Boundary ([`dashboard/src/app/error.tsx`](./dashboard/src/app/error.tsx)):** React client error boundary component catching uncaught rendering errors, displaying user-friendly diagnostics, and providing a clean reset/retry action.
 - **Comprehensive Vitest Component Test Suite:** Automated component testing with Vitest and `@testing-library/react` (31 tests across 4 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`), verifying typed GraphQL client queries, error boundaries, empty states, and form interactions.
 
 | Route | Source File | Primary GraphQL Operations Used |
 | :--- | :--- | :--- |
-| `/` | [`src/app/page.tsx`](file:///d:/MyPA/dashboard/src/app/page.tsx) | System overview KPIs & navigation cards |
-| `/audit` | [`src/app/audit/page.tsx`](file:///d:/MyPA/dashboard/src/app/audit/page.tsx) | `mutationLogs`, `rollbackMutation` |
-| `/automations` | [`src/app/automations/page.tsx`](file:///d:/MyPA/dashboard/src/app/automations/page.tsx) | `externalApiConnectors`, `automationRules`, `userPreference`, `personalCrmContacts`, `registerExternalApi`, `toggleAutomationRule`, `deleteAutomationRule`, `saveUserPreference` |
-| `/baby` | [`src/app/baby/page.tsx`](file:///d:/MyPA/dashboard/src/app/baby/page.tsx) | `babyProfiles`, `babyCareLogs`, `babyInventory`, `logBabyCare`, `updateBabyInventory` |
-| `/finance` | [`src/app/finance/page.tsx`](file:///d:/MyPA/dashboard/src/app/finance/page.tsx) | `financialTransactions`, `categoryBudgets`, `recurringBills`, `logFinancialTransaction`, `setCategoryBudget` |
-| `/house` | [`src/app/house/page.tsx`](file:///d:/MyPA/dashboard/src/app/house/page.tsx) | `houseContracts`, `homeMaintenanceItems`, `vehicleAssets`, `completeHomeMaintenance`, `saveHouseContract` |
-| `/logs` | [`src/app/logs/page.tsx`](file:///d:/MyPA/dashboard/src/app/logs/page.tsx) | `auditSessions` |
-| `/memory` | [`src/app/memory/page.tsx`](file:///d:/MyPA/dashboard/src/app/memory/page.tsx) | `topicMemories`, `entityProfiles`, `pinTopicMemory`, `deleteTopicMemory` |
-| `/sessions` | [`src/app/sessions/page.tsx`](file:///d:/MyPA/dashboard/src/app/sessions/page.tsx) | `userSessions` |
-| `/shared` | [`src/app/shared/page.tsx`](file:///d:/MyPA/dashboard/src/app/shared/page.tsx) | `sharedSpaces`, `sharedTasks`, `updateSharedSpace`, `completeSharedTask`, `createSharedTask` |
-| `/users` | [`src/app/users/page.tsx`](file:///d:/MyPA/dashboard/src/app/users/page.tsx) | `users`, `activePairingCodes`, `generatePairingCode` |
+| `/` | [`src/app/page.tsx`](./dashboard/src/app/page.tsx) | System overview KPIs & navigation cards |
+| `/audit` | [`src/app/audit/page.tsx`](./dashboard/src/app/audit/page.tsx) | `mutationLogs`, `rollbackMutation` |
+| `/automations` | [`src/app/automations/page.tsx`](./dashboard/src/app/automations/page.tsx) | `externalApiConnectors`, `automationRules`, `userPreference`, `personalCrmContacts`, `registerExternalApi`, `toggleAutomationRule`, `deleteAutomationRule`, `saveUserPreference` |
+| `/baby` | [`src/app/baby/page.tsx`](./dashboard/src/app/baby/page.tsx) | `babyProfiles`, `babyCareLogs`, `babyInventory`, `logBabyCare`, `updateBabyInventory` |
+| `/finance` | [`src/app/finance/page.tsx`](./dashboard/src/app/finance/page.tsx) | `financialTransactions`, `categoryBudgets`, `recurringBills`, `logFinancialTransaction`, `setCategoryBudget` |
+| `/house` | [`src/app/house/page.tsx`](./dashboard/src/app/house/page.tsx) | `houseContracts`, `homeMaintenanceItems`, `vehicleAssets`, `completeHomeMaintenance`, `saveHouseContract` |
+| `/logs` | [`src/app/logs/page.tsx`](./dashboard/src/app/logs/page.tsx) | `auditSessions` |
+| `/memory` | [`src/app/memory/page.tsx`](./dashboard/src/app/memory/page.tsx) | `topicMemories`, `entityProfiles`, `pinTopicMemory`, `deleteTopicMemory` |
+| `/sessions` | [`src/app/sessions/page.tsx`](./dashboard/src/app/sessions/page.tsx) | `userSessions` |
+| `/shared` | [`src/app/shared/page.tsx`](./dashboard/src/app/shared/page.tsx) | `sharedSpaces`, `sharedTasks`, `updateSharedSpace`, `completeSharedTask`, `createSharedTask` |
+| `/users` | [`src/app/users/page.tsx`](./dashboard/src/app/users/page.tsx) | `users`, `activePairingCodes`, `generatePairingCode` |
 | `/oauth`, `/tools`, `/settings` | `src/app/{oauth,tools,settings}/page.tsx` | System inspection & configuration consoles |
 
 ---
 
 ## 8. Configuration, Environment Variables & Cron Schedules
 
-### 8.1 Environment Variables ([`internal/config/config.go`](file:///d:/MyPA/internal/config/config.go) & [`internal/crypto/aes.go`](file:///d:/MyPA/internal/crypto/aes.go))
+### 8.1 Environment Variables ([`internal/config/config.go`](./internal/config/config.go) & [`internal/crypto/aes.go`](./internal/crypto/aes.go))
 
 | Environment Variable | Viper Config Key | Default | Used By | Description |
 | :--- | :--- | :--- | :--- | :--- |
@@ -684,10 +683,10 @@ The consumer loop guarantees resilient, bounded message processing:
 | `NGROK_AUTHTOKEN` | *(Docker Compose)* | — | `ngrok` | Ngrok authentication token |
 | `NGROK_DOMAIN` | *(Docker Compose)* | — | `ngrok` | Static Ngrok domain tunneling to `proxy:8000` |
 
-### 8.2 Built-In Cron Schedules ([`internal/scheduler/scheduler.go`](file:///d:/MyPA/internal/scheduler/scheduler.go))
+### 8.2 Built-In Cron Schedules ([`internal/scheduler/scheduler.go`](./internal/scheduler/scheduler.go))
 
 All cron schedules run in the `Asia/Jerusalem` timezone (`scheduler.go:20`):
-- **`0 2 * * *` (02:00 AM daily):** Runs [`db.BackupDatabase`](file:///d:/MyPA/internal/db/backup.go#L15-L43) to `/backups` (retaining last 3 backups).
+- **`0 2 * * *` (02:00 AM daily):** Runs [`db.BackupDatabase`](./internal/db/backup.go#L15-L43) to `/backups` (retaining last 3 backups).
 - **`0 8 * * *` (08:00 AM daily):** Calls `engine.BroadcastProactiveMessage` to send personalized Morning Briefings to all active users.
 - **`* * * * *` (Every 1 minute):** Calls `engine.CheckAndSendReminders()` to deliver due personal reminders from `scheduled_reminders` and due collaborative reminders from `shared_task_reminders` (updating `is_sent = true` and `reminded_at`).
 - **`*/5 * * * *` (Every 5 minutes) + On-Change Hook:** Calls `ReloadWorkflows(engine, dbClient, runner)` (thread-safe via `workflowMu sync.Mutex`) to rebuild the active cron runner for both legacy workflows (`workflows` table) and active cron automation rules (`automation_rules` table WHERE `trigger_type = 'cron' AND is_active = true`, parsing cron expressions via `automation.ExtractCronSchedule` and executing actions via `automation.Runner.ExecuteAction`).

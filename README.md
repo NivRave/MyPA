@@ -364,11 +364,11 @@ internal/
   twilio/                   # Twilio WhatsApp API client, chunker & media handler
 docs/
   FEATURES_EXPANSION.md     # Architectural specification for Topics 1–9
-  PLAN.md                   # Parallel wave implementation plan
   ROADMAP.md                # Release history & V3/V4 roadmap
+  architecture_deep_dive.md # End-to-end architecture & data-flow reference
+  architecture_v4.md        # V4 enterprise architecture vision
 AGENTS.md                   # Global AI agent development rules & guardrails
 SYSTEM.md                   # Canonical system architecture, DB/storage schema, API & feature playbook
-REVIEW.md                   # Senior Principal Engineer full-stack code & security review report
 ```
 
 ---

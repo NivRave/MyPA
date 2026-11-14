@@ -35,3 +35,6 @@ backups/
 node_modules/
 .next/
 
+# Internal agent workspaces & audit reports
+.agents/
+REVIEW.md

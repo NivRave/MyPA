@@ -1,5 +1,9 @@
 # MyPA Expansion Specification: Durability, Topic Memory, Life Domains & Shared Spaces
 
+> [!NOTE]
+> **Implementation Status: 100% Complete (Delivered in V3.0 & V3.1)**  
+> All 9 feature topics and 4 rollout milestones defined in this specification are fully implemented in production across `internal/domains/`, `internal/db/`, `internal/graph/`, and `dashboard/`. See [`SYSTEM.md`](../SYSTEM.md) for the canonical implementation reference.
+
 This document defines the approved feature topics and phased rollout milestones for upgrading **MyPA** with enterprise-grade durability, topic-mapped memory, multi-schedule management, life-domain trackers (Baby, House, Finance), dynamic external APIs/automations, and multi-user shared spaces.
 
 ---

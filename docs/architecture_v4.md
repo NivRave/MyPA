@@ -1,62 +1,47 @@
-# MyPA V4: Architecture & System Vision
+# MyPA V4: Enterprise Architecture & Next-Generation Vision
 
-This document outlines the core architectural overhaul, security guardrails, advanced reasoning models, and infrastructure transformations planned for **MyPA V4 (The Enterprise Foundation)**. 
+This document outlines the next-generation architectural roadmap for **MyPA V4**.
 
-While V3 focuses on feature expansion, V4 focuses on rewriting the foundational data layer, execution models, and scaling capabilities.
+> [!TIP]
+> Several foundational security, memory, and reliability capabilities originally envisioned for V4 were pulled forward and **delivered in V3.1** (see Section 1 below). Sections 2–4 detail the remaining V4 horizon.
 
-## 1. Architecture & Infrastructure Overhaul
+---
 
-### Event Sourcing & CQRS
-Move toward a true Event Sourcing architecture to ensure every state change is recorded as an immutable event log. This allows for perfect point-in-time recovery—if the AI makes an error, the system state can be "rewound."
+## 1. Foundation Pillars Already Delivered in V3.1
 
-### Serverless Ingestion & Cloud Deployment
-- **Webhook Gateway**: Decouple the webhook ingestion layer into serverless edge functions (e.g., Cloudflare Workers) for high reliability and zero idle cost.
-- **Proxy Replacement**: Replace the custom Go proxy service with an industry-standard ingress controller (Nginx, Traefik, or Caddy) for built-in rate limiting, SSL termination, and load balancing.
-- **CI/CD**: Move from local development to a 24/7 cloud environment with automated linting, testing, and deployment via GitHub Actions.
+- [x] **Transactional Snapshot Rollback & Audit Trail (`internal/domains/durability`)**: Immutable `mutation_logs` recording `BeforeJSON` and `AfterJSON` state snapshots for every tool and GraphQL mutation, enabling atomic point-in-time rollback via `/undo` and `rollbackMutation`.
+- [x] **Encrypted State & Credentials at Rest (`internal/crypto/aes.go`)**: Application-level AES-256-GCM encryption with HKDF-SHA256 salted key derivation for OAuth tokens in Redis (`token:<userID>`), PostgreSQL fallback (`encrypted_credentials`), and external API headers.
+- [x] **Prompt Injection Defense & Confirmation Gates (`internal/orchestrator/security.go`)**: Semantic `<untrusted_external_content>` XML boundary tagging for external data combined with interactive `CONFIRM <TOOL>` staging for privileged meta-tools.
+- [x] **Circuit Breakers & Token Cost Controls (`internal/orchestrator/engine.go`, `registry.go`)**: Bounded 8-turn recursion ceiling (`MaxToolRecursionDepth = 8`), concurrent `errgroup` execution, Redis dynamic prompt caching, and Two-Tier Intent Routing (~80% prompt token reduction).
+- [x] **Living Entity Knowledge Graph & Memory Consolidation (`internal/domains/memory`)**: Structured `EntityProfile` JSONB cards, temporal memory superseding (`SupersededByID`, `ValidUntil`), and background memory consolidation (`ConsolidateMemories`) indexed with `pgvector` `halfvec(3072)` HNSW indexes.
 
-### Observability & Distributed Tracing
-Implement OpenTelemetry across the Proxy, Gateway, and Orchestrator for visual distributed tracing to monitor exact latency breakdowns (e.g., Gemini API vs. PostgreSQL vs. RabbitMQ).
+---
 
-## 2. Security & Guardrails
+## 2. Cloud-Native Ingestion & Observability (Planned for V4)
 
-### Prompt Injection Defense ("The Guardian")
-Pass incoming prompts through a fast, specialized local model or heuristic filter to detect and block prompt injection attacks before reaching the main orchestrator.
+### Serverless Edge Ingestion & Ingress Controller
+- **Edge Webhook Workers**: Optional deployment of webhook signature verification (`Telegram` and `Twilio`) to serverless edge functions (e.g., Cloudflare Workers) for global low-latency ingestion.
+- **Managed Ingress Controller**: Optional Traefik / Caddy ingress profile alongside the lightweight Go `proxy` service for automated ACME TLS termination in cloud deployments.
 
-### Encrypted State & Tokens
-Enforce application-level encryption at rest for all sensitive data. OAuth tokens (in Redis) and personal conversation memories (in PostgreSQL) must be cryptographically locked.
+### OpenTelemetry Distributed Tracing
+- Instrument `proxy`, `gateway`, `orchestrator`, and `audit-worker` with **OpenTelemetry (OTLP)** spans propagated across RabbitMQ AMQP headers to visualize end-to-end latency breakdowns (Webhook -> Queue -> Redis/Postgres -> Gemini API -> Tool Execution) in Jaeger/Grafana Tempo.
 
-### Cost Controls & Circuit Breakers
-Enforce strict token budgets per user per day. Implement circuit breakers to detect and halt recursive tool-calling loops.
+---
 
-## 3. Advanced AI Reasoning & Brain Management
+## 3. Advanced Multi-Agent Reasoning (Planned for V4)
 
-### Multi-Agent Swarm Architecture
-Transition from a single monolithic orchestrator to specialized sub-agents (e.g., Travel Agent, Finance Agent). These agents will debate and synthesize final answers for complex tasks.
+### Multi-Agent Specialist Sub-Graphs
+- Evolve complex cross-domain queries (e.g., *"Plan a family vacation within our monthly budget and clear our shared calendar"*) into coordinated specialist sub-agent turns (Finance Planner + Schedule Coordinator) that synthesize a unified proposal.
 
-### "Measure Twice, Cut Once" Eval Loops
-Distinguish between non-destructive and destructive actions. Destructive actions (deleting events, sending emails) require the orchestrator to generate a plan that is validated by a secondary "Reviewer" agent before execution.
+### Zero-Shot OpenAPI Auto-Discovery
+- Extend the on-demand External API Connector (`register_external_api`) to automatically parse OpenAPI 3.1 / Swagger specifications and dynamically synthesize typed `FunctionDeclaration` schemas at runtime.
 
-### Explicit Reflection & Tracing
-Require the orchestrator to output its internal Chain of Thought in a structured format, stored in the Audit Log, ensuring deterministic explanations for AI decisions.
+### Cross-Encoder Memory Re-Ranking
+- Complement `pgvector` HNSW cosine retrieval (`Top-20` candidates) with a lightweight cross-encoder re-ranking pass to select the `Top-5` highest-precision memories for long-horizon reasoning.
 
-### API Auto-Discovery (Zero-Shot Integrations)
-Enable the assistant to autonomously read OpenAPI/Swagger docs and figure out how to call new third-party services without hardcoded integrations.
+---
 
-## 4. Memory Architecture
+## 4. Resilience & Graceful Degradation (Planned for V4)
 
-### Memory Consolidation ("Sleep Cycles")
-Implement a nightly "sleep cycle" cron job where a background agent processes the day's logs, extracts permanent facts, updates a compressed Knowledge Graph, and deletes stale vectors.
-
-### Entity-based Knowledge Graph
-Supplement vector search with a structured Knowledge Graph to deterministically map relationships, preferences, and entities.
-
-### Cross-Encoder Re-ranking
-Enhance memory retrieval by fetching a broad set of memories from PostgreSQL and using a cross-encoder model to re-rank them, passing only the most relevant context to the orchestrator.
-
-## 5. Scope & Limitations (The Constitution)
-
-### Hard Boundaries
-Establish a core "Constitution" defining forbidden actions (e.g., never send emails without explicit user confirmation, never initiate contact with unauthorized numbers).
-
-### Graceful Degradation
-Design the system to handle LLM API outages gracefully by falling back to a "dumb" mode where hardcoded slash commands continue to function via direct API calls.
+### Multi-Provider LLM Failover
+- Extend `internal/llm/` to support automatic fallback across secondary model providers or local Ollama endpoints when primary cloud LLM quotas or regional endpoints experience downtime.
