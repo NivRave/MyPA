@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/nivik/mypa/internal/config"
 )
@@ -46,7 +47,15 @@ func main() {
 	slog.Info("unified API gateway starting", "port", port)
 	
 	addr := fmt.Sprintf(":%d", port)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("proxy server crashed", "error", err)
 		os.Exit(1)
 	}
@@ -65,16 +74,40 @@ func setupProxy(gatewayStr, orchestratorStr string) (*http.ServeMux, error) {
 	gatewayProxy := httputil.NewSingleHostReverseProxy(gatewayURL)
 	orchestratorProxy := httputil.NewSingleHostReverseProxy(orchestratorURL)
 
+	proxyTransport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		ResponseHeaderTimeout: 15 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+	}
+	gatewayProxy.Transport = proxyTransport
+	orchestratorProxy.Transport = proxyTransport
+
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/webhook/telegram") || strings.HasPrefix(r.URL.Path, "/webhook/twilio") {
 			slog.Info("proxying to gateway", "path", r.URL.Path)
+			r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10MB limit
 			gatewayProxy.ServeHTTP(w, r)
 			return
 		}
 
-		if strings.HasPrefix(r.URL.Path, "/auth/google") || strings.HasPrefix(r.URL.Path, "/graphql") || strings.HasPrefix(r.URL.Path, "/playground") {
+		if strings.HasPrefix(r.URL.Path, "/auth/google") {
 			slog.Info("proxying to orchestrator", "path", r.URL.Path)
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+			orchestratorProxy.ServeHTTP(w, r)
+			return
+		}
+
+		if strings.HasPrefix(r.URL.Path, "/graphql") {
+			// Proxy ingress guard: require Authorization header
+			if r.Header.Get("Authorization") == "" {
+				slog.Warn("proxy: unauthenticated request to /graphql rejected", "remote_addr", r.RemoteAddr)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			slog.Info("proxying to orchestrator", "path", r.URL.Path)
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
 			orchestratorProxy.ServeHTTP(w, r)
 			return
 		}

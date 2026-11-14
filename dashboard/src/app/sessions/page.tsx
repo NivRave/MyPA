@@ -1,22 +1,32 @@
-import { Pool } from "pg";
+import { graphqlFetch, type UserSessionSummary } from "@/lib/graphql";
 
 export const dynamic = "force-dynamic";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable",
-});
+const GET_USER_SESSIONS = `
+  query GetUserSessions {
+    userSessions {
+      userId
+      source
+      totalInteractions
+      lastActive
+    }
+  }
+`;
+
+async function getUserSessions(): Promise<UserSessionSummary[]> {
+  try {
+    const data = await graphqlFetch<{ userSessions: UserSessionSummary[] }>(
+      GET_USER_SESSIONS
+    );
+    return data.userSessions || [];
+  } catch (err) {
+    console.error("Failed to fetch user sessions:", err);
+    return [];
+  }
+}
 
 export default async function SessionsPage() {
-  const { rows: sessions } = await pool.query(`
-    SELECT 
-      user_id, 
-      MAX(source) as source, 
-      COUNT(id) as total_interactions, 
-      MAX(start_time) as last_active 
-    FROM audit_sessions 
-    GROUP BY user_id 
-    ORDER BY last_active DESC
-  `);
+  const sessions = await getUserSessions();
 
   return (
     <div className="flex-1 p-8 overflow-y-auto">
@@ -36,19 +46,19 @@ export default async function SessionsPage() {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-neutral-200">
-            {sessions.map((session) => (
-              <tr key={session.user_id} className="hover:bg-neutral-50">
+            {sessions.map((session: UserSessionSummary) => (
+              <tr key={session.userId} className="hover:bg-neutral-50">
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-neutral-900">
-                  {session.user_id}
+                  {session.userId}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500 capitalize">
                   {session.source || "unknown"}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
-                  {session.total_interactions}
+                  {session.totalInteractions}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
-                  {new Date(session.last_active).toLocaleString()}
+                  {new Date(session.lastActive).toLocaleString()}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                   <button className="text-indigo-600 hover:text-indigo-900 mr-4">View History</button>

@@ -5,6 +5,7 @@ This file enforces strict agent behaviors and development conventions for this w
 ## 1. Development Cycle
 - **Branch Verification (CRITICAL)**: BEFORE starting any development, making file changes, or committing, you MUST verify the current branch using a terminal command.
 - **Branching**: Develop on `dev`! Never perform work directly on `main` or `master`. You must explicitly checkout the `dev` branch (or a feature branch off of it) before proceeding with changes.
+- **Architecture & System Blueprint Check (`SYSTEM.md`)**: BEFORE designing or implementing any new feature, domain module, database model, AI tool, or GraphQL API, you MUST read [`SYSTEM.md`](./SYSTEM.md) and follow its 8-step Feature Development Playbook.
 - **Verification**: Code must be tested and verified before considering a task complete. Run appropriate tests and checks.
 - **Pre-Commit Container Build**: BEFORE deciding a task is complete and asking the user for permission to commit, you MUST run a full container build locally (e.g., `docker-compose build`) to ensure there are no hidden compilation or infrastructure errors. Never rely solely on partial `go build` commands for a single service.
 - **Stage Verification (CRITICAL Guardrail)**: ALWAYS before committing, verify that the added/staged files are relevant to that commit alone. This is an important guardrail when multiple agents are touching different parts of the project concurrently.
@@ -21,6 +22,7 @@ After completing any feature development, bug fix, milestone, or major phase, yo
 - **Commit suggestion**: Suggest committing the changes and provide an appropriate, formatted commit message. (Wait for the user's approval before committing).
 
 ## 4. Documentation Maintenance
+- **System Blueprint Updates (`SYSTEM.md` — MANDATORY)**: Whenever a change adds, modifies, or removes any feature, GORM database model/table, Redis key, RabbitMQ queue, `ToolModule` tool declaration, GraphQL schema type/query/mutation, environment variable, or Next.js Dashboard route, you MUST update [`SYSTEM.md`](./SYSTEM.md) in the same milestone before considering the task complete.
 - **README Updates**: Always verify if the `README.md` file needs to be updated as a result of the changes made. If the new feature, bug fix, or configuration alters how the project is used or set up, update the README accordingly.
 
 ## 5. Release & Tagging Strategy

@@ -52,7 +52,7 @@ func (c *Client) SearchContacts(ctx context.Context, userID, query string) ([]mo
 	}
 
 	req := srv.People.SearchContacts().Query(query).ReadMask("names,emailAddresses,phoneNumbers")
-	resp, err := req.Do()
+	resp, err := req.Context(ctx).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to search contacts: %w", err)
 	}
@@ -108,7 +108,7 @@ func (c *Client) CreateContact(ctx context.Context, userID, name, email, phone s
 		}
 	}
 
-	_, err = srv.People.CreateContact(person).Do()
+	_, err = srv.People.CreateContact(person).Context(ctx).Do()
 	if err != nil {
 		return fmt.Errorf("failed to create contact: %w", err)
 	}

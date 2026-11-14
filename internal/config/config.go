@@ -11,33 +11,42 @@ import (
 
 // Config holds all configuration for the application.
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Telegram TelegramConfig `mapstructure:"telegram"`
-	RabbitMQ RabbitMQConfig `mapstructure:"rabbitmq"`
-	Redis    RedisConfig    `mapstructure:"redis"`
-	Database DatabaseConfig `mapstructure:"database"`
-	Gemini   GeminiConfig   `mapstructure:"gemini"`
-	Google   GoogleConfig   `mapstructure:"google"`
-	Groq     GroqConfig     `mapstructure:"groq"`
-	Twilio   TwilioConfig   `mapstructure:"twilio"`
-	Tavily   TavilyConfig   `mapstructure:"tavily"`
+	Server     ServerConfig     `mapstructure:"server"`
+	Telegram   TelegramConfig   `mapstructure:"telegram"`
+	RabbitMQ   RabbitMQConfig   `mapstructure:"rabbitmq"`
+	Redis      RedisConfig      `mapstructure:"redis"`
+	Database   DatabaseConfig   `mapstructure:"database"`
+	Gemini     GeminiConfig     `mapstructure:"gemini"`
+	Google     GoogleConfig     `mapstructure:"google"`
+	Groq       GroqConfig       `mapstructure:"groq"`
+	Twilio     TwilioConfig     `mapstructure:"twilio"`
+	Tavily     TavilyConfig     `mapstructure:"tavily"`
+	Encryption EncryptionConfig `mapstructure:"encryption"`
+}
+
+// EncryptionConfig holds cryptographic encryption settings.
+type EncryptionConfig struct {
+	Key string `mapstructure:"key"`
 }
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
-	GatewayPort      int    `mapstructure:"gateway_port"`
-	OrchestratorPort int    `mapstructure:"orchestrator_port"`
-	ProxyPort        int    `mapstructure:"proxy_port"`
-	GatewayURL       string `mapstructure:"gateway_url"`
-	OrchestratorURL  string `mapstructure:"orchestrator_url"`
-	DefaultTimezone  string `mapstructure:"default_timezone"`
-	AllowedUsersRaw  string `mapstructure:"allowed_users"`
+	GatewayPort        int    `mapstructure:"gateway_port"`
+	OrchestratorPort   int    `mapstructure:"orchestrator_port"`
+	ProxyPort          int    `mapstructure:"proxy_port"`
+	GatewayURL         string `mapstructure:"gateway_url"`
+	OrchestratorURL    string `mapstructure:"orchestrator_url"`
+	DefaultTimezone    string `mapstructure:"default_timezone"`
+	AllowedUsersRaw    string `mapstructure:"allowed_users"`
+	DashboardAPISecret string `mapstructure:"dashboard_api_secret"`
+	JWTSecret          string `mapstructure:"jwt_secret"`
 }
 
 // TelegramConfig holds Telegram Bot API settings.
 type TelegramConfig struct {
-	BotToken   string `mapstructure:"bot_token"`
-	WebhookURL string `mapstructure:"webhook_url"`
+	BotToken    string `mapstructure:"bot_token"`
+	WebhookURL  string `mapstructure:"webhook_url"`
+	SecretToken string `mapstructure:"secret_token"`
 }
 
 // RabbitMQConfig holds RabbitMQ connection settings.
@@ -138,6 +147,10 @@ func Load() (*Config, error) {
 		"TWILIO_AUTH_TOKEN":     "twilio.auth_token",
 		"TWILIO_FROM_NUMBER":    "twilio.from_number",
 		"TAVILY_API_KEY":        "tavily.api_key",
+		"ENCRYPTION_KEY":        "encryption.key",
+		"TELEGRAM_SECRET_TOKEN": "telegram.secret_token",
+		"DASHBOARD_API_SECRET":  "server.dashboard_api_secret",
+		"JWT_SECRET":            "server.jwt_secret",
 	}
 
 	for envKey, configKey := range envBindings {

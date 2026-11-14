@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/nivik/mypa/internal/calendar"
@@ -68,11 +69,28 @@ func TestAuthRouter(t *testing.T) {
 		return len(s) > 0
 	})).Return(nil)
 
-	// Setup router
-	mux := setupAuthRouter(oauthCfg, store, tgClient)
+	// Pre-save CSRF nonce in Redis
+	csrfNonce := "valid-csrf-nonce-123"
+	err = store.SaveOAuthState(context.Background(), csrfNonce, "user-123", 10*time.Minute)
+	require.NoError(t, err)
 
-	// Run test
-	req := httptest.NewRequest("GET", "/auth/google/callback?code=my-test-code&state=user-123", nil)
+	// Setup mock fallback saver
+	var savedUserID, savedProvider string
+	var savedTokenData []byte
+	mockSaver := &mockFallbackSaver{
+		saveFn: func(ctx context.Context, userID, provider string, tokenData []byte, passphrase ...string) error {
+			savedUserID = userID
+			savedProvider = provider
+			savedTokenData = tokenData
+			return nil
+		},
+	}
+
+	// Setup router with fallback saver
+	mux := setupAuthRouter(oauthCfg, store, tgClient, mockSaver)
+
+	// Run test with valid nonce
+	req := httptest.NewRequest("GET", "/auth/google/callback?code=my-test-code&state="+csrfNonce, nil)
 	rr := httptest.NewRecorder()
 
 	mux.ServeHTTP(rr, req)
@@ -81,12 +99,50 @@ func TestAuthRouter(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Body.String(), "Success!")
 	
-	// Verify token was saved
+	// Verify token was saved in Redis
 	tokenBytes, err := store.GetOAuthToken(context.Background(), "user-123")
 	require.NoError(t, err)
 	assert.Contains(t, string(tokenBytes), "dummy-token")
 
+	// Verify fallback was persisted
+	assert.Equal(t, "user-123", savedUserID)
+	assert.Equal(t, "google_oauth", savedProvider)
+	assert.Contains(t, string(savedTokenData), "dummy-token")
+
+	// Verify state nonce was deleted (one-time use)
+	_, err = store.ValidateAndDeleteOAuthState(context.Background(), csrfNonce)
+	assert.Error(t, err)
+
 	tgClient.AssertExpectations(t)
+}
+
+type mockFallbackSaver struct {
+	saveFn func(ctx context.Context, userID, provider string, tokenData []byte, passphrase ...string) error
+}
+
+func (m *mockFallbackSaver) SaveCredentialFallback(ctx context.Context, userID, provider string, tokenData []byte, passphrase ...string) error {
+	if m.saveFn != nil {
+		return m.saveFn(ctx, userID, provider, tokenData, passphrase...)
+	}
+	return nil
+}
+
+func TestAuthRouter_InvalidStateNonce(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+
+	store, err := state.NewStore("redis://" + mr.Addr())
+	require.NoError(t, err)
+	defer store.Close()
+
+	mux := setupAuthRouter(nil, store, nil)
+	req := httptest.NewRequest("GET", "/auth/google/callback?code=any-code&state=non-existent-nonce", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Contains(t, rr.Body.String(), "invalid or expired oauth state nonce")
 }
 
 func TestAuthRouter_MissingParams(t *testing.T) {

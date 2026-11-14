@@ -1,666 +1,227 @@
-# MyPA — Complete Architecture Deep Dive (Updated)
+# MyPA — Complete Architecture Deep Dive
 
-## High-Level Architecture
+> [!NOTE]
+> For the exhaustive database table definitions (29 GORM models), complete 70-tool parameter catalog, and 8-section Feature Development Playbook, see [`SYSTEM.md`](../SYSTEM.md).
+
+---
+
+## 1. High-Level System Architecture
 
 ```mermaid
 graph TB
     subgraph "External Clients"
         TG_USER["💬 Telegram User"]
         WA_USER["📱 WhatsApp User"]
+        WEB_USER["🌐 Web Browser (:3030)"]
     end
 
-    subgraph "External APIs"
+    subgraph "External Messaging APIs"
         TG_API["Telegram Bot API"]
-        TWILIO_API["Twilio API"]
+        TWILIO_API["Twilio WhatsApp API"]
     end
 
-    subgraph "MyPA Docker Compose Stack (8 containers)"
-        subgraph "Proxy Service (:8000)"
-            PROXY["Reverse Proxy\n(httputil.ReverseProxy)"]
+    subgraph "MyPA Docker Compose Stack (10 Containers)"
+        subgraph "Ingress & Edge"
+            NGROK["ngrok (:4040)"]
+            PROXY["Proxy Service (:8000)\n• /webhook/* → Gateway\n• /graphql (Auth Guard) → Orchestrator\n• /auth/google/* → Orchestrator"]
+            DASH["Next.js 16 Dashboard (:3030)\n• 14 App Router Consoles\n• Typed graphqlFetch Client"]
         end
 
         subgraph "Gateway Service (:8080)"
-            GW_TG["POST /webhook/telegram"]
-            GW_TW["POST /webhook/twilio"]
+            GW_TG["POST /webhook/telegram\n(Secret Token Verify)"]
+            GW_TW["POST /webhook/twilio\n(HMAC-SHA1 Verify)"]
         end
 
-        subgraph "Message Broker"
-            RABBIT_MSG["RabbitMQ\nQueue: telegram.inbound"]
-            RABBIT_AUDIT["RabbitMQ\nQueue: audit.events"]
+        subgraph "RabbitMQ Broker (:5672 / :15672)"
+            RMQ_IN["Queue: telegram.inbound\n(+ telegram.inbound.dlq)"]
+            RMQ_AUD["Queue: audit.events\n(+ audit.events.dlq)"]
+            RMQ_DLX["Dead-Letter Exchange\nmypa.dlx"]
         end
 
         subgraph "Orchestrator Service (:8081)"
-            ENGINE["Engine\n(processMessage)"]
-            AUDIO_CLIENT["Groq Whisper\n(whisper-large-v3-turbo)"]
-            LLM_CLIENT["Gemini 2.5 Flash\n(temp 0.2)"]
-            TOOL_EXEC["Tool Execution\n(20 tools)"]
-            OAUTH_HTTP["GET /auth/google/callback"]
-            SCHED["Cron Scheduler\n(8AM Asia/Jerusalem)"]
+            ENGINE["Engine (ProcessMessage)\n• Pre-Auth & Admin RBAC\n• Prompt Injection Gate"]
+            INTENT["Two-Tier Intent Matcher\n(8 Core + 9 Domain Groups)"]
+            REGISTRY["ToolModule Registry\n(70 Tools / 13 Packages)"]
+            BUS["Dual-Lane EventBus\n• Sync: Durability & Cache\n• Async: 4-Worker Pool"]
+            GQL["gqlgen GraphQL Server\n(22 Queries / 28 Mutations)"]
+            OAUTH_HTTP["GET /auth/google/callback\n(32B CSRF Nonce GETDEL)"]
+            SCHED["Cron Scheduler\n(Backups, Briefings, Reminders, Rules)"]
         end
 
         subgraph "Audit Worker Service"
-            AW_CONSUMER["ConsumeRaw()\n→ InsertAuditSession"]
-            AW_ARCHIVER["Daily Archiver\n(30-day retention)"]
+            AW_CONSUMER["Resilient Consumer\n→ InsertAuditSession"]
+            AW_ARCHIVER["Daily Archiver\n(30-day JSONL retention)"]
         end
 
-        subgraph "Data Layer"
-            REDIS["Redis 7\n• chat:{userID} (20 msgs, 1h TTL)\n• token:{userID} (OAuth, no TTL)"]
-            PG["PostgreSQL 15 + pgvector\n• audit_sessions\n• audit_events\n• memories (3072-dim)"]
+        subgraph "Persistence Layer"
+            REDIS["Redis 7 (:6379)\n• chat:<userID> (stripped photos)\n• token:<userID> (AES-256-GCM)\n• ctx_prompt:<fg>:<mod> (10m TTL)\n• oauth_state & rate_limit keys"]
+            PG["PostgreSQL 15 + pgvector (:5432)\n• 29 Multi-Tenant GORM Tables\n• halfvec(3072) HNSW Indexes\n• 6 Composite B-Tree Indexes"]
             PGADMIN["pgAdmin 4 (:5050)"]
         end
     end
 
-    subgraph "External Services"
-        GEMINI["Google Gemini API"]
-        GROQ["Groq Whisper API"]
-        GCAL["Google Calendar API"]
-        GMAIL_API["Gmail API"]
-        GTASKS["Google Tasks API"]
-        TAVILY["Tavily Search API"]
-        GOOGLE_OAUTH["Google OAuth 2.0"]
+    subgraph "External AI & Workspace Services"
+        GEMINI["Google Gemini 2.5 Flash\n& gemini-embedding-001"]
+        GROQ["Groq Whisper API\n(whisper-large-v3)"]
+        GSUITE["Google Calendar, Gmail,\nTasks & People APIs"]
+        TAVILY["Tavily Search API\n& NetGuard Scraper"]
     end
 
-    TG_USER --> TG_API
-    WA_USER --> TWILIO_API
+    TG_USER <--> TG_API
+    WA_USER <--> TWILIO_API
+    WEB_USER <--> DASH
 
-    TG_API -->|"POST webhook"| PROXY
-    TWILIO_API -->|"POST webhook"| PROXY
+    TG_API & TWILIO_API --> NGROK --> PROXY
+    DASH -->|"POST /graphql (Bearer)"| PROXY
 
-    PROXY -->|"/webhook/*"| GW_TG
-    PROXY -->|"/webhook/*"| GW_TW
-    PROXY -->|"/auth/google/*"| OAUTH_HTTP
+    PROXY --> GW_TG & GW_TW
+    PROXY --> GQL & OAUTH_HTTP
 
-    GW_TG -->|"models.Message"| RABBIT_MSG
-    GW_TW -->|"models.Message"| RABBIT_MSG
+    GW_TG & GW_TW -->|"SafePublisher (Confirms)"| RMQ_IN
+    RMQ_IN -.->|"3 Failed Retries"| RMQ_DLX
+    RMQ_AUD -.->|"3 Failed Retries"| RMQ_DLX
 
-    RABBIT_MSG -->|"Consume()"| ENGINE
+    RMQ_IN -->|"Consumer"| ENGINE
+    ENGINE <--> INTENT & REGISTRY
+    REGISTRY -->|"Publish(MutationEvent)"| BUS
+    GQL -->|"Publish(MutationEvent)"| BUS
 
-    ENGINE --> AUDIO_CLIENT
-    AUDIO_CLIENT --> GROQ
-    ENGINE --> LLM_CLIENT
-    LLM_CLIENT --> GEMINI
-    ENGINE --> TOOL_EXEC
-    TOOL_EXEC --> GCAL
-    TOOL_EXEC --> GMAIL_API
-    TOOL_EXEC --> GTASKS
-    TOOL_EXEC --> TAVILY
+    ENGINE & REGISTRY & GQL <--> REDIS
+    ENGINE & REGISTRY & GQL <--> PG
+    BUS -->|"Sync: MutationLog"| PG
+    BUS -->|"Async: Partner Sync"| TG_API & TWILIO_API
 
-    ENGINE <--> REDIS
-    ENGINE -->|"SaveMemory /\nSearchMemories"| PG
+    ENGINE -->|"SafePublisher"| RMQ_AUD --> AW_CONSUMER --> PG
+    AW_ARCHIVER --> PG
 
-    ENGINE -->|"Publish(AuditSession)"| RABBIT_AUDIT
-    RABBIT_AUDIT -->|"ConsumeRaw()"| AW_CONSUMER
-    AW_CONSUMER -->|"InsertAuditSession"| PG
-    AW_ARCHIVER -->|"archive + prune\n(>30 days)"| PG
-
+    ENGINE <--> GEMINI & GROQ
+    REGISTRY <--> GSUITE & TAVILY
+    SCHED --> ENGINE
     PGADMIN --> PG
-
-    ENGINE -->|"response"| TG_API
-    ENGINE -->|"response"| TWILIO_API
-    TG_API --> TG_USER
-    TWILIO_API --> WA_USER
-
-    OAUTH_HTTP --> GOOGLE_OAUTH
-    SCHED -->|"8AM daily"| ENGINE
 ```
 
 ---
 
-## What Changed Since Last Analysis
+## 2. Container Stack & Unified Multi-Target Dockerfile
 
-> [!IMPORTANT]
-> ### Summary of Changes
-> 1. **New Audit Worker service** with daily archiver (30-day retention → JSONL export → DB prune)
-> 2. **Restructured audit schema** — `AuditSession` + `AuditEvent` replacing flat `AuditLog`
-> 3. **Generic broker** — `Publish(ctx, v any)` and `ConsumeRaw(func([]byte))` methods
-> 4. **Unified Dockerfile** — single multi-target file with distroless runtime images
-> 5. **New `EventPublisher` port interface** in orchestrator
-> 6. **Healthcheck `start_period`** added to all infra containers
+All four Go microservices compile from a single root [`Dockerfile`](../Dockerfile) using BuildKit cache mounts (`/go/pkg/mod` and `/root/.cache/go-build`) and granular `COPY` directives (`internal/`, `config/`, `cmd/<service>/`):
 
-| Area | Before | After |
-|---|---|---|
-| **Audit model** | Flat `AuditLog` (user_message, llm_response, action_taken) | **`AuditSession`** (session-level: UUID, timing, tokens, status) + **`AuditEvent`** (span-level: event_type, payloads as JSONB, per-span timing & tokens) |
-| **Audit persistence** | Orchestrator `defer` → direct DB write | Orchestrator → RabbitMQ `audit.events` → **Audit Worker** → DB |
-| **Audit retention** | None | **30-day retention** — daily archiver exports to JSONL, prunes from DB |
-| **Broker API** | `Publish(ctx, models.Message)`, `Consume(func(models.Message))` | **`Publish(ctx, v any)`**, `Consume(func(models.Message))`, **`ConsumeRaw(func([]byte))`** |
-| **DB methods** | `LogInteraction(AuditLog)`, `GetLastAuditLogForUser()` | **`InsertAuditSession(AuditSession)`**, **`InsertAuditEvent(AuditEvent)`**, **`GetLastAuditSessionForUser()`** |
-| **Port interfaces** | 9 interfaces | **10 interfaces** (added `EventPublisher`) |
-| **Dockerfiles** | 3 separate files | **1 unified multi-target** with `gcr.io/distroless/static-debian12` runtimes |
-| **Docker containers** | 7 | **8** (added audit-worker) |
-| **Healthchecks** | No `start_period` | All infra: `start_period` (RabbitMQ 10s, Redis 5s, Postgres 10s) |
-
-### What Did NOT Change
-Gateway, Proxy, LLM client, tool declarations (20 tools), Calendar, Gmail, Tasks, Tavily, Scraper, Audio, Telegram, Twilio, Redis state store, PostgreSQL Memory schema, Scheduler, Markdown converters, Config structure.
+| Container | Target / Image | Runtime Image | Host Port | Role |
+| :--- | :--- | :--- | :---: | :--- |
+| **`proxy`** | `proxy` | `gcr.io/distroless/static-debian12` | `127.0.0.1:8000` | Edge reverse proxy: `/webhook/*` → Gateway, `/graphql` (with auth header check) & `/auth/google/*` → Orchestrator |
+| **`gateway`** | `gateway` | `gcr.io/distroless/static-debian12` | `127.0.0.1:8080` | Validates Telegram secret token & Twilio HMAC-SHA1 signature, normalizes payloads, publishes to RabbitMQ |
+| **`orchestrator`** | `orchestrator` | `debian:12-slim` (`postgresql-client`) | `127.0.0.1:8081` | Reasoning engine, 70-tool `Registry`, dual-lane `EventBus`, OAuth2, GraphQL API, Cron scheduler |
+| **`audit-worker`** | `audit-worker` | `gcr.io/distroless/static-debian12` | — | Consumes `audit.events`, writes `AuditSession` records, archives sessions >30 days to `/app/archives` JSONL |
+| **`dashboard`** | `dashboard/Dockerfile` | `node:20-alpine` (Next.js standalone) | `127.0.0.1:3030` | Next.js 16 (React 19) Web Control Dashboard communicating via `http://proxy:8000/graphql` |
+| **`rabbitmq`** | Official Image | `rabbitmq:3.13-management-alpine` | `127.0.0.1:5672`, `15672` | AMQP 0-9-1 broker with `mypa.dlx` dead-letter exchange and `.dlq` queues |
+| **`redis`** | Official Image | `redis:7-alpine` (`--appendonly yes`) | `127.0.0.1:6379` | Hot conversation state, encrypted OAuth tokens, prompt cache, CSRF nonces, rate limiters |
+| **`postgres`** | Official Image | `pgvector/pgvector:pg15` | `127.0.0.1:5432` | Relational + `pgvector` database (29 tables, HNSW `halfvec(3072)` & composite indexes) |
+| **`pgadmin`** | Official Image | `dpage/pgadmin4` | `127.0.0.1:5050` | PostgreSQL administration console |
+| **`ngrok`** | Official Image | `ngrok/ngrok:latest` | `127.0.0.1:4040` | Public HTTPS webhook tunnel to `proxy:8000` |
 
 ---
 
-## Infrastructure: 8-Container Docker Stack
+## 3. Core Execution Flows
 
-| Container | Dockerfile Target | Runtime | Port | Role |
-|---|---|---|---|---|
-| **proxy** | `proxy` | `distroless/static-debian12` | `:8000` | Reverse proxy: webhooks → Gateway, OAuth → Orchestrator |
-| **gateway** | `gateway` | `distroless/static-debian12` | `:8080` | Telegram & Twilio webhook ingestion → RabbitMQ |
-| **orchestrator** | `orchestrator` | `distroless/static-debian12` | `:8081` | Brain: LLM reasoning, tool execution, audit publishing |
-| **audit-worker** | `audit-worker` | `distroless/static-debian12` | — | Audit log persistence + 30-day retention archiver |
-| **rabbitmq** | (image) | `rabbitmq:3.13-management-alpine` | `:5672`/`:15672` | 2 durable queues: `telegram.inbound` + `audit.events` |
-| **redis** | (image) | `redis:7-alpine` | `:6379` | Session state + OAuth tokens |
-| **postgres** | (image) | `pgvector/pgvector:pg15` | `:5432` | Audit sessions/events + semantic memory |
-| **pgadmin** | (image) | `dpage/pgadmin4` | `:5050` | Database admin UI |
-
-### Unified Dockerfile
-
-```mermaid
-graph TD
-    subgraph "Stage 1: Shared deps"
-        D["golang:1.26-alpine\ngo mod download (cached)"]
-    end
-
-    subgraph "Stage 2: Build targets"
-        BG["build-gateway"]
-        BO["build-orchestrator"]
-        BP["build-proxy"]
-        BA["build-audit-worker"]
-    end
-
-    subgraph "Stage 3: Runtime (distroless)"
-        RG["gateway"]
-        RO["orchestrator"]
-        RP["proxy"]
-        RA["audit-worker"]
-    end
-
-    D --> BG --> RG
-    D --> BO --> RO
-    D --> BP --> RP
-    D --> BA --> RA
-```
-
-- Shared `deps` stage for `go mod download`
-- Granular `COPY` per service (only `internal/`, `config/`, `cmd/<service>/`)
-- BuildKit cache mounts for `/go/pkg/mod` and `/root/.cache/go-build`
-- `ldflags='-w -s'` for stripped binaries
-- `gcr.io/distroless/static-debian12` runtime (no shell, minimal attack surface)
-
----
-
-## RabbitMQ: Two Queue Topology
-
-```mermaid
-graph LR
-    subgraph "Publishers"
-        GW["Gateway\n(Publish)"]
-        ORCH["Orchestrator\n(Publish)"]
-    end
-
-    subgraph "RabbitMQ (durable, persistent, prefetch=1)"
-        Q1["telegram.inbound"]
-        Q2["audit.events"]
-    end
-
-    subgraph "Consumers"
-        ENGINE["Orchestrator\n(Consume)"]
-        AW["Audit Worker\n(ConsumeRaw)"]
-    end
-
-    GW -->|"models.Message"| Q1
-    Q1 --> ENGINE
-
-    ORCH -->|"models.AuditSession"| Q2
-    Q2 --> AW
-    AW -->|"InsertAuditSession"| PG["PostgreSQL"]
-```
-
-| Queue | Payload | Publisher | Consumer | Method | ACK Strategy |
-|---|---|---|---|---|---|
-| `telegram.inbound` | `models.Message` | Gateway | Orchestrator | `Consume(func(Message))` | ACK/NACK+requeue/Reject |
-| `audit.events` | `models.AuditSession` | Orchestrator | Audit Worker | `ConsumeRaw(func([]byte))` | ACK on success, return `nil` on bad JSON (discard), return `error` on DB failure (requeue) |
-
-The broker's `Publish(ctx, v any)` now accepts any JSON-serializable type, enabling reuse for both message types.
-
----
-
-## Data Models
-
-### Audit Schema (NEW — replaces flat AuditLog)
-
-```mermaid
-erDiagram
-    AuditSession {
-        uuid ID PK
-        string UserID "indexed"
-        string ChatID
-        string Source "telegram/whatsapp"
-        string UserPrompt
-        string FinalResponse
-        timestamp StartTime
-        timestamp EndTime
-        int64 TotalDurationMs
-        int TotalTokens
-        string Status "success/failed"
-    }
-
-    AuditEvent {
-        uuid ID PK
-        uuid SessionID FK "indexed"
-        string EventType "llm_inference/tool_execution"
-        string ActionName
-        jsonb RequestPayload
-        jsonb ResponsePayload
-        string ErrorMessage
-        timestamp StartTime
-        timestamp EndTime
-        int64 DurationMs
-        int PromptTokens
-        int CompletionTokens
-    }
-
-    AuditSession ||--o{ AuditEvent : "has many"
-```
-
-**Key improvements over flat `AuditLog`:**
-- **Session-level** tracking: UUID session ID, total duration, total tokens, status
-- **Event/span-level** granularity: individual LLM inferences and tool executions tracked separately
-- **JSONB payloads**: full request/response data stored for debugging
-- **Per-span token counts**: prompt and completion tokens tracked per event
-
-### Other Models (unchanged)
-
-| Model | Table | Purpose |
-|---|---|---|
-| `Message` | (RabbitMQ only) | Normalized cross-platform message |
-| `ChatMessage` | (Redis only) | Conversation history turn |
-| `Memory` | `memories` | Semantic facts with 3072-dim pgvector embeddings |
-| `CalendarEvent` | (API only) | Google Calendar event structure |
-
----
-
-## The Audit Worker (NEW)
-
-```mermaid
-graph TB
-    subgraph "Audit Worker Service"
-        CONSUMER["ConsumeRaw()\nfrom audit.events queue"]
-        ARCHIVER["Daily Archiver\n(24h ticker)"]
-    end
-
-    CONSUMER -->|"Unmarshal AuditSession\n→ InsertAuditSession"| PG["PostgreSQL"]
-
-    ARCHIVER -->|"Query sessions > 30 days"| PG
-    ARCHIVER -->|"Export to JSONL"| FILE["audit_archive_<timestamp>.jsonl"]
-    ARCHIVER -->|"DELETE from DB"| PG
-```
-
-**Two concurrent goroutines:**
-
-1. **Consumer**: Reads from `audit.events` queue, deserializes `AuditSession`, persists to PostgreSQL. Poison messages (bad JSON) are discarded with `return nil`. DB errors cause requeue via `return error`.
-
-2. **Daily Archiver** (`startArchiver`):
-   - Runs on a `24h` ticker
-   - Queries audit sessions older than 30 days
-   - Exports them to timestamped JSONL files (`audit_archive_<unix_ts>.jsonl`)
-   - Deletes archived records from PostgreSQL
-   - Provides automatic data retention management
-
----
-
-## All Flows
-
-### Inbound (User-Initiated)
-| # | Flow | Source | Trigger |
-|---|---|---|---|
-| 1 | **Text Message** | Telegram or WhatsApp | User sends text |
-| 2 | **Voice Message** | Telegram or WhatsApp | User sends voice note |
-| 3 | **`/connect` Command** | Telegram or WhatsApp | User types `/connect` |
-
-### System-Initiated
-| # | Flow | Trigger |
-|---|---|---|
-| 4 | **Morning Brief** | Cron at 8:00 AM Israel time |
-
----
-
-## Flow 1: Text Message
+### Flow 1: Conversational Turn & Two-Tier Tool Execution
 
 ```mermaid
 sequenceDiagram
     participant User
-    participant Platform as Telegram/Twilio API
+    participant Platform as Telegram / Twilio
     participant Proxy as Proxy (:8000)
     participant GW as Gateway (:8080)
-    participant RMQ as RabbitMQ
+    participant RMQ as RabbitMQ (telegram.inbound)
     participant Engine as Orchestrator Engine
     participant Redis
-    participant PG as PostgreSQL
+    participant PG as PostgreSQL (pgvector)
     participant Gemini as Gemini 2.5 Flash
-    participant Tools as External Services
-    participant RMQ_A as RabbitMQ (audit.events)
-    participant AW as Audit Worker
+    participant Registry as ToolModule Registry
+    participant Bus as Dual-Lane EventBus
 
-    User->>Platform: Send text message
-    Platform->>Proxy: POST /webhook/*
-    Proxy->>GW: Forward
-
-    GW->>GW: Parse & normalize to models.Message
-    GW->>RMQ: Publish(models.Message) → telegram.inbound
-    GW-->>Platform: 200 OK (immediate)
-
-    RMQ->>Engine: Consume() delivers message
-    Note over Engine: Create AuditSession UUID<br/>Start timer (5-min timeout)
-
-    Engine->>Redis: GetChatHistory(userID) → last 20 msgs
-    Engine->>Gemini: GenerateEmbedding(text) → 3072-dim vector
-    Engine->>PG: SearchMemories(userID, embedding, 5) → cosine ⇔
-    PG-->>Engine: Top 5 relevant memories
-
-    Note over Engine: Build system prompt:<br/>• Current RFC1123 datetime<br/>• Israel timezone (Sun-Thu workweek)<br/>• Tool instructions<br/>• Retrieved memories
-
-    Engine->>Gemini: Chat(systemPrompt, history, msg, 20 tools)<br/>Temperature: 0.2
-
-    alt Text response
-        Gemini-->>Engine: Response{Text}
-    else Tool call
-        Gemini-->>Engine: Response{ToolCall}
-        loop Recursive feedbackToLLM
-            Engine->>Tools: Execute tool
-            Tools-->>Engine: Result
-            Engine->>Gemini: Continue with result
-        end
-    end
-
-    Engine->>Engine: Format (ToTelegramHTML / ToWhatsApp)
-    Engine->>Engine: Chunk ≤1500 chars (smart boundary)
-    Engine->>Platform: Send response
-    Platform->>User: Deliver message
-
-    Engine->>Redis: AppendChatHistory (user + assistant)
-
-    Note over Engine: defer: record EndTime,<br/>compute TotalDurationMs
-
-    Engine-->>RMQ_A: Publish(AuditSession) [async defer]
-    RMQ_A->>AW: ConsumeRaw()
-    AW->>PG: InsertAuditSession
-```
-
-### Key Details
-- Gateway responds instantly — no AI at the Gateway
-- Redis: sliding 20-message window (RPUSH + LTRIM + EXPIRE 1h)
-- Every message embedded via `gemini-embedding-001`, top 5 memories recalled via pgvector cosine distance
-- LLM at temperature 0.2 for reliable tool calls
-- **Session-based telemetry**: UUID session ID created at start, timing recorded, published as `AuditSession` on completion
-- Poison pill defense: errors caught, user notified, message ACKed
-
----
-
-## Flow 2: Voice / Audio Message
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Platform as Telegram/Twilio API
-    participant GW as Gateway
-    participant RMQ as RabbitMQ
-    participant Engine as Orchestrator Engine
-    participant Groq as Groq Whisper API
-
-    User->>Platform: Send voice note 🎤
-    Platform->>GW: POST /webhook/* (VoiceFileID or MediaURL)
-    GW->>RMQ: Publish (Text empty, voice fields set)
+    User->>Platform: Send message (text / photo / PDF)
+    Platform->>Proxy: POST /webhook/telegram or /webhook/twilio
+    Proxy->>GW: Forward (10MB MaxBytesReader)
+    GW->>GW: Verify X-Telegram-Bot-Api-Secret-Token or X-Twilio-Signature
+    GW->>RMQ: SafePublisher.Publish(models.Message) [Publisher Confirm]
     GW-->>Platform: 200 OK
 
-    RMQ->>Engine: Deliver message
+    RMQ->>Engine: Deliver models.Message (prefetch=1, 3-retry DLQ guard)
+    Engine->>PG: Pre-Auth Check: GetUser(msg.UserID)
+    alt Unauthenticated User
+        Engine->>Redis: Check/Increment Pairing Rate Limit (5 tries / 15m → 1h lockout)
+        Engine-->>Platform: Prompt for 6-digit pairing code or redeem code
+    else Authenticated User
+        Engine->>Redis: GetChatHistory(userID) + MGET ctx_prompt:<familyGroup>:*
+        Engine->>Gemini: GenerateEmbedding(text) → 3072-dim vector
+        Engine->>PG: SearchSimilarMemories (halfvec(3072) HNSW cosine)
+        Engine->>Engine: KeywordIntentMatcher → Select Tier 1 (8 Core) + Active Tier 2 Tools
 
-    alt Telegram voice
-        Engine->>Platform: GetFile(fileID) → DownloadFile(path)
-    else WhatsApp voice
-        Engine->>Platform: DownloadMedia(mediaURL) [Basic Auth]
-    end
+        loop Bounded Recursion (MaxToolRecursionDepth = 8)
+            Engine->>Gemini: Chat(systemPrompt, history, activeTools)
+            alt ToolCalls returned
+                Engine->>Engine: Check SEC-09 Meta-Tool Confirmation Gate
+                Engine->>Registry: Execute tools concurrently (errgroup, max 8)
+                Registry->>PG: Tenant-scoped repository read/write
+                Registry->>Bus: Publish(MutationEvent)
+                Bus->>PG: Sync Lane: Insert MutationLog + Invalidate PromptCache
+                Bus-->>Platform: Async Lane: Partner SharedSpace notification & Automation rules
+                Registry-->>Engine: Tool responses
+            else Final Text returned
+                Gemini-->>Engine: Response text
+            end
+        end
 
-    Engine->>Groq: TranscribeAudio(bytes, "voice.ogg")<br/>Model: whisper-large-v3-turbo
-    Groq-->>Engine: Transcribed text
-
-    Engine->>Platform: "🗣️ *Transcribed:* ..." (preview)
-    Platform->>User: Shows transcription
-
-    Note over Engine: msg.Text = transcribedText<br/>→ continues as Text Flow
-```
-
-- Audio download + transcription in Orchestrator (not Gateway)
-- Groq Whisper `whisper-large-v3-turbo` — auto language detection
-- User gets real-time transcription preview
-
----
-
-## Flow 3: `/connect` Command (Google OAuth)
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Engine as Orchestrator Engine
-    participant Google as Google OAuth 2.0
-    participant OrcHTTP as Orchestrator HTTP (:8081)
-    participant Redis
-
-    User->>Engine: "/connect" (via Gateway → RabbitMQ)
-
-    Engine->>Engine: oauthCfg.AuthCodeURL(userID)<br/>Scopes: Calendar + Gmail + Tasks
-    Engine->>User: OAuth URL
-
-    User->>Google: Grants permissions
-    Google->>OrcHTTP: GET /auth/google/callback?code=xxx&state=userID
-
-    OrcHTTP->>Google: Exchange(code) → tokens
-    OrcHTTP->>Redis: SetOAuthToken(userID, tokenBytes)
-    OrcHTTP->>User: "✅ Connected!"
-```
-
-- Single OAuth flow for Calendar + Gmail + Tasks
-- Tokens in Redis without expiration, auto-refreshed
-
----
-
-## Flow 4: Morning Brief (Scheduled)
-
-```mermaid
-sequenceDiagram
-    participant Cron as Cron (8AM Asia/Jerusalem)
-    participant Engine as Orchestrator
-    participant PG as PostgreSQL
-
-    Cron->>Engine: BroadcastProactiveMessage(prompt)
-    Engine->>PG: GetUniqueUsers()
-    PG-->>Engine: [user IDs]
-
-    loop Each user
-        Engine->>PG: GetLastAuditSessionForUser(userID)
-        Note over Engine: Gets Source + ChatID<br/>from last interaction
-        Engine->>Engine: processMessage(syntheticMsg)<br/>2-min timeout goroutine
+        Engine->>Engine: Format (SafeChunkTelegramHTML / ToWhatsApp)
+        Engine->>Platform: Deliver response
+        Engine->>Redis: AppendChatHistory (strip raw PhotoData bytes → metadata tag)
+        Engine-->>RMQ: Async defer: Publish(AuditSession) → audit.events
     end
 ```
 
-- Multi-tenant: broadcasts to all known users
-- Platform-aware: sends on each user's last-used platform
-- Each user in a separate goroutine (2-min timeout)
+### Flow 2: Voice Note Transcription (`whisper-large-v3`)
+1. After passing the pre-auth check in `Engine.ProcessMessage`, voice notes (`VoiceFileID` on Telegram or `audio/*` `MediaURL` on WhatsApp) are downloaded in the Orchestrator.
+2. WhatsApp media downloads validate the URL against `internal/twilio`'s HTTPS `*.twilio.com` / `*.twiliocdn.com` domain allowlist (capped at 25MB) before attaching Twilio BasicAuth credentials.
+3. Audio bytes are sent to Groq Whisper (`whisper-large-v3`), a real-time `"🗣️ Transcribed: ..."` preview is sent to the user, and `msg.Text` proceeds through the standard conversational flow.
+
+### Flow 3: Hardened Google OAuth2 (`/connect`)
+1. User sends `/connect`.
+2. Orchestrator generates a 32-byte cryptographically random hex nonce (`internal/crypto`), stores `oauth_state:<nonce> -> userID` in Redis with a 10-minute TTL, and sends the Google OAuth2 authorization URL.
+3. On `GET /auth/google/callback`, Orchestrator atomically validates and consumes the nonce via Redis `GETDEL`, exchanges the authorization code for tokens, encrypts the token payload with HKDF-SHA256 salted AES-256-GCM, and dual-writes it to Redis (`token:<userID>`) and PostgreSQL (`encrypted_credentials`).
+
+### Flow 4: Unified Snapshot Rollback (`/undo` & GraphQL `rollbackMutation`)
+1. Every state-mutating tool or GraphQL mutation emits a `MutationEvent` containing `BeforeJSON` and `AfterJSON` snapshots, persisted synchronously into `mutation_logs`.
+2. When a user sends `/undo` in chat, invokes `undo_last_action`, or clicks **Rollback** in the Web Dashboard (`/audit`), `durability.Module.Rollback` verifies positive tenant ownership, checks the entity against the 19-table allowlist (`ResolveRollbackTable`), restores the snapshot inside an atomic GORM transaction, and marks `is_undone = true`.
 
 ---
 
-## Tool Catalog (20 Tools)
+## 4. Modular `ToolModule` Catalog (70 Tools / 13 Packages)
 
-#### Calendar (4)
-| Tool | Action |
-|---|---|
-| `create_calendar_event` | Create with title, start/end (ISO 8601), timezone, description, recurrence |
-| `list_calendar_events` | List in date range with query |
-| `update_calendar_event` | Partial update via Patch API |
-| `delete_calendar_event` | Delete by ID |
+Rather than a monolithic switch statement, all 70 tools are encapsulated in 13 `orchestrator.ToolModule` packages under [`internal/domains/`](../internal/domains):
 
-#### Email (8)
-| Tool | Action |
-|---|---|
-| `search_emails` | Gmail query syntax search |
-| `read_email` | Full body (recursive MIME decode) |
-| `draft_email_reply` | Draft with proper threading headers |
-| `archive_emails` | Remove INBOX label (batch) |
-| `soft_delete_emails` | Move to Trash (batch) |
-| `list_email_labels` | Name → ID map |
-| `apply_email_labels` | Apply label (batch) |
-| `create_email_label` | Create new label |
-
-#### Tasks (6)
-| Tool | Action |
-|---|---|
-| `list_task_lists` | List all task lists |
-| `create_task_list` | Create new list |
-| `list_tasks` | Pending tasks (default `@default`) |
-| `create_task` | Create with title, notes, due |
-| `complete_task` | Mark completed |
-| `delete_task` | Delete permanently |
-
-#### Web (2)
-| Tool | Action |
-|---|---|
-| `search_web` | Tavily — AI answer + top 3. Progress: "🔍 Searching..." |
-| `fetch_webpage` | Readability → Markdown, 20k limit. Progress: "📖 Reading..." |
-
-#### Memory (1)
-| Tool | Action |
-|---|---|
-| `remember_fact` | Embed via gemini-embedding-001 → pgvector |
-
-### Recursive Agent Loop
-
-```mermaid
-graph TD
-    A["LLM returns ToolCall"] --> B["handleToolCall()"]
-    B --> C["Execute service method"]
-    C --> D["feedbackToLLM()"]
-    D --> E["Append tool call + result to history"]
-    E --> F["Re-prompt Gemini with continuation"]
-    F --> G{"Response?"}
-    G -->|"ToolCall"| B
-    G -->|"Text"| H["Return final response"]
-```
-
-No hard iteration limit — recurses until LLM produces final text. Enables multi-step chains (e.g., search emails → read → create task → draft reply → summarize).
+| Package | Domain Group | Tool Count | Registered Tools |
+| :--- | :--- | :---: | :--- |
+| `registry` (built-in) | Tier 1 Core | 1 | `get_current_time` |
+| `workspace_calendar` | `DomainCalendar` | 4 | `create_calendar_event`, `list_calendar_events`, `update_calendar_event`, `delete_calendar_event` |
+| `workspace_gmail` | `DomainGmail` | 9 | `search_emails`, `read_email`, `draft_email_reply`, `archive_emails`, `soft_delete_emails`, `list_email_labels`, `apply_email_labels`, `create_email_label`, `unsubscribe_email` |
+| `workspace_tasks` | `DomainTasks` | 6 | `list_task_lists`, `create_task_list`, `list_tasks`, `create_task`, `complete_task`, `delete_task` |
+| `workspace_contacts` | `DomainContacts` | 2 | `search_contacts`, `create_contact` |
+| `web_research` | Tier 1 Core | 2 | `search_web`, `fetch_webpage` |
+| `durability` | Tier 1 Core / Audit | 3 | `undo_last_action`, `list_recent_changes`, `export_topic_data` |
+| `memory` | Tier 1 Core / Memory | 5 | `remember_fact`, `save_topic_memory`, `search_topic_memories`, `upsert_entity_profile`, `get_entity_profile` |
+| `shared` | `DomainShared` + Core | 5 | `schedule_reminder`, `configure_shared_topic`, `create_shared_reminder`, `complete_shared_reminder`, `list_shared_activity` |
+| `schedule` | `DomainCalendar` | 5 | `schedule_topic_event`, `list_topic_schedule`, `configure_topic_calendar`, `delete_topic_event`, `update_topic_event` |
+| `baby` | `DomainBaby` | 5 | `upsert_baby_profile`, `log_baby_care`, `query_baby_logs_and_trends`, `get_baby_milestone_suggestions`, `manage_baby_inventory` |
+| `house` | `DomainHouse` | 4 | `save_house_contract_or_receipt`, `list_house_contracts`, `manage_home_maintenance`, `manage_vehicle_asset` |
+| `finance` | `DomainFinance` | 4 | `log_financial_transaction`, `get_financial_summary`, `set_category_budget`, `manage_recurring_bills` |
+| `automation` | `DomainAutomation` & `DomainContacts` | 15 | `register_external_api`, `list_external_apis`, `call_external_api`, `create_automation_rule`, `list_automation_rules`, `delete_automation_rule`, `update_user_preferences`, `get_user_preferences`, `upsert_personal_crm`, `query_personal_crm`, `schedule_workflow`, `list_workflows`, `delete_workflow` *(plus 2 internal helpers)* |
 
 ---
 
-## Dual-Layer Persistence
+## 5. Dual-Layer Storage & Indexing Summary
 
-```mermaid
-graph TB
-    subgraph "Redis (Hot)"
-        R1["chat:{userID}\n20 msgs, 1h TTL"]
-        R2["token:{userID}\nOAuth, no TTL"]
-    end
-
-    subgraph "PostgreSQL + pgvector (Cold)"
-        P1["audit_sessions"]
-        P2["audit_events"]
-        P3["memories\n(3072-dim vectors)"]
-    end
-
-    ENGINE["Orchestrator"] -->|"Append/Get ChatHistory"| R1
-    ENGINE -->|"Set/Get OAuthToken"| R2
-    ENGINE -->|"Save/Search Memories"| P3
-
-    ENGINE -->|"Publish(AuditSession)"| RMQ["RabbitMQ\naudit.events"]
-    RMQ --> AW["Audit Worker"]
-    AW -->|"InsertAuditSession"| P1
-    AW -->|"Archive >30d → JSONL + DELETE"| P1
-```
-
-| Store | Data | Writer | Retention |
-|---|---|---|---|
-| **Redis** `chat:{userID}` | Last 20 turns | Orchestrator | 1 hour TTL |
-| **Redis** `token:{userID}` | Google OAuth tokens | Orchestrator (OAuth callback) | Permanent |
-| **PostgreSQL** `audit_sessions` | Session-level interaction logs | Audit Worker | **30 days** (archived to JSONL) |
-| **PostgreSQL** `audit_events` | Per-span action traces | Audit Worker | Follows sessions |
-| **PostgreSQL** `memories` | Semantic facts (3072-dim vectors) | Orchestrator (`remember_fact`) | Permanent |
-
----
-
-## Clean Architecture: Port Interfaces
-
-10 interfaces in [`ports.go`](file:///D:/MyPA/internal/orchestrator/ports.go):
-
-| Interface | Methods |
-|---|---|
-| `TelegramClient` | `SendMessage`, `GetFile`, `DownloadFile` |
-| `TwilioClient` | `SendMessage`, `DownloadMedia` |
-| `AudioClient` | `TranscribeAudio` |
-| `LLMClient` | `Chat`, `GenerateEmbedding` |
-| `CalendarClient` | `CreateEvent`, `ListEvents`, `UpdateEvent`, `DeleteEvent` |
-| `GmailClient` | `SearchEmails`, `ReadEmail`, `DraftReply`, `ArchiveEmail`, `SoftDeleteEmail`, `ListLabels`, `ApplyLabel`, `CreateLabel` |
-| `TasksClient` | `ListTaskLists`, `CreateTaskList`, `ListTasks`, `CreateTask`, `CompleteTask`, `DeleteTask` |
-| `DBClient` | `SaveMemory`, `SearchMemories`, `GetUniqueUsers`, `GetLastAuditSessionForUser` |
-| **`EventPublisher`** | **`Publish(ctx, v any)`** ← NEW |
-| `TavilyClient` | `Search` |
-
-Unit tested with GoMock-generated mocks.
-
----
-
-## Key Architecture Decisions
-
-| Decision | Detail |
-|---|---|
-| **Async message processing** | Gateway responds instantly, offloads to RabbitMQ. Orchestrator has 5-min timeout. |
-| **Gateway is dumb** | No AI, no downloads, no transcription. Only normalize and publish. |
-| **RabbitMQ with manual ACK** | Durable queues, prefetch=1, manual ACK/NACK/Reject. Poison pill rejection. |
-| **Decoupled audit pipeline** | Orchestrator → RabbitMQ `audit.events` → Audit Worker → PostgreSQL. Zero DB latency on request path. |
-| **Structured audit telemetry** | Session + Event model with UUIDs, timing, token counts, JSONB payloads. |
-| **30-day audit retention** | Daily archiver exports old sessions to JSONL, prunes from DB. |
-| **Dual AI providers** | Gemini 2.5 Flash (reasoning), Groq Whisper (transcription), Gemini Embedding (memory). |
-| **Semantic long-term memory** | pgvector 3072-dim cosine search on every message. `remember_fact` stores new facts. |
-| **Redis for session state** | Sliding 20-msg window, 1h TTL. OAuth tokens permanent. |
-| **Multi-tenant OAuth** | Per-user Google tokens in Redis. Calendar + Gmail + Tasks in one flow. Auto-refresh. |
-| **Dual inbound channels** | Telegram + WhatsApp normalized to `models.Message`. |
-| **Recursive tool loop** | No hard limit — recurses until LLM produces final text. |
-| **Unified Dockerfile** | Multi-target with BuildKit caching. Distroless runtime images. Granular COPY. |
-| **Generic broker** | `Publish(ctx, v any)` — reusable for any JSON-serializable payload type. |
-
----
-
-## Complete End-to-End Flow
-
-```
-[User sends message on Telegram or WhatsApp]
-        │
-        ▼
-[Platform API → Proxy (:8000) → Gateway (:8080)]
-        │
-        ▼
-[Gateway: Normalize → Publish(models.Message) → RabbitMQ "telegram.inbound"]
-        │
-        ▼
-[Orchestrator Engine: processMessage() — 5min timeout]
-        │
-        ├── [Create AuditSession UUID, start timer]
-        │
-        ├── [/connect?] → Return Google OAuth URL & exit
-        │
-        ├── [Voice?] → Download → Groq Whisper → preview → replace Text
-        │
-        ├── [Redis] → GetChatHistory (last 20)
-        ├── [Gemini] → GenerateEmbedding (3072 dims)
-        ├── [PostgreSQL] → SearchMemories (cosine ⇔, top 5)
-        │
-        ├── [Build system prompt] → datetime, timezone, tools, memories
-        │
-        ├── [Gemini LLM] → Chat @ temp 0.2, 20 tools
-        │       ├── [Text] → Format & send
-        │       └── [ToolCall] → Execute → feedbackToLLM → recurse
-        │
-        ├── [Format] → ToTelegramHTML() or ToWhatsApp()
-        ├── [Chunk ≤1500] → smart boundary splitting
-        ├── [Send] → Telegram/Twilio API
-        ├── [Redis] → AppendChatHistory (user + assistant)
-        │
-        └── [defer] → Record EndTime, compute duration
-                    → Publish(AuditSession) → RabbitMQ "audit.events"
-                                                    │
-                                                    ▼
-                                          [Audit Worker]
-                                          ├── InsertAuditSession → PostgreSQL
-                                          └── Daily: Archive >30d → JSONL + DELETE
-```
+| Store | Key / Table Group | Count | Highlights |
+| :--- | :--- | :---: | :--- |
+| **Redis 7** | `chat:*`, `token:*`, `ctx_prompt:*`, `oauth_state:*`, `pending_meta_tool:*`, `rate_limit:pairing:*` | 7 patterns | Stripped `PhotoData` history (<10KB/user), HKDF AES-256-GCM encrypted tokens, 10m dynamic prompt cache, 10m `GETDEL` OAuth nonces |
+| **PostgreSQL 15 + `pgvector`** | Core, Durability, Memory v2, Shared, Schedule, Baby, House, Finance, Automation | 29 tables | Pool tuned (`25 max open / 10 idle`), `halfvec(3072)` HNSW cosine indexes on `memories` & `topic_memories`, 6 composite multi-tenant B-Tree indexes |
+| **RabbitMQ 3.13** | `telegram.inbound`, `audit.events` + `.dlq` queues on `mypa.dlx` | 4 queues | Mutex-serialized `SafePublisher` with broker confirms, 3-attempt exponential backoff consumer retries, poison-pill isolation |

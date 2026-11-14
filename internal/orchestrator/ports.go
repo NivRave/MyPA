@@ -80,6 +80,8 @@ type DBClient interface {
 	SaveReminder(reminder models.ScheduledReminder) error
 	GetDueReminders() ([]models.ScheduledReminder, error)
 	MarkReminderSent(id uint) error
+	GetDueSharedReminders() ([]models.SharedTaskReminder, error)
+	MarkSharedReminderSent(id uint) error
 	GetUser(platformID string) (*models.User, error)
 	UpsertUser(u models.User) error
 	CreatePairingCode(pc models.PairingCode) error
@@ -99,4 +101,10 @@ type EventPublisher interface {
 // TavilyClient defines the interface for web search.
 type TavilyClient interface {
 	Search(ctx context.Context, query string) (string, error)
+}
+
+// RollbackEngine defines the interface for state rollback operations.
+type RollbackEngine interface {
+	Rollback(ctx context.Context, actorID, familyGroup, mutationID string, reason ...string) (*models.RollbackResult, error)
+	RollbackLast(ctx context.Context, actorID, familyGroup string, reason ...string) (*models.RollbackResult, error)
 }

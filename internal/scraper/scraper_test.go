@@ -9,9 +9,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/nivik/mypa/internal/netguard"
 )
 
 func TestFetchAndExtractText(t *testing.T) {
+	netguard.SetAllowLoopbackForTesting(true)
 	htmlContent := `
 		<html>
 			<head><title>Test Article Title</title></head>
@@ -88,4 +90,13 @@ func TestFetchAndExtractText_Truncation(t *testing.T) {
 	truncMsg := "\n\n... [Content Truncated due to length]"
 	assert.Equal(t, 20000+len(truncMsg), len(text))
 	assert.True(t, strings.HasSuffix(text, truncMsg))
+}
+
+func TestFetchAndExtractText_SSRFBlocked(t *testing.T) {
+	netguard.SetAllowLoopbackForTesting(false)
+	defer netguard.SetAllowLoopbackForTesting(true)
+
+	_, err := FetchAndExtractText(context.Background(), "http://169.254.169.254/latest/meta-data/")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SSRF blocked")
 }

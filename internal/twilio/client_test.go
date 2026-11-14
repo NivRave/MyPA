@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/nivik/mypa/internal/config"
@@ -43,6 +44,47 @@ func TestClient_SendMessage(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestClient_SendMessage_Chunking(t *testing.T) {
+	var receivedBodies []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := r.ParseForm()
+		require.NoError(t, err)
+		receivedBodies = append(receivedBodies, r.FormValue("Body"))
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer ts.Close()
+
+	cfg := config.TwilioConfig{
+		AccountSID: "test-sid",
+		AuthToken:  "test-token",
+		FromNumber: "whatsapp:+0987654321",
+	}
+	client := NewClient(cfg)
+	client.httpClient.Transport = &rewriteTransport{URL: ts.URL}
+
+	// Message with 3500 chars containing paragraphs
+	longMessage := strings.Repeat("Habit item description.\n\n", 150)
+	err := client.SendMessage(context.Background(), "+1234567890", longMessage)
+	require.NoError(t, err)
+	assert.Greater(t, len(receivedBodies), 1)
+	for _, body := range receivedBodies {
+		assert.LessOrEqual(t, len(body), 1500)
+	}
+}
+
+func TestSplitMessage(t *testing.T) {
+	short := "Short message"
+	assert.Equal(t, []string{short}, SplitMessage(short, 1500))
+
+	p1 := strings.Repeat("a", 1000)
+	p2 := strings.Repeat("b", 1000)
+	text := p1 + "\n\n" + p2
+	chunks := SplitMessage(text, 1500)
+	assert.Equal(t, 2, len(chunks))
+	assert.Equal(t, p1, chunks[0])
+	assert.Equal(t, p2, chunks[1])
+}
+
 func TestClient_DownloadMedia(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/media/123", r.URL.Path)
@@ -66,9 +108,33 @@ func TestClient_DownloadMedia(t *testing.T) {
 	client.httpClient.Transport = &rewriteTransport{URL: ts.URL}
 
 	// We pass the path as URL and the rewriteTransport changes scheme/host
-	content, err := client.DownloadMedia(context.Background(), "http://api.twilio.com/media/123")
+	content, err := client.DownloadMedia(context.Background(), "https://api.twilio.com/media/123")
 	require.NoError(t, err)
 	assert.Equal(t, []byte("media content"), content)
+}
+
+func TestClient_DownloadMedia_InsecureScheme(t *testing.T) {
+	cfg := config.TwilioConfig{
+		AccountSID: "test-sid",
+		AuthToken:  "test-token",
+	}
+	client := NewClient(cfg)
+
+	_, err := client.DownloadMedia(context.Background(), "http://api.twilio.com/media/123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTPS is strictly required")
+}
+
+func TestClient_DownloadMedia_UntrustedHost(t *testing.T) {
+	cfg := config.TwilioConfig{
+		AccountSID: "test-sid",
+		AuthToken:  "test-token",
+	}
+	client := NewClient(cfg)
+
+	_, err := client.DownloadMedia(context.Background(), "https://evil-attacker.com/media/123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "untrusted media URL hostname")
 }
 
 type rewriteTransport struct {

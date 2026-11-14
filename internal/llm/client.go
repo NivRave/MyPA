@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"sync"
+	"time"
 
 	"github.com/nivik/mypa/internal/models"
 	"google.golang.org/genai"
@@ -13,6 +16,8 @@ import (
 type Client struct {
 	genaiClient *genai.Client
 	model       string
+	extraTools  []*genai.FunctionDeclaration
+	toolsMu     sync.RWMutex
 }
 
 // NewClient initializes a new Gemini client.
@@ -31,6 +36,13 @@ func NewClient(ctx context.Context, apiKey, model string, opts ...func(*genai.Cl
 		opt(cfg)
 	}
 
+	// Enforce explicit client timeout if not provided via functional options
+	if cfg.HTTPClient == nil {
+		cfg.HTTPClient = &http.Client{
+			Timeout: 90 * time.Second,
+		}
+	}
+
 	client, err := genai.NewClient(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gemini client: %w", err)
@@ -40,6 +52,64 @@ func NewClient(ctx context.Context, apiKey, model string, opts ...func(*genai.Cl
 		genaiClient: client,
 		model:       model,
 	}, nil
+}
+
+// SetExtraTools sets additional function declarations available to the LLM during Chat.
+func (c *Client) SetExtraTools(tools []*genai.FunctionDeclaration) {
+	c.toolsMu.Lock()
+	defer c.toolsMu.Unlock()
+	c.extraTools = make([]*genai.FunctionDeclaration, len(tools))
+	copy(c.extraTools, tools)
+}
+
+// AddFunctionDeclarations appends additional function declarations to the client's toolset.
+func (c *Client) AddFunctionDeclarations(tools ...*genai.FunctionDeclaration) {
+	c.toolsMu.Lock()
+	defer c.toolsMu.Unlock()
+	c.extraTools = append(c.extraTools, tools...)
+}
+
+type activeToolsKey struct{}
+type noToolsContextKey struct{}
+
+// WithActiveTools stores the turn-scoped tool declarations in context.
+func WithActiveTools(ctx context.Context, tools []*genai.FunctionDeclaration) context.Context {
+	return context.WithValue(ctx, activeToolsKey{}, tools)
+}
+
+// ActiveToolsFromContext retrieves the turn-scoped tool declarations from context.
+func ActiveToolsFromContext(ctx context.Context) ([]*genai.FunctionDeclaration, bool) {
+	val := ctx.Value(activeToolsKey{})
+	if val == nil {
+		return nil, false
+	}
+	tools, ok := val.([]*genai.FunctionDeclaration)
+	return tools, ok
+}
+
+// WithNoTools returns a context instructing the LLM client to omit tool schemas.
+func WithNoTools(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noToolsContextKey{}, true)
+}
+
+// IsNoTools checks whether the context specifies that no tools should be passed.
+func IsNoTools(ctx context.Context) bool {
+	v, _ := ctx.Value(noToolsContextKey{}).(bool)
+	return v
+}
+
+func isNoTools(ctx context.Context) bool {
+	return IsNoTools(ctx)
+}
+
+
+// ContentBlockedError indicates that Gemini blocked the prompt or output due to a safety or content policy filter.
+type ContentBlockedError struct {
+	BlockReason string
+}
+
+func (e *ContentBlockedError) Error() string {
+	return fmt.Sprintf("gemini blocked prompt: %s", e.BlockReason)
 }
 
 // Response represents the output from the LLM, which could be either a text reply or a tool call.
@@ -104,12 +174,43 @@ func (c *Client) Chat(ctx context.Context, systemInstruction string, history []m
 		Parts: newParts,
 	})
 
-	// Configure the model
+	// Configure tools: check WithNoTools and WithActiveTools first, fallback to extraTools/CalendarEventTool
+	var tools []*genai.Tool
+	if isNoTools(ctx) {
+		tools = nil
+	} else if scopedTools, ok := ActiveToolsFromContext(ctx); ok && len(scopedTools) > 0 {
+		tools = []*genai.Tool{{FunctionDeclarations: scopedTools}}
+	} else {
+		c.toolsMu.RLock()
+		if CalendarEventTool != nil {
+			if len(c.extraTools) > 0 {
+				seenNames := make(map[string]bool)
+				combinedDecls := make([]*genai.FunctionDeclaration, 0, len(CalendarEventTool.FunctionDeclarations)+len(c.extraTools))
+				for _, d := range c.extraTools {
+					if d != nil && d.Name != "" && !seenNames[d.Name] {
+						seenNames[d.Name] = true
+						combinedDecls = append(combinedDecls, d)
+					}
+				}
+				for _, d := range CalendarEventTool.FunctionDeclarations {
+					if d != nil && d.Name != "" && !seenNames[d.Name] {
+						seenNames[d.Name] = true
+						combinedDecls = append(combinedDecls, d)
+					}
+				}
+				tools = []*genai.Tool{{FunctionDeclarations: combinedDecls}}
+			} else {
+				tools = []*genai.Tool{CalendarEventTool}
+			}
+		}
+		c.toolsMu.RUnlock()
+	}
+
 	config := &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{
 			Parts: []*genai.Part{genai.NewPartFromText(systemInstruction)},
 		},
-		Tools:       []*genai.Tool{CalendarEventTool},
+		Tools:       tools,
 		Temperature: genai.Ptr[float32](0.2), // Low temp for more deterministic tool calling
 	}
 
@@ -119,8 +220,22 @@ func (c *Client) Chat(ctx context.Context, systemInstruction string, history []m
 		return nil, fmt.Errorf("failed to generate content: %w", err)
 	}
 
+	if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "" {
+		return nil, &ContentBlockedError{BlockReason: string(resp.PromptFeedback.BlockReason)}
+	}
+
 	if len(resp.Candidates) == 0 {
 		return nil, fmt.Errorf("no candidates returned from model")
+	}
+
+	if resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
+		if resp.Candidates[0].FinishReason != "" && resp.Candidates[0].FinishReason != "STOP" {
+			if resp.Candidates[0].FinishReason == "SAFETY" || resp.Candidates[0].FinishReason == "BLOCKLIST" || resp.Candidates[0].FinishReason == "PROHIBITED_CONTENT" {
+				return nil, &ContentBlockedError{BlockReason: string(resp.Candidates[0].FinishReason)}
+			}
+			return nil, fmt.Errorf("model candidate finished with reason: %v", resp.Candidates[0].FinishReason)
+		}
+		return nil, fmt.Errorf("no content returned in model candidate")
 	}
 
 	var toolCalls []*genai.FunctionCall

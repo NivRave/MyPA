@@ -1,15 +1,36 @@
-import { Pool } from "pg";
+import { graphqlFetch, type AuditSession } from "@/lib/graphql";
 
 export const dynamic = "force-dynamic";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable",
-});
+const GET_AUDIT_SESSIONS = `
+  query GetAuditSessions($limit: Int) {
+    auditSessions(limit: $limit) {
+      id
+      userId
+      source
+      userPrompt
+      status
+      totalDurationMs
+      startTime
+    }
+  }
+`;
+
+async function getAuditSessions(): Promise<AuditSession[]> {
+  try {
+    const data = await graphqlFetch<{ auditSessions: AuditSession[] }>(
+      GET_AUDIT_SESSIONS,
+      { limit: 50 }
+    );
+    return data.auditSessions || [];
+  } catch (err) {
+    console.error("Failed to fetch audit sessions:", err);
+    return [];
+  }
+}
 
 export default async function LogsPage() {
-  const { rows: sessions } = await pool.query(
-    "SELECT * FROM audit_sessions ORDER BY start_time DESC LIMIT 50"
-  );
+  const sessions = await getAuditSessions();
 
   return (
     <div className="flex-1 p-8 overflow-y-auto">
@@ -29,19 +50,19 @@ export default async function LogsPage() {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-neutral-200">
-            {sessions.map((session) => (
+            {sessions.map((session: AuditSession) => (
               <tr key={session.id} className="hover:bg-neutral-50">
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-900">
-                  {new Date(session.start_time).toLocaleString()}
+                  {new Date(session.startTime).toLocaleString()}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
-                  <span className="font-medium">{session.user_id}</span>
+                  <span className="font-medium">{session.userId}</span>
                   <br />
                   <span className="text-xs">{session.source}</span>
                 </td>
                 <td className="px-6 py-4 text-sm text-neutral-900">
-                  <div className="max-w-md truncate" title={session.user_prompt}>
-                    {session.user_prompt || "—"}
+                  <div className="max-w-md truncate" title={session.userPrompt}>
+                    {session.userPrompt || "—"}
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
@@ -52,7 +73,7 @@ export default async function LogsPage() {
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
-                  {session.total_duration_ms} ms
+                  {session.totalDurationMs} ms
                 </td>
               </tr>
             ))}

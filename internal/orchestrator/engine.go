@@ -2,10 +2,15 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -14,13 +19,14 @@ import (
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/markdown"
 	"github.com/nivik/mypa/internal/models"
-	"github.com/nivik/mypa/internal/scraper"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/pgvector/pgvector-go"
 	"golang.org/x/oauth2"
+	"golang.org/x/sync/errgroup"
 
 	"google.golang.org/genai"
 )
@@ -44,12 +50,119 @@ type Engine struct {
 	publisher       EventPublisher
 	wg              sync.WaitGroup
 	onWorkflowsChanged func()
+	toolRegistry    *Registry
+	eventBus        *events.EventBus
+	intentMatcher   IntentMatcher
+}
+
+var hebrewPrepositionRegex = regexp.MustCompile(`(^|[^\p{Hebrew}\w])([בלמכ])(\d+)`)
+
+// NormalizeHebrewPrepositionNumbers inserts a hyphen between Hebrew preposition letters and attached numbers (e.g., "ב18" -> "ב-18").
+// This prevents automated false-positive safety/content filter blocks in LLM tokenizers.
+func NormalizeHebrewPrepositionNumbers(text string) string {
+	return hebrewPrepositionRegex.ReplaceAllString(text, "${1}${2}-${3}")
 }
 
 // SetWorkflowsChangedCallback sets a callback to be invoked when workflows change.
 func (e *Engine) SetWorkflowsChangedCallback(cb func()) {
 	e.onWorkflowsChanged = cb
 }
+
+// SetToolRegistry sets the modular tool registry and synchronizes declarations with the LLM client.
+func (e *Engine) SetToolRegistry(reg *Registry) {
+	e.toolRegistry = reg
+	if reg != nil && e.llm != nil {
+		if toolSetter, ok := e.llm.(interface{ SetExtraTools([]*genai.FunctionDeclaration) }); ok {
+			toolSetter.SetExtraTools(reg.AllDeclarations())
+		}
+	}
+	if reg != nil && e.store != nil && e.eventBus != nil {
+		RegisterPromptInvalidator(e.eventBus, e.store)
+		reg.WithPromptCache(e.store)
+	}
+}
+
+// WithToolRegistry configures the tool registry in a builder pattern.
+func (e *Engine) WithToolRegistry(reg *Registry) *Engine {
+	e.SetToolRegistry(reg)
+	return e
+}
+
+// SetEventBus sets the internal event bus.
+func (e *Engine) SetEventBus(bus *events.EventBus) {
+	e.eventBus = bus
+	if e.toolRegistry != nil && e.store != nil && bus != nil {
+		RegisterPromptInvalidator(bus, e.store)
+		e.toolRegistry.WithPromptCache(e.store)
+	}
+}
+
+// WithEventBus configures the event bus in a builder pattern.
+func (e *Engine) WithEventBus(bus *events.EventBus) *Engine {
+	e.SetEventBus(bus)
+	return e
+}
+
+// WithIntentMatcher sets a custom IntentMatcher on the engine.
+func (e *Engine) WithIntentMatcher(im IntentMatcher) *Engine {
+	e.intentMatcher = im
+	return e
+}
+
+// formatAttachmentMarker formats a concise human-readable metadata marker for stripped attachments.
+func formatAttachmentMarker(mimeType string, dataLen int) string {
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	sizeKB := float64(dataLen) / 1024.0
+	if sizeKB >= 1024.0 {
+		return fmt.Sprintf("[Attachment: %s (%.1f MB)]", mimeType, sizeKB/1024.0)
+	}
+	return fmt.Sprintf("[Attachment: %s (%.1f KB)]", mimeType, sizeKB)
+}
+
+// buildCallContext constructs a CallContext for the given user and incoming message.
+func (e *Engine) buildCallContext(ctx context.Context, user *models.User, msg models.Message) CallContext {
+	sendNotif := func(nCtx context.Context, targetUserID, text string) error {
+		if targetUserID == msg.UserID {
+			return e.sendMessage(nCtx, msg, text)
+		}
+		if e.db != nil {
+			log, err := e.db.GetLastAuditSessionForUser(targetUserID)
+			if err == nil && log != nil && log.Source != "" {
+				targetMsg := models.Message{
+					ID:     fmt.Sprintf("notif-%d", time.Now().UnixNano()),
+					ChatID: log.ChatID,
+					UserID: targetUserID,
+					Text:   text,
+					Source: log.Source,
+				}
+				return e.sendMessage(nCtx, targetMsg, text)
+			}
+		}
+		return fmt.Errorf("no active channel found for user: %s", targetUserID)
+	}
+
+	callCtx := CallContext{
+		User:             user,
+		Message:          msg,
+		DB:               e.db,
+		LLM:              e.llm,
+		EventBus:         e.eventBus,
+		SendNotification: sendNotif,
+		Extra:            make(map[string]interface{}),
+	}
+	if e.onWorkflowsChanged != nil {
+		callCtx.Extra["workflows_changed"] = e.onWorkflowsChanged
+	}
+	if secState := GetTurnSecurityState(ctx); secState != nil {
+		isUntrusted, sources := secState.IsUntrusted()
+		callCtx.HasUntrustedContent = isUntrusted
+		callCtx.UntrustedSources = sources
+	}
+	return callCtx
+}
+
 
 // NewEngine initializes the orchestrator engine.
 func NewEngine(
@@ -83,6 +196,7 @@ func NewEngine(
 		audioClient:     audio,
 		publisher:       pub,
 		timezone:        tz,
+		intentMatcher:   NewKeywordIntentMatcher(),
 	}
 
 	e.calendarFactory = func(ctx context.Context, userID string) (CalendarClient, error) {
@@ -118,9 +232,8 @@ func (e *Engine) Start(ctx context.Context) error {
 			// Try to notify the user of the error
 			_ = e.sendMessage(msgCtx, msg, "⚠️ Sorry, I encountered an internal error while processing your request.")
 			
-			// We return nil here so the broker ACKs the message. 
-			// We don't want poison pills to crash the consumer loop indefinitely.
-			return nil 
+			// Return err so the broker consumer retries with backoff and routes to DLQ upon reaching max attempts
+			return err 
 		}
 		
 		return nil
@@ -134,53 +247,69 @@ func (e *Engine) Wait() {
 
 // sendMessage sends a text message to the user, breaking it into smaller chunks if necessary to avoid platform limits.
 func (e *Engine) sendMessage(ctx context.Context, msg models.Message, text string) error {
-	// Format text for the specific platform
 	if msg.Source == "whatsapp" {
-		text = markdown.ToWhatsApp(text)
-	} else if msg.Source == "telegram" {
-		text = markdown.ToTelegramHTML(text)
+		return e.twClient.SendMessage(ctx, msg.UserID, text)
 	}
 
-	// Chunk message to avoid hitting Twilio's 1600 character limit or Telegram limits.
-	const chunkSize = 1500
-	var err error
-
-	for len(text) > 0 {
-		var chunk string
-		if len(text) > chunkSize {
-			// Find a good breaking point
-			breakIndex := chunkSize
-			
-			// Look for natural breaks within the last few hundred characters of the chunk
-			searchSpace := text[:chunkSize]
-			if idx := strings.LastIndex(searchSpace, "\n\n"); idx > chunkSize-500 {
-				breakIndex = idx
-			} else if idx := strings.LastIndex(searchSpace, "\n"); idx > chunkSize-300 {
-				breakIndex = idx
-			} else if idx := strings.LastIndex(searchSpace, ". "); idx > chunkSize-200 {
-				breakIndex = idx + 1 // include the dot
-			} else if idx := strings.LastIndex(searchSpace, " "); idx > chunkSize-100 {
-				breakIndex = idx
-			}
-
-			chunk = strings.TrimSpace(text[:breakIndex])
-			text = strings.TrimSpace(text[breakIndex:])
-		} else {
-			chunk = text
-			text = ""
-		}
-
-		if msg.Source == "whatsapp" {
-			err = e.twClient.SendMessage(ctx, msg.UserID, chunk)
-		} else {
-			err = e.tgClient.SendMessage(ctx, msg.ChatID, chunk)
-		}
-
-		if err != nil {
+	formatted := text
+	if msg.Source == "telegram" && !markdown.IsTelegramHTML(text) {
+		formatted = markdown.ToTelegramHTML(text)
+	}
+	chunks := markdown.SafeChunkTelegramHTML(formatted, 4000)
+	for _, chunk := range chunks {
+		if err := e.tgClient.SendMessage(ctx, msg.ChatID, chunk); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg models.Message) error {
+	// Check if user is currently locked out
+	if e.store != nil {
+		if locked, remaining, lockErr := e.store.CheckPairingLockout(ctx, msg.UserID); lockErr == nil && locked {
+			mins := int(remaining.Minutes()) + 1
+			return e.sendMessage(ctx, msg, fmt.Sprintf("🚫 Too many failed pairing attempts. You are temporarily locked out. Please try again in %d minutes.", mins))
+		}
+	}
+
+	// Extract potential pairing code from message text
+	code := strings.TrimSpace(msg.Text)
+	code = strings.TrimPrefix(code, "/start ")
+	code = strings.TrimSpace(code)
+
+	var pc *models.PairingCode
+	if len(code) == 6 {
+		pc, _ = e.db.GetPairingCode(code)
+	}
+
+	if pc != nil {
+		newUser := models.User{
+			PlatformID:  msg.UserID,
+			Name:        "Unknown",
+			Role:        pc.Role,
+			FamilyGroup: pc.FamilyGroup,
+			CreatedAt:   time.Now(),
+		}
+		if err := e.db.RedeemPairingCode(pc.ID, newUser); err == nil {
+			if e.store != nil {
+				_ = e.store.ResetPairingRateLimit(ctx, msg.UserID)
+			}
+			return e.sendMessage(ctx, msg, "✅ Pairing successful! Welcome to MyPA. You can now use all features.")
+		}
+	}
+
+	// Record failed pairing attempt
+	if e.store != nil {
+		attempts, lockedOut, _ := e.store.RecordFailedPairingAttempt(ctx, msg.UserID)
+		if lockedOut {
+			return e.sendMessage(ctx, msg, "🚫 Too many failed attempts (5/5). Your account has been locked for 1 hour.")
+		}
+		remainingAttempts := 5 - attempts
+		return e.sendMessage(ctx, msg, fmt.Sprintf("🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue. (%d attempts remaining before 1-hour lockout)", remainingAttempts))
+	}
+
+	return e.sendMessage(ctx, msg, "🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue.")
 }
 
 // ProcessMessage is the main entry point for handling an incoming user message.
@@ -215,9 +344,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 				Status:          status,
 			}
 			
-			pubErr := e.publisher.Publish(context.Background(), session)
-			if pubErr != nil {
-				slog.Error("failed to publish telemetry session", "error", pubErr)
+			if e.publisher != nil {
+				pubErr := e.publisher.Publish(context.Background(), session)
+				if pubErr != nil {
+					slog.Error("failed to publish telemetry session", "error", pubErr)
+				}
 			}
 		}(msg.Text, func() string {
 			if err != nil {
@@ -227,6 +358,48 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		}())
 	}()
 
+	secState := &TurnSecurityState{}
+	ctx = WithTurnSecurityState(ctx, secState)
+
+	// 1. Pre-Auth Check: Verify user exists and is authenticated
+	user, err := e.db.GetUser(msg.UserID)
+	if err != nil || user == nil {
+		return e.handleUnauthenticatedUser(ctx, msg)
+	}
+
+	// Interactive confirmation gate redemption for staged privileged actions
+	trimmedText := strings.TrimSpace(msg.Text)
+	if strings.HasPrefix(strings.ToUpper(trimmedText), "CONFIRM") {
+		parts := strings.Fields(trimmedText)
+		expectedTool := ""
+		if len(parts) >= 2 {
+			expectedTool = strings.ToLower(parts[1])
+		}
+		if e.store != nil {
+			pending, err := e.store.GetAndClearPendingMetaTool(ctx, msg.UserID)
+			if err != nil {
+				slog.Error("failed to retrieve pending meta tool action", "error", err)
+				return e.sendMessage(ctx, msg, "❌ Error retrieving pending confirmation. Please try again.")
+			}
+			if pending == nil {
+				return e.sendMessage(ctx, msg, "⚠️ No pending confirmation found or it has expired.")
+			}
+			if expectedTool != "" && strings.ToLower(pending.ToolName) != expectedTool {
+				_ = e.store.StagePendingMetaTool(ctx, msg.UserID, *pending, 5*time.Minute)
+				return e.sendMessage(ctx, msg, fmt.Sprintf("⚠️ Confirmation mismatch. Pending action is '%s', but you confirmed '%s'.", pending.ToolName, expectedTool))
+			}
+
+			slog.Info("executing confirmed meta tool action", "user_id", msg.UserID, "tool", pending.ToolName)
+			call := &genai.FunctionCall{
+				Name: pending.ToolName,
+				Args: pending.Args,
+			}
+			resultStr := e.executeSingleTool(ctx, msg, nil, "", call)
+			llmResponse = fmt.Sprintf("✅ **Confirmed and Executed:** `%s`\n\n%s", pending.ToolName, resultStr)
+			return e.sendMessage(ctx, msg, llmResponse)
+		}
+	}
+
 	// Check for commands
 	if msg.Text == "/help" {
 		var sb strings.Builder
@@ -235,6 +408,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		sb.WriteString("• `/connect` - Connect Google Account (Calendar, Tasks, Gmail, Contacts)\n")
 		sb.WriteString("• `/backup` - Create a manual database backup\n")
 		sb.WriteString("• `/restore` - Restore the database from the latest backup\n")
+		sb.WriteString("• `/undo` - Revert your most recent action or specify mutation ID\n")
 		sb.WriteString("• `/help` - Show this help message\n\n")
 		sb.WriteString("*AI Capabilities:*\n")
 		sb.WriteString("I am an AI assistant. You can speak to me naturally. Here are my underlying capabilities:\n\n")
@@ -264,13 +438,34 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		return e.sendMessage(ctx, msg, llmResponse)
 	}
 
+	if msg.Text == "/undo" || strings.HasPrefix(msg.Text, "/undo ") {
+		mutID := strings.TrimSpace(strings.TrimPrefix(msg.Text, "/undo"))
+		return e.handleUndo(ctx, user, msg, mutID)
+	}
+
 	if msg.Text == "/connect" {
-		url := e.oauthCfg.AuthCodeURL(msg.UserID)
+		nonce := ""
+		if e.store != nil {
+			nonceBytes := make([]byte, 32)
+			if _, err := io.ReadFull(rand.Reader, nonceBytes); err == nil {
+				nonce = hex.EncodeToString(nonceBytes)
+				_ = e.store.SaveOAuthState(ctx, nonce, msg.UserID, 10*time.Minute)
+			}
+		}
+		stateParam := nonce
+		if stateParam == "" {
+			stateParam = msg.UserID
+		}
+		url := e.oauthCfg.AuthCodeURL(stateParam)
 		llmResponse = fmt.Sprintf("🔗 [Click here to connect your Google Calendar](%s)", url)
 		return e.sendMessage(ctx, msg, llmResponse)
 	}
 
 	if msg.Text == "/backup" {
+		if user.Role != "admin" {
+			slog.Warn("unauthorized backup command attempt", "user_id", user.PlatformID, "role", user.Role)
+			return e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")
+		}
 		_ = e.sendMessage(ctx, msg, "🔄 Starting database backup...")
 		databaseURL := os.Getenv("DATABASE_URL")
 		if databaseURL == "" {
@@ -285,6 +480,10 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	}
 
 	if msg.Text == "/restore" {
+		if user.Role != "admin" {
+			slog.Warn("unauthorized restore command attempt", "user_id", user.PlatformID, "role", user.Role)
+			return e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")
+		}
 		_ = e.sendMessage(ctx, msg, "🔄 Starting database restore from latest backup...")
 		databaseURL := os.Getenv("DATABASE_URL")
 		if databaseURL == "" {
@@ -346,6 +545,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	} else if msg.Source == "whatsapp" && msg.MediaURL != "" {
 		mediaType := strings.ToLower(msg.MediaContentType)
 		slog.Info("WhatsApp media received", "media_url", msg.MediaURL, "content_type", mediaType)
+
+		isTextDoc := strings.HasPrefix(mediaType, "text/") ||
+			mediaType == "application/json" ||
+			mediaType == "application/xml" ||
+			mediaType == "application/csv" ||
+			mediaType == "application/x-yaml" ||
+			mediaType == "text/yaml"
+
 		if strings.HasPrefix(mediaType, "image/") {
 			photoData, err = e.twClient.DownloadMedia(ctx, msg.MediaURL)
 			if err != nil {
@@ -353,7 +560,30 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 				return fmt.Errorf("failed to download twilio photo: %w", err)
 			}
 			photoMimeType = msg.MediaContentType
-		} else {
+		} else if isTextDoc {
+			docData, err := e.twClient.DownloadMedia(ctx, msg.MediaURL)
+			if err != nil {
+				_ = e.sendMessage(ctx, msg, "❌ Failed to download WhatsApp document.")
+				return fmt.Errorf("failed to download twilio document: %w", err)
+			}
+			docText := WrapUntrustedContent("whatsapp_document", msg.MediaURL, string(docData))
+			secState.MarkUntrusted("whatsapp_document:" + msg.MediaURL)
+			if strings.TrimSpace(msg.Text) != "" {
+				msg.Text = fmt.Sprintf("%s\n\n[Attached Document Content]:\n%s", strings.TrimSpace(msg.Text), docText)
+			} else {
+				msg.Text = docText
+			}
+		} else if mediaType == "application/pdf" {
+			photoData, err = e.twClient.DownloadMedia(ctx, msg.MediaURL)
+			if err != nil {
+				_ = e.sendMessage(ctx, msg, "❌ Failed to download WhatsApp PDF.")
+				return fmt.Errorf("failed to download twilio pdf: %w", err)
+			}
+			photoMimeType = "application/pdf"
+			if strings.TrimSpace(msg.Text) == "" {
+				msg.Text = "Please process and analyze the attached document."
+			}
+		} else if strings.HasPrefix(mediaType, "audio/") || mediaType == "application/ogg" {
 			// Handle Twilio Voice Messages
 			audioData, err := e.twClient.DownloadMedia(ctx, msg.MediaURL)
 			if err != nil {
@@ -369,6 +599,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 
 			_ = e.sendMessage(ctx, msg, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
 			msg.Text = transcribedText
+		} else {
+			_ = e.sendMessage(ctx, msg, fmt.Sprintf("⚠️ Unsupported attachment format (%s). Please send a text file (.txt, .md, .csv), PDF, image, or voice note.", msg.MediaContentType))
+			return nil
 		}
 	}
 
@@ -376,29 +609,6 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	history, err := e.store.GetChatHistory(ctx, msg.UserID)
 	if err != nil {
 		return fmt.Errorf("failed to get chat history: %w", err)
-	}
-
-	// 2.5 Authorize User
-	user, err := e.db.GetUser(msg.UserID)
-	if err != nil {
-		// User not found. Check if msg.Text is a pairing code.
-		code := strings.TrimSpace(msg.Text)
-		pc, err := e.db.GetPairingCode(code)
-		if err == nil && pc != nil {
-			newUser := models.User{
-				PlatformID:  msg.UserID,
-				Name:        "Unknown", // Can be updated later
-				Role:        pc.Role,
-				FamilyGroup: pc.FamilyGroup,
-				CreatedAt:   time.Now(),
-			}
-			if err := e.db.RedeemPairingCode(pc.ID, newUser); err == nil {
-				llmResponse = "Pairing successful"
-				return e.sendMessage(ctx, msg, "✅ Pairing successful! Welcome to MyPA. You can now use all features.")
-			}
-		}
-		llmResponse = "Unauthorized access attempt"
-		return e.sendMessage(ctx, msg, "🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue.")
 	}
 
 	// 3. Build the system prompt
@@ -424,7 +634,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		"If the user sends an image of a flyer or invitation, extract the details and use create_calendar_event. "+
 		"If the user sends an image of a receipt, summarize the expense. "+
 		"If the user sends an image containing a personal fact (e.g. a business card), describe it and use the remember_fact tool to save it. "+
-		"IMPORTANT: If the user provides a list (e.g., in an image or text), you MUST process ALL items by executing multiple tool calls simultaneously. "+
+		"If the user shares a document, text file (.txt, .md, .csv), or PDF, analyze its contents and fulfill any requests, questions, or workflows requested by the user. "+
+		"IMPORTANT: If the user provides a list (e.g., in an image, document, or text), you MUST process ALL items by executing multiple tool calls simultaneously. "+
 		"IMPORTANT: If a tool returns JSON or raw data (like list_unread_emails or list_tasks), you MUST summarize and format it into a clean, friendly, conversational response (e.g. using bullet points). NEVER output raw JSON to the user. "+
 		"IMPORTANT: The user is in Israel. The week starts on Sunday and ends on Thursday (Friday and Saturday are the weekend). When reasoning about 'next week' or 'this week', start the week on Sunday.",
 		userCtx, user.Role, user.FamilyGroup, time.Now().Format(time.RFC1123), e.timezone,
@@ -462,9 +673,46 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		}
 	}
 
+	// Append dynamic system prompt instructions from registered tool modules
+	if e.toolRegistry != nil {
+		callCtx := e.buildCallContext(ctx, user, msg)
+		if extraPrompt := e.toolRegistry.CombinedSystemPrompt(ctx, callCtx); extraPrompt != "" {
+			systemPrompt += "\n\n" + extraPrompt
+		}
+	}
+
+	// Dynamic Two-Tier Tool Context Selection (SCALE-01)
+	if e.toolRegistry != nil {
+		var matchedDomains []DomainGroup
+		if e.intentMatcher != nil {
+			matchedDomains = e.intentMatcher.MatchDomains(msg.Text)
+		}
+		activeTools := e.toolRegistry.SelectDeclarations(matchedDomains, false)
+		ctx = llm.WithActiveTools(ctx, activeTools)
+	}
+
 	// 4. Call LLM
-	resp, err := e.llm.Chat(ctx, systemPrompt, history, msg.Text, photoData, photoMimeType)
+	promptText := msg.Text
+	resp, err := e.llm.Chat(ctx, systemPrompt, history, promptText, photoData, photoMimeType)
 	if err != nil {
+		var blockedErr *llm.ContentBlockedError
+		if errors.As(err, &blockedErr) {
+			normalized := NormalizeHebrewPrepositionNumbers(promptText)
+			if normalized != promptText {
+				slog.Info("retrying LLM chat with normalized prompt after content block", "original", promptText, "normalized", normalized, "reason", blockedErr.BlockReason)
+				resp, err = e.llm.Chat(ctx, systemPrompt, history, normalized, photoData, photoMimeType)
+			}
+		}
+	}
+	if err != nil {
+		var blockedErr *llm.ContentBlockedError
+		if errors.As(err, &blockedErr) {
+			slog.Warn("llm prompt blocked by safety filter", "user_id", msg.UserID, "reason", blockedErr.BlockReason)
+			replyText := "⚠️ The AI safety filter flagged this request (likely a false positive). Please try phrasing it slightly differently, for example by adding a hyphen (e.g. 'ב-18:00') or using full time/date words."
+			llmResponse = replyText
+			_ = e.sendMessage(ctx, msg, replyText)
+			return nil
+		}
 		return fmt.Errorf("llm chat failed: %w", err)
 	}
 
@@ -483,7 +731,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 			PhotoMimeType: photoMimeType,
 		})
 		
-		replyText, _ = e.handleToolCalls(ctx, msg, loopHistory, systemPrompt, resp.ToolCalls)
+		replyText, _ = e.handleToolCalls(ctx, msg, loopHistory, systemPrompt, resp.ToolCalls, 1)
 	} else {
 		// No tool call
 		replyText = resp.Text
@@ -499,59 +747,184 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		return fmt.Errorf("failed to send reply message: %w", err)
 	}
 
-	// 7. Update conversation history
+	// 7. Update conversation history (SCALE-02: strip PhotoData bytes)
+	persistedContent := msg.Text
+	if len(photoData) > 0 {
+		marker := formatAttachmentMarker(photoMimeType, len(photoData))
+		if strings.TrimSpace(persistedContent) == "" {
+			persistedContent = marker
+		} else {
+			persistedContent = fmt.Sprintf("%s\n%s", strings.TrimSpace(persistedContent), marker)
+		}
+	}
+
 	_ = e.store.AppendChatHistory(ctx, msg.UserID, models.ChatMessage{
-		Role: "user", 
-		Content: msg.Text,
-		PhotoData: photoData,
-		PhotoMimeType: photoMimeType,
+		Role:    "user",
+		Content: persistedContent,
 	})
 	_ = e.store.AppendChatHistory(ctx, msg.UserID, models.ChatMessage{Role: "assistant", Content: replyText})
 
 	return nil
 }
 
+// MaxToolRecursionDepth is the maximum number of recursive tool loops allowed per turn.
+const MaxToolRecursionDepth = 8
 
-func (e *Engine) handleToolCalls(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCalls []*genai.FunctionCall) (string, error) {
-	var funcCalls []models.FunctionCall
-	var funcResponses []models.FunctionResponse
+// MaxConcurrentTools is the maximum number of tool calls executed in parallel within a single turn.
+const MaxConcurrentTools = 8
 
-	for _, tc := range toolCalls {
-		resultStr := e.executeSingleTool(ctx, msg, history, systemPrompt, tc)
-		
-		funcCalls = append(funcCalls, models.FunctionCall{Name: tc.Name, Args: tc.Args})
-		funcResponses = append(funcResponses, models.FunctionResponse{
-			Name: tc.Name,
-			Response: map[string]interface{}{"result": resultStr},
+const maxToolIterations = MaxToolRecursionDepth
+
+// executeToolsConcurrently executes a batch of function calls in parallel using errgroup.
+// It guarantees deterministic indexing, context cancellation, panic recovery, and bounded concurrency.
+func (e *Engine) executeToolsConcurrently(
+	ctx context.Context,
+	msg models.Message,
+	history []models.ChatMessage,
+	systemPrompt string,
+	toolCalls []*genai.FunctionCall,
+) ([]models.FunctionCall, []models.FunctionResponse) {
+	n := len(toolCalls)
+	if n == 0 {
+		return nil, nil
+	}
+
+	funcCalls := make([]models.FunctionCall, n)
+	funcResponses := make([]models.FunctionResponse, n)
+
+	for i, tc := range toolCalls {
+		funcCalls[i] = models.FunctionCall{Name: tc.Name, Args: tc.Args}
+	}
+
+	if n == 1 {
+		tc := toolCalls[0]
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic recovered during single tool execution",
+						"tool", tc.Name,
+						"panic", r,
+						"user_id", msg.UserID,
+					)
+					funcResponses[0] = models.FunctionResponse{
+						Name: tc.Name,
+						Response: map[string]interface{}{
+							"result": fmt.Sprintf("❌ Internal panic during tool execution: %v", r),
+						},
+					}
+				}
+			}()
+			resultStr := e.executeSingleTool(ctx, msg, history, systemPrompt, tc)
+			funcResponses[0] = models.FunctionResponse{
+				Name:     tc.Name,
+				Response: map[string]interface{}{"result": resultStr},
+			}
+		}()
+		return funcCalls, funcResponses
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(MaxConcurrentTools)
+
+	for i, tc := range toolCalls {
+		idx := i
+		call := tc
+		g.Go(func() error {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic recovered during concurrent tool execution",
+						"tool", call.Name,
+						"panic", r,
+						"user_id", msg.UserID,
+					)
+					funcResponses[idx] = models.FunctionResponse{
+						Name: call.Name,
+						Response: map[string]interface{}{
+							"result": fmt.Sprintf("❌ Internal panic during tool execution: %v", r),
+						},
+					}
+				}
+			}()
+
+			resultStr := e.executeSingleTool(gctx, msg, history, systemPrompt, call)
+			funcResponses[idx] = models.FunctionResponse{
+				Name:     call.Name,
+				Response: map[string]interface{}{"result": resultStr},
+			}
+			return nil
 		})
 	}
+	_ = g.Wait()
+
+	return funcCalls, funcResponses
+}
+
+func (e *Engine) handleToolCalls(
+	ctx context.Context,
+	msg models.Message,
+	history []models.ChatMessage,
+	systemPrompt string,
+	toolCalls []*genai.FunctionCall,
+	iteration int,
+) (string, error) {
+	if iteration <= 0 {
+		iteration = 1
+	}
+
+	funcCalls, funcResponses := e.executeToolsConcurrently(ctx, msg, history, systemPrompt, toolCalls)
 
 	// Add the actual assistant tool calls natively
 	extendedHistory := append(history, models.ChatMessage{
-		Role: "assistant",
+		Role:      "assistant",
 		ToolCalls: funcCalls,
 	})
-	
+
 	// Add the function responses natively
 	extendedHistory = append(extendedHistory, models.ChatMessage{
-		Role: "function",
+		Role:          "function",
 		ToolResponses: funcResponses,
 	})
 
-	// Prompt the LLM to continue
-	prompt := "Please continue fulfilling the user's request. What's next? If you are completely done, provide a friendly, nicely formatted final summary of all your actions directly to the user."
-	
-	summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, prompt, nil, "")
-	if err != nil {
-		return "❌ Failed to process: " + err.Error(), nil
-	}
-	
-	if len(summaryResp.ToolCalls) > 0 {
-		extendedHistory = append(extendedHistory, models.ChatMessage{Role: "user", Content: prompt})
-		return e.handleToolCalls(ctx, msg, extendedHistory, systemPrompt, summaryResp.ToolCalls)
+	// Check iteration limit (SCALE-03: bound to 8 iterations)
+	if iteration >= maxToolIterations {
+		slog.Warn("max tool recursion reached, requesting terminal summary without tools",
+			"user_id", msg.UserID, "iteration", iteration)
+
+		terminalPrompt := "Maximum tool execution limit reached (8 steps). Do NOT call any more tools. " +
+			"Please provide a friendly, clear, and comprehensive final summary of all actions completed so far directly to the user."
+
+		// Force no-tools call to guarantee conversational termination
+		summaryResp, err := e.llm.Chat(llm.WithNoTools(ctx), systemPrompt, extendedHistory, terminalPrompt, nil, "")
+		if err != nil {
+			return "✅ Actions were executed (maximum 8 steps reached).", nil
+		}
+		if summaryResp != nil && summaryResp.Text != "" {
+			return summaryResp.Text, nil
+		}
+		return "✅ All requested actions have been completed up to the maximum iteration limit.", nil
 	}
 
-	return summaryResp.Text, nil
+	// Normal continuation prompt
+	prompt := "Please continue fulfilling the user's request. What's next? If you are completely done, provide a friendly, nicely formatted final summary of all your actions directly to the user."
+
+	summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, prompt, nil, "")
+	if err != nil {
+		var blockedErr *llm.ContentBlockedError
+		if errors.As(err, &blockedErr) {
+			return "⚠️ Actions were executed, but the final response summary was flagged by the AI content filter.", nil
+		}
+		return "❌ Failed to process: " + err.Error(), nil
+	}
+
+	if summaryResp != nil && len(summaryResp.ToolCalls) > 0 {
+		extendedHistory = append(extendedHistory, models.ChatMessage{Role: "user", Content: prompt})
+		return e.handleToolCalls(ctx, msg, extendedHistory, systemPrompt, summaryResp.ToolCalls, iteration+1)
+	}
+
+	if summaryResp != nil {
+		return summaryResp.Text, nil
+	}
+	return "", nil
 }
 
 func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) (string, error) {
@@ -564,504 +937,88 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 			return res, nil
 		}
 	}
-	return e.handleToolCalls(ctx, msg, history, systemPrompt, []*genai.FunctionCall{toolCall})
+	return e.handleToolCalls(ctx, msg, history, systemPrompt, []*genai.FunctionCall{toolCall}, 1)
 }
 
 func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) string {
 	slog.Info("llm requested tool call", "tool", toolCall.Name)
+
+	isMetaTool := toolCall.Name == "update_user_preferences" ||
+		toolCall.Name == "create_automation_rule" ||
+		toolCall.Name == "schedule_workflow" ||
+		toolCall.Name == "register_external_api"
+
+	if isMetaTool {
+		secState := GetTurnSecurityState(ctx)
+		if secState != nil {
+			isUntrusted, sources := secState.IsUntrusted()
+			if isUntrusted {
+				if e.store != nil {
+					stageData := state.PendingMetaToolAction{
+						ToolName:  toolCall.Name,
+						Args:      toolCall.Args,
+						UserID:    msg.UserID,
+						CreatedAt: time.Now(),
+					}
+					_ = e.store.StagePendingMetaTool(ctx, msg.UserID, stageData, 5*time.Minute)
+				}
+
+				sourceDesc := "external untrusted content"
+				if len(sources) > 0 {
+					sourceDesc = strings.Join(sources, ", ")
+				}
+
+				return fmt.Sprintf(
+					"🔒 **Interactive Security Confirmation Required**\n\n"+
+						"The assistant received a command to perform a privileged system action (`%s`) while processing external data (%s).\n"+
+						"To prevent indirect prompt injection, this modification was NOT applied automatically.\n\n"+
+						"👉 If you intended to make this change, please reply with:\n`CONFIRM %s`",
+					toolCall.Name, sourceDesc, strings.ToUpper(toolCall.Name),
+				)
+			}
+		}
+	}
 	
-	if toolCall.Name == "create_calendar_event" {
-		argsJSON, _ := json.Marshal(toolCall.Args)
-		var event models.CalendarEvent
-		if err := json.Unmarshal(argsJSON, &event); err != nil {
-			return fmt.Sprintf("failed to parse tool arguments into event: %v", err)
+	// Delegate to modular ToolRegistry if registered
+	if e.toolRegistry != nil {
+		var user *models.User
+		if e.db != nil {
+			user, _ = e.db.GetUser(msg.UserID)
 		}
-
-		calClient, err := e.calendarFactory(ctx, msg.UserID)
-		if err != nil {
-			if err.Error() == "unauthorized" {
-				return "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again."
+		callCtx := e.buildCallContext(ctx, user, msg)
+		res, handled, err := e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)
+		if handled {
+			if err != nil {
+				slog.Error("registry tool execution failed", "tool", toolCall.Name, "error", err)
+				return fmt.Sprintf("❌ Error executing %s: %v", toolCall.Name, err)
 			}
-			return "⚠️ Your Google connection expired or is invalid. Please send /connect again."
-		}
-
-		link, err := calClient.CreateEvent(ctx, event)
-		if err != nil {
-			return "❌ Failed to create event: " + err.Error()
-		}
-		return fmt.Sprintf("Event Created Successfully! Link: %s", link)
-	} else if toolCall.Name == "update_calendar_event" {
-		argsJSON, _ := json.Marshal(toolCall.Args)
-		var event models.CalendarEvent
-		if err := json.Unmarshal(argsJSON, &event); err != nil {
-			return fmt.Sprintf("failed to parse tool arguments into event: %v", err)
-		}
-
-		calClient, err := e.calendarFactory(ctx, msg.UserID)
-		if err != nil {
-			if err.Error() == "unauthorized" {
-				return "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again."
-			}
-			return "⚠️ Your Google connection expired or is invalid. Please send /connect again."
-		}
-
-		err = calClient.UpdateEvent(ctx, event.ID, event)
-		if err != nil {
-			return "❌ Failed to update event: " + err.Error()
-		}
-		return "Event Updated Successfully!"
-	} else if toolCall.Name == "delete_calendar_event" {
-		argsJSON, _ := json.Marshal(toolCall.Args)
-		var event models.CalendarEvent
-		if err := json.Unmarshal(argsJSON, &event); err != nil {
-			return fmt.Sprintf("failed to parse tool arguments into event: %v", err)
-		}
-
-		calClient, err := e.calendarFactory(ctx, msg.UserID)
-		if err != nil {
-			if err.Error() == "unauthorized" {
-				return "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again."
-			}
-			return "⚠️ Your Google connection expired or is invalid. Please send /connect again."
-		}
-
-		err = calClient.DeleteEvent(ctx, event.ID)
-		if err != nil {
-			return "❌ Failed to delete event: " + err.Error()
-		}
-		return "Event Deleted Successfully!"
-	} else if toolCall.Name == "list_calendar_events" {
-		calClient, err := e.calendarFactory(ctx, msg.UserID)
-		if err != nil {
-			if err.Error() == "unauthorized" {
-				return "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again."
-			}
-			return "⚠️ Your Google connection expired or is invalid. Please send /connect again."
-		}
-
-		argsJSON, _ := json.Marshal(toolCall.Args)
-		var args struct {
-			TimeMin string `json:"time_min"`
-			TimeMax string `json:"time_max"`
-			Query   string `json:"query"`
-		}
-		_ = json.Unmarshal(argsJSON, &args)
-
-		events, err := calClient.ListEvents(ctx, args.TimeMin, args.TimeMax, args.Query)
-		if err != nil {
-			return "❌ Failed to fetch calendar events: " + err.Error()
-		}
-
-		eventsJSON, _ := json.Marshal(events)
-		return fmt.Sprintf("Here are the calendar events I found:\n%s", string(eventsJSON))
-	} else if toolCall.Name == "remember_fact" {
-		argsJSON, _ := json.Marshal(toolCall.Args)
-		var args struct {
-			Fact  string `json:"fact"`
-			Scope string `json:"scope"`
-		}
-		_ = json.Unmarshal(argsJSON, &args)
-
-		scope := "personal"
-		if args.Scope == "family" {
-			scope = "family"
-		}
-
-		embedding, err := e.llm.GenerateEmbedding(ctx, args.Fact)
-		if err != nil {
-			slog.Error("failed to generate embedding for fact", "error", err)
-			return "❌ Failed to save memory (embedding error)."
-		}
-
-		err = e.db.SaveMemory(models.Memory{
-			UserID:    msg.UserID,
-			Scope:     scope,
-			Fact:      args.Fact,
-			Embedding: pgvector.NewVector(embedding),
-			CreatedAt: time.Now(),
-		})
-		if err != nil {
-			slog.Error("failed to save memory to db", "error", err)
-			return "❌ Failed to save memory to database."
-		}
-		return fmt.Sprintf("Fact saved to %s memory successfully.", scope)
-	} else if toolCall.Name == "search_emails" {
-		query, _ := toolCall.Args["query"].(string)
-		maxResults := int64(5)
-		if val, ok := toolCall.Args["max_results"]; ok {
-			maxResults = int64(val.(float64))
-		}
-
-		slog.Info("executing search_emails tool", "user", msg.UserID, "query", query, "max_results", maxResults)
-		emails, err := e.gmailClient.SearchEmails(ctx, msg.UserID, query, maxResults)
-		if err != nil {
-			slog.Error("search_emails failed", "error", err)
-			return fmt.Sprintf("Error checking emails: %v", err)
-		}
-		if len(emails) == 0 {
-			return "You have no unread emails."
-		}
-		
-		emailsJSON, _ := json.Marshal(emails)
-		return fmt.Sprintf("Here are the emails I found:\n%s\nYou can use read_email, archive_emails, soft_delete_emails, draft_email_reply, or apply_email_labels on them.", string(emailsJSON))
-	} else if toolCall.Name == "read_email" {
-		messageID, ok := toolCall.Args["message_id"].(string)
-		if !ok {
-			return "Missing message_id parameter"
-		}
-
-		slog.Info("executing read_email tool", "user", msg.UserID, "message_id", messageID)
-		body, err := e.gmailClient.ReadEmail(ctx, msg.UserID, messageID)
-		if err != nil {
-			slog.Error("read_email failed", "error", err)
-			return fmt.Sprintf("Error reading email: %v", err)
-		}
-		
-		return fmt.Sprintf("Here is the email body for %s:\n%s\nYou can take action or summarize it.", messageID, body)
-	} else if toolCall.Name == "draft_email_reply" {
-		messageID, okID := toolCall.Args["message_id"].(string)
-		replyText, okText := toolCall.Args["reply_text"].(string)
-		
-		if !okID || !okText {
-			return "Missing message_id or reply_text parameters"
-		}
-
-		slog.Info("executing draft_email_reply tool", "user", msg.UserID, "message_id", messageID)
-		err := e.gmailClient.DraftReply(ctx, msg.UserID, messageID, replyText)
-		if err != nil {
-			slog.Error("draft_email_reply failed", "error", err)
-			return fmt.Sprintf("Error drafting reply: %v", err)
-		}
-		return "Draft created successfully! The user can review it in their Gmail app."
-	} else if toolCall.Name == "archive_emails" {
-		messageIDsRaw, ok := toolCall.Args["message_ids"].([]interface{})
-		if !ok {
-			return "Missing message_ids parameter"
-		}
-		var messageIDs []string
-		for _, v := range messageIDsRaw {
-			messageIDs = append(messageIDs, v.(string))
-		}
-		slog.Info("executing archive_emails tool", "user", msg.UserID, "count", len(messageIDs))
-		for _, messageID := range messageIDs {
-			if err := e.gmailClient.ArchiveEmail(ctx, msg.UserID, messageID); err != nil {
-				slog.Error("archive_emails failed", "error", err, "message_id", messageID)
-			}
-		}
-		return fmt.Sprintf("%d emails archived successfully.", len(messageIDs))
-	} else if toolCall.Name == "soft_delete_emails" {
-		messageIDsRaw, ok := toolCall.Args["message_ids"].([]interface{})
-		if !ok {
-			return "Missing message_ids parameter"
-		}
-		var messageIDs []string
-		for _, v := range messageIDsRaw {
-			messageIDs = append(messageIDs, v.(string))
-		}
-		slog.Info("executing soft_delete_emails tool", "user", msg.UserID, "count", len(messageIDs))
-		for _, messageID := range messageIDs {
-			if err := e.gmailClient.SoftDeleteEmail(ctx, msg.UserID, messageID); err != nil {
-				slog.Error("soft_delete_emails failed", "error", err, "message_id", messageID)
-			}
-		}
-		return fmt.Sprintf("%d emails moved to trash successfully.", len(messageIDs))
-	} else if toolCall.Name == "list_email_labels" {
-		slog.Info("executing list_email_labels tool", "user", msg.UserID)
-		labels, err := e.gmailClient.ListLabels(ctx, msg.UserID)
-		if err != nil {
-			slog.Error("list_email_labels failed", "error", err)
-			return fmt.Sprintf("Error listing labels: %v", err)
-		}
-		labelsJSON, _ := json.Marshal(labels)
-		return fmt.Sprintf("Here are the available labels (name -> ID):\n%s", string(labelsJSON))
-	} else if toolCall.Name == "apply_email_labels" {
-		messageIDsRaw, okID := toolCall.Args["message_ids"].([]interface{})
-		labelID, okLabel := toolCall.Args["label_id"].(string)
-		if !okID || !okLabel {
-			return "Missing message_ids or label_id parameter"
-		}
-		var messageIDs []string
-		for _, v := range messageIDsRaw {
-			messageIDs = append(messageIDs, v.(string))
-		}
-		slog.Info("executing apply_email_labels tool", "user", msg.UserID, "count", len(messageIDs), "label_id", labelID)
-		for _, messageID := range messageIDs {
-			if err := e.gmailClient.ApplyLabel(ctx, msg.UserID, messageID, labelID); err != nil {
-				slog.Error("apply_email_labels failed", "error", err, "message_id", messageID)
-			}
-		}
-		return fmt.Sprintf("Label applied to %d emails successfully.", len(messageIDs))
-	} else if toolCall.Name == "create_email_label" {
-		labelName, ok := toolCall.Args["label_name"].(string)
-		if !ok {
-			return "❌ Invalid label name."
-		}
-		slog.Info("executing create_email_label tool", "user", msg.UserID, "label_name", labelName)
-		labelID, err := e.gmailClient.CreateLabel(ctx, msg.UserID, labelName)
-		if err != nil {
-			return fmt.Sprintf("Error creating label: %v", err)
-		}
-		return fmt.Sprintf("Label '%s' created successfully with ID: %s", labelName, labelID)
-	} else if toolCall.Name == "unsubscribe_email" {
-		messageID, ok := toolCall.Args["message_id"].(string)
-		if !ok {
-			return "Missing message_id parameter"
-		}
-		slog.Info("executing unsubscribe_email tool", "user", msg.UserID, "message_id", messageID)
-		err := e.gmailClient.UnsubscribeEmail(ctx, msg.UserID, messageID)
-		if err != nil {
-			return fmt.Errorf("Error unsubscribing: %v", err).Error()
-		}
-		return "Successfully unsubscribed from the email list."
-	} else if toolCall.Name == "list_task_lists" {
-		slog.Info("executing list_task_lists tool", "user", msg.UserID)
-		lists, err := e.tasksClient.ListTaskLists(ctx, msg.UserID)
-		if err != nil {
-			slog.Error("list_task_lists failed", "error", err)
-			return fmt.Sprintf("Error listing task lists: %v", err)
-		}
-		if len(lists) == 0 {
-			return "You have no task lists."
-		}
-		listsJSON, _ := json.Marshal(lists)
-		return fmt.Sprintf("Here are the available task lists:\n%s", string(listsJSON))
-	} else if toolCall.Name == "create_task_list" {
-		title, ok := toolCall.Args["title"].(string)
-		if !ok {
-			return "Missing title parameter"
-		}
-		slog.Info("executing create_task_list tool", "user", msg.UserID, "title", title)
-		_, err := e.tasksClient.CreateTaskList(ctx, msg.UserID, title)
-		if err != nil {
-			slog.Error("create_task_list failed", "error", err)
-			return fmt.Sprintf("Error creating task list: %v", err)
-		}
-		return "Task list created successfully."
-	} else if toolCall.Name == "list_tasks" {
-		slog.Info("executing list_tasks tool", "user", msg.UserID)
-		listID, _ := toolCall.Args["list_id"].(string)
-		tasks, err := e.tasksClient.ListTasks(ctx, msg.UserID, listID)
-		if err != nil {
-			slog.Error("list_tasks failed", "error", err)
-			return fmt.Sprintf("Error listing tasks: %v", err)
-		}
-		if len(tasks) == 0 {
-			return "You have no tasks on this list."
-		}
-		
-		tasksJSON, _ := json.Marshal(tasks)
-		return fmt.Sprintf("Here are the tasks in this list:\n%s", string(tasksJSON))
-	} else if toolCall.Name == "create_task" {
-		listID, _ := toolCall.Args["list_id"].(string)
-		title, _ := toolCall.Args["title"].(string)
-		notes, _ := toolCall.Args["notes"].(string)
-		due, _ := toolCall.Args["due"].(string)
-
-		slog.Info("executing create_task tool", "user", msg.UserID, "title", title)
-		err := e.tasksClient.CreateTask(ctx, msg.UserID, listID, title, notes, due)
-		if err != nil {
-			slog.Error("create_task failed", "error", err)
-			return fmt.Sprintf("Error creating task: %v", err)
-		}
-		return "Task created successfully."
-	} else if toolCall.Name == "complete_task" {
-		listID, _ := toolCall.Args["list_id"].(string)
-		taskID, ok := toolCall.Args["task_id"].(string)
-		if !ok {
-			return "Missing task_id parameter"
-		}
-
-		slog.Info("executing complete_task tool", "user", msg.UserID, "task_id", taskID)
-		err := e.tasksClient.CompleteTask(ctx, msg.UserID, listID, taskID)
-		if err != nil {
-			slog.Error("complete_task failed", "error", err)
-			return fmt.Sprintf("Error completing task: %v", err)
-		}
-		return "Task marked as completed."
-	} else if toolCall.Name == "delete_task" {
-		listID, _ := toolCall.Args["list_id"].(string)
-		taskID, ok := toolCall.Args["task_id"].(string)
-		if !ok {
-			return "Missing task_id parameter"
-		}
-
-		slog.Info("executing delete_task tool", "user", msg.UserID, "task_id", taskID)
-		err := e.tasksClient.DeleteTask(ctx, msg.UserID, listID, taskID)
-		if err != nil {
-			slog.Error("delete_task failed", "error", err)
-			return fmt.Sprintf("Error deleting task: %v", err)
-		}
-		return "Task deleted successfully."
-	} else if toolCall.Name == "search_web" {
-		query, ok := toolCall.Args["query"].(string)
-		if !ok {
-			return "Missing query parameter"
-		}
-
-		slog.Info("executing search_web tool", "user", msg.UserID, "query", query)
-		// Notify user that we are searching
-		_ = e.sendMessage(ctx, msg, "🔍 Searching the web...")
-
-		result, err := e.tavilyClient.Search(ctx, query)
-		if err != nil {
-			slog.Error("search_web failed", "error", err)
-			return fmt.Sprintf("Error searching the web: %v", err)
-		}
-		return result
-	} else if toolCall.Name == "schedule_reminder" {
-		message, _ := toolCall.Args["message"].(string)
-		dueTimeStr, _ := toolCall.Args["due_time"].(string)
-
-		dueTime, err := time.Parse(time.RFC3339, dueTimeStr)
-		if err != nil {
-			return "❌ Failed to parse due time. Please use ISO 8601 format."
-		}
-
-		slog.Info("executing schedule_reminder tool", "user", msg.UserID, "message", message, "due_time", dueTime)
-		
-		err = e.db.SaveReminder(models.ScheduledReminder{
-			UserID:    msg.UserID,
-			Message:   message,
-			DueTime:   dueTime,
-			IsSent:    false,
-			CreatedAt: time.Now(),
-		})
-		
-		if err != nil {
-			slog.Error("schedule_reminder failed", "error", err)
-			return fmt.Sprintf("Error scheduling reminder: %v", err)
-		}
-		
-		// Return a nice confirmation instead of recursing, as this is an action tool
-		return fmt.Sprintf("✅ **Reminder Set!**\n\nI will remind you at %s: \"%s\"", dueTime.In(time.Local).Format(time.RFC822), message)
-	} else if toolCall.Name == "fetch_webpage" {
-		url, ok := toolCall.Args["url"].(string)
-		if !ok {
-			return "Missing url parameter"
-		}
-
-		slog.Info("executing fetch_webpage tool", "user", msg.UserID, "url", url)
-		// Notify user that we are reading
-		_ = e.sendMessage(ctx, msg, "📖 Reading webpage...")
-
-		content, err := scraper.FetchAndExtractText(ctx, url)
-		if err != nil {
-			slog.Error("fetch_webpage failed", "error", err, "url", url)
-			return fmt.Sprintf("Error fetching webpage: %v", err)
-		}
-		
-		summaryPrompt := fmt.Sprintf("Here is the content of the webpage:\n\n%s\n\nPlease fulfill the user's original request using this information.\nIf they asked to save it for later, use the create_task tool.\nIf they asked for a summary, provide a comprehensive, detailed summary. Use explicit **bold** markdown (double asterisks) for all topics and section headers (do not use single asterisks).", content)
-		
-		extendedHistory := append(history, models.ChatMessage{Role: "user", Content: msg.Text})
-		
-		summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, summaryPrompt, nil, "")
-		if err != nil {
-			return "❌ Failed to process webpage: " + err.Error()
-		}
-		
-		if len(summaryResp.ToolCalls) > 0 {
-			// Recursively handle the next tool call (e.g. LLM decides to create_task)
-			res, _ := e.handleToolCalls(ctx, msg, extendedHistory, systemPrompt, summaryResp.ToolCalls)
 			return res
 		}
-		return summaryResp.Text
-	} else if toolCall.Name == "search_contacts" {
-		query, ok := toolCall.Args["query"].(string)
-		if !ok {
-			return "Missing query parameter"
-		}
+	}
 
-		slog.Info("executing search_contacts tool", "user", msg.UserID, "query", query)
-		contacts, err := e.contactsClient.SearchContacts(ctx, msg.UserID, query)
-		if err != nil {
-			slog.Error("search_contacts failed", "error", err)
-			return fmt.Sprintf("Error searching contacts: %v", err)
+	if toolCall.Name == "get_current_time" {
+		loc := time.UTC
+		if strings.TrimSpace(e.timezone) != "" {
+			if l, err := time.LoadLocation(strings.TrimSpace(e.timezone)); err == nil {
+				loc = l
+			}
 		}
-		if len(contacts) == 0 {
-			return "I couldn't find any contacts matching that name."
+		if toolCall.Args != nil {
+			if tzVal, ok := toolCall.Args["timezone"].(string); ok && strings.TrimSpace(tzVal) != "" {
+				if l, err := time.LoadLocation(strings.TrimSpace(tzVal)); err == nil {
+					loc = l
+				}
+			}
 		}
-		
-		contactsJSON, _ := json.Marshal(contacts)
-		return fmt.Sprintf("Here are the contacts I found:\n%s\nPlease provide the requested information to the user.", string(contactsJSON))
-	} else if toolCall.Name == "create_contact" {
-		name, ok := toolCall.Args["name"].(string)
-		if !ok {
-			return "Missing name parameter"
+		now := time.Now().In(loc)
+		resp := map[string]interface{}{
+			"current_time": now.Format(time.RFC3339),
+			"timezone":     loc.String(),
+			"day_of_week":  now.Weekday().String(),
+			"unix":         now.Unix(),
 		}
-		email, _ := toolCall.Args["email"].(string)
-		phone, _ := toolCall.Args["phone"].(string)
-
-		slog.Info("executing create_contact tool", "user", msg.UserID, "name", name)
-		err := e.contactsClient.CreateContact(ctx, msg.UserID, name, email, phone)
-		if err != nil {
-			slog.Error("create_contact failed", "error", err)
-			return fmt.Sprintf("Error creating contact: %v", err)
-		}
-		return "Contact created successfully."
-	} else if toolCall.Name == "schedule_workflow" {
-		name, okName := toolCall.Args["name"].(string)
-		cronExp, okCron := toolCall.Args["cron_expression"].(string)
-		instruction, okInst := toolCall.Args["instruction"].(string)
-		
-		if !okName || !okCron || !okInst {
-			return "Missing required parameters (name, cron_expression, instruction)"
-		}
-
-		slog.Info("executing schedule_workflow tool", "user", msg.UserID, "name", name, "cron", cronExp)
-		
-		err := e.db.SaveWorkflow(models.Workflow{
-			UserID:         msg.UserID,
-			Name:           name,
-			CronExpression: cronExp,
-			Instruction:    instruction,
-			IsActive:       true,
-			CreatedAt:      time.Now(),
-		})
-		
-		if err != nil {
-			slog.Error("schedule_workflow failed", "error", err)
-			return fmt.Sprintf("Error scheduling workflow: %v", err)
-		}
-		
-		if e.onWorkflowsChanged != nil {
-			e.onWorkflowsChanged()
-		}
-		
-		return fmt.Sprintf("✅ **Workflow Scheduled!**\n\n'%s' will run on schedule: %s", name, cronExp)
-	} else if toolCall.Name == "list_workflows" {
-		slog.Info("executing list_workflows tool", "user", msg.UserID)
-		workflows, err := e.db.GetUserWorkflows(msg.UserID)
-		if err != nil {
-			return fmt.Sprintf("Error listing workflows: %v", err)
-		}
-		if len(workflows) == 0 {
-			return "You have no active workflows scheduled."
-		}
-		
-		workflowsJSON, _ := json.Marshal(workflows)
-		return fmt.Sprintf("Here are your active workflows:\n%s", string(workflowsJSON))
-	} else if toolCall.Name == "delete_workflow" {
-		idStr, ok := toolCall.Args["id"].(string)
-		if !ok {
-			return "Missing id parameter"
-		}
-		
-		var id uint
-		if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
-			return "Invalid id parameter: must be a number"
-		}
-
-		slog.Info("executing delete_workflow tool", "user", msg.UserID, "workflow_id", id)
-		err := e.db.DeleteWorkflow(id, msg.UserID)
-		if err != nil {
-			return fmt.Sprintf("Error deleting workflow: %v", err)
-		}
-		
-		if e.onWorkflowsChanged != nil {
-			e.onWorkflowsChanged()
-		}
-
-		return "Workflow deleted successfully."
+		b, _ := json.Marshal(resp)
+		return string(b)
 	}
 
 	return "⚠️ LLM tried to call an unknown tool."
@@ -1158,6 +1115,81 @@ func (e *Engine) CheckAndSendReminders() {
 		_ = e.db.MarkReminderSent(reminder.ID)
 		
 		// Optionally log to history
-		_ = e.store.AppendChatHistory(context.Background(), reminder.UserID, models.ChatMessage{Role: "assistant", Content: formattedMsg})
+		if e.store != nil {
+			_ = e.store.AppendChatHistory(context.Background(), reminder.UserID, models.ChatMessage{Role: "assistant", Content: formattedMsg})
+		}
+	}
+
+	sharedReminders, err := e.db.GetDueSharedReminders()
+	if err != nil {
+		slog.Error("failed to get due shared reminders", "error", err)
+		return
+	}
+
+	for _, s := range sharedReminders {
+		targetUserID := s.AssignedToUserID
+		if targetUserID == "" {
+			targetUserID = s.CreatedByUserID
+		}
+
+		log, err := e.db.GetLastAuditSessionForUser(targetUserID)
+		if err != nil || log == nil || log.Source == "" {
+			slog.Warn("failed to get last audit log for shared reminder", "user_id", targetUserID, "shared_reminder_id", s.ID)
+			continue
+		}
+
+		msg := models.Message{
+			ID:     fmt.Sprintf("shared-reminder-%d", s.ID),
+			ChatID: log.ChatID,
+			UserID: targetUserID,
+			Source: log.Source,
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+		formattedMsg := fmt.Sprintf("🔔 *Shared Task Reminder:*\n\n**%s** (Topic: %s)", s.Title, s.Topic)
+		err = e.sendMessage(ctx, msg, formattedMsg)
+		if err != nil {
+			slog.Error("failed to send shared reminder message", "shared_reminder_id", s.ID, "error", err)
+			cancel()
+			continue
+		}
+		cancel()
+
+		_ = e.db.MarkSharedReminderSent(s.ID)
+		if e.store != nil {
+			_ = e.store.AppendChatHistory(context.Background(), targetUserID, models.ChatMessage{Role: "assistant", Content: formattedMsg})
+		}
 	}
 }
+
+func (e *Engine) handleUndo(ctx context.Context, user *models.User, msg models.Message, mutationID string) error {
+	actorID := msg.UserID
+	familyGroup := ""
+	if user != nil {
+		if strings.TrimSpace(user.PlatformID) != "" {
+			actorID = strings.TrimSpace(user.PlatformID)
+		}
+		familyGroup = strings.TrimSpace(user.FamilyGroup)
+	}
+
+	if e.toolRegistry != nil {
+		if mod, ok := e.toolRegistry.GetModule("durability"); ok {
+			if rEngine, ok := mod.(RollbackEngine); ok {
+				res, err := rEngine.Rollback(ctx, actorID, familyGroup, mutationID)
+				if err != nil {
+					if strings.Contains(err.Error(), "no recent undoable actions found") {
+						return e.sendMessage(ctx, msg, "ℹ️ No recent undoable actions found.")
+					}
+					return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Undo failed: %v", err))
+				}
+				if res.AlreadyUndone {
+					return e.sendMessage(ctx, msg, fmt.Sprintf("ℹ️ %s", res.Detail))
+				}
+				return e.sendMessage(ctx, msg, fmt.Sprintf("↩️ **Successfully Undone!**\n\n%s", res.Detail))
+			}
+		}
+	}
+
+	return e.sendMessage(ctx, msg, "⚠️ Durability undo engine is not configured.")
+}
+

@@ -8,10 +8,16 @@ server:
 google:
   client_id: ""
   client_secret: ""
-  redirect_url: "http://localhost:8080/oauth/callback"
+  redirect_url: "http://localhost:8081/auth/google/callback"
 
 tavily:
   api_key: ""
 
 gemini:
   model: gemini-2.5-flash
+
+encryption:
+  key: "" # Supplied via ENCRYPTION_KEY environment variable
+
+telegram:
+  secret_token: "" # Supplied via TELEGRAM_SECRET_TOKEN environment variable

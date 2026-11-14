@@ -79,12 +79,12 @@ type FunctionResponse struct {
 // AuditSession represents a complete user interaction session.
 type AuditSession struct {
 	ID              string    `json:"id" gorm:"primarykey;type:uuid"`
-	UserID          string    `json:"user_id" gorm:"index"`
+	UserID          string    `json:"user_id" gorm:"index;index:idx_audit_sessions_user_start,priority:1"`
 	ChatID          string    `json:"chat_id"`
 	Source          string    `json:"source"`
 	UserPrompt      string    `json:"user_prompt"`
 	FinalResponse   string    `json:"final_response"`
-	StartTime       time.Time `json:"start_time"`
+	StartTime       time.Time `json:"start_time" gorm:"index:idx_audit_sessions_start_time;index:idx_audit_sessions_user_start,priority:2,sort:desc"`
 	EndTime         time.Time `json:"end_time"`
 	TotalDurationMs int64     `json:"total_duration_ms"`
 	TotalTokens     int       `json:"total_tokens"`

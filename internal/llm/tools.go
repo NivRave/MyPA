@@ -129,6 +129,10 @@ var CalendarEventTool = &genai.Tool{
 						Type:        genai.TypeString,
 						Description: "The exact fact or preference to remember (e.g. 'The user is vegan', 'The user's wife is named Sarah', 'The user prefers meetings in the afternoon').",
 					},
+					"scope": {
+						Type:        genai.TypeString,
+						Description: "Scope: 'personal' or 'family'",
+					},
 				},
 				Required: []string{"fact"},
 			},
@@ -295,6 +299,20 @@ var CalendarEventTool = &genai.Tool{
 					},
 				},
 				Required: []string{"message", "due_time"},
+			},
+		},
+		{
+			Name:        "search_web",
+			Description: "Searches the live web using Tavily for current news, facts, recent events, or information you don't know.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"query": {
+						Type:        genai.TypeString,
+						Description: "The search query to look up on the web.",
+					},
+				},
+				Required: []string{"query"},
 			},
 		},
 		{

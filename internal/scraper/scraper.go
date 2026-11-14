@@ -9,15 +9,14 @@ import (
 
 	html2md "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"codeberg.org/readeck/go-readability/v2"
+	"github.com/nivik/mypa/internal/netguard"
 )
 
 // FetchAndExtractText takes a URL, fetches it, parses it with go-readability to extract the main article,
 // and converts the HTML into Markdown.
 func FetchAndExtractText(ctx context.Context, url string) (string, error) {
-	// Create a short-lived context if not provided, but usually we pass the orchestrator ctx
-	client := &http.Client{
-		Timeout: 15 * time.Second,
-	}
+	// Create a safe SSRF-protected HTTP client
+	client := netguard.SafeClient(15 * time.Second)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

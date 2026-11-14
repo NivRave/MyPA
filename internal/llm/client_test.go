@@ -122,10 +122,109 @@ func TestClient_GenerateEmbedding(t *testing.T) {
 	assert.Equal(t, float32(0.1), emb[0])
 }
 
+func TestClient_Chat_PromptBlocked(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"promptFeedback": {
+				"blockReason": "PROHIBITED_CONTENT"
+			},
+			"candidates": []
+		}`))
+	}))
+	defer ts.Close()
+
+	withHTTPClient := func(cfg *genai.ClientConfig) {
+		cfg.HTTPClient = &http.Client{
+			Transport: &rewriteTransport{URL: ts.URL},
+		}
+	}
+
+	client, err := NewClient(context.Background(), "mock-key", "gemini-test", withHTTPClient)
+	require.NoError(t, err)
+
+	_, err = client.Chat(context.Background(), "sys", nil, "msg", nil, "")
+	require.Error(t, err)
+	var blockedErr *ContentBlockedError
+	require.ErrorAs(t, err, &blockedErr)
+	assert.Equal(t, "PROHIBITED_CONTENT", blockedErr.BlockReason)
+}
+
+func TestClient_Chat_CandidateSafetyBlocked(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"candidates": [
+				{
+					"finishReason": "SAFETY"
+				}
+			]
+		}`))
+	}))
+	defer ts.Close()
+
+	withHTTPClient := func(cfg *genai.ClientConfig) {
+		cfg.HTTPClient = &http.Client{
+			Transport: &rewriteTransport{URL: ts.URL},
+		}
+	}
+
+	client, err := NewClient(context.Background(), "mock-key", "gemini-test", withHTTPClient)
+	require.NoError(t, err)
+
+	_, err = client.Chat(context.Background(), "sys", nil, "msg", nil, "")
+	require.Error(t, err)
+	var blockedErr *ContentBlockedError
+	require.ErrorAs(t, err, &blockedErr)
+	assert.Equal(t, "SAFETY", blockedErr.BlockReason)
+}
+
 func TestNewClient_NoKey(t *testing.T) {
 	_, err := NewClient(context.Background(), "", "")
 	require.Error(t, err)
 }
+
+func TestClient_ExtraTools(t *testing.T) {
+	client := &Client{}
+	assert.Empty(t, client.extraTools)
+
+	decl1 := &genai.FunctionDeclaration{Name: "custom_tool_1"}
+	decl2 := &genai.FunctionDeclaration{Name: "custom_tool_2"}
+
+	client.SetExtraTools([]*genai.FunctionDeclaration{decl1})
+	assert.Len(t, client.extraTools, 1)
+	assert.Equal(t, "custom_tool_1", client.extraTools[0].Name)
+
+	client.AddFunctionDeclarations(decl2)
+	assert.Len(t, client.extraTools, 2)
+	assert.Equal(t, "custom_tool_2", client.extraTools[1].Name)
+}
+
+func TestActiveTools_Context(t *testing.T) {
+	ctx := context.Background()
+	_, ok := ActiveToolsFromContext(ctx)
+	assert.False(t, ok)
+
+	decls := []*genai.FunctionDeclaration{
+		{Name: "tool_alpha"},
+		{Name: "tool_beta"},
+	}
+	ctxWithTools := WithActiveTools(ctx, decls)
+	retrieved, ok := ActiveToolsFromContext(ctxWithTools)
+	assert.True(t, ok)
+	require.Len(t, retrieved, 2)
+	assert.Equal(t, "tool_alpha", retrieved[0].Name)
+	assert.Equal(t, "tool_beta", retrieved[1].Name)
+}
+
+func TestNoTools_Context(t *testing.T) {
+	ctx := context.Background()
+	assert.False(t, isNoTools(ctx))
+
+	ctxNoTools := WithNoTools(ctx)
+	assert.True(t, isNoTools(ctxNoTools))
+}
+
 
 type rewriteTransport struct {
 	URL string

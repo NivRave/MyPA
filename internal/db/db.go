@@ -3,6 +3,7 @@ package db
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/nivik/mypa/internal/models"
 	"github.com/pgvector/pgvector-go"
@@ -15,7 +16,8 @@ type Client struct {
 	DB *gorm.DB
 }
 
-// NewClient initializes the database connection and runs auto-migrations.
+// NewClient initializes the database connection, configures the connection pool,
+// runs auto-migrations, and applies custom indexes.
 func NewClient(dsn string) (*Client, error) {
 	if dsn == "" {
 		return nil, fmt.Errorf("database URL is empty")
@@ -26,13 +28,29 @@ func NewClient(dsn string) (*Client, error) {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Ensure pgvector extension exists
+	// 1. Configure underlying sql.DB connection pool sizing
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve generic database object: %w", err)
+	}
+
+	sqlDB.SetMaxOpenConns(25)                  // Max 25 active connections per service
+	sqlDB.SetMaxIdleConns(10)                  // Keep 10 warm idle connections ready
+	sqlDB.SetConnMaxLifetime(30 * time.Minute) // Periodically recycle connections
+	sqlDB.SetConnMaxIdleTime(5 * time.Minute)  // Reclaim idle connections
+
+	// 2. Verify database connectivity (health check / fail-fast)
+	if err := sqlDB.Ping(); err != nil {
+		return nil, fmt.Errorf("database ping failed: %w", err)
+	}
+
+	// 3. Ensure pgvector extension exists
 	if err := db.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error; err != nil {
 		return nil, fmt.Errorf("failed to create vector extension: %w", err)
 	}
 
-	// Auto-migrate schemas
-	if err := db.AutoMigrate(
+	// 4. Auto-migrate schemas
+	baseModels := []interface{}{
 		&models.AuditSession{},
 		&models.AuditEvent{},
 		&models.Memory{},
@@ -40,14 +58,52 @@ func NewClient(dsn string) (*Client, error) {
 		&models.User{},
 		&models.PairingCode{},
 		&models.Workflow{},
-	); err != nil {
+	}
+	allModels := append(baseModels, GetRegisteredModels()...)
+
+	if err := db.AutoMigrate(allModels...); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
-	slog.Info("connected to postgres and ran migrations successfully")
+	// 5. Apply performance and HNSW composite indexes
+	if err := ApplyCustomIndexes(db); err != nil {
+		return nil, fmt.Errorf("failed to apply custom database indexes: %w", err)
+	}
+
+	slog.Info("connected to postgres, tuned connection pool, and ran migrations successfully",
+		"max_open_conns", 25,
+		"max_idle_conns", 10,
+		"conn_max_lifetime", "30m",
+		"conn_max_idle_time", "5m",
+	)
 
 	return &Client{DB: db}, nil
 }
+
+// Ping verifies database liveness.
+func (c *Client) Ping() error {
+	if c.DB == nil {
+		return fmt.Errorf("database client is not initialized")
+	}
+	sqlDB, err := c.DB.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Ping()
+}
+
+// Close gracefully closes the database connection pool.
+func (c *Client) Close() error {
+	if c.DB == nil {
+		return nil
+	}
+	sqlDB, err := c.DB.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
+}
+
 
 // InsertAuditSession saves a new audit session to the database.
 func (c *Client) InsertAuditSession(session models.AuditSession) error {

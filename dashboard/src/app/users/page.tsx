@@ -1,65 +1,60 @@
 import { revalidatePath } from 'next/cache';
+import { graphqlFetch, type User, type PairingCode } from '@/lib/graphql';
 
 export const dynamic = "force-dynamic";
 
-async function fetchGraphQL(query: string, variables?: any) {
-  const res = await fetch('http://proxy:8000/graphql', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, variables }),
-    cache: 'no-store'
-  });
-  if (!res.ok) {
-    throw new Error('Failed to fetch GraphQL: ' + res.statusText);
+const GET_USERS_AND_CODES = `
+  query GetUsersAndCodes {
+    users {
+      id
+      platformId
+      name
+      role
+      familyGroup
+      createdAt
+    }
+    activePairingCodes {
+      id
+      code
+      role
+      familyGroup
+      expiresAt
+    }
   }
-  const json = await res.json();
-  if (json.errors) {
-    console.error(json.errors);
-    throw new Error('GraphQL Error');
+`;
+
+const GENERATE_PAIRING_CODE_MUTATION = `
+  mutation GenerateCode($role: String!, $familyGroup: String!) {
+    generatePairingCode(role: $role, familyGroup: $familyGroup) {
+      id
+    }
   }
-  return json.data;
-}
+`;
 
 export default async function UsersPage() {
-  const data = await fetchGraphQL(`
-    query GetUsersAndCodes {
-      users {
-        id
-        platformId
-        name
-        role
-        familyGroup
-        createdAt
-      }
-      activePairingCodes {
-        id
-        code
-        role
-        familyGroup
-        expiresAt
-      }
-    }
-  `);
+  let data: { users: User[]; activePairingCodes: PairingCode[] } = {
+    users: [],
+    activePairingCodes: [],
+  };
+
+  try {
+    data = await graphqlFetch<{ users: User[]; activePairingCodes: PairingCode[] }>(
+      GET_USERS_AND_CODES
+    );
+  } catch (err) {
+    console.error('Failed to fetch users and codes:', err);
+  }
 
   async function createCode(formData: FormData) {
     'use server';
     const role = formData.get('role') as string;
     const familyGroup = formData.get('familyGroup') as string;
 
-    await fetch('http://proxy:8000/graphql', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: `
-          mutation GenerateCode($role: String!, $familyGroup: String!) {
-            generatePairingCode(role: $role, familyGroup: $familyGroup) {
-              id
-            }
-          }
-        `,
-        variables: { role, familyGroup }
-      }),
-    });
+    try {
+      await graphqlFetch(GENERATE_PAIRING_CODE_MUTATION, { role, familyGroup });
+    } catch (err) {
+      console.error('generatePairingCode failed:', err);
+    }
     
     revalidatePath('/users');
   }
@@ -90,7 +85,7 @@ export default async function UsersPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-200">
-                {data.users.map((user: any) => (
+                {data.users.map((user: User) => (
                   <tr key={user.id} className="hover:bg-neutral-50">
                     <td className="px-6 py-4 text-neutral-900">{user.platformId}</td>
                     <td className="px-6 py-4 text-neutral-600">{user.name}</td>
@@ -144,7 +139,7 @@ export default async function UsersPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-200">
-                  {data.activePairingCodes.map((code: any) => (
+                  {data.activePairingCodes.map((code: PairingCode) => (
                     <tr key={code.id} className="hover:bg-neutral-50">
                       <td className="px-6 py-4 font-mono font-medium text-indigo-600">{code.code}</td>
                       <td className="px-6 py-4 text-neutral-600 capitalize">{code.role}</td>

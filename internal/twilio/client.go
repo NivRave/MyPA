@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/markdown"
@@ -21,16 +22,29 @@ type Client struct {
 // NewClient creates a new Twilio API client.
 func NewClient(cfg config.TwilioConfig) *Client {
 	return &Client{
-		cfg:        cfg,
-		httpClient: &http.Client{},
+		cfg: cfg,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}
 }
 
 // SendMessage sends a WhatsApp message (text) to the target number.
+// If the formatted text exceeds the max length (1500 chars), it is split across multiple messages.
 func (c *Client) SendMessage(ctx context.Context, to string, text string) error {
-	apiURL := fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", c.cfg.AccountSID)
-
 	formattedText := markdown.ToWhatsApp(text)
+	chunks := SplitMessage(formattedText, 1500)
+
+	for _, chunk := range chunks {
+		if err := c.sendSingleMessage(ctx, to, chunk); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) sendSingleMessage(ctx context.Context, to string, body string) error {
+	apiURL := fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", c.cfg.AccountSID)
 
 	data := url.Values{}
 	if !strings.HasPrefix(to, "whatsapp:") {
@@ -38,7 +52,7 @@ func (c *Client) SendMessage(ctx context.Context, to string, text string) error 
 	}
 	data.Set("To", to)
 	data.Set("From", c.cfg.FromNumber)
-	data.Set("Body", formattedText)
+	data.Set("Body", body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(data.Encode()))
 	if err != nil {
@@ -62,14 +76,68 @@ func (c *Client) SendMessage(ctx context.Context, to string, text string) error 
 	return nil
 }
 
-// DownloadMedia downloads a media file securely from Twilio using HTTP Basic Auth.
+// SplitMessage splits text into chunks of at most maxLen characters,
+// prioritizing cuts at double newlines (\n\n), newlines (\n), or spaces.
+func SplitMessage(text string, maxLen int) []string {
+	if len(text) <= maxLen {
+		return []string{text}
+	}
+
+	var chunks []string
+	remaining := text
+
+	for len(remaining) > maxLen {
+		cut := maxLen
+		if idx := strings.LastIndex(remaining[:cut], "\n\n"); idx > 0 {
+			cut = idx + 2
+		} else if idx := strings.LastIndex(remaining[:cut], "\n"); idx > 0 {
+			cut = idx + 1
+		} else if idx := strings.LastIndex(remaining[:cut], " "); idx > 0 {
+			cut = idx + 1
+		}
+
+		chunk := strings.TrimSpace(remaining[:cut])
+		if chunk != "" {
+			chunks = append(chunks, chunk)
+		}
+		remaining = strings.TrimSpace(remaining[cut:])
+	}
+
+	if len(remaining) > 0 {
+		chunks = append(chunks, remaining)
+	}
+
+	return chunks
+}
+
+// DownloadMedia downloads a media file securely from Twilio enforcing HTTPS and hostname allowlist.
 func (c *Client) DownloadMedia(ctx context.Context, mediaURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", mediaURL, nil)
+	parsedURL, err := url.Parse(mediaURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid media URL: %w", err)
+	}
+
+	// 1. Enforce HTTPS scheme strictly
+	if !strings.EqualFold(parsedURL.Scheme, "https") {
+		return nil, fmt.Errorf("insecure media URL scheme %q: HTTPS is strictly required", parsedURL.Scheme)
+	}
+
+	// 2. Validate hostname against trusted allowlist
+	host := strings.ToLower(parsedURL.Hostname())
+	isTrusted := host == "api.twilio.com" || host == "media.twiliocdn.com"
+	if !isTrusted {
+		return nil, fmt.Errorf("untrusted media URL hostname %q: only api.twilio.com and media.twiliocdn.com are permitted", host)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", parsedURL.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
-	req.SetBasicAuth(c.cfg.AccountSID, c.cfg.AuthToken)
+	// 3. Only attach BasicAuth credentials when host matches trusted Twilio domains
+	if isTrusted {
+		req.SetBasicAuth(c.cfg.AccountSID, c.cfg.AuthToken)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -78,9 +146,11 @@ func (c *Client) DownloadMedia(ctx context.Context, mediaURL string) ([]byte, er
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, fmt.Errorf("twilio API returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	return io.ReadAll(resp.Body)
+	// Limit maximum downloaded media size to 25MB
+	const maxMediaDownloadBytes = 25 << 20
+	return io.ReadAll(io.LimitReader(resp.Body, maxMediaDownloadBytes))
 }

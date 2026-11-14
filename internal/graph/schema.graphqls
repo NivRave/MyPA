@@ -1,4 +1,4 @@
-﻿scalar Time
+scalar Time
 
 type User {
   id: ID!
@@ -19,11 +19,357 @@ type PairingCode {
   createdAt: Time!
 }
 
+# Topic 2: Topic-Mapped Memory & Knowledge Graph
+type TopicMemory {
+  id: ID!
+  userId: String!
+  familyGroup: String!
+  topic: String!
+  subtopic: String!
+  tagsJson: String!
+  fact: String!
+  scope: String!
+  createdByUserId: String!
+  supersededById: Int
+  validFrom: Time!
+  validUntil: Time
+  isPinned: Boolean!
+  createdAt: Time!
+}
+
+type EntityProfile {
+  id: ID!
+  userId: String!
+  familyGroup: String!
+  topic: String!
+  entityType: String!
+  entityName: String!
+  attributesJson: String!
+  updatedByUserId: String!
+  updatedAt: Time!
+}
+
+# Topic 9: Shared Spaces & Collaboration
+type SharedSpace {
+  id: ID!
+  familyGroup: String!
+  topic: String!
+  ownerUserId: String!
+  sharedWithUserId: String!
+  canView: Boolean!
+  canEdit: Boolean!
+  notifyMode: String!
+  updatedAt: Time!
+}
+
+type SharedTaskReminder {
+  id: ID!
+  familyGroup: String!
+  topic: String!
+  title: String!
+  dueTime: Time
+  createdByUserId: String!
+  assignedToUserId: String
+  isCompleted: Boolean!
+  completedByUserId: String
+  completedAt: Time
+  createdAt: Time!
+}
+
+# Topic 3: Multi-Schedule Engine
+type ScheduleEvent {
+  id: ID!
+  externalGoogleEventId: String!
+  partnerGoogleEventId: String!
+  userId: String!
+  familyGroup: String!
+  topic: String!
+  tagsJson: String!
+  title: String!
+  description: String!
+  startTime: Time!
+  endTime: Time!
+  recurrenceRule: String!
+  syncToGoogle: Boolean!
+  isShared: Boolean!
+  createdByUserId: String!
+  createdAt: Time!
+}
+
+type TopicCalendarConfig {
+  id: ID!
+  userId: String!
+  topic: String!
+  colorId: String!
+  prefixTag: String!
+  targetCalendarId: String!
+  includeInMorningBriefing: Boolean!
+  syncToGoogleDefault: Boolean
+  updatedAt: Time!
+}
+
+# Topic 4: Baby & Family Care Tracker
+type BabyProfile {
+  id: ID!
+  familyGroup: String!
+  name: String!
+  dateOfBirth: Time!
+  dueDate: Time
+  gender: String!
+  birthWeightGrams: Int!
+  currentWeightGrams: Int!
+  heightCm: Float!
+  pediatricianInfo: String!
+  allergiesNotes: String!
+  updatedByUserId: String!
+  updatedAt: Time!
+}
+
+type BabyCareLog {
+  id: ID!
+  babyId: ID!
+  familyGroup: String!
+  logType: String!
+  valueNumeric: Float!
+  unit: String!
+  details: String!
+  timestamp: Time!
+  loggedByUserId: String!
+}
+
+type BabyInventoryItem {
+  id: ID!
+  familyGroup: String!
+  itemName: String!
+  quantityRemaining: Float!
+  unit: String!
+  lowThreshold: Float!
+  updatedAt: Time!
+}
+
+# Topic 5 & 8.1: House Maintenance, Contracts & Vehicle Vault
+type HouseContractRecord {
+  id: ID!
+  familyGroup: String!
+  recordType: String!
+  title: String!
+  vendorOrLandlord: String!
+  contactDetails: String!
+  amount: Float!
+  currency: String!
+  startDate: Time
+  expirationOrRenewalDate: Time
+  noticePeriodDays: Int!
+  keyTermsJson: String!
+  createdByUserId: String!
+  createdAt: Time!
+}
+
+type HomeMaintenanceItem {
+  id: ID!
+  familyGroup: String!
+  taskName: String!
+  category: String!
+  intervalDays: Int!
+  lastCompletedAt: Time
+  nextDueAt: Time!
+  contractorInfo: String!
+  notes: String!
+  updatedByUserId: String!
+}
+
+type VehicleAsset {
+  id: ID!
+  familyGroup: String!
+  name: String!
+  licensePlate: String!
+  insuranceExpiry: Time
+  annualTestExpiry: Time
+  lastServiceDate: Time
+  currentMileageKm: Int!
+  nextServiceMileageKm: Int!
+  notes: String!
+}
+
+# Topic 6: Financial Tracking & Budget Intelligence
+type FinancialTransaction {
+  id: ID!
+  userId: String!
+  familyGroup: String!
+  type: String!
+  category: String!
+  merchant: String!
+  amount: Float!
+  currency: String!
+  transactionDate: Time!
+  isShared: Boolean!
+  source: String!
+  notes: String!
+  createdAt: Time!
+}
+
+type CategoryBudget {
+  id: ID!
+  familyGroup: String!
+  category: String!
+  monthlyLimit: Float!
+  currency: String!
+  alertThresholdPct: Float!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+type RecurringBill {
+  id: ID!
+  familyGroup: String!
+  name: String!
+  category: String!
+  expectedAmount: Float!
+  currency: String!
+  billingCycle: String!
+  nextDueDay: Int!
+  autoRenew: Boolean!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+# Topics 7, 8.2 & 8.3: External APIs, Automations, Runtime Customization & CRM
+type ExternalAPIConnector {
+  id: ID!
+  userId: String!
+  familyGroup: String!
+  name: String!
+  baseUrl: String!
+  defaultMethod: String!
+  description: String!
+  createdAt: Time!
+}
+
+type AutomationRule {
+  id: ID!
+  userId: String!
+  familyGroup: String!
+  name: String!
+  triggerType: String!
+  triggerTopic: String!
+  conditionJson: String!
+  actionInstruction: String!
+  isActive: Boolean!
+  createdAt: Time!
+}
+
+type UserPreference {
+  userId: ID!
+  preferredLanguage: String!
+  tonePersona: String!
+  defaultCurrency: String!
+  quietHoursStart: String!
+  quietHoursEnd: String!
+  briefingTopicsJson: String!
+  standingInstructions: String!
+  updatedAt: Time!
+}
+
+type PersonalCRMContact {
+  id: ID!
+  userId: String!
+  familyGroup: String!
+  personName: String!
+  relationship: String!
+  importantDatesJson: String!
+  giftIdeasAndSizes: String!
+  medicalNotes: String!
+  updatedAt: Time!
+}
+
+# Topic 1: Durability & Mutation Audit Logs
+type MutationLog {
+  id: ID!
+  userId: String!
+  familyGroup: String!
+  topic: String!
+  action: String!
+  entityType: String!
+  entityId: String!
+  beforeJson: String
+  afterJson: String
+  summary: String!
+  isUndone: Boolean!
+  createdAt: Time!
+}
+
+type AuditSession {
+  id: ID!
+  userId: String!
+  source: String!
+  userPrompt: String!
+  status: String!
+  totalDurationMs: Int!
+  startTime: Time!
+}
+
+type UserSessionSummary {
+  userId: String!
+  source: String!
+  totalInteractions: Int!
+  lastActive: Time!
+}
+
 type Query {
   users: [User!]!
-  activePairingCodes: [PairingCode!]!
+  activePairingCodes(familyGroup: String): [PairingCode!]!
+  topicMemories(topic: String, familyGroup: String, includeSuperseded: Boolean): [TopicMemory!]!
+  entityProfiles(topic: String, entityType: String, familyGroup: String): [EntityProfile!]!
+  sharedSpaces(familyGroup: String!): [SharedSpace!]!
+  sharedTasks(familyGroup: String!, topic: String, isCompleted: Boolean): [SharedTaskReminder!]!
+  scheduleEvents(topic: String, familyGroup: String, startTime: Time, endTime: Time): [ScheduleEvent!]!
+  topicCalendarConfigs(userId: String, familyGroup: String): [TopicCalendarConfig!]!
+  babyProfiles(familyGroup: String!): [BabyProfile!]!
+  babyCareLogs(babyId: ID!, familyGroup: String, logType: String, limit: Int): [BabyCareLog!]!
+  babyInventory(familyGroup: String!): [BabyInventoryItem!]!
+  houseContracts(familyGroup: String!, recordType: String): [HouseContractRecord!]!
+  homeMaintenanceItems(familyGroup: String!, category: String): [HomeMaintenanceItem!]!
+  vehicleAssets(familyGroup: String!): [VehicleAsset!]!
+  financialTransactions(familyGroup: String!, category: String, limit: Int): [FinancialTransaction!]!
+  categoryBudgets(familyGroup: String!): [CategoryBudget!]!
+  recurringBills(familyGroup: String!): [RecurringBill!]!
+  externalApiConnectors(familyGroup: String): [ExternalAPIConnector!]!
+  automationRules(familyGroup: String): [AutomationRule!]!
+  userPreference(userId: ID!): UserPreference
+  personalCrmContacts(familyGroup: String!): [PersonalCRMContact!]!
+  mutationLogs(familyGroup: String, topic: String, limit: Int): [MutationLog!]!
+  auditSessions(familyGroup: String, limit: Int): [AuditSession!]!
+  userSessions(familyGroup: String): [UserSessionSummary!]!
 }
 
 type Mutation {
   generatePairingCode(role: String!, familyGroup: String!): PairingCode!
+  saveTopicMemory(topic: String!, subtopic: String!, fact: String!, tagsJson: String, scope: String, familyGroup: String): TopicMemory!
+  deleteTopicMemory(id: ID!): Boolean!
+  pinTopicMemory(id: ID!, isPinned: Boolean!): TopicMemory!
+  upsertEntityProfile(topic: String!, entityType: String!, entityName: String!, attributesJson: String!, familyGroup: String): EntityProfile!
+  updateSharedSpace(familyGroup: String!, topic: String!, sharedWithUserId: String!, canView: Boolean!, canEdit: Boolean!, notifyMode: String!): SharedSpace!
+  createSharedTask(familyGroup: String!, topic: String!, title: String!, dueTime: Time, assignedToUserId: String): SharedTaskReminder!
+  completeSharedTask(id: ID!, completedByUserId: String!): SharedTaskReminder!
+  createScheduleEvent(topic: String!, title: String!, description: String, startTime: Time!, endTime: Time!, tagsJson: String, syncToGoogle: Boolean, isShared: Boolean, familyGroup: String): ScheduleEvent!
+  deleteScheduleEvent(id: ID!): Boolean!
+  saveTopicCalendarConfig(topic: String!, colorId: String, prefixTag: String, includeInMorningBriefing: Boolean, syncToGoogleDefault: Boolean, familyGroup: String): TopicCalendarConfig!
+  upsertBabyProfile(familyGroup: String!, name: String!, dateOfBirth: Time!, gender: String!, currentWeightGrams: Int, heightCm: Float, pediatricianInfo: String, allergiesNotes: String): BabyProfile!
+  logBabyCare(babyId: ID!, familyGroup: String!, logType: String!, valueNumeric: Float, unit: String, details: String, timestamp: Time): BabyCareLog!
+  updateBabyInventory(familyGroup: String!, itemName: String!, quantityRemaining: Float!, unit: String!, lowThreshold: Float!): BabyInventoryItem!
+  saveHouseContract(familyGroup: String!, recordType: String!, title: String!, vendorOrLandlord: String, amount: Float, currency: String, expirationOrRenewalDate: Time, noticePeriodDays: Int, keyTermsJson: String): HouseContractRecord!
+  saveHomeMaintenanceItem(familyGroup: String!, taskName: String!, category: String!, intervalDays: Int!, nextDueAt: Time!, contractorInfo: String, notes: String): HomeMaintenanceItem!
+  completeHomeMaintenance(id: ID!): HomeMaintenanceItem!
+  saveVehicleAsset(familyGroup: String!, name: String!, licensePlate: String!, insuranceExpiry: Time, annualTestExpiry: Time, currentMileageKm: Int, nextServiceMileageKm: Int, notes: String): VehicleAsset!
+  logFinancialTransaction(familyGroup: String!, type: String!, category: String!, merchant: String!, amount: Float!, currency: String!, notes: String, isShared: Boolean): FinancialTransaction!
+  setCategoryBudget(familyGroup: String!, category: String!, monthlyLimit: Float!, currency: String!, alertThresholdPct: Float): CategoryBudget!
+  saveRecurringBill(familyGroup: String!, name: String!, category: String!, expectedAmount: Float!, currency: String!, billingCycle: String!, nextDueDay: Int!, autoRenew: Boolean!): RecurringBill!
+  registerExternalApi(name: String!, baseUrl: String!, defaultMethod: String, description: String, familyGroup: String): ExternalAPIConnector!
+  saveAutomationRule(name: String!, triggerType: String!, triggerTopic: String!, conditionJson: String!, actionInstruction: String!, isActive: Boolean, familyGroup: String): AutomationRule!
+  toggleAutomationRule(id: ID!, isActive: Boolean!): AutomationRule!
+  deleteAutomationRule(id: ID!): Boolean!
+  saveUserPreference(userId: ID!, preferredLanguage: String, tonePersona: String, defaultCurrency: String, quietHoursStart: String, quietHoursEnd: String, standingInstructions: String): UserPreference!
+  savePersonalCrmContact(familyGroup: String!, personName: String!, relationship: String, importantDatesJson: String, giftIdeasAndSizes: String, medicalNotes: String): PersonalCRMContact!
+  rollbackMutation(mutationId: ID!): Boolean!
 }
+

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"io"
 	"log/slog"
@@ -34,7 +35,7 @@ func main() {
 	// Initialize RabbitMQ Publisher with retry
 	var pub *broker.Publisher
 	for i := 0; i < 5; i++ {
-		pub, err = broker.NewPublisher(cfg.RabbitMQ.URL, "telegram.inbound")
+		pub, err = broker.NewSafePublisher(cfg.RabbitMQ.URL, "telegram.inbound")
 		if err == nil {
 			break
 		}
@@ -52,8 +53,12 @@ func main() {
 
 	// Start server
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Server.GatewayPort),
-		Handler: r,
+		Addr:              fmt.Sprintf(":%d", cfg.Server.GatewayPort),
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {
@@ -87,16 +92,31 @@ func setupRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10MB limit for gateway webhooks
+			next.ServeHTTP(w, r)
+		})
+	})
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	twHandler := twilio.NewHandler(pub)
+	twHandler := twilio.NewHandler(pub, cfg.Twilio.AuthToken)
 	r.Post("/webhook/twilio", twHandler.HandleWebhook)
 
 	r.Post("/webhook/telegram", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.Telegram.SecretToken != "" {
+			secretHeader := r.Header.Get("X-Telegram-Bot-Api-Secret-Token")
+			if subtle.ConstantTimeCompare([]byte(secretHeader), []byte(cfg.Telegram.SecretToken)) != 1 {
+				slog.Warn("unauthorized telegram webhook attempt", "remote_addr", r.RemoteAddr)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			slog.Error("failed to read request body", "error", err)

@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/nivik/mypa/internal/calendar"
+	"github.com/nivik/mypa/internal/netguard"
 	"github.com/nivik/mypa/internal/state"
 	gmailapi "google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
@@ -64,14 +66,14 @@ func (c *Client) SearchEmails(ctx context.Context, userID string, query string, 
 		return nil, err
 	}
 
-	res, err := srv.Users.Messages.List("me").Q(query).MaxResults(maxResults).Do()
+	res, err := srv.Users.Messages.List("me").Q(query).MaxResults(maxResults).Context(ctx).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list emails: %w", err)
 	}
 
 	var emails []EmailSummary
 	for _, m := range res.Messages {
-		msg, err := srv.Users.Messages.Get("me", m.Id).Format("metadata").MetadataHeaders("From", "Subject").Do()
+		msg, err := srv.Users.Messages.Get("me", m.Id).Format("metadata").MetadataHeaders("From", "Subject").Context(ctx).Do()
 		if err != nil {
 			slog.Warn("failed to fetch email details", "message_id", m.Id, "error", err)
 			continue
@@ -105,7 +107,7 @@ func (c *Client) ReadEmail(ctx context.Context, userID, messageID string) (strin
 		return "", err
 	}
 
-	msg, err := srv.Users.Messages.Get("me", messageID).Format("full").Do()
+	msg, err := srv.Users.Messages.Get("me", messageID).Format("full").Context(ctx).Do()
 	if err != nil {
 		return "", fmt.Errorf("failed to get email: %w", err)
 	}
@@ -174,7 +176,7 @@ func (c *Client) DraftReply(ctx context.Context, userID, messageID, replyText st
 		return err
 	}
 
-	msg, err := srv.Users.Messages.Get("me", messageID).Format("metadata").Do()
+	msg, err := srv.Users.Messages.Get("me", messageID).Format("metadata").Context(ctx).Do()
 	if err != nil {
 		return fmt.Errorf("failed to fetch original email for drafting: %w", err)
 	}
@@ -204,7 +206,7 @@ func (c *Client) DraftReply(ctx context.Context, userID, messageID, replyText st
 		},
 	}
 
-	_, err = srv.Users.Drafts.Create("me", draft).Do()
+	_, err = srv.Users.Drafts.Create("me", draft).Context(ctx).Do()
 	return err
 }
 
@@ -217,7 +219,7 @@ func (c *Client) ArchiveEmail(ctx context.Context, userID, messageID string) err
 	req := &gmailapi.ModifyMessageRequest{
 		RemoveLabelIds: []string{"INBOX"},
 	}
-	_, err = srv.Users.Messages.Modify("me", messageID, req).Do()
+	_, err = srv.Users.Messages.Modify("me", messageID, req).Context(ctx).Do()
 	return err
 }
 
@@ -227,7 +229,7 @@ func (c *Client) SoftDeleteEmail(ctx context.Context, userID, messageID string) 
 	if err != nil {
 		return err
 	}
-	_, err = srv.Users.Messages.Trash("me", messageID).Do()
+	_, err = srv.Users.Messages.Trash("me", messageID).Context(ctx).Do()
 	return err
 }
 
@@ -237,7 +239,7 @@ func (c *Client) ListLabels(ctx context.Context, userID string) (map[string]stri
 	if err != nil {
 		return nil, err
 	}
-	res, err := srv.Users.Labels.List("me").Do()
+	res, err := srv.Users.Labels.List("me").Context(ctx).Do()
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +259,7 @@ func (c *Client) ApplyLabel(ctx context.Context, userID, messageID, labelID stri
 	req := &gmailapi.ModifyMessageRequest{
 		AddLabelIds: []string{labelID},
 	}
-	_, err = srv.Users.Messages.Modify("me", messageID, req).Do()
+	_, err = srv.Users.Messages.Modify("me", messageID, req).Context(ctx).Do()
 	return err
 }
 
@@ -270,7 +272,7 @@ func (c *Client) CreateLabel(ctx context.Context, userID, labelName string) (str
 	label := &gmailapi.Label{
 		Name: labelName,
 	}
-	res, err := srv.Users.Labels.Create("me", label).Do()
+	res, err := srv.Users.Labels.Create("me", label).Context(ctx).Do()
 	if err != nil {
 		return "", err
 	}
@@ -284,7 +286,7 @@ func (c *Client) UnsubscribeEmail(ctx context.Context, userID, messageID string)
 		return err
 	}
 
-	msg, err := srv.Users.Messages.Get("me", messageID).Format("metadata").Do()
+	msg, err := srv.Users.Messages.Get("me", messageID).Format("metadata").Context(ctx).Do()
 	if err != nil {
 		return fmt.Errorf("failed to fetch email: %w", err)
 	}
@@ -305,23 +307,27 @@ func (c *Client) UnsubscribeEmail(ctx context.Context, userID, messageID string)
 	httpRe := regexp.MustCompile(`<(https?://[^>]+)>`)
 	if match := httpRe.FindStringSubmatch(listUnsub); len(match) > 1 {
 		url := match[1]
-		
-		req, _ := http.NewRequestWithContext(ctx, "POST", url, nil)
-		client := &http.Client{}
-		resp, err := client.Do(req)
+		client := netguard.SafeClient(10 * time.Second)
+
+		req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 		if err == nil {
-			defer resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				return nil
+			resp, err := client.Do(req)
+			if err == nil {
+				defer resp.Body.Close()
+				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+					return nil
+				}
 			}
 		}
-		
-		req, _ = http.NewRequestWithContext(ctx, "GET", url, nil)
-		resp, err = client.Do(req)
+
+		req, err = http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err == nil {
-			defer resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				return nil
+			resp, err := client.Do(req)
+			if err == nil {
+				defer resp.Body.Close()
+				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+					return nil
+				}
 			}
 		}
 	}
@@ -349,7 +355,7 @@ func (c *Client) UnsubscribeEmail(ctx context.Context, userID, messageID string)
 			Raw: b64.URLEncoding.EncodeToString([]byte(rawMessage)),
 		}
 
-		_, err = srv.Users.Messages.Send("me", msgReq).Do()
+		_, err = srv.Users.Messages.Send("me", msgReq).Context(ctx).Do()
 		if err != nil {
 			return fmt.Errorf("failed to send unsubscribe email: %w", err)
 		}
