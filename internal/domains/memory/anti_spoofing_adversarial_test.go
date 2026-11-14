@@ -129,7 +129,7 @@ func TestChallenge2_Memory_AntiSpoofing(t *testing.T) {
 		assert.Equal(t, "mem_legit_family", profile.FamilyGroup)
 
 		// Verify attacker cannot access it under evil_family
-		evilProfile, err := repo.GetEntityProfile(context.Background(), "evil_family_hacker", "health", "VictimPerson")
+		evilProfile, _ := repo.GetEntityProfile(context.Background(), "evil_family_hacker", "health", "VictimPerson")
 		assert.Nil(t, evilProfile)
 	})
 }

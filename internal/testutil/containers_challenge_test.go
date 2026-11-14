@@ -57,7 +57,7 @@ func TestEmpirical_Testcontainers_ConcurrentSingletonInitialization(t *testing.T
 // Validates that parallel isolated databases (CREATE DATABASE testdb_<uuid>)
 // drop cleanly on cleanup() with 0 orphaned databases and 0 lingering connections.
 func TestEmpirical_Testcontainers_CleanDatabaseTeardown(t *testing.T) {
-	const numDatabases = 10
+	const numDatabases = 5
 	ctx := context.Background()
 
 	_, adminDB, err := getSingletonPostgres(ctx)

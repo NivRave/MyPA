@@ -75,7 +75,7 @@ func TestEmpirical_GraphQL_MutationEvents_NoEmissionOnFailure(t *testing.T) {
 	preCount := len(tracker.getEvents())
 
 	// User B attempts to delete User A's schedule event
-	_, err = resolver.Mutation().DeleteScheduleEvent(ctxB, evCreated.ID)
+	_, _ = resolver.Mutation().DeleteScheduleEvent(ctxB, evCreated.ID)
 	// Even if it returns false or error, it must NOT emit a delete event for Family A
 	time.Sleep(50 * time.Millisecond)
 	eventsAfterAttack := tracker.getEvents()

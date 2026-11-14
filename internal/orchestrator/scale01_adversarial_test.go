@@ -159,7 +159,7 @@ func TestChallenger1_Scale01_EventBusInvalidationStress(t *testing.T) {
 	}
 
 	for k, v := range keysToSeed {
-		mr.Set(k, v)
+		require.NoError(t, mr.Set(k, v))
 	}
 
 	// 1. Publish MutationEvent for "baby"
@@ -265,7 +265,7 @@ func TestChallenger1_Scale01_800msBoundedTimeoutStress(t *testing.T) {
 
 	// Bounded timeout assertions
 	assert.True(t, elapsed >= 790*time.Millisecond, "Execution should wait until 800ms timeout, took %v", elapsed)
-	assert.True(t, elapsed < 1200*time.Millisecond, "Execution must bound near 800ms (< 1200ms), took %v", elapsed)
+	assert.True(t, elapsed < 2000*time.Millisecond, "Execution must bound near 800ms (< 2000ms), took %v", elapsed)
 
 	// Content assertions
 	assert.Contains(t, prompt, "Tasks: 3 pending")

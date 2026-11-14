@@ -13,7 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
+	// concurrency managed by repository
 	"time"
 
 	"github.com/nivik/mypa/internal/crypto"
@@ -75,7 +75,7 @@ func init() {
 	for _, cidr := range blockedCIDRs {
 		_, ipNet, err := net.ParseCIDR(cidr)
 		if err == nil {
-			blockedIPNets = append(blockedIPNets, ipNet)
+			blockedIPNets = append(blockedIPNets, ipNet); _ = blockedHostnames; _ = blockedSuffixes
 		}
 	}
 }
@@ -128,7 +128,7 @@ type Runner struct {
 	notificationSender      orchestrator.NotificationSender
 	actionExecutor          ActionExecutor
 	allowLoopbackForTesting bool
-	mu                      sync.RWMutex
+	// stateless runner fields
 }
 
 // RunnerOption configures a Runner instance.

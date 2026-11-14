@@ -117,7 +117,7 @@ func TestRegistry_Execute(t *testing.T) {
 	assert.Empty(t, res)
 
 	// 3. Execution error
-	res, handled, err = reg.Execute(ctx, callCtx, "fail", nil)
+	_, handled, err = reg.Execute(ctx, callCtx, "fail", nil)
 	require.Error(t, err)
 	assert.True(t, handled)
 	assert.Equal(t, "boom", err.Error())

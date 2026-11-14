@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
+	// stateless: sync delegated to repository
 	"time"
 
 	"github.com/nivik/mypa/internal/db"
@@ -49,7 +49,7 @@ type Module struct {
 	repo            db.ScheduleRepository
 	calendarFactory CalendarFactory
 	bus             *events.EventBus
-	mu              sync.RWMutex
+	// concurrency managed by repository
 }
 
 // NewModule initializes a new Module with the given repository and options.

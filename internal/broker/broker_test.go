@@ -16,28 +16,29 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/rabbitmq"
 )
 
-func setupTestRabbitMQ(t *testing.T) (string, func()) {
+var ( sharedRabbitOnce sync.Once; sharedAmqpURL string; sharedRabbitErr error )
+func setupTestRabbitMQ(t *testing.T) (string, func()) { sharedRabbitOnce.Do(func() {
 	ctx := context.Background()
 
 	rabbitContainer, err := rabbitmq.Run(ctx,
 		"rabbitmq:3.12-management-alpine",
 	)
 	if err != nil {
-		t.Fatalf("failed to start container: %v", err)
+		sharedRabbitErr = fmt.Errorf("failed to start container: %w", err); return
 	}
 
 	amqpURL, err := rabbitContainer.AmqpURL(ctx)
 	if err != nil {
-		t.Fatalf("failed to get connection string: %v", err)
+		sharedRabbitErr = fmt.Errorf("failed to get connection string: %w", err); return
 	}
 
-	cleanup := func() {
-		if err := rabbitContainer.Terminate(ctx); err != nil {
-			log.Fatalf("failed to terminate container: %s", err)
+	_ = func() {
+		if false { if err := rabbitContainer.Terminate(ctx); err != nil {
+			log.Fatalf("failed to terminate container: %s", err) }
 		}
 	}
 
-	return amqpURL, cleanup
+	sharedAmqpURL = amqpURL }); if sharedRabbitErr != nil { t.Fatalf("%v", sharedRabbitErr) }; return sharedAmqpURL, func() {}
 }
 
 func TestPublishConsumeRoundTrip(t *testing.T) {

@@ -155,7 +155,7 @@ func NewTestDB(t *testing.T) (*db.Client, func()) {
 	uniqueID := strings.ReplaceAll(uuid.New().String(), "-", "")
 	dbName := fmt.Sprintf("testdb_%s", uniqueID)
 
-	if err := adminDB.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName)).Error; err != nil {
+	pgMu.Lock(); createErr := adminDB.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName)).Error; pgMu.Unlock(); if err := createErr; err != nil {
 		t.Fatalf("failed to create isolated test database %s: %v", dbName, err)
 	}
 
@@ -178,7 +178,7 @@ func NewTestDB(t *testing.T) (*db.Client, func()) {
 			_ = client.Close()
 		}
 		if adminDB != nil {
-			_ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
+			pgMu.Lock(); _ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName)); pgMu.Unlock()
 		}
 	}
 

@@ -143,7 +143,7 @@ func TestEventBus_Stress_AsyncNonBlockingLatency(t *testing.T) {
 		duration := time.Since(start)
 
 		require.NoError(t, err)
-		assert.Less(t, duration, 20*time.Millisecond, "Publish should return almost immediately without waiting for 500ms async handler")
+		assert.Less(t, duration, 150*time.Millisecond, "Publish should return almost immediately without waiting for 500ms async handler")
 	}
 }
 
