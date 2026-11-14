@@ -76,7 +76,7 @@ func TestSEC08_LegacyUnsaltedCiphertext_BackwardCompatibility(t *testing.T) {
 // outside unit testing, startup panics if ENCRYPTION_KEY is unset.
 func TestSEC08_ProductionStartupPanic_WhenMissingKey(t *testing.T) {
 	cmd := exec.Command("go", "run", "./cmd/orchestrator")
-	cmd.Dir = "d:\\MyPA" // project root
+	cmd.Dir = "../.." // project root
 	cmd.Env = append(os.Environ(), "ENV=production", "GO_ENV=production", "ENCRYPTION_KEY=")
 	output, runErr := cmd.CombinedOutput()
 

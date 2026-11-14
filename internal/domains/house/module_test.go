@@ -652,7 +652,7 @@ func TestModule_SystemPromptSection(t *testing.T) {
 	})
 
 	// 4. Add vehicle with expiring test
-	testExp := time.Now().AddDate(0, 0, 15)
+	testExp := time.Now().AddDate(0, 0, 15).Add(time.Hour)
 	_ = repo.CreateVehicleAsset(&models.VehicleAsset{
 		FamilyGroup:      "family-jones",
 		Name:             "Subaru Outback",
