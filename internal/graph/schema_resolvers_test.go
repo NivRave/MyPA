@@ -310,7 +310,7 @@ func TestSchemaResolvers_AutomationLifecycle(t *testing.T) {
 	// 1. RegisterExternalAPI
 	method := "POST"
 	desc := "Local webhook gateway"
-	api, err := resolver.Mutation().RegisterExternalAPI(ctx, "LocalGateway", "https://api.external.com/webhook", &method, &desc, &fam)
+	api, err := resolver.Mutation().RegisterExternalAPI(ctx, "LocalGateway", "https://93.184.216.34/webhook", &method, &desc, &fam)
 	require.NoError(t, err)
 	require.NotNil(t, api)
 	assert.Equal(t, fam, api.FamilyGroup)

@@ -123,7 +123,7 @@ func TestEmpirical_EventBus_Backpressure1200EventsQueueSaturation(t *testing.T) 
 // TestEmpirical_EventBus_ConcurrentMultipleSubscribersPanicsAndDrops tests concurrent publishers
 // publishing to multiple async subscribers, some of which panic while others succeed.
 func TestEmpirical_EventBus_ConcurrentMultipleSubscribersPanicsAndDrops(t *testing.T) {
-	bus := NewEventBus(WithWorkerCount(4), WithQueueCapacity(500))
+	bus := NewEventBus(WithWorkerCount(4), WithQueueCapacity(1024))
 	defer bus.Close()
 
 	ctx := context.Background()

@@ -218,7 +218,7 @@ func TestResolver_Mutations_EmitEvents(t *testing.T) {
 	// 3. RegisterExternalAPI mutation (fixes BUG-03)
 	fg := "fam-test"
 	method := "GET"
-	apiLog, err := resolver.Mutation().RegisterExternalAPI(ctx, "WeatherAPI", "https://api.weather.com", &method, nil, &fg)
+	apiLog, err := resolver.Mutation().RegisterExternalAPI(ctx, "WeatherAPI", "https://93.184.216.34/weather", &method, nil, &fg)
 	require.NoError(t, err)
 	require.NotNil(t, apiLog)
 	require.Len(t, autoRepo.createdAPIs, 1)
