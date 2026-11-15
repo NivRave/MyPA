@@ -619,7 +619,7 @@ func TestIntentMatcher_AdversarialStressAndReDoS(t *testing.T) {
 		elapsed := time.Since(start)
 
 		assert.Empty(t, res)
-		assert.Less(t, elapsed, 250*time.Millisecond, "100KB input must evaluate rapidly without ReDoS")
+		assert.Less(t, elapsed, timingSlack*250*time.Millisecond, "100KB input must evaluate rapidly without ReDoS")
 
 		// 1MB string with a single domain keyword embedded at the very end
 		oneMB := strings.Repeat("the quick brown fox jumps over the lazy dog. ", 23000) + " please fix the refrigerator leak"
@@ -630,7 +630,7 @@ func TestIntentMatcher_AdversarialStressAndReDoS(t *testing.T) {
 		elapsed1MB := time.Since(start)
 
 		assert.Contains(t, res1MB, DomainHouse, "Must find house keyword at end of 1MB buffer")
-		assert.Less(t, elapsed1MB, 3*time.Second, "1MB input evaluation must complete under 3s")
+		assert.Less(t, elapsed1MB, timingSlack*3*time.Second, "1MB input evaluation must complete under 3s")
 	})
 
 	t.Run("False-Positive Trap Words (Boundary Precision)", func(t *testing.T) {

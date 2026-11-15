@@ -142,9 +142,10 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 					daysAway, ok := calculateDaysUntil(d.Date, now)
 					if ok && daysAway >= 0 && daysAway <= 30 {
 						timeLabel := fmt.Sprintf("in %d days", daysAway)
-						if daysAway == 0 {
+						switch daysAway {
+						case 0:
 							timeLabel = "TODAY!"
-						} else if daysAway == 1 {
+						case 1:
 							timeLabel = "tomorrow!"
 						}
 

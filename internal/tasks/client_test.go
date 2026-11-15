@@ -137,10 +137,11 @@ func TestClient_CompleteTask(t *testing.T) {
 	// CompleteTask does a GET followed by a PUT (or PATCH).
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method == "GET" {
+		switch r.Method {
+		case "GET":
 			assert.Contains(t, r.URL.Path, "/lists/list-1/tasks/task-1")
 			_, _ = w.Write([]byte(`{"id": "task-1", "title": "Buy Milk", "status": "needsAction"}`))
-		} else if r.Method == "PUT" {
+		case "PUT":
 			assert.Contains(t, r.URL.Path, "/lists/list-1/tasks/task-1")
 			_, _ = w.Write([]byte(`{"id": "task-1", "title": "Buy Milk", "status": "completed"}`))
 		}
