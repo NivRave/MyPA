@@ -128,3 +128,28 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### D1-4.7 User-facing error notice
 - Sent only when `errors.Is(err, ErrNonRetryable) || info.IsFinal()`, via new `Consumer.ConsumeWithInfo` (attempt number from the `x-retries` header). `Consume` kept as a compatibility wrapper.
+
+---
+
+## P1-5 — `/restore` confirmation + pre-restore backup
+
+### D1-5.1 Reuse the pending-action slot vs a dedicated key
+- **Options:** (a) reuse `pending_meta_tool:<userID>` with `ToolName="restore"` (plan); (b) a dedicated `pending_admin:<userID>` key.
+- **Chosen:** (a).
+- **Why / challenge:** one slot means staging a restore overwrites an unconfirmed meta-tool action (and vice versa). That's acceptable — both are short-lived, user-initiated, and the user sees which action is pending. A second key doubles the confirmation surface for no real benefit. `restore` is not an LLM tool name, so the model cannot stage it through the meta-tool gate.
+
+### D1-5.2 Restore the staged file, not "latest at confirm time"
+- The safety backup taken on confirmation becomes the newest file on disk; resolving "latest" at confirm time would restore the *current* state (a silent no-op that looks like success). The exact path is staged and validated (`.dump`, directly inside the backup dir, still exists).
+
+### D1-5.3 Explicit `CONFIRM RESTORE` only
+- The existing gate executes whatever is pending on a bare `CONFIRM`. For destructive actions (`isDestructiveAction`) the action name is mandatory; a bare `CONFIRM` re-stages with the *remaining* TTL (not a fresh 5 min) and explains.
+
+### D1-5.4 Safety backup failure aborts the restore
+- **Options:** abort; warn and continue.
+- **Chosen:** abort. `pg_restore -c` drops objects first; without a fresh dump there is no way back from a bad backup file. Safety backup uses retention `3+1` so it can never evict the target file, even if a nightly backup landed between staging and confirmation.
+
+### D1-5.5 Re-authorize at confirmation
+- Role is re-checked on `CONFIRM RESTORE` (the staged record lives in Redis and the role may have changed within the TTL).
+
+### D1-5.6 "Same for any future destructive admin commands"
+- `isDestructiveAction` + the staged-action pattern in `restore.go` is the template. `/backup` is not destructive (additive, retention-bounded) and stays immediate.

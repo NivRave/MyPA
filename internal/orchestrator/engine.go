@@ -35,6 +35,7 @@ import (
 type Engine struct {
 	consumer        *broker.Consumer
 	store           *state.Store
+	backups         backupOps // pg_dump/pg_restore seam; zero value = real db functions
 	db              DBClient
 	llm             LLMClient
 	tgClient        TelegramClient
@@ -412,6 +413,17 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 				_ = e.store.StagePendingMetaTool(ctx, msg.UserID, *pending, 5*time.Minute)
 				return e.sendMessage(ctx, msg, fmt.Sprintf("⚠️ Confirmation mismatch. Pending action is '%s', but you confirmed '%s'.", pending.ToolName, expectedTool))
 			}
+			if isDestructiveAction(pending.ToolName) {
+				if expectedTool == "" {
+					// Destructive actions require the action name; keep the pending action alive.
+					remaining := restoreConfirmTTL - time.Since(pending.CreatedAt)
+					if remaining > 0 {
+						_ = e.store.StagePendingMetaTool(ctx, msg.UserID, *pending, remaining)
+					}
+					return e.sendMessage(ctx, msg, fmt.Sprintf("⚠️ This is a destructive action. Reply `CONFIRM %s` to proceed.", strings.ToUpper(pending.ToolName)))
+				}
+				return e.executeConfirmedRestore(ctx, user, msg, pending)
+			}
 
 			slog.Info("executing confirmed meta tool action", "user_id", msg.UserID, "tool", pending.ToolName)
 			call := &genai.FunctionCall{
@@ -431,7 +443,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		sb.WriteString("*System Commands:*\n")
 		sb.WriteString("• `/connect` - Connect Google Account (Calendar, Tasks, Gmail, Contacts)\n")
 		sb.WriteString("• `/backup` - Create a manual database backup\n")
-		sb.WriteString("• `/restore` - Restore the database from the latest backup\n")
+		sb.WriteString("• `/restore` - Restore the database from the latest backup (asks for `CONFIRM RESTORE`; takes a safety backup first)\n")
 		sb.WriteString("• `/undo` - Revert your most recent action or specify mutation ID\n")
 		sb.WriteString("• `/help` - Show this help message\n\n")
 		sb.WriteString("*AI Capabilities:*\n")
@@ -506,29 +518,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	}
 
 	if msg.Text == "/restore" {
-		if user.Role != "admin" {
-			slog.Warn("unauthorized restore command attempt", "user_id", user.PlatformID, "role", user.Role)
-			return e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")
-		}
-		_ = e.sendMessage(ctx, msg, "🔄 Starting database restore from latest backup...")
-		databaseURL := os.Getenv("DATABASE_URL")
-		if databaseURL == "" {
-			return e.sendMessage(ctx, msg, "❌ Restore failed: DATABASE_URL not set.")
-		}
-		
-		latestBackup, err := db.GetLatestBackup("/backups")
-		if err != nil {
-			slog.Error("Failed to find latest backup", "error", err)
-			return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Restore failed: %v", err))
-		}
-
-		markSideEffect(ctx)
-		err = db.RestoreDatabase(databaseURL, latestBackup)
-		if err != nil {
-			slog.Error("Manual restore failed", "error", err)
-			return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Restore failed: %v", err))
-		}
-		return e.sendMessage(ctx, msg, fmt.Sprintf("✅ Restore completed successfully from %s!", latestBackup))
+		// P1-5: never restore immediately — stage it and require "CONFIRM RESTORE".
+		return e.handleRestoreCommand(ctx, user, msg)
 	}
 
 	var photoData []byte
