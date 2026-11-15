@@ -243,3 +243,14 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### D2-4.7 Dropping the `memories` table
 - Not done in code (plan: "keep old table until verified"). **Owner action:** after confirming retrieval in production, `DROP TABLE memories;` and remove `models.Memory` from AutoMigrate (a P4-3 versioned migration is the right vehicle).
+
+---
+
+## P2-5 — Skip embedding + retrieval for trivial messages
+
+### D2-5.1 Classification rule
+- **Options:** (a) token count only (≤ 3 words); (b) all-filler words AND ≤ 3 words; (c) a tiny classifier / LLM call.
+- **Chosen:** (b), plus empty and emoji/punctuation-only text.
+- **Why / challenge:** (a) would skip "remind me tomorrow" or "no meat tonight", losing relevant memories exactly when short messages carry intent. (c) costs more than the embedding it saves. With (b) the failure mode is benign: an unlisted filler word just means we embed as before.
+- "ok ok ok thanks thanks" (>3 filler words) is deliberately *not* trivial — the threshold is a hard cap so the rule stays predictable; it's a named constant (`maxTrivialTokens`) with a test.
+- CONFIRM messages never reach retrieval (handled earlier in `ProcessMessage`), so no special case is needed.

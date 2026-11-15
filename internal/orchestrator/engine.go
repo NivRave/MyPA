@@ -659,8 +659,12 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		userCtx, user.Role, user.FamilyGroup, time.Now().Format(time.RFC1123), e.timezone,
 	)
 
-	// Search long-term semantic memory
-	embedding, err := e.llm.GenerateEmbedding(ctx, msg.Text)
+	// Search long-term semantic memory — skipped for trivial acknowledgements (P2-5): an
+	// embedding of "thanks!" retrieves noise and costs an API call per message.
+	var embedding []float32
+	if !isTrivialMessage(msg.Text) {
+		embedding, err = e.llm.GenerateEmbedding(ctx, msg.Text)
+	}
 	if err == nil && len(embedding) > 0 {
 		// P2-4: single memory store. Visibility (own personal + family-shared) is enforced by
 		// the repository's tenant filter, so no per-member user ID list is needed.
