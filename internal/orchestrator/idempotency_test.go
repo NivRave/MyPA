@@ -132,6 +132,24 @@ func TestIdempotency_KeyIsScopedPerChat(t *testing.T) {
 	require.NoError(t, engine.ProcessMessage(context.Background(), b))
 }
 
+// Read-only built-ins (get_current_time) are not side effects: a failure afterwards stays retryable.
+func TestIdempotency_ReadOnlyBuiltinIsNotASideEffect(t *testing.T) {
+	engine, tgMock, llmMock, _ := setupIdempotencyEngine(t)
+	var calls int64
+	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ []models.ChatMessage, _ string, _ []byte, _ string) (*llm.Response, error) {
+			if atomic.AddInt64(&calls, 1) == 1 {
+				return &llm.Response{ToolCalls: []*genai.FunctionCall{{Name: "get_current_time", Args: map[string]interface{}{}}}}, nil
+			}
+			return &llm.Response{Text: "It is 9am."}, nil
+		}).AnyTimes()
+	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("telegram 502")).AnyTimes()
+
+	err := engine.ProcessMessage(context.Background(), tgMsg("104"))
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, broker.ErrNonRetryable, "only reading the clock must not block a retry")
+}
+
 func TestShouldNotifyUserOfFailure(t *testing.T) {
 	retryable := errors.New("llm down")
 	assert.False(t, shouldNotifyUserOfFailure(retryable, broker.DeliveryInfo{Attempt: 1, MaxAttempts: 3}),

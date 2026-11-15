@@ -60,6 +60,12 @@ func markSideEffect(ctx context.Context) {
 }
 
 func (fx *turnEffects) any() bool { return fx != nil && fx.happened.Load() }
+
+// readOnlyBuiltinTools are handled locally by the registry and never change external state,
+// so executing them does not make a turn non-retryable.
+var readOnlyBuiltinTools = map[string]bool{
+	"get_current_time": true,
+}
 // inboundClaim is the dedup claim for one inbound message (zero value = no claim held).
 type inboundClaim struct {
 	store *state.Store

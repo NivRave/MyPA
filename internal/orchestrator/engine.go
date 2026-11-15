@@ -1013,7 +1013,10 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 		if handled {
 			recordToolCall(ctx, toolCall.Name)
 			// The tool ran (possibly partially, even on error): retrying the turn would duplicate it.
-			markSideEffect(ctx)
+			// Read-only built-ins computed locally are exempt.
+			if !readOnlyBuiltinTools[toolCall.Name] {
+				markSideEffect(ctx)
+			}
 			if err != nil {
 				slog.Error("registry tool execution failed", "tool", toolCall.Name, "error", err)
 				return fmt.Sprintf("❌ Error executing %s: %v", toolCall.Name, err)
