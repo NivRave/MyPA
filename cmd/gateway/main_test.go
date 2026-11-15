@@ -39,7 +39,7 @@ func TestGatewayHealth(t *testing.T) {
 
 func TestGatewayTelegramWebhook_Success(t *testing.T) {
 	pub := new(MockEventPublisher)
-	cfg := &config.Config{}
+	cfg := &config.Config{Telegram: config.TelegramConfig{SecretToken: testTelegramSecret}}
 	r := setupRouter(pub, cfg)
 
 	// Valid Telegram Update payload
@@ -72,6 +72,7 @@ func TestGatewayTelegramWebhook_Success(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/webhook/telegram", bytes.NewBuffer(payload))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", testTelegramSecret)
 	rr := httptest.NewRecorder()
 
 	r.ServeHTTP(rr, req)
@@ -82,13 +83,14 @@ func TestGatewayTelegramWebhook_Success(t *testing.T) {
 
 func TestGatewayTelegramWebhook_InvalidJSON(t *testing.T) {
 	pub := new(MockEventPublisher)
-	cfg := &config.Config{}
+	cfg := &config.Config{Telegram: config.TelegramConfig{SecretToken: testTelegramSecret}}
 	r := setupRouter(pub, cfg)
 
 	payload := []byte(`{"update_id": 12345, bad json`)
 
 	req := httptest.NewRequest("POST", "/webhook/telegram", bytes.NewBuffer(payload))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", testTelegramSecret)
 	rr := httptest.NewRecorder()
 
 	r.ServeHTTP(rr, req)

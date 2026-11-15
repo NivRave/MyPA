@@ -52,14 +52,18 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify Twilio Signature if authToken is configured
-	if h.authToken != "" {
-		sig := r.Header.Get("X-Twilio-Signature")
-		if sig == "" || !h.validateSignature(r, r.PostForm, sig) {
-			slog.Warn("twilio webhook signature verification failed", "remote_addr", r.RemoteAddr)
-			http.Error(w, "Forbidden: invalid signature", http.StatusForbidden)
-			return
-		}
+	// Always verify the Twilio signature. Fail closed when no auth token is configured:
+	// an HMAC keyed with "" is computable by anyone, so it must never be accepted.
+	if h.authToken == "" {
+		slog.Error("twilio webhook rejected: TWILIO_AUTH_TOKEN is not configured", "remote_addr", r.RemoteAddr)
+		http.Error(w, "Forbidden: invalid signature", http.StatusForbidden)
+		return
+	}
+	sig := r.Header.Get("X-Twilio-Signature")
+	if sig == "" || !h.validateSignature(r, r.PostForm, sig) {
+		slog.Warn("twilio webhook signature verification failed", "remote_addr", r.RemoteAddr)
+		http.Error(w, "Forbidden: invalid signature", http.StatusForbidden)
+		return
 	}
 
 	from := r.FormValue("From")

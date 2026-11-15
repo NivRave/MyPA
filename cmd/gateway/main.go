@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"syscall"
 	"time"
 
@@ -29,6 +31,10 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
+	}
+	if err := validateGatewayConfig(cfg); err != nil {
+		slog.Error("invalid gateway configuration — refusing to start", "error", err)
 		os.Exit(1)
 	}
 
@@ -69,12 +75,30 @@ func main() {
 		}
 	}()
 
+	// Register the Telegram webhook (with secret_token) in the background.
+	// Network failures are retried with backoff and never crash the gateway.
+	regCtx, cancelReg := context.WithCancel(context.Background())
+	defer cancelReg()
+	if cfg.Telegram.WebhookURL != "" {
+		go func() {
+			client := telegram.NewClient(cfg.Telegram.BotToken)
+			err := registerWebhookWithRetry(regCtx, client, cfg.Telegram.WebhookURL, cfg.Telegram.SecretToken,
+				webhookRegisterMaxAttempts, webhookRegisterBaseDelay)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				slog.Error("giving up on telegram setWebhook; updates may be rejected until it is registered", "error", err)
+			}
+		}()
+	} else {
+		slog.Warn("TELEGRAM_WEBHOOK_URL not set; skipping setWebhook — the webhook must already be registered with the secret token")
+	}
+
 	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	slog.Info("gateway shutting down")
+	cancelReg()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -108,13 +132,10 @@ func setupRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
 	r.Post("/webhook/twilio", twHandler.HandleWebhook)
 
 	r.Post("/webhook/telegram", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.Telegram.SecretToken != "" {
-			secretHeader := r.Header.Get("X-Telegram-Bot-Api-Secret-Token")
-			if subtle.ConstantTimeCompare([]byte(secretHeader), []byte(cfg.Telegram.SecretToken)) != 1 {
-				slog.Warn("unauthorized telegram webhook attempt", "remote_addr", r.RemoteAddr)
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
+		if !telegramSecretValid(cfg.Telegram.SecretToken, r.Header.Get("X-Telegram-Bot-Api-Secret-Token")) {
+			slog.Warn("unauthorized telegram webhook attempt", "remote_addr", r.RemoteAddr)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
 		}
 
 		body, err := io.ReadAll(r.Body)
@@ -155,4 +176,79 @@ func setupRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
 	})
 
 	return r
+}
+
+// telegramSecretValid fails closed: an empty configured secret never matches.
+// (subtle.ConstantTimeCompare("", "") returns 1, so the explicit empty check is required.)
+func telegramSecretValid(configured, provided string) bool {
+	if configured == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(configured)) == 1
+}
+
+// Telegram's secret_token allows 1-256 characters from A-Z, a-z, 0-9, _ and -.
+var telegramSecretPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
+
+// validateGatewayConfig refuses configurations that would leave a webhook unauthenticated.
+func validateGatewayConfig(cfg *config.Config) error {
+	var errs []error
+
+	tg := cfg.Telegram
+	if tg.BotToken != "" || tg.WebhookURL != "" {
+		if tg.SecretToken == "" {
+			errs = append(errs, errors.New("TELEGRAM_SECRET_TOKEN is required when Telegram is configured (TELEGRAM_BOT_TOKEN/TELEGRAM_WEBHOOK_URL set)"))
+		}
+	}
+	if tg.SecretToken != "" && !telegramSecretPattern.MatchString(tg.SecretToken) {
+		errs = append(errs, errors.New("TELEGRAM_SECRET_TOKEN must be 1-256 characters of A-Z, a-z, 0-9, '_' or '-'"))
+	}
+	if tg.WebhookURL != "" && tg.BotToken == "" {
+		errs = append(errs, errors.New("TELEGRAM_BOT_TOKEN is required to register TELEGRAM_WEBHOOK_URL"))
+	}
+
+	if cfg.Twilio.AccountSID != "" && cfg.Twilio.AuthToken == "" {
+		errs = append(errs, errors.New("TWILIO_AUTH_TOKEN is required when TWILIO_ACCOUNT_SID is set (webhook signatures cannot be verified)"))
+	}
+
+	return errors.Join(errs...)
+}
+
+const (
+	webhookRegisterMaxAttempts = 8
+	webhookRegisterBaseDelay   = 2 * time.Second
+	webhookRegisterMaxDelay    = 2 * time.Minute
+)
+
+// webhookRegistrar is satisfied by *telegram.Client.
+type webhookRegistrar interface {
+	SetWebhook(ctx context.Context, webhookURL, secretToken string) error
+}
+
+// registerWebhookWithRetry calls SetWebhook until it succeeds, maxAttempts is reached, or ctx is
+// cancelled. Delays grow exponentially from baseDelay, capped at webhookRegisterMaxDelay.
+func registerWebhookWithRetry(ctx context.Context, reg webhookRegistrar, webhookURL, secretToken string, maxAttempts int, baseDelay time.Duration) error {
+	delay := baseDelay
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		lastErr = reg.SetWebhook(ctx, webhookURL, secretToken)
+		if lastErr == nil {
+			slog.Info("telegram webhook registered with secret token", "url", webhookURL, "attempt", attempt)
+			return nil
+		}
+		slog.Warn("telegram setWebhook failed", "attempt", attempt, "max_attempts", maxAttempts, "error", lastErr)
+		if attempt == maxAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, webhookRegisterMaxDelay)
+	}
+	return fmt.Errorf("telegram setWebhook failed after %d attempts: %w", maxAttempts, lastErr)
 }

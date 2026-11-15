@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/nivik/mypa/internal/markdown"
@@ -107,6 +109,57 @@ func (c *Client) doSend(ctx context.Context, url string, reqBody SendMessageRequ
 	}
 
 	return nil
+}
+
+// setWebhookRequest is the payload for the setWebhook API.
+type setWebhookRequest struct {
+	URL         string `json:"url"`
+	SecretToken string `json:"secret_token"`
+}
+
+// SetWebhook registers webhookURL with Telegram and instructs it to send secretToken in the
+// X-Telegram-Bot-Api-Secret-Token header on every update. Errors never include the bot token.
+func (c *Client) SetWebhook(ctx context.Context, webhookURL, secretToken string) error {
+	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/setWebhook", c.token)
+
+	body, err := json.Marshal(setWebhookRequest{URL: webhookURL, SecretToken: secretToken})
+	if err != nil {
+		return fmt.Errorf("failed to marshal setWebhook request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create setWebhook request: %w", redactURLError(err))
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("setWebhook request failed: %w", redactURLError(err))
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Ok          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return fmt.Errorf("setWebhook returned status %d with unparseable body", resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusOK || !result.Ok {
+		return fmt.Errorf("setWebhook rejected (status %d): %s", resp.StatusCode, result.Description)
+	}
+	return nil
+}
+
+// redactURLError strips the request URL (which embeds the bot token) from net/http errors.
+func redactURLError(err error) error {
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		return fmt.Errorf("%s: %w", uerr.Op, uerr.Err)
+	}
+	return err
 }
 
 // GetFile retrieves file metadata (including file_path) from Telegram.

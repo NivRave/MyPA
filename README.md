@@ -149,8 +149,8 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
    - Redirect targets are inspected and validated prior to each hop.
 
 2. **Webhook Ingress Signatures & Edge Protection (`cmd/gateway`, `internal/twilio`):**
-   - **Telegram:** Enforces `X-Telegram-Bot-Api-Secret-Token` matching `TELEGRAM_SECRET_TOKEN` using constant-time comparison (`subtle.ConstantTimeCompare`).
-   - **Twilio WhatsApp:** Calculates and verifies HMAC-SHA1 signatures (`X-Twilio-Signature`) across full request URLs and sorted parameters using `TWILIO_AUTH_TOKEN`.
+   - **Telegram:** Enforces `X-Telegram-Bot-Api-Secret-Token` matching `TELEGRAM_SECRET_TOKEN` using constant-time comparison (`subtle.ConstantTimeCompare`). Fails closed: the gateway refuses to start if Telegram is configured without a secret, and rejects every update when no secret is set. On startup the gateway registers `TELEGRAM_WEBHOOK_URL` with Telegram via `setWebhook` (including `secret_token`), retrying with backoff.
+   - **Twilio WhatsApp:** Calculates and verifies HMAC-SHA1 signatures (`X-Twilio-Signature`) across full request URLs and sorted parameters using `TWILIO_AUTH_TOKEN`. Fails closed: the gateway refuses to start if `TWILIO_ACCOUNT_SID` is set without `TWILIO_AUTH_TOKEN`, and rejects every WhatsApp webhook when no auth token is set.
    - **Edge Proxy:** Rejects unauthenticated `/graphql` calls at the reverse proxy layer, restricts `/playground` in production, and bounds HTTP request bodies with `http.MaxBytesReader` (10MB gateway, 1MB GraphQL).
 
 3. **GraphQL Authentication & Tenant Authorization (`internal/graph/auth_middleware.go`):**
@@ -185,8 +185,9 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
 | :--- | :--- | :---: | :--- |
 | **`ENCRYPTION_KEY`** | Primary 32-byte secret for HKDF-SHA256 salted AES-256-GCM encryption at rest; fails fast on boot in production if missing. | **Yes** (Prod) | `32-byte-hex-or-passphrase` |
 | **`DASHBOARD_API_SECRET`** | Secret bearer token used by the Next.js Web Dashboard and Proxy to authenticate requests to `/graphql`. | **Yes** | `super-secret-dashboard-key` |
-| **`TELEGRAM_SECRET_TOKEN`** | Webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header on Telegram ingress. | **Yes** | `random-webhook-secret-token` |
-| **`TWILIO_AUTH_TOKEN`** | Twilio Auth Token used to calculate and verify HMAC-SHA1 signatures (`X-Twilio-Signature`) on WhatsApp webhooks. | **Yes** | `twilio-account-auth-token` |
+| **`TELEGRAM_SECRET_TOKEN`** | Webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header on Telegram ingress. 1–256 chars of `A-Z a-z 0-9 _ -` (e.g. `openssl rand -hex 32`). Gateway refuses to start without it when Telegram is configured. | **Yes** | `random-webhook-secret-token` |
+| `TELEGRAM_WEBHOOK_URL` | Public URL of `/webhook/telegram`. When set, the gateway calls `setWebhook` with this URL and `TELEGRAM_SECRET_TOKEN` on startup. | If TG active | `https://your-domain.ngrok-free.dev/webhook/telegram` |
+| **`TWILIO_AUTH_TOKEN`** | Twilio Auth Token used to calculate and verify HMAC-SHA1 signatures (`X-Twilio-Signature`) on WhatsApp webhooks. Gateway refuses to start without it when `TWILIO_ACCOUNT_SID` is set. | **Yes** | `twilio-account-auth-token` |
 | **`RABBITMQ_URL`** | AMQP 0-9-1 connection string for RabbitMQ broker. | **Yes** | `amqp://user:password@rabbitmq:5672/` |
 | **`DATABASE_URL`** | PostgreSQL connection string (`postgres://...`). | **Yes** | `postgres://mypa:mypa@postgres:5432/mypa?sslmode=disable` |
 | **`REDIS_URL`** | Redis connection string (`redis://...`). | **Yes** | `redis://redis:6379/0` |
@@ -240,7 +241,7 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
    *(ngrok starts automatically inside Docker using `NGROK_AUTHTOKEN` and `NGROK_DOMAIN` from `.env`, exposing the tunnel inspection UI at `http://localhost:4040` and the Web Dashboard at `http://localhost:3030`)*
 
 3. **Set Webhooks:**
-   - **Telegram:**
+   - **Telegram:** Automatic. When `TELEGRAM_WEBHOOK_URL` is set, the gateway calls `setWebhook` with `TELEGRAM_SECRET_TOKEN` on startup (look for `telegram webhook registered with secret token` in `docker-compose logs gateway`). To register manually instead:
      ```bash
      curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=<NGROK_URL>/webhook/telegram&secret_token=<TELEGRAM_SECRET_TOKEN>"
      ```

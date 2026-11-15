@@ -50,7 +50,7 @@ func (r *repeatingReader) Read(p []byte) (n int, err error) {
 // (exceeding the 10MB gateway webhook limit) triggers an HTTP error and does NOT crash the server.
 func TestAdversarial_MaxBytesReader_TelegramWebhook(t *testing.T) {
 	pub := new(MockEventPublisher)
-	cfg := &config.Config{}
+	cfg := &config.Config{Telegram: config.TelegramConfig{SecretToken: testTelegramSecret}}
 	r := setupRouter(pub, cfg)
 
 	// Create an oversized stream: 12MB of data
@@ -58,6 +58,7 @@ func TestAdversarial_MaxBytesReader_TelegramWebhook(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/webhook/telegram", oversizedStream)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", testTelegramSecret)
 	rr := httptest.NewRecorder()
 
 	// Ensure no panic occurs
@@ -73,6 +74,7 @@ func TestAdversarial_MaxBytesReader_TelegramWebhook(t *testing.T) {
 	validPayload := []byte(`{"update_id": 999}`)
 	validReq := httptest.NewRequest("POST", "/webhook/telegram", bytes.NewBuffer(validPayload))
 	validReq.Header.Set("Content-Type", "application/json")
+	validReq.Header.Set("X-Telegram-Bot-Api-Secret-Token", testTelegramSecret)
 	validRR := httptest.NewRecorder()
 
 	require.NotPanics(t, func() {
@@ -85,7 +87,8 @@ func TestAdversarial_MaxBytesReader_TelegramWebhook(t *testing.T) {
 // (> 10MB) sent to /webhook/twilio is rejected by ParseForm without crashing the server.
 func TestAdversarial_MaxBytesReader_TwilioWebhook(t *testing.T) {
 	pub := new(MockEventPublisher)
-	cfg := &config.Config{}
+	const twilioToken = "maxbytes-twilio-token"
+	cfg := &config.Config{Twilio: config.TwilioConfig{AuthToken: twilioToken}}
 	r := setupRouter(pub, cfg)
 
 	// Generate 11MB form body: "From=%2B1234567890&Body=" followed by 11MB of filler
@@ -108,8 +111,9 @@ func TestAdversarial_MaxBytesReader_TwilioWebhook(t *testing.T) {
 		"From": {"+1234567890"},
 		"Body": {"Valid message"},
 	}
-	validReq := httptest.NewRequest("POST", "/webhook/twilio", strings.NewReader(normalForm.Encode()))
+	validReq := httptest.NewRequest("POST", "http://example.com/webhook/twilio", strings.NewReader(normalForm.Encode()))
 	validReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	validReq.Header.Set("X-Twilio-Signature", signTwilio(twilioToken, "http://example.com/webhook/twilio", normalForm))
 	validRR := httptest.NewRecorder()
 
 	pub.On("Publish", mock.Anything, mock.Anything).Return(nil)

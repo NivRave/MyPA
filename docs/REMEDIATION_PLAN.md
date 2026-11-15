@@ -185,7 +185,7 @@ Generate the tool catalog section of `SYSTEM.md`/`README.md` from the registry (
 
 | ID | Title | Phase | Status |
 |---|---|---|---|
-| P1-1 | Telegram/Twilio webhooks fail closed + setWebhook | 1 | ☐ |
+| P1-1 | Telegram/Twilio webhooks fail closed + setWebhook | 1 | ☑ |
 | P1-2 | Central config validation, no test-key fallback | 1 | ☐ |
 | P1-3 | Per-user prompt cache keys | 1 | ☐ |
 | P1-4 | Inbound idempotency + non-retryable after side effects | 1 | ☐ |
