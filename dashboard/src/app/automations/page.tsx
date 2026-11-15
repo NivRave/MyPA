@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { Zap, Globe, Sliders, Users, CheckCircle2, XCircle, Trash2, Shield, Clock } from "lucide-react";
 import {
   graphqlFetch,
+  getDashboardFamilyGroup,
   type ExternalAPIConnector,
   type AutomationRule,
   type UserPreference,
@@ -93,7 +94,7 @@ const SAVE_PREFERENCES_MUTATION = `
   }
 `;
 
-async function getAutomationData(familyGroup: string = "Smith Family", userId: string = "default") {
+async function getAutomationData(familyGroup: string = getDashboardFamilyGroup(), userId: string = "default") {
   try {
     const data = await graphqlFetch<{
       externalApiConnectors: ExternalAPIConnector[];
@@ -126,7 +127,7 @@ export default async function AutomationsPage() {
 
     try {
       await graphqlFetch(REGISTER_API_MUTATION, {
-        familyGroup: "Smith Family",
+        familyGroup: getDashboardFamilyGroup(),
         name,
         baseUrl,
         defaultMethod,

@@ -369,3 +369,28 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### Incidental: test-only `handleToolCall` double-executes `search_emails`
 - The helper runs `search_emails`, compares the output to an exact string, and otherwise falls through to `handleToolCalls`, which runs the tool again. Production does not use it (only tests). Made the shortcut content-based; removal belongs to P4-1.
+
+---
+
+## P3-2 — JWT / claims hardening ([DECIDE] dashboard scoping resolved by owner 2026-11-15)
+
+### D3-2.1 JWT rules
+- Header `alg` must equal `HS256` exactly (rejects `none`, `HS512`, case variants — no algorithm confusion). `exp` mandatory, in the future, and ≤ `MaxTokenLifetime` = 24 h ahead.
+- **Why 24 h without `iat`:** no code in the repo mints JWTs (they are minted externally), so issuance time can't be trusted anyway; capping `exp - now` bounds the damage of a leaked token regardless of how it was minted. **Revisit?** if a longer-lived client exists, mint shorter tokens rather than raising the cap.
+
+### D3-2.2 Dashboard secret scoping (owner: "scope via DASHBOARD_FAMILY_GROUP, fail closed")
+- **Options:** (a) give the dashboard a non-admin role in its family (breaks admin-only dashboard features such as editing family members' preferences); (b) keep `Role=admin` and add a server-side `TenantBound` flag, replacing every cross-tenant `Role == "admin"` bypass with `IsGlobalAdmin()`; (c) a separate API for the dashboard.
+- **Chosen:** (b). Eight resolver bypasses converted (shared reminder lookup, automation rule get/delete, user preference read/write, rollback scope, two audit system-wide views). Per-user targets use `resolveTargetUser` → `canActOnUser` (tenant-bound admin may only reach users whose `users.family_group` matches).
+- `TenantBound` is `json:"-"` and explicitly reset after JWT parsing — a token payload can never set it (tested).
+- `DASHBOARD_FAMILY_GROUP` is **required** by the orchestrator's `Validate` and the secret is ignored if it's empty (fail closed).
+- **Dashboard follow-through:** the Next.js app hard-coded `"Smith Family"` in 17 places — it only worked because the dashboard was a global admin. Options were (i) the server silently coercing any requested family to the bound one, or (ii) the dashboard reading the same `DASHBOARD_FAMILY_GROUP`. Chose (ii): the authorization layer should never silently ignore what a client asked for. `getDashboardFamilyGroup()` in `lib/graphql.ts` (server-side env), passed to the dashboard container in compose; falls back to the demo family when unset (the server then rejects the mismatch). Dashboard tests + lint pass.
+- **Behaviour change for the owner:** if your real family group isn't "Smith Family", the dashboard previously showed the demo family; it now shows *your* family once `DASHBOARD_FAMILY_GROUP` is set.
+
+### D3-2.3 Missing claims
+- `resolveTenantAndActor` returned user `"user"` in the *requested* family when claims were nil; `RollbackMutation` ran as a global `"system"` rollback. Both now error. The middleware always sets claims on `/graphql`, so this only removes a fall-open path.
+
+### D3-2.4 JWT_SECRET fallback
+- Removed (`cmd/orchestrator` read `os.Getenv` with `ENCRYPTION_KEY` fallback); auth secrets now come from validated config (`authCfg`). P1-2 already made `JWT_SECRET` required and distinct.
+
+### Noted, not changed
+- Members with an empty family group resolve to the shared tenant `"default"` in `resolveTenantAndActor` — two such users would share data in GraphQL. The orchestrator side uses the user ID as the fallback tenant instead. Aligning them changes data visibility for existing rows → follow-up for the owner.

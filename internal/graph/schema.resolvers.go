@@ -356,7 +356,7 @@ func (r *mutationResolver) CompleteSharedTask(ctx context.Context, id string, co
 
 	claims := GetAuthClaims(ctx)
 	var beforeTask *dbmodels.SharedTaskReminder
-	if claims != nil && claims.Role == "admin" {
+	if claims.IsGlobalAdmin() { // P3-2: tenant-bound admins stay inside their family
 		beforeTask, err = r.sharedRepo().GetSharedReminder(uID)
 	} else {
 		beforeTask, err = r.sharedRepo().GetSharedReminder(uID, fg)
@@ -1168,7 +1168,7 @@ func (r *mutationResolver) ToggleAutomationRule(ctx context.Context, id string, 
 	}
 
 	claims := GetAuthClaims(ctx)
-	isAdmin := claims != nil && claims.Role == "admin"
+	isAdmin := claims.IsGlobalAdmin() // P3-2: cross-family access only for global admins
 	if !isAdmin {
 		if rule.FamilyGroup != "" && !strings.EqualFold(rule.FamilyGroup, fg) {
 			return nil, fmt.Errorf("permission denied: unauthorized access to automation rule")
@@ -1222,7 +1222,7 @@ func (r *mutationResolver) DeleteAutomationRule(ctx context.Context, id string) 
 	}
 
 	claims := GetAuthClaims(ctx)
-	isAdmin := claims != nil && claims.Role == "admin"
+	isAdmin := claims.IsGlobalAdmin() // P3-2: cross-family access only for global admins
 	if !isAdmin {
 		if rule.FamilyGroup != "" && !strings.EqualFold(rule.FamilyGroup, fg) {
 			return false, fmt.Errorf("permission denied: unauthorized access to automation rule")
@@ -1265,10 +1265,10 @@ func (r *mutationResolver) SaveUserPreference(ctx context.Context, userID string
 		return nil, err
 	}
 
-	targetUserID := userID
-	claims := GetAuthClaims(ctx)
-	if claims != nil && claims.Role != "admin" {
-		targetUserID = actorID
+	// P3-2: tenant-bound admins may only target users of their own family.
+	targetUserID, err := r.resolveTargetUser(ctx, userID, actorID)
+	if err != nil {
+		return nil, err
 	}
 
 	beforePref, _ := r.autoRepo().GetUserPreference(targetUserID)
@@ -1389,13 +1389,14 @@ func (r *mutationResolver) RollbackMutation(ctx context.Context, mutationID stri
 	}
 
 	claims := GetAuthClaims(ctx)
+	if claims == nil {
+		return false, fmt.Errorf("unauthorized: no authenticated claims") // P3-2: never a "system" rollback by default
+	}
 	actorID := "system"
 	familyGroup := ""
-	if claims != nil {
-		if claims.Role != "admin" {
-			actorID = claims.UserID
-			familyGroup = claims.FamilyGroup
-		}
+	if !claims.IsGlobalAdmin() { // P3-2: only global admins roll back system-wide
+		actorID = claims.UserID
+		familyGroup = claims.FamilyGroup
 	}
 
 	res, err := dur.Rollback(ctx, actorID, familyGroup, mutationID)
@@ -1865,10 +1866,10 @@ func (r *queryResolver) UserPreference(ctx context.Context, userID string) (*mod
 		return nil, err
 	}
 
-	targetUserID := userID
-	claims := GetAuthClaims(ctx)
-	if claims != nil && claims.Role != "admin" {
-		targetUserID = actorID
+	// P3-2: tenant-bound admins may only target users of their own family.
+	targetUserID, err := r.resolveTargetUser(ctx, userID, actorID)
+	if err != nil {
+		return nil, err
 	}
 
 	dbPref, err := r.autoRepo().GetUserPreference(targetUserID)
@@ -1939,7 +1940,7 @@ func (r *queryResolver) AuditSessions(ctx context.Context, familyGroup *string, 
 	claims := GetAuthClaims(ctx)
 	var fg string
 	var err error
-	if claims != nil && claims.Role == "admin" && (familyGroup == nil || *familyGroup == "" || *familyGroup == "*") {
+	if claims.IsGlobalAdmin() && (familyGroup == nil || *familyGroup == "" || *familyGroup == "*") { // P3-2
 		// Admin requesting system-wide or default unscoped view
 		fg = ""
 	} else {
@@ -1986,7 +1987,7 @@ func (r *queryResolver) UserSessions(ctx context.Context, familyGroup *string) (
 	claims := GetAuthClaims(ctx)
 	var fg string
 	var err error
-	if claims != nil && claims.Role == "admin" && (familyGroup == nil || *familyGroup == "" || *familyGroup == "*") {
+	if claims.IsGlobalAdmin() && (familyGroup == nil || *familyGroup == "" || *familyGroup == "*") { // P3-2
 		// Admin requesting system-wide view
 		fg = ""
 	} else {

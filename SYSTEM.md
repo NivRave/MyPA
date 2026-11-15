@@ -302,7 +302,8 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
 
 3. **GraphQL Authentication Middleware (`internal/graph/auth_middleware.go`):**
    - Inspects `Authorization: Bearer <token>` on all requests to `/graphql`.
-   - Supports both constant-time `DASHBOARD_API_SECRET` comparison (granting admin role) and HMAC-SHA256 Bearer JWT claims (`user_id`, `role`, `family_group`, `exp`).
+   - Supports constant-time `DASHBOARD_API_SECRET` comparison and HS256 Bearer JWT claims (`user_id`, `role`, `family_group`, `exp`).
+   - **Hardening (*P3-2*):** JWT header `alg` must be exactly `HS256`; `exp` is mandatory, must be in the future and at most `MaxTokenLifetime` (24 h) ahead. The dashboard secret yields an admin **bound to `DASHBOARD_FAMILY_GROUP`** (`AuthClaims.TenantBound`, server-side only, `json:"-"`); without `DASHBOARD_FAMILY_GROUP` the secret authenticates nothing. Cross-tenant bypasses use `claims.IsGlobalAdmin()` (admin and not tenant-bound) instead of `Role == "admin"`; per-user targets go through `resolveTargetUser`/`canActOnUser` (tenant-bound admins only reach users of their own family). Missing claims are an error in `resolveTenantAndActor` and `RollbackMutation` (no default tenant, no implicit "system" rollback). `JWT_SECRET` no longer falls back to `ENCRYPTION_KEY`.
    - Injects authenticated claims into request context (`ForContext` / `GetAuthClaims`).
 
 4. **Multi-Tenant Isolation & Anti-IDOR (`internal/orchestrator/registry.go`, `internal/db/`, domain modules):**
@@ -625,7 +626,7 @@ The consumer loop guarantees resilient, bounded message processing:
 - **Code Generation:** Configured via [`gqlgen.yml`](./gqlgen.yml). Run `go run github.com/99designs/gqlgen generate` after editing `internal/graph/schema.graphqls` (always save files with UTF-8 encoding without BOM).
 - **Resolver Decoupling & Positive Authorization (Milestone 1C):** `graph.Resolver` receives explicit domain repository interfaces (`BabyRepo`, `FinanceRepo`, `HouseRepo`, `ScheduleRepo`, `SharedRepo`, `MemoryRepo`, `AutomationRepo`, `UserRepo`), `durability.RollbackEngine`, and `events.EventBus`. Direct `r.DB.DB` calls are eliminated across domain resolvers.
   - **Safe ID Parsing:** All string entity IDs are strictly validated via [`toolutil.ParseID`](./internal/domains/toolutil/toolutil.go), rejecting empty, non-numeric, or `<= 0` values.
-  - **Positive Multi-Tenant Authorization:** Enforced via `resolveTenantAndActor`. Admin roles can target any `familyGroup`; non-admin callers are strictly bounded to their authenticated JWT/Context `familyGroup`.
+  - **Positive Multi-Tenant Authorization:** Enforced via `resolveTenantAndActor`. Only *global* admins (`IsGlobalAdmin`: JWT role admin) can target any `familyGroup`; tenant-bound admins (the dashboard) and members are strictly bounded to their authenticated `familyGroup`; missing claims are rejected (*P3-2*).
   - **MutationEvent Emission:** Every state-changing GraphQL mutation captures `BeforeJSON` and `AfterJSON` snapshots and publishes an [`events.MutationEvent`](./internal/events/bus.go) to `r.EventBus`, triggering audit logging, partner sync notifications, and automation rules across the system.
 
 | Domain | GraphQL Object Types | Queries (`type Query`) | Mutations (`type Mutation`) |
@@ -675,7 +676,7 @@ The consumer loop guarantees resilient, bounded message processing:
 | Service | Always required | Conditional |
 | :--- | :--- | :--- |
 | `gateway` | `RABBITMQ_URL` | `TELEGRAM_SECRET_TOKEN` (valid format) if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_URL` set; `TELEGRAM_BOT_TOKEN` if `TELEGRAM_WEBHOOK_URL` set; `TWILIO_AUTH_TOKEN` if `TWILIO_ACCOUNT_SID` set |
-| `orchestrator` | `ENCRYPTION_KEY`, `JWT_SECRET` (≠ `ENCRYPTION_KEY`), `DASHBOARD_API_SECRET`, `DATABASE_URL`, `REDIS_URL`, `RABBITMQ_URL`, `GEMINI_API_KEY` | `TWILIO_AUTH_TOKEN` if `TWILIO_ACCOUNT_SID` set |
+| `orchestrator` | `ENCRYPTION_KEY`, `JWT_SECRET` (≠ `ENCRYPTION_KEY`), `DASHBOARD_API_SECRET`, `DASHBOARD_FAMILY_GROUP`, `DATABASE_URL`, `REDIS_URL`, `RABBITMQ_URL`, `GEMINI_API_KEY` | `TWILIO_AUTH_TOKEN` if `TWILIO_ACCOUNT_SID` set |
 | `proxy` | `GATEWAY_URL`, `ORCHESTRATOR_URL` | — |
 | `audit-worker` | `DATABASE_URL`, `RABBITMQ_URL` | — |
 
@@ -697,6 +698,7 @@ The consumer loop guarantees resilient, bounded message processing:
 | `TELEGRAM_SECRET_TOKEN` | `telegram.secret_token` | Required if Telegram configured | `gateway` | Shared webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header using constant-time compare; also sent as `secret_token` in `setWebhook`. 1–256 chars `[A-Za-z0-9_-]`. Gateway refuses to start if missing while `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_URL` is set |
 | `TELEGRAM_WEBHOOK_URL` | `telegram.webhook_url` | `""` | `gateway` | Public URL of `/webhook/telegram`; when set, the gateway registers it via `setWebhook` on startup (requires `TELEGRAM_BOT_TOKEN`) |
 | `DASHBOARD_API_SECRET` | `server.dashboard_api_secret` | **Required** (orchestrator) | `orchestrator`, `proxy`, `dashboard` | Secret token used by web dashboard / proxy to authenticate to `/graphql` |
+| `DASHBOARD_FAMILY_GROUP` | `server.dashboard_family_group` | **Required** (orchestrator) | `orchestrator`, `dashboard` | Family group the dashboard secret is bound to (tenant-bound admin, *P3-2*); the dashboard sends it on every query (`getDashboardFamilyGroup`) |
 | `GRAPHQL_ENDPOINT` | *(dashboard env)* | `http://proxy:8000/graphql` | `dashboard` | Upstream GraphQL URL used by Next.js server actions and SSR data fetching |
 | `JWT_SECRET` | `server.jwt_secret` | **Required** (orchestrator); must differ from `ENCRYPTION_KEY` | `orchestrator`, `proxy` | Secret key used for signing and verifying HMAC-SHA256 Bearer JWT claims on `/graphql` |
 | `GEMINI_API_KEY` | `gemini.api_key` | — | `orchestrator` | Google AI Studio API key |

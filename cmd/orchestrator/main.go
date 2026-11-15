@@ -65,6 +65,7 @@ func main() {
 		slog.Error("invalid orchestrator configuration — refusing to start", "error", err)
 		os.Exit(1)
 	}
+	authCfg = cfg.Server
 
 	if err := crypto.ValidateKeyConfigured(); err != nil {
 		slog.Error("encryption key validation failed", "error", err)
@@ -269,7 +270,7 @@ func main() {
 	// Start Cron jobs
 	c := scheduler.StartCronJobs(engine, dbClient, automationRunner, cfg.Server.DefaultTimezone)
 	defer c.Stop()
-	
+
 	engine.SetWorkflowsChangedCallback(func() {
 		scheduler.ReloadWorkflows(engine, dbClient, automationRunner, cfg.Server.DefaultTimezone)
 	})
@@ -351,9 +352,13 @@ func setupAuthRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClien
 	return setupRouter(oauthCfg, store, tgClient, nil, saver)
 }
 
+// authCfg holds the validated /graphql auth settings (set in main). Zero value = fail closed:
+// no dashboard secret or JWT is accepted (e.g. in tests that build the router directly).
+var authCfg config.ServerConfig
+
 func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient, dbClient *db.Client, fallbackSaver CredentialFallbackSaver, eventBus ...*events.EventBus) *http.ServeMux {
 	mux := http.NewServeMux()
-	
+
 	// GraphQL Server
 	if dbClient != nil {
 		var durEngine durability.RollbackEngine
@@ -378,13 +383,13 @@ func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient Au
 		})
 		srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: resolvers}))
 
-
-		dashboardSecret := os.Getenv("DASHBOARD_API_SECRET")
-		jwtSecret := os.Getenv("JWT_SECRET")
-		if jwtSecret == "" {
-			jwtSecret = os.Getenv("ENCRYPTION_KEY")
-		}
-		authMiddleware := graph.NewAuthMiddleware(dashboardSecret, jwtSecret)
+		// P3-2: secrets come from validated config (cfg.Validate requires JWT_SECRET, distinct from
+		// ENCRYPTION_KEY — no fallback), and the dashboard secret is bound to one family group.
+		authMiddleware := graph.NewAuthMiddleware(graph.AuthConfig{
+			DashboardSecret:      authCfg.DashboardAPISecret,
+			DashboardFamilyGroup: authCfg.DashboardFamilyGroup,
+			JWTSecret:            authCfg.JWTSecret,
+		})
 
 		graphqlHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit for GraphQL

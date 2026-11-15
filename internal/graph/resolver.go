@@ -156,11 +156,9 @@ func (r *Resolver) durabilityEngine() durability.RollbackEngine {
 func (r *Resolver) resolveTenantAndActor(ctx context.Context, requestedFamilyGroup *string) (actorID string, familyGroup string, err error) {
 	claims := GetAuthClaims(ctx)
 	if claims == nil {
-		fg := "default"
-		if requestedFamilyGroup != nil && strings.TrimSpace(*requestedFamilyGroup) != "" {
-			fg = strings.TrimSpace(*requestedFamilyGroup)
-		}
-		return "user", fg, nil
+		// P3-2: never fall back to the requested family group — unauthenticated callers must not
+		// be able to pick a tenant. The auth middleware always sets claims on /graphql.
+		return "", "", fmt.Errorf("unauthorized: no authenticated claims")
 	}
 
 	actorID = claims.UserID
@@ -168,7 +166,9 @@ func (r *Resolver) resolveTenantAndActor(ctx context.Context, requestedFamilyGro
 		actorID = "user"
 	}
 
-	if claims.Role == "admin" {
+	// Only global admins may pick another family group; tenant-bound admins (the dashboard
+	// secret, P3-2) fall through to the same positive check as members.
+	if claims.IsGlobalAdmin() {
 		if requestedFamilyGroup != nil && strings.TrimSpace(*requestedFamilyGroup) != "" {
 			familyGroup = strings.TrimSpace(*requestedFamilyGroup)
 		} else if claims.FamilyGroup != "" {
@@ -194,6 +194,39 @@ func (r *Resolver) resolveTenantAndActor(ctx context.Context, requestedFamilyGro
 	}
 
 	return actorID, familyGroup, nil
+}
+
+// familyOfUser returns a user's family group (for tenant-bound admin checks, P3-2).
+func (r *Resolver) familyOfUser(userID string) (string, error) {
+	if r.DB == nil {
+		return "", fmt.Errorf("user lookup unavailable")
+	}
+	u, err := r.DB.GetUser(userID)
+	if err != nil {
+		return "", err
+	}
+	if u == nil {
+		return "", fmt.Errorf("user not found")
+	}
+	return u.FamilyGroup, nil
+}
+
+// resolveTargetUser decides whose per-user data (e.g. preferences) the caller may act on (P3-2):
+// members always act on themselves; global admins on anyone; tenant-bound admins (the dashboard)
+// only on users of their own family group — otherwise an explicit permission error.
+func (r *Resolver) resolveTargetUser(ctx context.Context, requestedUserID, actorID string) (string, error) {
+	claims := GetAuthClaims(ctx)
+	if claims == nil {
+		return "", fmt.Errorf("unauthorized: no authenticated claims")
+	}
+	requestedUserID = strings.TrimSpace(requestedUserID)
+	if requestedUserID == "" || requestedUserID == actorID || !claims.IsAdmin() {
+		return actorID, nil
+	}
+	if canActOnUser(claims, requestedUserID, r.familyOfUser) {
+		return requestedUserID, nil
+	}
+	return "", fmt.Errorf("permission denied: user %q is outside your family group", requestedUserID)
 }
 
 // publishEvent emits MutationEvent to EventBus

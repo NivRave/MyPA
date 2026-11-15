@@ -155,7 +155,7 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
 
 3. **GraphQL Authentication & Tenant Authorization (`internal/graph/auth_middleware.go`):**
    - Rejects unauthenticated `/graphql` requests with HTTP 401.
-   - Validates `Authorization: Bearer <token>` via constant-time `DASHBOARD_API_SECRET` check or HMAC-SHA256 Bearer JWT claims (`user_id`, `role`, `family_group`).
+   - Validates `Authorization: Bearer <token>` via constant-time `DASHBOARD_API_SECRET` check (an admin scoped to `DASHBOARD_FAMILY_GROUP` only) or HS256 Bearer JWT claims (`user_id`, `role`, `family_group`, mandatory `exp` ≤ 24 h, `alg` must be `HS256`).
    - Resolvers strictly enforce positive tenant authorization (`resolveTenantAndActor`) preventing cross-tenant IDOR access.
 
 4. **Cryptographic Key Management & Storage Encryption (`internal/crypto/aes.go`):**
@@ -187,6 +187,7 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
 | **`ENCRYPTION_KEY`** | Primary secret for HKDF-SHA256 salted AES-256-GCM encryption at rest; the orchestrator refuses to start if it is missing. | **Yes** | `openssl rand -hex 32` |
 | **`JWT_SECRET`** | HMAC-SHA256 secret for dashboard JWTs on `/graphql`. Must differ from `ENCRYPTION_KEY`. | **Yes** | `openssl rand -hex 32` |
 | **`DASHBOARD_API_SECRET`** | Secret bearer token used by the Next.js Web Dashboard and Proxy to authenticate requests to `/graphql`. | **Yes** | `super-secret-dashboard-key` |
+| **`DASHBOARD_FAMILY_GROUP`** | Family group the dashboard manages; the dashboard secret is an admin of this family only. Use the family group name from `ALLOWED_USERS`. | **Yes** | `TheFamily` |
 | **`TELEGRAM_SECRET_TOKEN`** | Webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header on Telegram ingress. 1–256 chars of `A-Z a-z 0-9 _ -` (e.g. `openssl rand -hex 32`). Gateway refuses to start without it when Telegram is configured. | **Yes** | `random-webhook-secret-token` |
 | `TELEGRAM_WEBHOOK_URL` | Public URL of `/webhook/telegram`. When set, the gateway calls `setWebhook` with this URL and `TELEGRAM_SECRET_TOKEN` on startup. | If TG active | `https://your-domain.ngrok-free.dev/webhook/telegram` |
 | **`TWILIO_AUTH_TOKEN`** | Twilio Auth Token used to calculate and verify HMAC-SHA1 signatures (`X-Twilio-Signature`) on WhatsApp webhooks. Gateway refuses to start without it when `TWILIO_ACCOUNT_SID` is set. | **Yes** | `twilio-account-auth-token` |

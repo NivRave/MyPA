@@ -15,8 +15,9 @@ const validTGSecret = "valid_telegram-secret123"
 func orchestratorOK() Config {
 	return Config{
 		Server: ServerConfig{
-			DashboardAPISecret: "dash-secret-abc",
-			JWTSecret:          "jwt-secret-def",
+			DashboardAPISecret:   "dash-secret-abc",
+			DashboardFamilyGroup: "TheFamily",
+			JWTSecret:            "jwt-secret-def",
 		},
 		Encryption: EncryptionConfig{Key: "enc-key-ghi"},
 		Database:   DatabaseConfig{URL: "postgres://u:p@db:5432/x"},
@@ -74,8 +75,8 @@ func TestValidate(t *testing.T) {
 		// --- orchestrator ---
 		{name: "Orchestrator_AllSetOK", service: ServiceOrchestrator, base: orchestratorOK},
 		{name: "Orchestrator_NothingSet_ListsEveryKey", service: ServiceOrchestrator,
-			base: func() Config { return Config{} },
-			wantErr: []string{"ENCRYPTION_KEY", "JWT_SECRET", "DASHBOARD_API_SECRET", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"}},
+			base:    func() Config { return Config{} },
+			wantErr: []string{"ENCRYPTION_KEY", "JWT_SECRET", "DASHBOARD_API_SECRET", "DASHBOARD_FAMILY_GROUP", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"}},
 		{name: "Orchestrator_WhitespaceKeyIsMissing", service: ServiceOrchestrator, base: orchestratorOK,
 			mutate: func(c *Config) { c.Encryption.Key = "   " }, wantErr: []string{"ENCRYPTION_KEY"}},
 		{name: "Orchestrator_JWTEqualsEncryptionKey", service: ServiceOrchestrator, base: orchestratorOK,

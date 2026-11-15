@@ -15,7 +15,7 @@ import (
 func TestAdversarial_SEC02_AuthMiddleware_HeaderVariations(t *testing.T) {
 	dashboardSecret := "prod-dashboard-secret-999"
 	jwtSecret := "prod-jwt-secret-888"
-	middleware := NewAuthMiddleware(dashboardSecret, jwtSecret)
+	middleware := NewAuthMiddleware(AuthConfig{DashboardSecret: dashboardSecret, DashboardFamilyGroup: "TestFamily", JWTSecret: jwtSecret})
 
 	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -56,7 +56,7 @@ func TestAdversarial_SEC02_AuthMiddleware_HeaderVariations(t *testing.T) {
 func TestAdversarial_SEC02_AuthMiddleware_JWTForgingAndAttacks(t *testing.T) {
 	dashboardSecret := "prod-dashboard-secret-999"
 	jwtSecret := "prod-jwt-secret-888"
-	middleware := NewAuthMiddleware(dashboardSecret, jwtSecret)
+	middleware := NewAuthMiddleware(AuthConfig{DashboardSecret: dashboardSecret, DashboardFamilyGroup: "TestFamily", JWTSecret: jwtSecret})
 
 	var capturedClaims *AuthClaims
 	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -164,7 +164,7 @@ func TestAdversarial_SEC02_AuthMiddleware_JWTForgingAndAttacks(t *testing.T) {
 
 func TestAdversarial_SEC02_AuthMiddleware_EmptySecretsRejectsAll(t *testing.T) {
 	// If server misconfigured with empty secrets, all requests must be rejected
-	middleware := NewAuthMiddleware("", "")
+	middleware := NewAuthMiddleware(AuthConfig{})
 	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

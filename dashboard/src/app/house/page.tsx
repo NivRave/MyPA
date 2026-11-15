@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { Home, FileText, Wrench, Car, AlertTriangle, CheckCircle, Plus } from "lucide-react";
 import {
   graphqlFetch,
+  getDashboardFamilyGroup,
   type HouseContractRecord,
   type HomeMaintenanceItem,
   type VehicleAsset,
@@ -77,7 +78,7 @@ const SAVE_CONTRACT_MUTATION = `
   }
 `;
 
-async function getHouseData(familyGroup: string = "Smith Family"): Promise<{
+async function getHouseData(familyGroup: string = getDashboardFamilyGroup()): Promise<{
   contracts: HouseContractRecord[];
   maintenance: HomeMaintenanceItem[];
   vehicles: VehicleAsset[];
@@ -101,7 +102,7 @@ async function getHouseData(familyGroup: string = "Smith Family"): Promise<{
 }
 
 export default async function HousePage() {
-  const familyGroup = "Smith Family";
+  const familyGroup = getDashboardFamilyGroup();
   const { contracts, maintenance, vehicles } = await getHouseData(familyGroup);
 
   async function completeTask(formData: FormData) {
@@ -127,7 +128,7 @@ export default async function HousePage() {
 
     try {
       await graphqlFetch(SAVE_CONTRACT_MUTATION, {
-        familyGroup: "Smith Family",
+        familyGroup: getDashboardFamilyGroup(),
         recordType,
         title,
         vendorOrLandlord: vendor,

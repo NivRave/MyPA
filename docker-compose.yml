@@ -168,6 +168,8 @@ services:
       - NEXT_PUBLIC_PROXY_URL=http://localhost:8000
       - GRAPHQL_ENDPOINT=http://proxy:8000/graphql
       - DASHBOARD_API_SECRET=${DASHBOARD_API_SECRET:-}
+      # Must match the orchestrator's: the dashboard secret is scoped to this family group (P3-2)
+      - DASHBOARD_FAMILY_GROUP=${DASHBOARD_FAMILY_GROUP:-}
     depends_on:
       proxy:
         condition: service_started

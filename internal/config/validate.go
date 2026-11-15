@@ -19,7 +19,7 @@ const (
 // requiredKeys lists the env vars each service cannot start without (conditional rules are in Validate).
 var requiredKeys = map[string][]string{
 	ServiceGateway:      {"RABBITMQ_URL"},
-	ServiceOrchestrator: {"ENCRYPTION_KEY", "JWT_SECRET", "DASHBOARD_API_SECRET", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"},
+	ServiceOrchestrator: {"ENCRYPTION_KEY", "JWT_SECRET", "DASHBOARD_API_SECRET", "DASHBOARD_FAMILY_GROUP", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"},
 	ServiceProxy:        {"GATEWAY_URL", "ORCHESTRATOR_URL"},
 	ServiceAuditWorker:  {"DATABASE_URL", "RABBITMQ_URL"},
 }
@@ -129,6 +129,8 @@ func (c *Config) valueFor(envKey string) (string, bool) {
 		return c.Server.JWTSecret, true
 	case "DASHBOARD_API_SECRET":
 		return c.Server.DashboardAPISecret, true
+	case "DASHBOARD_FAMILY_GROUP":
+		return c.Server.DashboardFamilyGroup, true
 	case "GEMINI_API_KEY":
 		return c.Gemini.APIKey, true
 	case "GATEWAY_URL":

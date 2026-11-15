@@ -39,9 +39,11 @@ type ServerConfig struct {
 	DefaultTimezone    string `mapstructure:"default_timezone"`
 	AllowedUsersRaw    string `mapstructure:"allowed_users"`
 	DashboardAPISecret string `mapstructure:"dashboard_api_secret"`
-	JWTSecret          string `mapstructure:"jwt_secret"`
-	WeekStartDay       string `mapstructure:"week_start_day"` // e.g. "Sunday" (default) or "Monday"
-	WeekendDays        string `mapstructure:"weekend_days"`   // e.g. "Friday,Saturday" (default)
+	// DashboardFamilyGroup scopes the dashboard secret to one family group (P3-2).
+	DashboardFamilyGroup string `mapstructure:"dashboard_family_group"`
+	JWTSecret            string `mapstructure:"jwt_secret"`
+	WeekStartDay         string `mapstructure:"week_start_day"` // e.g. "Sunday" (default) or "Monday"
+	WeekendDays          string `mapstructure:"weekend_days"`   // e.g. "Friday,Saturday" (default)
 }
 
 // TelegramConfig holds Telegram Bot API settings.
@@ -134,32 +136,33 @@ func Load() (*Config, error) {
 
 	// Explicit env var bindings (maps FLAT env vars to nested config keys)
 	envBindings := map[string]string{
-		"DEFAULT_TIMEZONE":      "server.default_timezone",
-		"ALLOWED_USERS":         "server.allowed_users",
-		"GATEWAY_URL":           "server.gateway_url",
-		"ORCHESTRATOR_URL":      "server.orchestrator_url",
-		"TELEGRAM_BOT_TOKEN":    "telegram.bot_token",
-		"TELEGRAM_WEBHOOK_URL":  "telegram.webhook_url",
-		"RABBITMQ_URL":          "rabbitmq.url",
-		"RABBITMQ_PREFETCH":     "rabbitmq.prefetch",
-		"REDIS_URL":             "redis.url",
-		"DATABASE_URL":          "database.url",
-		"GEMINI_API_KEY":        "gemini.api_key",
-		"GEMINI_MODEL":          "gemini.model",
-		"GOOGLE_CLIENT_ID":      "google.client_id",
-		"GOOGLE_CLIENT_SECRET":  "google.client_secret",
-		"GOOGLE_REDIRECT_URL":   "google.redirect_url",
-		"GROQ_API_KEY":          "groq.api_key",
-		"TWILIO_ACCOUNT_SID":    "twilio.account_sid",
-		"TWILIO_AUTH_TOKEN":     "twilio.auth_token",
-		"TWILIO_FROM_NUMBER":    "twilio.from_number",
-		"TAVILY_API_KEY":        "tavily.api_key",
-		"ENCRYPTION_KEY":        "encryption.key",
-		"TELEGRAM_SECRET_TOKEN": "telegram.secret_token",
-		"DASHBOARD_API_SECRET":  "server.dashboard_api_secret",
-		"JWT_SECRET":            "server.jwt_secret",
-		"WEEK_START_DAY":        "server.week_start_day",
-		"WEEKEND_DAYS":          "server.weekend_days",
+		"DEFAULT_TIMEZONE":       "server.default_timezone",
+		"ALLOWED_USERS":          "server.allowed_users",
+		"GATEWAY_URL":            "server.gateway_url",
+		"ORCHESTRATOR_URL":       "server.orchestrator_url",
+		"TELEGRAM_BOT_TOKEN":     "telegram.bot_token",
+		"TELEGRAM_WEBHOOK_URL":   "telegram.webhook_url",
+		"RABBITMQ_URL":           "rabbitmq.url",
+		"RABBITMQ_PREFETCH":      "rabbitmq.prefetch",
+		"REDIS_URL":              "redis.url",
+		"DATABASE_URL":           "database.url",
+		"GEMINI_API_KEY":         "gemini.api_key",
+		"GEMINI_MODEL":           "gemini.model",
+		"GOOGLE_CLIENT_ID":       "google.client_id",
+		"GOOGLE_CLIENT_SECRET":   "google.client_secret",
+		"GOOGLE_REDIRECT_URL":    "google.redirect_url",
+		"GROQ_API_KEY":           "groq.api_key",
+		"TWILIO_ACCOUNT_SID":     "twilio.account_sid",
+		"TWILIO_AUTH_TOKEN":      "twilio.auth_token",
+		"TWILIO_FROM_NUMBER":     "twilio.from_number",
+		"TAVILY_API_KEY":         "tavily.api_key",
+		"ENCRYPTION_KEY":         "encryption.key",
+		"TELEGRAM_SECRET_TOKEN":  "telegram.secret_token",
+		"DASHBOARD_API_SECRET":   "server.dashboard_api_secret",
+		"DASHBOARD_FAMILY_GROUP": "server.dashboard_family_group",
+		"JWT_SECRET":             "server.jwt_secret",
+		"WEEK_START_DAY":         "server.week_start_day",
+		"WEEKEND_DAYS":           "server.weekend_days",
 	}
 
 	for envKey, configKey := range envBindings {
