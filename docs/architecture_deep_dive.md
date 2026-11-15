@@ -54,7 +54,7 @@ graph TB
         end
 
         subgraph "Persistence Layer"
-            REDIS["Redis 7 (:6379)\n• chat:<userID> (stripped photos)\n• token:<userID> (AES-256-GCM)\n• ctx_prompt:<fg>:<mod> (10m TTL)\n• oauth_state & rate_limit keys"]
+            REDIS["Redis 7 (:6379)\n• chat:<userID> (stripped photos)\n• token:<userID> (AES-256-GCM)\n• ctx_prompt:<fg>:<user>:<mod> (10m TTL)\n• oauth_state & rate_limit keys"]
             PG["PostgreSQL 15 + pgvector (:5432)\n• 29 Multi-Tenant GORM Tables\n• halfvec(3072) HNSW Indexes\n• 6 Composite B-Tree Indexes"]
             PGADMIN["pgAdmin 4 (:5050)"]
         end
@@ -152,7 +152,7 @@ sequenceDiagram
         Engine->>Redis: Check/Increment Pairing Rate Limit (5 tries / 15m → 1h lockout)
         Engine-->>Platform: Prompt for 6-digit pairing code or redeem code
     else Authenticated User
-        Engine->>Redis: GetChatHistory(userID) + MGET ctx_prompt:<familyGroup>:*
+        Engine->>Redis: GetChatHistory(userID) + MGET ctx_prompt:<familyGroup>:<userID>:*
         Engine->>Gemini: GenerateEmbedding(text) → 3072-dim vector
         Engine->>PG: SearchSimilarMemories (halfvec(3072) HNSW cosine)
         Engine->>Engine: KeywordIntentMatcher → Select Tier 1 (8 Core) + Active Tier 2 Tools

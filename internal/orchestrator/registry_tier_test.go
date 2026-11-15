@@ -24,7 +24,7 @@ func TestRegistry_CombinedSystemPrompt_CacheHit(t *testing.T) {
 
 	reg := NewRegistry().WithPromptCache(store)
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "family_1"},
+		User: &models.User{PlatformID: "user_1", FamilyGroup: "family_1"},
 	}
 
 	callCount := 0
@@ -38,7 +38,7 @@ func TestRegistry_CombinedSystemPrompt_CacheHit(t *testing.T) {
 	reg.Register(mod)
 
 	// Pre-seed Redis cache
-	err = store.SetPromptSection(context.Background(), "family_1", "baby", "Cached Baby Section", 10*time.Minute)
+	err = store.SetPromptSection(context.Background(), "family_1", "user_1", "baby", "Cached Baby Section", 10*time.Minute)
 	require.NoError(t, err)
 
 	// Execute CombinedSystemPrompt
@@ -57,7 +57,7 @@ func TestRegistry_CombinedSystemPrompt_CacheMissAndPopulate(t *testing.T) {
 
 	reg := NewRegistry().WithPromptCache(store)
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "family_2"},
+		User: &models.User{PlatformID: "user_2", FamilyGroup: "family_2"},
 	}
 
 	mod := &mockToolModule{
@@ -73,7 +73,7 @@ func TestRegistry_CombinedSystemPrompt_CacheMissAndPopulate(t *testing.T) {
 	assert.Equal(t, "Finance section: Active", prompt)
 
 	// Verify key in Redis
-	cached, found, err := store.GetPromptSection(context.Background(), "family_2", "finance")
+	cached, found, err := store.GetPromptSection(context.Background(), "family_2", "user_2", "finance")
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, "Finance section: Active", cached)
@@ -121,7 +121,8 @@ func TestEventBus_PromptInvalidation(t *testing.T) {
 
 	ctx := context.Background()
 	// Pre-seed cache
-	_ = store.SetPromptSection(ctx, "fam1", "baby", "Baby section", 10*time.Minute)
+	_ = store.SetPromptSection(ctx, "fam1", "user1", "baby", "Baby section", 10*time.Minute)
+	_ = store.SetPromptSection(ctx, "fam1", "user2", "baby", "Baby section", 10*time.Minute)
 
 	// Publish mutation event
 	err = bus.Publish(ctx, events.MutationEvent{
@@ -133,9 +134,12 @@ func TestEventBus_PromptInvalidation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify key is evicted
-	_, found, err := store.GetPromptSection(ctx, "fam1", "baby")
+	_, found, err := store.GetPromptSection(ctx, "fam1", "user1", "baby")
 	require.NoError(t, err)
 	assert.False(t, found, "Key must be evicted after mutation event")
+	_, found, err = store.GetPromptSection(ctx, "fam1", "user2", "baby")
+	require.NoError(t, err)
+	assert.False(t, found, "Other family members' keys must be evicted too")
 }
 
 func TestRegistry_TwoTierToolSelection(t *testing.T) {
@@ -272,7 +276,7 @@ func TestRegistry_CombinedSystemPrompt_NegativeCaching(t *testing.T) {
 
 	reg := NewRegistry().WithPromptCache(store)
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "family_empty"},
+		User: &models.User{FamilyGroup: "family_empty", PlatformID: "user_empty"},
 	}
 
 	callCount := 0

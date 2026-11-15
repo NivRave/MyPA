@@ -18,7 +18,7 @@ import (
 )
 
 // TestChallenger1_Scale01_CacheHitMissAndTTL verifies:
-// 1. After a cache miss, Redis stores ctx_prompt:<familyGroup>:<module> with ~10-minute TTL.
+// 1. After a cache miss, Redis stores ctx_prompt:<familyGroup>:<userID>:<module> with ~10-minute TTL.
 // 2. Subsequent calls return cached content without invoking module SystemPromptSection.
 // 3. Partial cache hits only invoke missing modules and re-populate the cache.
 // 4. Fallback to ActorID works when FamilyGroup is absent.
@@ -81,9 +81,9 @@ func TestChallenger1_Scale01_CacheHitMissAndTTL(t *testing.T) {
 	assert.Equal(t, int64(1), atomic.LoadInt64(&emptyCalls), "Empty module must be evaluated once on cache miss")
 
 	// Step 2: Verify keys and TTL in Redis
-	babyKey := "ctx_prompt:fam_stress_1:baby"
-	financeKey := "ctx_prompt:fam_stress_1:finance"
-	emptyKey := "ctx_prompt:fam_stress_1:empty_domain"
+	babyKey := "ctx_prompt:fam_stress_1:tg_parent_1:baby"
+	financeKey := "ctx_prompt:fam_stress_1:tg_parent_1:finance"
+	emptyKey := "ctx_prompt:fam_stress_1:tg_parent_1:empty_domain"
 
 	assert.True(t, mr.Exists(babyKey), "Redis must contain baby prompt cache key")
 	assert.True(t, mr.Exists(financeKey), "Redis must contain finance prompt cache key")
@@ -123,11 +123,11 @@ func TestChallenger1_Scale01_CacheHitMissAndTTL(t *testing.T) {
 	}
 	promptNoFG := reg.CombinedSystemPrompt(ctx, callCtxNoFG)
 	assert.Contains(t, promptNoFG, "Baby Section")
-	assert.True(t, mr.Exists("ctx_prompt:actor_alone_99:baby"), "Must cache using ActorID when FamilyGroup is empty")
+	assert.True(t, mr.Exists("ctx_prompt:actor_alone_99:actor_alone_99:baby"), "Must cache using ActorID when FamilyGroup is empty")
 }
 
 // TestChallenger1_Scale01_EventBusInvalidationStress verifies:
-// 1. Publishing MutationEvent topic "baby" evicts both ctx_prompt:<familyGroup>:baby and ctx_prompt:<actorUserID>:baby.
+// 1. Publishing MutationEvent topic "baby" evicts ctx_prompt:<familyGroup>:*:baby (every member) and ctx_prompt:<actorUserID>:*:baby.
 // 2. Unrelated tenant keys (e.g. fam_beta) are NOT evicted.
 // 3. Unrelated module keys (e.g. finance, house) are NOT evicted.
 // 4. Aliased topics (e.g. "calendar" -> "schedule" and "workspace_calendar") evict both mapped modules.
@@ -148,14 +148,15 @@ func TestChallenger1_Scale01_EventBusInvalidationStress(t *testing.T) {
 
 	// Seed keys across tenants and modules
 	keysToSeed := map[string]string{
-		"ctx_prompt:fam_alpha:baby":               "Baby fam_alpha",
-		"ctx_prompt:user_john:baby":              "Baby user_john",
-		"ctx_prompt:fam_beta:baby":                "Baby fam_beta", // Unrelated family
-		"ctx_prompt:fam_alpha:finance":            "Finance fam_alpha", // Unrelated module
-		"ctx_prompt:fam_alpha:schedule":           "Schedule fam_alpha",
-		"ctx_prompt:fam_alpha:workspace_calendar": "Calendar fam_alpha",
-		"ctx_prompt:fam_alpha:memory":             "Memory fam_alpha",
-		"ctx_prompt:fam_alpha:house":              "House fam_alpha",
+		"ctx_prompt:fam_alpha:u_alpha:baby":               "Baby fam_alpha",
+		"ctx_prompt:fam_alpha:u_alpha2:baby":              "Baby fam_alpha second member",
+		"ctx_prompt:user_john:user_john:baby":              "Baby user_john",
+		"ctx_prompt:fam_beta:u_beta:baby":                "Baby fam_beta", // Unrelated family
+		"ctx_prompt:fam_alpha:u_alpha:finance":            "Finance fam_alpha", // Unrelated module
+		"ctx_prompt:fam_alpha:u_alpha:schedule":           "Schedule fam_alpha",
+		"ctx_prompt:fam_alpha:u_alpha:workspace_calendar": "Calendar fam_alpha",
+		"ctx_prompt:fam_alpha:u_alpha:memory":             "Memory fam_alpha",
+		"ctx_prompt:fam_alpha:u_alpha:house":              "House fam_alpha",
 	}
 
 	for k, v := range keysToSeed {
@@ -172,14 +173,15 @@ func TestChallenger1_Scale01_EventBusInvalidationStress(t *testing.T) {
 	require.NoError(t, err)
 
 	// Assert target keys evicted
-	assert.False(t, mr.Exists("ctx_prompt:fam_alpha:baby"), "fam_alpha:baby must be evicted")
-	assert.False(t, mr.Exists("ctx_prompt:user_john:baby"), "user_john:baby must be evicted")
+	assert.False(t, mr.Exists("ctx_prompt:fam_alpha:u_alpha:baby"), "fam_alpha:baby must be evicted")
+	assert.False(t, mr.Exists("ctx_prompt:fam_alpha:u_alpha2:baby"), "every fam_alpha member's baby section must be evicted")
+	assert.False(t, mr.Exists("ctx_prompt:user_john:user_john:baby"), "user_john:baby must be evicted")
 
 	// Assert unrelated tenant preserved
-	assert.True(t, mr.Exists("ctx_prompt:fam_beta:baby"), "fam_beta:baby must NOT be evicted")
+	assert.True(t, mr.Exists("ctx_prompt:fam_beta:u_beta:baby"), "fam_beta:baby must NOT be evicted")
 
 	// Assert unrelated module preserved
-	assert.True(t, mr.Exists("ctx_prompt:fam_alpha:finance"), "fam_alpha:finance must NOT be evicted")
+	assert.True(t, mr.Exists("ctx_prompt:fam_alpha:u_alpha:finance"), "fam_alpha:finance must NOT be evicted")
 
 	// 2. Test topic alias "calendar" -> invalidates "schedule" and "workspace_calendar"
 	err = bus.Publish(ctx, events.MutationEvent{
@@ -188,8 +190,8 @@ func TestChallenger1_Scale01_EventBusInvalidationStress(t *testing.T) {
 		Action:      "update",
 	})
 	require.NoError(t, err)
-	assert.False(t, mr.Exists("ctx_prompt:fam_alpha:schedule"), "schedule must be evicted by calendar topic")
-	assert.False(t, mr.Exists("ctx_prompt:fam_alpha:workspace_calendar"), "workspace_calendar must be evicted by calendar topic")
+	assert.False(t, mr.Exists("ctx_prompt:fam_alpha:u_alpha:schedule"), "schedule must be evicted by calendar topic")
+	assert.False(t, mr.Exists("ctx_prompt:fam_alpha:u_alpha:workspace_calendar"), "workspace_calendar must be evicted by calendar topic")
 
 	// 3. Test entity type fallback: Topic="health_custom", EntityType="topic_memory" -> invalidates "memory"
 	err = bus.Publish(ctx, events.MutationEvent{
@@ -199,10 +201,10 @@ func TestChallenger1_Scale01_EventBusInvalidationStress(t *testing.T) {
 		Action:      "upsert",
 	})
 	require.NoError(t, err)
-	assert.False(t, mr.Exists("ctx_prompt:fam_alpha:memory"), "memory must be evicted when EntityType contains 'memory'")
+	assert.False(t, mr.Exists("ctx_prompt:fam_alpha:u_alpha:memory"), "memory must be evicted when EntityType contains 'memory'")
 
 	// House must still be untouched
-	assert.True(t, mr.Exists("ctx_prompt:fam_alpha:house"), "house must still exist")
+	assert.True(t, mr.Exists("ctx_prompt:fam_alpha:u_alpha:house"), "house must still exist")
 }
 
 // TestChallenger1_Scale01_800msBoundedTimeoutStress verifies:
@@ -256,7 +258,7 @@ func TestChallenger1_Scale01_800msBoundedTimeoutStress(t *testing.T) {
 	reg.Register(blockingHangMod)
 
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "fam_timeout_test"},
+		User: &models.User{FamilyGroup: "fam_timeout_test", PlatformID: "u_timeout"},
 	}
 
 	start := time.Now()
@@ -274,10 +276,10 @@ func TestChallenger1_Scale01_800msBoundedTimeoutStress(t *testing.T) {
 	assert.NotContains(t, prompt, "Hanging section")
 
 	// Cache assertions: Fast modules cached; slow modules NOT cached
-	assert.True(t, mr.Exists("ctx_prompt:fam_timeout_test:fast_tasks"))
-	assert.True(t, mr.Exists("ctx_prompt:fam_timeout_test:fast_weather"))
-	assert.False(t, mr.Exists("ctx_prompt:fam_timeout_test:slow_sleeper"), "Timed-out module must not be cached")
-	assert.False(t, mr.Exists("ctx_prompt:fam_timeout_test:hanging_mod"), "Hanging module must not be cached")
+	assert.True(t, mr.Exists("ctx_prompt:fam_timeout_test:u_timeout:fast_tasks"))
+	assert.True(t, mr.Exists("ctx_prompt:fam_timeout_test:u_timeout:fast_weather"))
+	assert.False(t, mr.Exists("ctx_prompt:fam_timeout_test:u_timeout:slow_sleeper"), "Timed-out module must not be cached")
+	assert.False(t, mr.Exists("ctx_prompt:fam_timeout_test:u_timeout:hanging_mod"), "Hanging module must not be cached")
 }
 
 // mockFailingPromptCache simulates various Redis failure scenarios.
@@ -288,7 +290,7 @@ type mockFailingPromptCache struct {
 	getHits       map[string]string
 }
 
-func (m *mockFailingPromptCache) GetPromptSection(ctx context.Context, familyGroup, module string) (string, bool, error) {
+func (m *mockFailingPromptCache) GetPromptSection(ctx context.Context, familyGroup, userID, module string) (string, bool, error) {
 	if m.getErr != nil {
 		return "", false, m.getErr
 	}
@@ -296,7 +298,7 @@ func (m *mockFailingPromptCache) GetPromptSection(ctx context.Context, familyGro
 	return val, ok, nil
 }
 
-func (m *mockFailingPromptCache) GetPromptSections(ctx context.Context, familyGroup string, modules []string) (map[string]string, []string, error) {
+func (m *mockFailingPromptCache) GetPromptSections(ctx context.Context, familyGroup, userID string, modules []string) (map[string]string, []string, error) {
 	if m.getErr != nil {
 		return nil, modules, m.getErr
 	}
@@ -312,18 +314,18 @@ func (m *mockFailingPromptCache) GetPromptSections(ctx context.Context, familyGr
 	return hits, misses, nil
 }
 
-func (m *mockFailingPromptCache) SetPromptSection(ctx context.Context, familyGroup, module, content string, ttl time.Duration) error {
+func (m *mockFailingPromptCache) SetPromptSection(ctx context.Context, familyGroup, userID, module, content string, ttl time.Duration) error {
 	if m.setErr != nil {
 		return m.setErr
 	}
 	return nil
 }
 
-func (m *mockFailingPromptCache) InvalidatePromptSections(ctx context.Context, keys ...string) error {
+func (m *mockFailingPromptCache) InvalidateFamilyPromptSections(ctx context.Context, scope string, modules []string) (int, error) {
 	if m.invalidateErr != nil {
-		return m.invalidateErr
+		return 0, m.invalidateErr
 	}
-	return nil
+	return 0, nil
 }
 
 // TestChallenger1_Scale01_RedisFailureDegradation verifies:
@@ -333,7 +335,7 @@ func (m *mockFailingPromptCache) InvalidatePromptSections(ctx context.Context, k
 // 4. When miniredis is abruptly closed mid-operation, no panic occurs.
 func TestChallenger1_Scale01_RedisFailureDegradation(t *testing.T) {
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "fam_deg_1"},
+		User: &models.User{FamilyGroup: "fam_deg_1", PlatformID: "u_deg"},
 	}
 
 	liveMod := &mockToolModule{

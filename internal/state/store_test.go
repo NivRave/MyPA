@@ -298,28 +298,34 @@ func TestPromptCache_SetAndGet(t *testing.T) {
 
 	ctx := context.Background()
 	familyGroup := "fam-101"
+	userID := "user-1"
 	module := "baby"
 	content := "Baby Liam is 8 months old. Last feeding at 08:30."
 
 	// Initial get: cache miss
-	cached, found, err := store.GetPromptSection(ctx, familyGroup, module)
+	cached, found, err := store.GetPromptSection(ctx, familyGroup, userID, module)
 	require.NoError(t, err)
 	assert.False(t, found)
 	assert.Empty(t, cached)
 
 	// Set prompt section with 10m TTL
-	err = store.SetPromptSection(ctx, familyGroup, module, content, 10*time.Minute)
+	err = store.SetPromptSection(ctx, familyGroup, userID, module, content, 10*time.Minute)
 	require.NoError(t, err)
 
-	// Subsequent get: cache hit
-	cached, found, err = store.GetPromptSection(ctx, familyGroup, module)
+	// Subsequent get: cache hit for the same user only
+	cached, found, err = store.GetPromptSection(ctx, familyGroup, userID, module)
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, content, cached)
 
-	// Empty familyGroup or module error validation
-	assert.Error(t, store.SetPromptSection(ctx, "", module, content, 0))
-	assert.Error(t, store.SetPromptSection(ctx, familyGroup, "", content, 0))
+	_, found, err = store.GetPromptSection(ctx, familyGroup, "user-2", module)
+	require.NoError(t, err)
+	assert.False(t, found, "another family member must not hit this user's cached section")
+
+	// Empty familyGroup, userID or module error validation
+	assert.Error(t, store.SetPromptSection(ctx, "", userID, module, content, 0))
+	assert.Error(t, store.SetPromptSection(ctx, familyGroup, "", module, content, 0))
+	assert.Error(t, store.SetPromptSection(ctx, familyGroup, userID, "", content, 0))
 }
 
 func TestPromptCache_GetSections_MGet(t *testing.T) {
@@ -328,14 +334,15 @@ func TestPromptCache_GetSections_MGet(t *testing.T) {
 
 	ctx := context.Background()
 	familyGroup := "fam-202"
+	userID := "user-1"
 
 	// Pre-populate some sections
-	require.NoError(t, store.SetPromptSection(ctx, familyGroup, "baby", "Baby section", 10*time.Minute))
-	require.NoError(t, store.SetPromptSection(ctx, familyGroup, "finance", "Finance section", 10*time.Minute))
+	require.NoError(t, store.SetPromptSection(ctx, familyGroup, userID, "baby", "Baby section", 10*time.Minute))
+	require.NoError(t, store.SetPromptSection(ctx, familyGroup, userID, "finance", "Finance section", 10*time.Minute))
 
 	// Query 4 modules: 2 hits, 2 misses
 	modules := []string{"baby", "house", "finance", "schedule"}
-	hits, misses, err := store.GetPromptSections(ctx, familyGroup, modules)
+	hits, misses, err := store.GetPromptSections(ctx, familyGroup, userID, modules)
 	require.NoError(t, err)
 
 	assert.Len(t, hits, 2)
@@ -351,21 +358,40 @@ func TestPromptCache_InvalidateSections(t *testing.T) {
 
 	ctx := context.Background()
 	familyGroup := "fam-303"
+	userID := "user-1"
 
-	require.NoError(t, store.SetPromptSection(ctx, familyGroup, "baby", "Baby section", 10*time.Minute))
-	require.NoError(t, store.SetPromptSection(ctx, familyGroup, "house", "House section", 10*time.Minute))
+	require.NoError(t, store.SetPromptSection(ctx, familyGroup, userID, "baby", "Baby section", 10*time.Minute))
+	require.NoError(t, store.SetPromptSection(ctx, familyGroup, userID, "house", "House section", 10*time.Minute))
 
-	// Invalidate both
-	key1 := "ctx_prompt:" + familyGroup + ":baby"
-	key2 := "ctx_prompt:" + familyGroup + ":house"
-	err := store.InvalidatePromptSections(ctx, key1, key2)
+	// Invalidate both by explicit key
+	err := store.InvalidatePromptSections(ctx,
+		PromptCacheKey(familyGroup, userID, "baby"),
+		PromptCacheKey(familyGroup, userID, "house"))
 	require.NoError(t, err)
 
 	// Verify both evicted
-	_, found1, _ := store.GetPromptSection(ctx, familyGroup, "baby")
-	_, found2, _ := store.GetPromptSection(ctx, familyGroup, "house")
+	_, found1, _ := store.GetPromptSection(ctx, familyGroup, userID, "baby")
+	_, found2, _ := store.GetPromptSection(ctx, familyGroup, userID, "house")
 	assert.False(t, found1)
 	assert.False(t, found2)
 }
 
+func TestPromptCache_InvalidateFamily_AllUsersOneModule(t *testing.T) {
+	store, _, cleanup := setupTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
 
+	for _, u := range []string{"u1", "u2"} {
+		require.NoError(t, store.SetPromptSection(ctx, "fam-404", u, "memory", "m", time.Minute))
+		require.NoError(t, store.SetPromptSection(ctx, "fam-404", u, "baby", "b", time.Minute))
+	}
+	n, err := store.InvalidateFamilyPromptSections(ctx, "fam-404", []string{"memory"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	for _, u := range []string{"u1", "u2"} {
+		_, found, _ := store.GetPromptSection(ctx, "fam-404", u, "memory")
+		assert.False(t, found)
+		_, found, _ = store.GetPromptSection(ctx, "fam-404", u, "baby")
+		assert.True(t, found)
+	}
+}

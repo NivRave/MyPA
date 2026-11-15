@@ -483,7 +483,7 @@ func TestEmpirical_PromptCache_ThunderingHerd(t *testing.T) {
 	wg.Add(numCallers)
 
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "fam_herd_99"},
+		User: &models.User{FamilyGroup: "fam_herd_99", PlatformID: "u_herd"},
 	}
 
 	results := make([]string, numCallers)
@@ -503,7 +503,7 @@ func TestEmpirical_PromptCache_ThunderingHerd(t *testing.T) {
 	}
 
 	// Verify Redis cache is valid
-	val, found, err := store.GetPromptSection(context.Background(), "fam_herd_99", "thundering_mod")
+	val, found, err := store.GetPromptSection(context.Background(), "fam_herd_99", "u_herd", "thundering_mod")
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, "Thundering Section Content", val)
@@ -550,7 +550,7 @@ func TestEmpirical_PromptCache_SimultaneousMutationsAndReads(t *testing.T) {
 	var readSuccesses int64
 
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "fam_dyn_stress"},
+		User: &models.User{FamilyGroup: "fam_dyn_stress", PlatformID: "u_dyn"},
 	}
 
 	// 40 concurrent readers
@@ -604,7 +604,7 @@ func TestEmpirical_PromptCache_SimultaneousMutationsAndReads(t *testing.T) {
 // when Redis throws errors or connection failures.
 func TestEmpirical_PromptCache_RedisFailureUnderConcurrency(t *testing.T) {
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "fam_fail_stress"},
+		User: &models.User{FamilyGroup: "fam_fail_stress", PlatformID: "u_fail"},
 	}
 
 	failingCache := &mockFailingPromptCache{

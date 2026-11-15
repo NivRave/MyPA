@@ -277,29 +277,46 @@ const (
 	DefaultPromptCacheTTL = 10 * time.Minute
 )
 
-// SetPromptSection stores a generated system prompt section in Redis with a TTL.
-func (s *Store) SetPromptSection(ctx context.Context, familyGroup, module, content string, ttl time.Duration) error {
-	fg := strings.TrimSpace(familyGroup)
-	mod := strings.TrimSpace(module)
-	if fg == "" || mod == "" {
-		return errors.New("familyGroup and module cannot be empty")
+// promptKeySegment percent-encodes '%' and ':' so that user-controlled identifiers (family group
+// names, platform IDs) can never shift segment boundaries: ("a:b","c") and ("a","b:c") stay distinct.
+var promptKeySegmentEncoder = strings.NewReplacer("%", "%25", ":", "%3A")
+
+func promptKeySegment(s string) string {
+	return promptKeySegmentEncoder.Replace(strings.TrimSpace(s))
+}
+
+// globEscaper escapes Redis glob metacharacters so a segment is matched literally in SCAN MATCH.
+var globEscaper = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`)
+
+// PromptCacheKey builds ctx_prompt:<familyGroup>:<userID>:<module> with encoded segments.
+// Sections are per user because several modules (memory, automation, schedule) render
+// personal data; a family-only key leaked one member's sections to the others.
+func PromptCacheKey(familyGroup, userID, module string) string {
+	return fmt.Sprintf("%s:%s:%s:%s", PromptCachePrefix,
+		promptKeySegment(familyGroup), promptKeySegment(userID), promptKeySegment(module))
+}
+
+func promptScopeValid(familyGroup, userID, module string) bool {
+	return strings.TrimSpace(familyGroup) != "" && strings.TrimSpace(userID) != "" && strings.TrimSpace(module) != ""
+}
+
+// SetPromptSection stores a generated system prompt section for one user in Redis with a TTL.
+func (s *Store) SetPromptSection(ctx context.Context, familyGroup, userID, module, content string, ttl time.Duration) error {
+	if !promptScopeValid(familyGroup, userID, module) {
+		return errors.New("familyGroup, userID and module cannot be empty")
 	}
 	if ttl <= 0 {
 		ttl = DefaultPromptCacheTTL
 	}
-	key := fmt.Sprintf("%s:%s:%s", PromptCachePrefix, fg, mod)
-	return s.client.Set(ctx, key, content, ttl).Err()
+	return s.client.Set(ctx, PromptCacheKey(familyGroup, userID, module), content, ttl).Err()
 }
 
-// GetPromptSection retrieves a cached system prompt section for a familyGroup and module.
-func (s *Store) GetPromptSection(ctx context.Context, familyGroup, module string) (string, bool, error) {
-	fg := strings.TrimSpace(familyGroup)
-	mod := strings.TrimSpace(module)
-	if fg == "" || mod == "" {
+// GetPromptSection retrieves a cached system prompt section for a user and module.
+func (s *Store) GetPromptSection(ctx context.Context, familyGroup, userID, module string) (string, bool, error) {
+	if !promptScopeValid(familyGroup, userID, module) {
 		return "", false, nil
 	}
-	key := fmt.Sprintf("%s:%s:%s", PromptCachePrefix, fg, mod)
-	val, err := s.client.Get(ctx, key).Result()
+	val, err := s.client.Get(ctx, PromptCacheKey(familyGroup, userID, module)).Result()
 	if err == redis.Nil {
 		return "", false, nil
 	} else if err != nil {
@@ -310,19 +327,18 @@ func (s *Store) GetPromptSection(ctx context.Context, familyGroup, module string
 
 // GetPromptSections fetches multiple prompt sections in a single roundtrip via MGet.
 // On Redis error, it degrades gracefully and treats all requested modules as cache misses.
-func (s *Store) GetPromptSections(ctx context.Context, familyGroup string, modules []string) (map[string]string, []string, error) {
+func (s *Store) GetPromptSections(ctx context.Context, familyGroup, userID string, modules []string) (map[string]string, []string, error) {
 	hits := make(map[string]string)
 	if len(modules) == 0 {
 		return hits, nil, nil
 	}
-	fg := strings.TrimSpace(familyGroup)
-	if fg == "" {
+	if strings.TrimSpace(familyGroup) == "" || strings.TrimSpace(userID) == "" {
 		return hits, modules, nil
 	}
 
 	keys := make([]string, len(modules))
 	for i, m := range modules {
-		keys[i] = fmt.Sprintf("%s:%s:%s", PromptCachePrefix, fg, strings.TrimSpace(m))
+		keys[i] = PromptCacheKey(familyGroup, userID, m)
 	}
 
 	vals, err := s.client.MGet(ctx, keys...).Result()
@@ -357,6 +373,39 @@ func (s *Store) InvalidatePromptSections(ctx context.Context, keys ...string) er
 		return nil
 	}
 	return s.client.Del(ctx, validKeys...).Err()
+}
+
+// InvalidateFamilyPromptSections deletes the cached sections of the given modules for EVERY user
+// in a family scope (ctx_prompt:<scope>:*:<module>). It uses SCAN (non-blocking, unlike KEYS)
+// with glob-escaped segments, and returns the number of keys deleted.
+func (s *Store) InvalidateFamilyPromptSections(ctx context.Context, scope string, modules []string) (int, error) {
+	if strings.TrimSpace(scope) == "" || len(modules) == 0 {
+		return 0, nil
+	}
+	suffixes := make(map[string]bool, len(modules))
+	for _, m := range modules {
+		if strings.TrimSpace(m) != "" {
+			suffixes[":"+promptKeySegment(m)] = true
+		}
+	}
+
+	pattern := fmt.Sprintf("%s:%s:*", PromptCachePrefix, globEscaper.Replace(promptKeySegment(scope)))
+	var toDelete []string
+	iter := s.client.Scan(ctx, 0, pattern, 500).Iterator()
+	for iter.Next(ctx) {
+		key := iter.Val()
+		if idx := strings.LastIndex(key, ":"); idx >= 0 && suffixes[key[idx:]] {
+			toDelete = append(toDelete, key)
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return 0, fmt.Errorf("scan prompt cache keys: %w", err)
+	}
+	if len(toDelete) == 0 {
+		return 0, nil
+	}
+	n, err := s.client.Del(ctx, toDelete...).Result()
+	return int(n), err
 }
 
 

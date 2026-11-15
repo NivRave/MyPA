@@ -70,3 +70,28 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### D1-2.8 Startup panic → clean exit
 - The subprocess test `TestSEC08_ProductionStartupFails_WhenMissingKey` now asserts a non-zero exit **without** `panic:` in output, and also runs with `ENV=test` to prove the env var no longer unlocks the dev key.
+
+---
+
+## P1-3 — Per-user prompt cache keys
+
+### D1-3.1 Cache granularity
+- **Options:** (a) key every section per user `ctx_prompt:<fg>:<user>:<mod>` (plan default); (b) let each module declare a scope (`family` vs `user`) and keep family-shared sections family-keyed; (c) never cache modules that render personal data.
+- **Chosen:** (a).
+- **Why / challenge:** (b) gives a better hit rate, but a single mislabelled module re-opens the leak, and the "memory"/"automation"/"schedule" sections mix family and personal content in one string anyway. For a family of 2–6 people the extra misses cost a few ms of DB work per member per 10 min. (c) throws away the cache for the most expensive sections. Safe-by-default wins; (b) can be layered on later as an explicit opt-in.
+
+### D1-3.2 Invalidation strategy
+- **Options:** (a) `SCAN MATCH ctx_prompt:<scope>:*` then filter by module and `DEL` (plan); (b) `KEYS` (blocking — rejected outright); (c) per-family generation counter in the key (`ctx_prompt:<fg>:v<N>:…`, `INCR` to invalidate, old keys age out via TTL); (d) a Redis SET index of keys per family.
+- **Chosen:** (a), one SCAN per scope (not per module), `COUNT 500`.
+- **Why / challenge:** (c) is O(1) and also closes the miss-then-stale-write race, but adds a round trip to every prompt build and more moving parts. (d) needs index maintenance on every write and can drift. SCAN cost scales with Redis key count, which for this app is tiny (hundreds of keys); mutations are infrequent. **Known, pre-existing race:** a prompt build that misses, then a mutation invalidates, then the build writes its (now stale) section — bounded by the 10-min TTL. (c) is the upgrade path if that ever matters.
+
+### D1-3.3 Key-segment encoding and glob escaping
+- **Finding:** family-group names are free-form. With a 4-segment key, family `a:b` + user `c` and family `a` + user `b:c` collide on `ctx_prompt:a:b:c:mod` — a cross-tenant leak path. A family named `*` (or containing `?[]`) would also turn the invalidation SCAN pattern into a wildcard over other families.
+- **Chosen:** percent-encode `%`→`%25` and `:`→`%3A` in every segment (`state.PromptCacheKey`), and glob-escape the scope segment before using it in `SCAN MATCH`. Both covered by tests.
+- **Alternative rejected:** hashing segments (opaque keys, harder to debug in `redis-cli`).
+
+### D1-3.4 Unknown identity
+- **Chosen:** if `CallContext.ActorID()` is empty, do not read or write the cache (previously such calls were cached under the family key). Rare path (system-initiated prompts); correctness over hit rate.
+
+### D1-3.5 Scope of invalidation for users without a family group
+- `CallContext.TenantFamilyGroup()` falls back to the user ID, so such users are cached as `ctx_prompt:<uid>:<uid>:<mod>`; invalidating scope `event.ActorUserID` covers them. Kept both scopes (family + actor) from the old design.
