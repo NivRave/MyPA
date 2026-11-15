@@ -375,6 +375,38 @@ func (s *Store) InvalidatePromptSections(ctx context.Context, keys ...string) er
 	return s.client.Del(ctx, validKeys...).Err()
 }
 
+// InboundDedupTTL bounds how long a processed inbound message ID is remembered.
+// Telegram retries webhooks for well under a day; RabbitMQ redeliveries are immediate.
+const InboundDedupTTL = 24 * time.Hour
+
+// InboundMessageKey builds inbound:<source>:<scope>:<messageID>. Telegram message_id is unique
+// only per chat, so scope is the chat ID (falling back to the user ID, e.g. WhatsApp, whose
+// MessageSid is globally unique anyway). Segments are encoded like prompt-cache keys.
+func InboundMessageKey(source, chatID, userID, messageID string) string {
+	scope := chatID
+	if strings.TrimSpace(scope) == "" {
+		scope = userID
+	}
+	if strings.TrimSpace(source) == "" {
+		source = "unknown"
+	}
+	return fmt.Sprintf("inbound:%s:%s:%s", promptKeySegment(source), promptKeySegment(scope), promptKeySegment(messageID))
+}
+
+// ClaimInbound atomically marks an inbound message as being processed (SET NX EX).
+// It returns false if the message was already claimed, i.e. it is a duplicate delivery.
+func (s *Store) ClaimInbound(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	if ttl <= 0 {
+		ttl = InboundDedupTTL
+	}
+	return s.client.SetNX(ctx, key, time.Now().UTC().Format(time.RFC3339), ttl).Result()
+}
+
+// ReleaseInbound removes a claim so a retryable failure can be redelivered and processed.
+func (s *Store) ReleaseInbound(ctx context.Context, key string) error {
+	return s.client.Del(ctx, key).Err()
+}
+
 // InvalidateFamilyPromptSections deletes the cached sections of the given modules for EVERY user
 // in a family scope (ctx_prompt:<scope>:*:<module>). It uses SCAN (non-blocking, unlike KEYS)
 // with glob-escaped segments, and returns the number of keys deleted.

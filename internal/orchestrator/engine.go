@@ -221,21 +221,25 @@ func NewEngine(
 func (e *Engine) Start(ctx context.Context) error {
 	slog.Info("orchestrator engine starting")
 	
-	return e.consumer.Consume(func(msg models.Message) error {
+	return e.consumer.ConsumeWithInfo(func(msg models.Message, info broker.DeliveryInfo) error {
 		// Use a bounded timeout for each message processing to prevent stuck consumers, but allow enough time for multi-turn agent execution (5m)
 		msgCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 
 		if err := e.ProcessMessage(msgCtx, msg); err != nil {
-			slog.Error("failed to process message", "message_id", msg.ID, "error", err)
-			
-			// Try to notify the user of the error
-			_ = e.sendMessage(msgCtx, msg, "⚠️ Sorry, I encountered an internal error while processing your request.")
-			
-			// Return err so the broker consumer retries with backoff and routes to DLQ upon reaching max attempts
-			return err 
+			slog.Error("failed to process message", "message_id", msg.ID, "attempt", info.Attempt, "max_attempts", info.MaxAttempts, "error", err)
+
+			// Notify the user only when no retry will follow (final attempt or non-retryable).
+			if shouldNotifyUserOfFailure(err, info) {
+				notifyCtx, notifyCancel := context.WithTimeout(context.WithoutCancel(msgCtx), 15*time.Second)
+				_ = e.sendMessage(notifyCtx, msg, "⚠️ Sorry, I encountered an internal error while processing your request.")
+				notifyCancel()
+			}
+
+			// Retryable errors are requeued (DLQ after max attempts); ErrNonRetryable is acked.
+			return err
 		}
-		
+
 		return nil
 	})
 }
@@ -292,6 +296,7 @@ func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg models.Messa
 			CreatedAt:   time.Now(),
 		}
 		if err := e.db.RedeemPairingCode(pc.ID, newUser); err == nil {
+			markSideEffect(ctx) // code consumed: a retry would see it as invalid and count a failed attempt
 			if e.store != nil {
 				_ = e.store.ResetPairingRateLimit(ctx, msg.UserID)
 			}
@@ -302,6 +307,7 @@ func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg models.Messa
 	// Record failed pairing attempt
 	if e.store != nil {
 		attempts, lockedOut, _ := e.store.RecordFailedPairingAttempt(ctx, msg.UserID)
+		markSideEffect(ctx) // attempt counted: a retry would count it twice toward lockout
 		if lockedOut {
 			return e.sendMessage(ctx, msg, "🚫 Too many failed attempts (5/5). Your account has been locked for 1 hour.")
 		}
@@ -315,6 +321,14 @@ func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg models.Messa
 // ProcessMessage is the main entry point for handling an incoming user message.
 // It orchestrates transcription, command handling, confirmation flows, and LLM reasoning.
 func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err error) {
+	// P1-4: drop duplicate deliveries (Telegram webhook retries, broker redeliveries) before
+	// doing anything — including telemetry — so a message's tools run at most once.
+	claim, duplicate := e.claimInbound(ctx, msg)
+	if duplicate {
+		slog.Info("duplicate inbound message skipped", "message_id", msg.ID, "user_id", msg.UserID, "source", msg.Source)
+		return nil
+	}
+
 	slog.Info("processing message", "user_id", msg.UserID, "text", msg.Text)
 
 	var llmResponse string
@@ -360,6 +374,16 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 
 	secState := &TurnSecurityState{}
 	ctx = WithTurnSecurityState(ctx, secState)
+
+	// Runs before the telemetry defer above (LIFO), so telemetry sees the final error.
+	effects := &turnEffects{}
+	ctx = withTurnEffects(ctx, effects)
+	defer func() {
+		if err != nil && effects.any() {
+			err = broker.NonRetryable(err)
+		}
+		claim.finish(ctx, err)
+	}()
 
 	// 1. Pre-Auth Check: Verify user exists and is authenticated
 	user, err := e.db.GetUser(msg.UserID)
@@ -439,6 +463,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	}
 
 	if msg.Text == "/undo" || strings.HasPrefix(msg.Text, "/undo ") {
+		markSideEffect(ctx) // a rollback may be applied; never re-run it
 		mutID := strings.TrimSpace(strings.TrimPrefix(msg.Text, "/undo"))
 		return e.handleUndo(ctx, user, msg, mutID)
 	}
@@ -471,6 +496,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		if databaseURL == "" {
 			return e.sendMessage(ctx, msg, "❌ Backup failed: DATABASE_URL not set.")
 		}
+		markSideEffect(ctx)
 		path, err := db.BackupDatabase(databaseURL, "/backups", 3)
 		if err != nil {
 			slog.Error("Manual backup failed", "error", err)
@@ -496,6 +522,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 			return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Restore failed: %v", err))
 		}
 
+		markSideEffect(ctx)
 		err = db.RestoreDatabase(databaseURL, latestBackup)
 		if err != nil {
 			slog.Error("Manual restore failed", "error", err)
@@ -746,6 +773,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	if err := e.sendMessage(ctx, msg, replyText); err != nil {
 		return fmt.Errorf("failed to send reply message: %w", err)
 	}
+	markSideEffect(ctx) // reply delivered: a later failure must not re-send it
 
 	// 7. Update conversation history (SCALE-02: strip PhotoData bytes)
 	persistedContent := msg.Text
@@ -988,6 +1016,8 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 		callCtx := e.buildCallContext(ctx, user, msg)
 		res, handled, err := e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)
 		if handled {
+			// The tool ran (possibly partially, even on error): retrying the turn would duplicate it.
+			markSideEffect(ctx)
 			if err != nil {
 				slog.Error("registry tool execution failed", "tool", toolCall.Name, "error", err)
 				return fmt.Sprintf("❌ Error executing %s: %v", toolCall.Name, err)

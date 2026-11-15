@@ -95,3 +95,36 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### D1-3.5 Scope of invalidation for users without a family group
 - `CallContext.TenantFamilyGroup()` falls back to the user ID, so such users are cached as `ctx_prompt:<uid>:<uid>:<mod>`; invalidating scope `event.ActorUserID` covers them. Kept both scopes (family + actor) from the old design.
+
+---
+
+## P1-4 — Inbound idempotency + no retries after side effects
+
+### D1-4.1 Delivery semantics: at-most-once for side-effecting turns
+- **Options:** (a) at-least-once (status quo: any error re-runs the turn); (b) at-most-once via a dedup claim; (c) effectively-once via per-tool idempotency keys (each tool call carries `<messageID>:<callIndex>` and every external API/DB write dedups on it).
+- **Chosen:** (b) now; (c) noted as the long-term ideal.
+- **Why / challenge:** (a) is what created duplicate calendar events/emails. (c) is best practice for payment-style systems but needs every integration (Google Calendar, Gmail, Tasks, Twilio, internal repos) to accept an idempotency key — a cross-cutting change far larger than this item, and Google APIs only partly support it. (b) is a small, central change. Its cost: if the orchestrator **crashes mid-turn**, the redelivery is dropped and the user must resend. For an assistant that takes real-world actions, "you may need to repeat yourself" beats "it booked twice".
+- **Revisit?** If lost messages after crashes ever matter, add a `processing`→`done` two-phase claim with a short processing TTL plus a recovery notice to the user.
+
+### D1-4.2 When to release the claim
+- **Chosen:** release (`DEL`) on retryable failure; keep on success and on non-retryable failure. A naive `SET NX` without release would silently drop the broker's own retries — breaking "LLM failed before tools → requeued".
+- Release uses `context.WithoutCancel` + 2 s timeout because the turn context may already be expired (5-min turn timeout is a common failure cause).
+
+### D1-4.3 What counts as a side effect
+- **Counted:** registry tool executed (even if it returned an error — it may have partially applied), `/backup`, `/restore`, `/undo`, pairing-code redemption, recorded failed pairing attempt (a retry would double-count toward lockout), final reply delivered.
+- **Not counted:** progress notices ("Transcribed: …", "Starting backup…" is followed by the counted backup itself), staging a pending CONFIRM action (idempotent overwrite), `get_current_time`.
+- **Why / challenge:** counting *every* outgoing message is simpler, but then a Gemini 503 after the transcription notice becomes a lost message instead of a retry. Repeating a progress notice is harmless; losing the answer is not.
+
+### D1-4.4 Non-retryable → ack vs dead-letter
+- **Options:** ack (plan); reject to DLQ for inspection.
+- **Chosen:** ack.
+- **Why / challenge:** DLQ messages tend to be replayed by an operator, which would re-run the side effects this item exists to prevent. The failure is still recorded: error log + the audit session (`status=failed`).
+
+### D1-4.5 Dedup key scope
+- `inbound:<source>:<chatID or userID>:<messageID>`: Telegram `message_id` is unique only per chat; Twilio `MessageSid` is global (user scope is fine). Segments reuse the prompt-cache percent-encoding. Messages without an ID (proactive broadcasts) skip dedup with a warning. Scheduler-generated IDs (`wf-<id>-<unix>`) are unique per firing, so dedup is harmless there.
+
+### D1-4.6 Redis unavailable during claim
+- **Chosen:** fail open (process without dedup) with a warning. The turn needs Redis for chat history anyway, so a real Redis outage fails the turn retryably; failing closed would add a second failure mode for no gain.
+
+### D1-4.7 User-facing error notice
+- Sent only when `errors.Is(err, ErrNonRetryable) || info.IsFinal()`, via new `Consumer.ConsumeWithInfo` (attempt number from the `x-retries` header). `Consume` kept as a compatibility wrapper.

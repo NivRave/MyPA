@@ -93,6 +93,13 @@ func (c *Consumer) connect() error {
 
 // Consume starts consuming models.Message items with supervision and auto-reconnect.
 func (c *Consumer) Consume(handler func(models.Message) error) error {
+	return c.ConsumeWithInfo(func(msg models.Message, _ DeliveryInfo) error { return handler(msg) })
+}
+
+// ConsumeWithInfo is like Consume but also tells the handler which delivery attempt it is
+// processing, so it can e.g. stay silent on intermediate retryable failures.
+// Handler errors wrapping ErrNonRetryable are acked (never redelivered).
+func (c *Consumer) ConsumeWithInfo(handler func(models.Message, DeliveryInfo) error) error {
 	return c.consumeLoop(func(d amqp.Delivery) {
 		var msg models.Message
 		if err := json.Unmarshal(d.Body, &msg); err != nil {
@@ -102,7 +109,7 @@ func (c *Consumer) Consume(handler func(models.Message) error) error {
 			return
 		}
 
-		if err := handler(msg); err != nil {
+		if err := handler(msg, deliveryInfo(getRetryCount(d.Headers), c.maxRetries)); err != nil {
 			c.handleFailure(d, err)
 		} else {
 			_ = d.Ack(false)
@@ -202,7 +209,16 @@ func (c *Consumer) reconnectWithBackoff() error {
 func (c *Consumer) handleFailure(d amqp.Delivery, handlerErr error) {
 	retries := getRetryCount(d.Headers)
 
-	if retries+1 >= c.maxRetries {
+	switch decideFailure(handlerErr, retries, c.maxRetries) {
+	case actionAck:
+		slog.Error("non-retryable handler failure after side effects; acking without redelivery",
+			"queue", c.queue.Name,
+			"attempt", retries+1,
+			"error", handlerErr,
+		)
+		_ = d.Ack(false)
+		return
+	case actionDeadLetter:
 		slog.Error("message delivery failed, max retries reached; rejecting to DLQ",
 			"queue", c.queue.Name,
 			"retries", retries+1,
