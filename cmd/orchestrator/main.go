@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/nivik/mypa/internal/logging"
 	"log/slog"
 	"net/http"
 	"os"
@@ -51,8 +52,7 @@ import (
 
 func main() {
 	// Initialize logger
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
+	logging.Setup() // JSON on stdout at LOG_LEVEL (default info); P3-3
 
 	// Load config
 	cfg, err := config.Load()

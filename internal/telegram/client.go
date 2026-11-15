@@ -93,13 +93,13 @@ func (c *Client) doSend(ctx context.Context, url string, reqBody SendMessageRequ
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return fmt.Errorf("failed to create request: %w", redactURLError(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to execute request: %w", err)
+		return fmt.Errorf("failed to execute request: %w", redactURLError(err))
 	}
 	defer resp.Body.Close()
 
@@ -154,6 +154,7 @@ func (c *Client) SetWebhook(ctx context.Context, webhookURL, secretToken string)
 }
 
 // redactURLError strips the request URL (which embeds the bot token) from net/http errors.
+// Every client method routes transport/request errors through it (P1-1, P3-3).
 func redactURLError(err error) error {
 	var uerr *url.Error
 	if errors.As(err, &uerr) {
@@ -168,12 +169,12 @@ func (c *Client) GetFile(ctx context.Context, fileID string) (string, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create getFile request: %w", err)
+		return "", fmt.Errorf("failed to create getFile request: %w", redactURLError(err))
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to execute getFile request: %w", err)
+		return "", fmt.Errorf("failed to execute getFile request: %w", redactURLError(err))
 	}
 	defer resp.Body.Close()
 
@@ -205,12 +206,12 @@ func (c *Client) DownloadFile(ctx context.Context, filePath string) ([]byte, err
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create download request: %w", err)
+		return nil, fmt.Errorf("failed to create download request: %w", redactURLError(err))
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download file: %w", err)
+		return nil, fmt.Errorf("failed to download file: %w", redactURLError(err))
 	}
 	defer resp.Body.Close()
 

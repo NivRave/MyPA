@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"crypto/subtle"
 	"encoding/base64"
+	"github.com/nivik/mypa/internal/logging"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -88,7 +89,9 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		MediaContentType: mediaContentType,
 	}
 
-	slog.Info("received twilio message", "user_id", msg.UserID, "text", msg.Text, "has_media", mediaURL != "", "content_type", mediaContentType)
+	// P3-3: never log message content at INFO (length + message_id only).
+	logging.LogMessageText(r.Context(), nil, "received twilio message", msg.Text,
+		"user_id", msg.UserID, "message_id", msg.ID, "has_media", mediaURL != "", "content_type", mediaContentType)
 
 	err = h.publisher.Publish(context.Background(), msg)
 	if err != nil {

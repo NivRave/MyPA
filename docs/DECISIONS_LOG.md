@@ -394,3 +394,24 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### Noted, not changed
 - Members with an empty family group resolve to the shared tenant `"default"` in `resolveTenantAndActor` — two such users would share data in GraphQL. The orchestrator side uses the user ID as the fallback tenant instead. Aligning them changes data visibility for existing rows → follow-up for the owner.
+
+---
+
+## P3-3 — Logging hygiene + rotation
+
+### D3-3.1 What replaces message text in logs
+- **Options:** (a) length + content hash (plan); (b) length + message ID; (c) nothing.
+- **Chosen:** (b). A hash of short, predictable family messages ("ok", "yes", "at the dentist") is reversible by dictionary and lets anyone confirm a guess; correlation — the hash's purpose — is already provided by the platform message ID. Full text remains available in a separate DEBUG record.
+- Added `LOG_LEVEL` (all Go services, via `internal/logging.Setup`) — previously the level was hard-coded to INFO, so "full text at DEBUG" would have been unreachable.
+
+### D3-3.2 Broker unparseable payloads
+- Log `body_bytes` only. The payload is a user message; the DLQ keeps the original for inspection.
+
+### D3-3.3 Bot token in errors (carried over from P1-1)
+- `SendMessage`, `SendMessageHTML`, `GetFile`, `DownloadFile` now route request/transport errors through `redactURLError` (the API URL contains the token). Tested by a transport that always fails.
+
+### D3-3.4 Log rotation
+- One YAML anchor (`x-logging`) applied to all 10 services (including third-party images); structural test parses the compose file and checks driver/size/count per service, so a newly added service without rotation fails CI.
+
+### Not covered
+- Third-party containers' own logs (Postgres statement logging, RabbitMQ) may contain data; their defaults don't log message bodies. The dashboard (Next.js) doesn't log message content.

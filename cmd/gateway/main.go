@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"github.com/nivik/mypa/internal/logging"
 	"io"
 	"log/slog"
 	"net/http"
@@ -23,8 +24,7 @@ import (
 
 func main() {
 	// Initialize logger
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
+	logging.Setup() // JSON on stdout at LOG_LEVEL (default info); P3-3
 
 	// Load config
 	cfg, err := config.Load()
@@ -160,7 +160,8 @@ func setupRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
 		// Forward to orchestrator regardless of authorization
 		// (Orchestrator handles unauthorized pairing flows)
 
-		slog.Info("received message", "user_id", msg.UserID, "text", msg.Text)
+		// P3-3: never log message content at INFO (length + message_id only).
+		logging.LogMessageText(r.Context(), nil, "received message", msg.Text, "user_id", msg.UserID, "message_id", msg.ID)
 
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()

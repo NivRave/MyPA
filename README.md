@@ -196,6 +196,7 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
 | **`REDIS_URL`** | Redis connection string (`redis://...`). | **Yes** | `redis://redis:6379/0` |
 | `ALLOWED_USERS` | Bootstrap allowed users formatted as `"platform_id:Name:Role:FamilyGroup"`. | No | `123456789:Admin:admin:TheFamily` |
 | `DEFAULT_TIMEZONE` | Default IANA timezone used for system prompts and localized datetime parsing. | No | `"Asia/Jerusalem"` / `"UTC"` |
+| `LOG_LEVEL` | `debug` / `info` / `warn` / `error`. Message text is only logged at `debug`. | No | `info` |
 | `WEEK_START_DAY` | First day of the week used when the assistant reasons about "this/next week". | No | `Sunday` |
 | `WEEKEND_DAYS` | Comma-separated weekend days. | No | `Friday,Saturday` |
 | `GRAPHQL_ENDPOINT` | Upstream GraphQL URL used by Next.js server actions and SSR data fetching. | No | `http://proxy:8000/graphql` |

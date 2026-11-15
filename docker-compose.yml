@@ -1,5 +1,13 @@
+# P3-3: bounded container logs for every service (json-file, 5 x 10 MB)
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   gateway:
+    logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
@@ -20,6 +28,7 @@ services:
     restart: unless-stopped
 
   orchestrator:
+    logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
@@ -44,6 +53,7 @@ services:
     restart: unless-stopped
 
   audit-worker:
+    logging: *default-logging
     build:
       context: .
       target: audit-worker
@@ -63,6 +73,7 @@ services:
     restart: unless-stopped
 
   proxy:
+    logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
@@ -80,6 +91,7 @@ services:
     restart: unless-stopped
 
   ngrok:
+    logging: *default-logging
     image: ngrok/ngrok:latest
     restart: unless-stopped
     command:
@@ -96,6 +108,7 @@ services:
 
 
   rabbitmq:
+    logging: *default-logging
     image: rabbitmq:3.13-management-alpine
     ports:
       - "127.0.0.1:5672:5672"
@@ -114,6 +127,7 @@ services:
     restart: unless-stopped
 
   redis:
+    logging: *default-logging
     image: redis:7-alpine
     ports:
       - "127.0.0.1:6379:6379"
@@ -129,6 +143,7 @@ services:
     restart: unless-stopped
 
   postgres:
+    logging: *default-logging
     image: pgvector/pgvector:pg15
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mypa}
@@ -147,6 +162,7 @@ services:
     restart: unless-stopped
 
   pgadmin:
+    logging: *default-logging
     image: dpage/pgadmin4
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@mypa.com}
@@ -159,6 +175,7 @@ services:
     restart: unless-stopped
 
   dashboard:
+    logging: *default-logging
     build:
       context: ./dashboard
       dockerfile: Dockerfile

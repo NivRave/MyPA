@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nivik/mypa/internal/logging"
 	"io"
 	"log/slog"
 	"os"
@@ -33,28 +34,28 @@ import (
 
 // Engine is the core orchestrator that connects all components.
 type Engine struct {
-	consumer        *broker.Consumer
-	store           *state.Store
-	backups         backupOps // pg_dump/pg_restore seam; zero value = real db functions
-	db              DBClient
-	llm             LLMClient
-	tgClient        TelegramClient
-	twClient        TwilioClient
-	audioClient     AudioClient
-	oauthCfg        *calendar.OAuthConfig
-	gmailClient     GmailClient
-	tasksClient     TasksClient
-	contactsClient  ContactsClient
-	tavilyClient    TavilyClient
-	calendarFactory func(context.Context, string) (CalendarClient, error)
-	timezone        string
-	publisher       EventPublisher
-	wg              sync.WaitGroup
+	consumer           *broker.Consumer
+	store              *state.Store
+	backups            backupOps // pg_dump/pg_restore seam; zero value = real db functions
+	db                 DBClient
+	llm                LLMClient
+	tgClient           TelegramClient
+	twClient           TwilioClient
+	audioClient        AudioClient
+	oauthCfg           *calendar.OAuthConfig
+	gmailClient        GmailClient
+	tasksClient        TasksClient
+	contactsClient     ContactsClient
+	tavilyClient       TavilyClient
+	calendarFactory    func(context.Context, string) (CalendarClient, error)
+	timezone           string
+	publisher          EventPublisher
+	wg                 sync.WaitGroup
 	onWorkflowsChanged func()
-	toolRegistry    *Registry
-	eventBus        *events.EventBus
-	intentMatcher   IntentMatcher
-	calendar        CalendarConventions // week start / weekend for the system prompt (P2-6)
+	toolRegistry       *Registry
+	eventBus           *events.EventBus
+	intentMatcher      IntentMatcher
+	calendar           CalendarConventions // week start / weekend for the system prompt (P2-6)
 }
 
 var hebrewPrepositionRegex = regexp.MustCompile(`(^|[^\p{Hebrew}\w])([בלמכ])(\d+)`)
@@ -74,7 +75,9 @@ func (e *Engine) SetWorkflowsChangedCallback(cb func()) {
 func (e *Engine) SetToolRegistry(reg *Registry) {
 	e.toolRegistry = reg
 	if reg != nil && e.llm != nil {
-		if toolSetter, ok := e.llm.(interface{ SetExtraTools([]*genai.FunctionDeclaration) }); ok {
+		if toolSetter, ok := e.llm.(interface {
+			SetExtraTools([]*genai.FunctionDeclaration)
+		}); ok {
 			toolSetter.SetExtraTools(reg.AllDeclarations())
 		}
 	}
@@ -181,7 +184,6 @@ func (e *Engine) buildCallContext(ctx context.Context, user *models.User, msg mo
 	return callCtx
 }
 
-
 // NewEngine initializes the orchestrator engine.
 func NewEngine(
 	cons *broker.Consumer,
@@ -200,22 +202,22 @@ func NewEngine(
 	tz string,
 ) *Engine {
 	e := &Engine{
-		consumer:        cons,
-		store:           store,
-		db:              db,
-		llm:             llm,
-		tgClient:        tg,
-		twClient:        tw,
-		oauthCfg:        oauth,
-		gmailClient:     gmailC,
-		tasksClient:     tasksC,
-		contactsClient:  contactsC,
-		tavilyClient:    tavilyC,
-		audioClient:     audio,
-		publisher:       pub,
-		timezone:        tz,
-		intentMatcher:   NewKeywordIntentMatcher(),
-		calendar:        DefaultCalendarConventions(),
+		consumer:       cons,
+		store:          store,
+		db:             db,
+		llm:            llm,
+		tgClient:       tg,
+		twClient:       tw,
+		oauthCfg:       oauth,
+		gmailClient:    gmailC,
+		tasksClient:    tasksC,
+		contactsClient: contactsC,
+		tavilyClient:   tavilyC,
+		audioClient:    audio,
+		publisher:      pub,
+		timezone:       tz,
+		intentMatcher:  NewKeywordIntentMatcher(),
+		calendar:       DefaultCalendarConventions(),
 	}
 
 	e.calendarFactory = func(ctx context.Context, userID string) (CalendarClient, error) {
@@ -239,7 +241,7 @@ func NewEngine(
 // Start begins consuming messages and processing them.
 func (e *Engine) Start(ctx context.Context) error {
 	slog.Info("orchestrator engine starting")
-	
+
 	return e.consumer.ConsumeWithInfo(func(msg models.Message, info broker.DeliveryInfo) error {
 		// Use a bounded timeout for each message processing to prevent stuck consumers, but allow enough time for multi-turn agent execution (5m)
 		msgCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -348,7 +350,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		return nil
 	}
 
-	slog.Info("processing message", "user_id", msg.UserID, "text", msg.Text)
+	logging.LogMessageText(ctx, nil, "processing message", msg.Text, "user_id", msg.UserID, "message_id", msg.ID) // P3-3
 
 	var llmResponse string
 	sessionID := uuid.New().String()
@@ -366,7 +368,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 			if errStr != "" {
 				status = "failed"
 			}
-			
+
 			session := models.AuditSession{
 				ID:              sessionID,
 				UserID:          msg.UserID,
@@ -380,7 +382,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 				Status:          status,
 				ToolSummary:     toolSummary,
 			}
-			
+
 			if e.publisher != nil {
 				pubErr := e.publisher.Publish(context.Background(), session)
 				if pubErr != nil {
@@ -470,7 +472,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		sb.WriteString("• `/help` - Show this help message\n\n")
 		sb.WriteString("*AI Capabilities:*\n")
 		sb.WriteString("I am an AI assistant. You can speak to me naturally. Here are my underlying capabilities:\n\n")
-		
+
 		for _, fn := range llm.CalendarEventTool.FunctionDeclarations {
 			desc := fn.Description
 			if idx := strings.Index(desc, " Call this"); idx != -1 {
@@ -480,18 +482,18 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 			} else if idx := strings.Index(desc, ". Does not"); idx != -1 {
 				desc = desc[:idx+1]
 			}
-			
+
 			name := strings.ReplaceAll(fn.Name, "_", " ")
 			sb.WriteString(fmt.Sprintf("• *%s*: %s\n", name, desc))
 		}
-		
+
 		sb.WriteString("\n*Examples of what you can ask:*\n")
 		sb.WriteString("🗣️ _\"Remind me to call Mom tomorrow at 5pm\"_\n")
 		sb.WriteString("🗣️ _\"What's on my calendar for today?\"_\n")
 		sb.WriteString("🗣️ _\"Do I have any unread emails?\"_\n")
 		sb.WriteString("🗣️ _\"Add 'Buy milk' to my Groceries list\"_\n")
 		sb.WriteString("🗣️ _\"Search the web for the weather in Tel Aviv\"_\n")
-		
+
 		llmResponse = sb.String()
 		return e.sendMessage(ctx, msg, llmResponse)
 	}
@@ -725,7 +727,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		if errors.As(err, &blockedErr) {
 			normalized := NormalizeHebrewPrepositionNumbers(promptText)
 			if normalized != promptText {
-				slog.Info("retrying LLM chat with normalized prompt after content block", "original", promptText, "normalized", normalized, "reason", blockedErr.BlockReason)
+				slog.Info("retrying LLM chat with normalized prompt after content block", "message_id", msg.ID, "text_len", len([]rune(promptText)), "reason", blockedErr.BlockReason) // P3-3: no content
 				resp, err = e.llm.Chat(ctx, systemPrompt, history, normalized, photoData, photoMimeType)
 			}
 		}
@@ -748,15 +750,15 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	if len(resp.ToolCalls) > 0 {
 		// Generate AuditEvent for tool call?
 		// We can add this later, for now just skip assigning actionTaken
-		
+
 		// Initialize the loop history with the user's message
 		loopHistory := append(history, models.ChatMessage{
-			Role: "user", 
-			Content: msg.Text,
-			PhotoData: photoData,
+			Role:          "user",
+			Content:       msg.Text,
+			PhotoData:     photoData,
 			PhotoMimeType: photoMimeType,
 		})
-		
+
 		replyText, _ = e.handleToolCalls(ctx, msg, loopHistory, systemPrompt, resp.ToolCalls, 1)
 	} else {
 		// No tool call
@@ -771,7 +773,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		replyText = "⚠️ Sorry, I didn't get a response from the AI. Please try again."
 	}
 	llmResponse = replyText
-	
+
 	if err := e.sendMessage(ctx, msg, replyText); err != nil {
 		return fmt.Errorf("failed to send reply message: %w", err)
 	}
@@ -1012,7 +1014,7 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 			}
 		}
 	}
-	
+
 	// Delegate to modular ToolRegistry if registered
 	if e.toolRegistry != nil {
 		// P2-7: reuse the user resolved at the start of the turn; look it up only for callers
@@ -1075,8 +1077,6 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 	return "⚠️ LLM tried to call an unknown tool."
 }
 
-
-
 // BroadcastProactiveMessage sends a scheduled prompt to all known users.
 func (e *Engine) BroadcastProactiveMessage(ctx context.Context, promptText string) {
 	slog.Info("broadcasting proactive message to all users")
@@ -1090,7 +1090,7 @@ func (e *Engine) BroadcastProactiveMessage(ctx context.Context, promptText strin
 	for _, userID := range userIDs {
 		// Mock a message object to pass into processMessage
 		// We'll treat this as a system-triggered prompt that we feed into the LLM on behalf of the user
-		
+
 		// To properly send the message, we need a valid chat ID and source.
 		// We'll just look up the most recent audit session to find the user's preferred platform/chat ID.
 		log, err := e.db.GetLastAuditSessionForUser(userID)
@@ -1152,9 +1152,9 @@ func (e *Engine) CheckAndSendReminders() {
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
-		
+
 		formattedMsg := fmt.Sprintf("🔔 *Reminder:*\n\n%s", reminder.Message)
-		
+
 		err = e.sendMessage(ctx, msg, formattedMsg)
 		if err != nil {
 			slog.Error("failed to send reminder message", "reminder_id", reminder.ID, "error", err)
@@ -1164,7 +1164,7 @@ func (e *Engine) CheckAndSendReminders() {
 		cancel()
 
 		_ = e.db.MarkReminderSent(reminder.ID)
-		
+
 		// Optionally log to history
 		if e.store != nil {
 			_ = e.store.AppendChatHistory(context.Background(), reminder.UserID, models.ChatMessage{Role: "assistant", Content: formattedMsg})
@@ -1243,4 +1243,3 @@ func (e *Engine) handleUndo(ctx context.Context, user *models.User, msg models.M
 
 	return e.sendMessage(ctx, msg, "⚠️ Durability undo engine is not configured.")
 }
-

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/nivik/mypa/internal/logging"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -17,8 +18,7 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
+	logging.Setup() // JSON on stdout at LOG_LEVEL (default info); P3-3
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -151,4 +151,3 @@ func archiveOldSessions(dbClient *db.Client, optionalDir ...string) error {
 	slog.Info("archived and deleted old sessions", "count", len(sessions), "file", filePath)
 	return nil
 }
-

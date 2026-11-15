@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/nivik/mypa/internal/logging"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -15,8 +16,7 @@ import (
 
 func main() {
 	// Initialize logger
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
+	logging.Setup() // JSON on stdout at LOG_LEVEL (default info); P3-3
 
 	// Load config
 	cfg, err := config.Load()
@@ -39,7 +39,7 @@ func main() {
 	// Start server
 	port := cfg.Server.ProxyPort
 	slog.Info("unified API gateway starting", "port", port)
-	
+
 	addr := fmt.Sprintf(":%d", port)
 	srv := &http.Server{
 		Addr:              addr,
@@ -75,7 +75,6 @@ func setupProxy(gatewayStr, orchestratorStr string) (*http.ServeMux, error) {
 	}
 	gatewayProxy.Transport = proxyTransport
 	orchestratorProxy.Transport = proxyTransport
-
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

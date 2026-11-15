@@ -140,7 +140,8 @@ func (c *Consumer) ConsumeWithInfo(handler func(models.Message, DeliveryInfo) er
 		var msg models.Message
 		if err := json.Unmarshal(d.Body, &msg); err != nil {
 			return "", func() {
-				slog.Error("unparseable message rejected directly to DLQ", "error", err, "body", string(d.Body))
+				// P3-3: never log the payload (it carries user messages); size is enough to debug.
+				slog.Error("unparseable message rejected directly to DLQ", "error", err, "body_bytes", len(d.Body))
 				// Fatal poison pill: reject without requeue -> routes directly to mypa.dlx
 				_ = d.Reject(false)
 			}
