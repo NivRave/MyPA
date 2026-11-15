@@ -459,3 +459,23 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### Owner action
 - **Rotate exposure:** the old default ngrok domain is in git history. If the repo is (or was) public, treat that domain as known (Phase 0 note) — ngrok domains aren't secrets, but webhooks behind it rely on P1-1's secret checks.
+
+---
+
+## P4-1 — Split ProcessMessage
+
+### D4-1.1 Shape
+- `ProcessMessage` (462 → 95 lines) keeps only orchestration: dedup claim, telemetry + retry defers (which depend on the named `err`), auth, then four calls. Each phase returns `(response, handled|stop, err)` so every early-return path keeps the exact error the defers see.
+- `commands.go`: CONFIRM redemption + a command table (`map[string]commandHandler`; `/undo <id>` by prefix). Adding a command is one map entry + one method.
+- `media.go`: `ingestMedia` → `mediaAttachment{Data, MimeType}`; may rewrite `msg.Text` (transcription, inlined documents) via pointer, exactly as the inline code mutated the local `msg`.
+- `turn.go`: `runTurn` + the tool loop (`executeToolsConcurrently`, `handleToolCalls`, `executeSingleTool`).
+
+### D4-1.2 How "no behaviour change" was ensured
+- Moved blocks were extracted programmatically from a snapshot by line range and transformed only by mechanical renames (`photoData`→`media.Data`, `llmResponse=`→`response=`, `return X`→`return …, X`), not retyped. The full suite (incl. idempotency, restore, sticky domains, injection, history, concurrency tests added earlier) passes unchanged.
+
+### D4-1.3 Test-only `handleToolCall`
+- Moved to `engine_testhelpers_test.go` (it double-executed `search_emails`; see P3-1 note). Production code no longer contains it; its 12 test callers are unchanged.
+
+### Not done (follow-ups)
+- One `turnState` struct instead of three context keys (`TurnSecurityState`, `turnEffects`, turn user) — would touch every tool-loop signature; better as its own change.
+- Tool guidance (`toolGuidance`) still lives in the engine (see D2-6.2).

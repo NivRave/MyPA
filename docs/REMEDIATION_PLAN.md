@@ -204,7 +204,7 @@ Generate the tool catalog section of `SYSTEM.md`/`README.md` from the registry (
 | P3-3 | Logging hygiene + rotation | 3 | ☑ |
 | P3-4 | Backup encryption & retention | 3 | ☑ |
 | P3-5 | Compose: no committed domain, pinned images | 3 | ☑ |
-| P4-1 | Split ProcessMessage | 4 | ☐ |
+| P4-1 | Split ProcessMessage | 4 | ☑ |
 | P4-2 | Split domain modules | 4 | ☐ |
 | P4-3 | Versioned migrations | 4 | ☐ |
 | P4-4 | Service topology ADR | 4 | ☐ |
