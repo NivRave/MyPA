@@ -61,6 +61,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := cfg.Validate(config.ServiceOrchestrator); err != nil {
+		slog.Error("invalid orchestrator configuration — refusing to start", "error", err)
+		os.Exit(1)
+	}
+
 	if err := crypto.ValidateKeyConfigured(); err != nil {
 		slog.Error("encryption key validation failed", "error", err)
 		os.Exit(1)

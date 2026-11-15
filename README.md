@@ -161,7 +161,7 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
 4. **Cryptographic Key Management & Storage Encryption (`internal/crypto/aes.go`):**
    - Encrypts OAuth credentials in Redis (`token:<userID>`) and PostgreSQL fallback (`encrypted_credentials`), as well as API connector authorization headers, using AES-256-GCM.
    - Employs HKDF-SHA256 salted key derivation (`[16-byte Salt][12-byte Nonce][Ciphertext + 16-byte Tag]`) with automatic backward compatibility for legacy unsalted payloads.
-   - Fails fast on application startup (`crypto.ValidateKeyConfigured()`), panicking if `ENCRYPTION_KEY` is empty in production.
+   - Fails fast on application startup: every service runs `cfg.Validate(<service>)` and exits with a list of all missing or placeholder secrets (e.g. `ENCRYPTION_KEY`, `JWT_SECRET`). The dev fallback encryption key exists only inside `go test` binaries.
 
 5. **OAuth CSRF State Defense:**
    - Generates 32-byte cryptographically random hex nonces stored in Redis (`oauth_state:<nonce> -> userID`) with a 10-minute TTL.
@@ -183,7 +183,8 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
 
 | Variable | Description | Required? | Default / Example |
 | :--- | :--- | :---: | :--- |
-| **`ENCRYPTION_KEY`** | Primary 32-byte secret for HKDF-SHA256 salted AES-256-GCM encryption at rest; fails fast on boot in production if missing. | **Yes** (Prod) | `32-byte-hex-or-passphrase` |
+| **`ENCRYPTION_KEY`** | Primary secret for HKDF-SHA256 salted AES-256-GCM encryption at rest; the orchestrator refuses to start if it is missing. | **Yes** | `openssl rand -hex 32` |
+| **`JWT_SECRET`** | HMAC-SHA256 secret for dashboard JWTs on `/graphql`. Must differ from `ENCRYPTION_KEY`. | **Yes** | `openssl rand -hex 32` |
 | **`DASHBOARD_API_SECRET`** | Secret bearer token used by the Next.js Web Dashboard and Proxy to authenticate requests to `/graphql`. | **Yes** | `super-secret-dashboard-key` |
 | **`TELEGRAM_SECRET_TOKEN`** | Webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header on Telegram ingress. 1–256 chars of `A-Z a-z 0-9 _ -` (e.g. `openssl rand -hex 32`). Gateway refuses to start without it when Telegram is configured. | **Yes** | `random-webhook-secret-token` |
 | `TELEGRAM_WEBHOOK_URL` | Public URL of `/webhook/telegram`. When set, the gateway calls `setWebhook` with this URL and `TELEGRAM_SECRET_TOKEN` on startup. | If TG active | `https://your-domain.ngrok-free.dev/webhook/telegram` |

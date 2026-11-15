@@ -95,66 +95,6 @@ func TestTwilioWebhook_EmptyAuthToken_RejectsEvenEmptyKeySignature(t *testing.T)
 	pub.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
-// --- Startup validation ---
-
-func TestValidateGatewayConfig(t *testing.T) {
-	cases := []struct {
-		name    string
-		cfg     config.Config
-		wantErr string // empty = expect no error
-	}{
-		{
-			name: "NothingConfigured_OK",
-			cfg:  config.Config{},
-		},
-		{
-			name:    "TelegramBotTokenWithoutSecret_Fails",
-			cfg:     config.Config{Telegram: config.TelegramConfig{BotToken: "123:abc"}},
-			wantErr: "TELEGRAM_SECRET_TOKEN",
-		},
-		{
-			name: "TelegramBotTokenWithSecret_OK",
-			cfg:  config.Config{Telegram: config.TelegramConfig{BotToken: "123:abc", SecretToken: testTelegramSecret}},
-		},
-		{
-			name:    "TelegramSecretInvalidChars_Fails",
-			cfg:     config.Config{Telegram: config.TelegramConfig{BotToken: "123:abc", SecretToken: "has spaces!"}},
-			wantErr: "TELEGRAM_SECRET_TOKEN",
-		},
-		{
-			name:    "TelegramSecretTooLong_Fails",
-			cfg:     config.Config{Telegram: config.TelegramConfig{BotToken: "123:abc", SecretToken: strings.Repeat("a", 257)}},
-			wantErr: "TELEGRAM_SECRET_TOKEN",
-		},
-		{
-			name:    "TelegramWebhookURLWithoutBotToken_Fails",
-			cfg:     config.Config{Telegram: config.TelegramConfig{WebhookURL: "https://x.example/webhook/telegram", SecretToken: testTelegramSecret}},
-			wantErr: "TELEGRAM_BOT_TOKEN",
-		},
-		{
-			name:    "TwilioEnabledWithoutAuthToken_Fails",
-			cfg:     config.Config{Twilio: config.TwilioConfig{AccountSID: "AC123"}},
-			wantErr: "TWILIO_AUTH_TOKEN",
-		},
-		{
-			name: "TwilioEnabledWithAuthToken_OK",
-			cfg:  config.Config{Twilio: config.TwilioConfig{AccountSID: "AC123", AuthToken: "tok"}},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := validateGatewayConfig(&tc.cfg)
-			if tc.wantErr == "" {
-				assert.NoError(t, err)
-				return
-			}
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.wantErr)
-		})
-	}
-}
-
 // --- setWebhook registration with retry/backoff ---
 
 type fakeRegistrar struct {

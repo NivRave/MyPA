@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"regexp"
 	"syscall"
 	"time"
 
@@ -33,7 +32,7 @@ func main() {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
-	if err := validateGatewayConfig(cfg); err != nil {
+	if err := cfg.Validate(config.ServiceGateway); err != nil {
 		slog.Error("invalid gateway configuration — refusing to start", "error", err)
 		os.Exit(1)
 	}
@@ -185,33 +184,6 @@ func telegramSecretValid(configured, provided string) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(configured)) == 1
-}
-
-// Telegram's secret_token allows 1-256 characters from A-Z, a-z, 0-9, _ and -.
-var telegramSecretPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
-
-// validateGatewayConfig refuses configurations that would leave a webhook unauthenticated.
-func validateGatewayConfig(cfg *config.Config) error {
-	var errs []error
-
-	tg := cfg.Telegram
-	if tg.BotToken != "" || tg.WebhookURL != "" {
-		if tg.SecretToken == "" {
-			errs = append(errs, errors.New("TELEGRAM_SECRET_TOKEN is required when Telegram is configured (TELEGRAM_BOT_TOKEN/TELEGRAM_WEBHOOK_URL set)"))
-		}
-	}
-	if tg.SecretToken != "" && !telegramSecretPattern.MatchString(tg.SecretToken) {
-		errs = append(errs, errors.New("TELEGRAM_SECRET_TOKEN must be 1-256 characters of A-Z, a-z, 0-9, '_' or '-'"))
-	}
-	if tg.WebhookURL != "" && tg.BotToken == "" {
-		errs = append(errs, errors.New("TELEGRAM_BOT_TOKEN is required to register TELEGRAM_WEBHOOK_URL"))
-	}
-
-	if cfg.Twilio.AccountSID != "" && cfg.Twilio.AuthToken == "" {
-		errs = append(errs, errors.New("TWILIO_AUTH_TOKEN is required when TWILIO_ACCOUNT_SID is set (webhook signatures cannot be verified)"))
-	}
-
-	return errors.Join(errs...)
 }
 
 const (

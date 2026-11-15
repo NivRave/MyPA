@@ -25,18 +25,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	gatewayStr := cfg.Server.GatewayURL
-	if gatewayStr == "" {
-		slog.Error("GATEWAY_URL is required")
-		os.Exit(1)
-	}
-	orchestratorStr := cfg.Server.OrchestratorURL
-	if orchestratorStr == "" {
-		slog.Error("ORCHESTRATOR_URL is required")
+	if err := cfg.Validate(config.ServiceProxy); err != nil {
+		slog.Error("invalid proxy configuration — refusing to start", "error", err)
 		os.Exit(1)
 	}
 
-	mux, err := setupProxy(gatewayStr, orchestratorStr)
+	mux, err := setupProxy(cfg.Server.GatewayURL, cfg.Server.OrchestratorURL)
 	if err != nil {
 		slog.Error("failed to setup proxy", "error", err)
 		os.Exit(1)

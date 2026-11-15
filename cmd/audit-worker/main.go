@@ -26,6 +26,10 @@ func main() {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
+	if err := cfg.Validate(config.ServiceAuditWorker); err != nil {
+		slog.Error("invalid audit-worker configuration — refusing to start", "error", err)
+		os.Exit(1)
+	}
 
 	var dbClient *db.Client
 	for i := 0; i < 5; i++ {
