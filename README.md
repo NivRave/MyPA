@@ -294,7 +294,7 @@ go test -v -race ./internal/...
 # 2. Run database repository and GraphQL resolver integration tests
 go test -v ./internal/db/... ./internal/graph/...
 
-# 3. Run Next.js Dashboard Vitest component tests (31 tests across 4 test suites)
+# 3. Run Next.js Dashboard Vitest component tests (33 tests across 4 test suites)
 npm test --prefix dashboard
 
 # 4. Verify full multi-stage container build
@@ -303,6 +303,8 @@ docker-compose build
 # 5. Run end-to-end integration tests (requires Docker daemon)
 go test -v ./tests/...
 ```
+
+**Continuous integration** (`.github/workflows/ci.yml`, on push/PR to `dev` and `master`): Go build + vet + `go test -race -p 1 ./...`, golangci-lint v2.15.0 (config in `.golangci.yml`), `govulncheck`, the dashboard (`npm ci`, lint, test, build, `npm audit --omit=dev --audit-level=high`), and `docker compose build` (with `.env.example` copied to `.env`). Run the linter locally with `docker run --rm -v "$PWD:/app" -w /app golangci/golangci-lint:v2.15.0 golangci-lint run ./...`.
 
 To remove local build artefacts (root `*.exe`/`*.test`, `bin/`, coverage files): `powershell -File scripts/clean.ps1` (Windows) or `sh scripts/clean.sh`. Build outputs belong in `bin/` (gitignored).
 

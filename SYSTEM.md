@@ -103,6 +103,7 @@ mypa/
 │   ├── proxy/main.go               # Unified reverse proxy (:8000)
 │   ├── audit-worker/main.go        # Async RabbitMQ telemetry consumer & 30-day session archiver
 │   └── devtools/listmodels/        # Dev-only utility (lists Gemini models); not in any image
+├── .github/workflows/ci.yml       # CI (P5-3): go test -race, golangci-lint (.golangci.yml), govulncheck, dashboard, compose build
 ├── scripts/clean.{ps1,sh}          # Remove local build artefacts (bin/, root *.exe/*.test, coverage)
 ├── docs/                           # REMEDIATION_PLAN.md, DECISIONS_LOG.md, adr/ (architecture decisions); reviews/ is gitignored
 ├── internal/

@@ -559,3 +559,35 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### D5-2.3 Verification that no test case was lost
 - `go test -list '.*' ./...` before vs after: 612 = 612 entries; the 74 removed names map one-to-one onto the 74 added names under the prefix rules (checked as a bijection). Renames were byte-level regex substitutions (line endings preserved); `go vet` proves no collisions. Full test suite + compose build re-run.
+
+## P5-3 — CI
+
+### D5-3.1 Principle: CI must be green the day it is introduced
+- The old workflow only ran on `master` (this whole remediation lives on `dev`) and installed `golangci-lint@master`, so nothing had ever gated the code. Every new gate was run locally with the exact pinned tool **before** committing: lint (golangci/golangci-lint:v2.15.0 image), govulncheck v1.9.0, the dashboard job in `node:22`, `go test -race` in `golang:1.26`, and a compose `config` simulation with only `.env.example`.
+- They were not green, so P5-3 also fixes what they found (separate commit on the same branch) rather than shipping red gates.
+
+### D5-3.2 Pinning
+- Actions pinned to **commit SHAs** with the release in a comment (tags are mutable; Dependabot updates both). Releases chosen were ≥ 4 weeks old: checkout v7.0.1, setup-go v7.0.0, setup-node v7.1.0, golangci-lint-action v9.3.0; tools: golangci-lint v2.15.0, govulncheck v1.9.0. Go version comes from `go.mod` (`go-version-file`), so CI and builds cannot drift.
+- `permissions: contents: read` and a per-ref `concurrency` group (cancel superseded runs).
+
+### D5-3.3 golangci-lint configuration (`.golangci.yml`, v2)
+- Pinned linter found 56 issues (45 errcheck, 11 staticcheck) — and **107 more** hidden by the default `max-same-issues: 3` cap (found by re-running uncapped; worth knowing when reading lint output).
+- errcheck (45, all `Close()` on read paths, shutdown paths and test bodies): the v2 `std-error-handling` exclusion preset — the community default. Both `internal/db/backup.go` sites were checked by hand: read paths, so ignoring Close is correct. Caveat noted in the config: Close on a *write* path still needs explicit checking in review.
+- staticcheck: fixed 7 real simplifications (tagged switches, De Morgan, inferred type, merged conditional assignment, `fmt.Fprintf(w, …)`). Disabled two quick-fix checks: **QF1008** (`db.Dialector.Name()` is clearer than the promoted `db.Name()`) and **QF1012** (`b.WriteString(fmt.Sprintf())` → `fmt.Fprintf(&b, …)`: 107 sites in non-hot prompt builders; mass rewrite = churn). Options considered: `new-from-rev` baseline (hides real debt and breaks on rebases — rejected), fixing all 107 (rejected as churn), excluding test files (rejected — tests deserve the same linters).
+
+### D5-3.4 govulncheck findings → patched
+- Reachable vulnerabilities in 4 modules: `golang.org/x/net` 0.61→0.62 (html parser, used by the scraper), `rabbitmq/amqp091-go` 1.13→1.14 (pre-negotiation frame limit), `klauspost/compress` 1.20.1→1.20.2, `moby/go-archive` 0.2→0.3 (testcontainers). Patch/minor bumps; all tests + race suite pass.
+
+### D5-3.5 Dashboard: a critical, shipped vulnerability
+- `npm audit` found **`next@16.3.4` with critical advisories including unauthenticated RCE** (Image Optimization with SVG; `use cache` typed arrays) plus SSRF/cache-poisoning. Upgraded to `next@16.4.6` / `eslint-config-next@16.4.6` (latest 16.4 patch, 1 week old — for an RCE fix within the framework's own patch line, taking all later fixes outweighs the soak-time preference).
+- `shadcn` moved to devDependencies: it is only imported from `globals.css` (`@import "shadcn/tailwind.css"`, compiled by Tailwind at build). As a runtime dependency it pulled `@modelcontextprotocol/sdk` → express → `proxy-addr` (critical) into the production tree. The Docker build stage runs `npm ci` with devDependencies, so the build is unaffected.
+- `npm audit fix` (in-range lockfile updates). Result: **0 vulnerabilities in production dependencies**. Remaining: dev-only (vitest 3 → tinypool critical, minimatch, deepmerge); fix requires vitest 5 (major) → **P5-4**.
+- Gate: `npm audit --omit=dev --audit-level=high` is blocking; full audit runs report-only (`continue-on-error`) until P5-4 makes it blocking.
+
+### D5-3.6 Compose build without secrets
+- Services use a required `env_file: .env`, which compose resolves even for `build` (verified: `env file … not found`). Options: `required: false` in compose; `cp .env.example .env` in CI (chosen). Making it optional would let a real deployment start silently without secrets; the CI-only copy keeps production fail-closed.
+
+### D5-3.7 Tests under `-race`
+- CI runs `go test -race -count=1 -p 1 ./...` (proposed in P2-8). Verified locally beforehand: the full suite under `-race` in `golang:1.26` with the Docker socket mounted for testcontainers. **No data races in 41 packages.**
+- One failure: `TestIntentMatcher_AdversarialStressAndReDoS` asserts absolute wall-clock budgets (100 KB < 250 ms, 1 MB < 3 s); under `-race` it took 0.44 s / 6.4 s. Options: skip the subtest under race; run `-race` only on selected packages; **scale budgets by a build-tagged `timingSlack` constant** (chosen; `race_on_test.go` = 10, `race_off_test.go` = 1 — the stdlib's `internal/race.Enabled` pattern). Scaling keeps the assertion meaningful: real ReDoS is exponential, not a constant factor. Re-run twice under `-race` and once without: green.
+- Risk noted: other wall-clock assertions passed under `-race` locally but could flake on slower shared CI runners; if one does, apply the same `timingSlack` pattern in that package.

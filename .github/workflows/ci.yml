@@ -1,33 +1,102 @@
 name: CI
 
+# P5-3: runs on the integration branch (dev) as well as master, for pushes and PRs.
 on:
   push:
-    branches: [ "master" ]
+    branches: ["dev", "master"]
   pull_request:
-    branches: [ "master" ]
+    branches: ["dev", "master"]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Third-party actions are pinned to commit SHAs (tags are mutable); the comment names the release.
 jobs:
-  build:
+  go-test:
+    name: Go build, vet & test (race)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      # Integration tests start Postgres/Redis/RabbitMQ via testcontainers (Docker is available
+      # on ubuntu runners). -p 1 keeps container-backed packages from contending; -race per P2-8.
+      - name: Test
+        run: go test -race -count=1 -p 1 ./...
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.26'
+  go-lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0 # config: .golangci.yml
+          args: --timeout=10m
 
-    - name: Build
-      run: |
-        go build -v ./cmd/gateway
-        go build -v ./cmd/orchestrator
-        go build -v ./cmd/proxy
-        go build -v ./cmd/audit-worker
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
-    - name: Test
-      run: go test -v -p 1 ./cmd/... ./internal/... ./tests/...
+  dashboard:
+    name: Dashboard lint, test, build & audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+      # Blocking: anything high+ in what ships (production dependencies).
+      - name: npm audit (production deps)
+        run: npm audit --omit=dev --audit-level=high
+      # Report-only until P5-4 upgrades vitest (tinypool advisory is test-runner only).
+      - name: npm audit (all deps, report-only)
+        run: npm audit --audit-level=high
+        continue-on-error: true
 
-    - name: Install and run golangci-lint
-      run: |
-        go install github.com/golangci/golangci-lint/cmd/golangci-lint@master
-        $(go env GOPATH)/bin/golangci-lint run --timeout=5m ./cmd/... ./internal/... ./tests/...
+  compose-build:
+    name: docker compose build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Services declare `env_file: .env`, which compose resolves even for `build`. CI has no
+      # secrets, so the documented template stands in; nothing is started.
+      - name: Provide .env from template
+        run: cp .env.example .env
+      - name: Build all images
+        run: docker compose build
