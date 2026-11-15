@@ -699,13 +699,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		}
 	}
 
-	// Dynamic Two-Tier Tool Context Selection (SCALE-01)
+	// Dynamic Two-Tier Tool Context Selection (SCALE-01) + sticky follow-up domains (P2-2)
+	var matchedDomains []DomainGroup
 	if e.toolRegistry != nil {
-		var matchedDomains []DomainGroup
 		if e.intentMatcher != nil {
 			matchedDomains = e.intentMatcher.MatchDomains(msg.Text)
 		}
-		activeTools := e.toolRegistry.SelectDeclarations(matchedDomains, false)
+		selected := unionDomains(matchedDomains, e.loadStickyDomains(ctx, msg.UserID))
+		activeTools := e.toolRegistry.SelectDeclarations(selected, false)
 		ctx = llm.WithActiveTools(ctx, activeTools)
 	}
 
@@ -754,6 +755,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		// No tool call
 		replyText = resp.Text
 	}
+
+	// Remember what this turn used so a short follow-up ("yes, the second one") keeps its tools.
+	e.saveStickyDomains(ctx, msg.UserID, matchedDomains, effects.calledTools())
 
 	// 6. Send reply to Telegram
 	if strings.TrimSpace(replyText) == "" {
@@ -1007,6 +1011,7 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 		callCtx := e.buildCallContext(ctx, user, msg)
 		res, handled, err := e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)
 		if handled {
+			recordToolCall(ctx, toolCall.Name)
 			// The tool ran (possibly partially, even on error): retrying the turn would duplicate it.
 			markSideEffect(ctx)
 			if err != nil {

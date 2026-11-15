@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +18,28 @@ import (
 // Safe for concurrent use: tools execute in parallel goroutines.
 type turnEffects struct {
 	happened atomic.Bool
+
+	mu    sync.Mutex
+	tools []string // names of tools executed this turn (for sticky domains, P2-2)
+}
+
+// recordToolCall notes that a tool ran in the turn carried by ctx.
+func recordToolCall(ctx context.Context, name string) {
+	if fx, ok := ctx.Value(turnEffectsKey{}).(*turnEffects); ok && fx != nil {
+		fx.mu.Lock()
+		fx.tools = append(fx.tools, name)
+		fx.mu.Unlock()
+	}
+}
+
+// calledTools returns a copy of the tool names executed this turn.
+func (fx *turnEffects) calledTools() []string {
+	if fx == nil {
+		return nil
+	}
+	fx.mu.Lock()
+	defer fx.mu.Unlock()
+	return append([]string(nil), fx.tools...)
 }
 
 type turnEffectsKey struct{}
@@ -37,7 +60,6 @@ func markSideEffect(ctx context.Context) {
 }
 
 func (fx *turnEffects) any() bool { return fx != nil && fx.happened.Load() }
-
 // inboundClaim is the dedup claim for one inbound message (zero value = no claim held).
 type inboundClaim struct {
 	store *state.Store

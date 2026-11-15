@@ -365,6 +365,29 @@ var ModuleDomainMapping = map[string]DomainGroup{
 	"durability": DomainHistory,
 }
 
+// DomainsForTools returns the Tier-2 domains of the modules owning the given tools
+// (core tools and unknown tools contribute nothing). Order follows first appearance.
+func (r *Registry) DomainsForTools(toolNames []string) []DomainGroup {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []DomainGroup
+	seen := map[DomainGroup]bool{}
+	for _, name := range toolNames {
+		if CoreToolNames[name] {
+			continue
+		}
+		mod, ok := r.byTool[name]
+		if !ok {
+			continue
+		}
+		if d, ok := ModuleDomainMapping[mod.Name()]; ok && !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 // CoreDeclarations returns only the Tier 1 core function declarations.
 func (r *Registry) CoreDeclarations() []*genai.FunctionDeclaration {
 	r.mu.RLock()

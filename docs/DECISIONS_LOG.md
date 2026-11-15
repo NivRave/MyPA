@@ -169,3 +169,25 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### D2-1.3 Invariant test location
 - An external test package (`orchestrator_test`) so it can import every domain module (they import `orchestrator`, so an internal test would be an import cycle). The module list mirrors `cmd/orchestrator/main.go`; adding a module there without adding it to the test is the remaining gap — noted for P5-5 (generate the catalogue from one registration list).
+
+---
+
+## P2-2 — Sticky domains for follow-ups
+
+### D2-2.1 What to carry forward
+- **Options:** (a) carry the full selection (matched ∪ inherited sticky) — domains accumulate for as long as the user keeps talking; (b) carry only this turn's *used* domains: text-matched ∪ domains of tools actually executed; (c) keep a decaying score per domain over N turns.
+- **Chosen:** (b).
+- **Why / challenge:** (a) slowly re-creates "send every tool", defeating Tier-2 scoping. (c) is more nuanced but adds state and tuning for little gain in a chat where follow-ups are almost always about the immediately preceding turn. (b) gives one-turn carry-over and decays automatically; a domain in active use keeps renewing itself via called tools.
+
+### D2-2.2 Where tool calls are recorded
+- On the per-turn `turnEffects` (from P1-4), appended only when the registry actually handled the tool. Core tools are ignored by `DomainsForTools` (they're always offered anyway).
+
+### D2-2.3 Failure handling
+- Load/save errors are logged and ignored — stickiness is an optimization; it must never fail a turn.
+- Saved before the reply is sent so it reflects the turn even if delivery fails.
+
+### D2-2.4 TTL
+- 15 minutes (plan). A follow-up after a longer pause usually restates context, and keyword matching takes over again.
+
+### D2-2.5 Follow-up fix to P1-4 (separate commit)
+- While wiring this, found that `Registry.Execute` reports `get_current_time` as handled, so P1-4 counted it as a side effect — contradicting D1-4.3. Fixed by excluding read-only built-ins from `markSideEffect`.

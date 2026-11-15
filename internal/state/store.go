@@ -375,6 +375,36 @@ func (s *Store) InvalidatePromptSections(ctx context.Context, keys ...string) er
 	return s.client.Del(ctx, validKeys...).Err()
 }
 
+// SetTurnDomains stores the tool domains used by a user's last turn (turn_domains:<userID>) so a
+// follow-up message can keep them. An empty list deletes the key.
+func (s *Store) SetTurnDomains(ctx context.Context, userID string, domains []string, ttl time.Duration) error {
+	key := "turn_domains:" + promptKeySegment(userID)
+	if len(domains) == 0 {
+		return s.client.Del(ctx, key).Err()
+	}
+	b, err := json.Marshal(domains)
+	if err != nil {
+		return err
+	}
+	return s.client.Set(ctx, key, b, ttl).Err()
+}
+
+// GetTurnDomains returns the domains stored by SetTurnDomains (nil if none or expired).
+func (s *Store) GetTurnDomains(ctx context.Context, userID string) ([]string, error) {
+	val, err := s.client.Get(ctx, "turn_domains:"+promptKeySegment(userID)).Bytes()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	if err := json.Unmarshal(val, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // InboundDedupTTL bounds how long a processed inbound message ID is remembered.
 // Telegram retries webhooks for well under a day; RabbitMQ redeliveries are immediate.
 const InboundDedupTTL = 24 * time.Hour
