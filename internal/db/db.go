@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"time"
@@ -144,13 +145,14 @@ func (c *Client) SearchMemories(userIDs []string, embedding pgvector.Vector, lim
 	// We want to match if user_id is the primary user (index 0) OR if it's any user in the list AND scope is 'family'
 	primaryUser := userIDs[0]
 	
-	result := c.DB.Where("(user_id = ? AND scope = 'personal') OR (user_id IN ? AND scope = 'family')", primaryUser, userIDs).
-		Order(gorm.Expr("embedding <=> ?", embedding)).
-		Limit(limit).
-		Find(&memories)
-	
-	if result.Error != nil {
-		return nil, fmt.Errorf("failed to search memories: %w", result.Error)
+	err := withVectorScan(context.Background(), c.DB, func(tx *gorm.DB) error {
+		return tx.Where("(user_id = ? AND scope = 'personal') OR (user_id IN ? AND scope = 'family')", primaryUser, userIDs).
+			Order(cosineOrder(embedding)). // matches the HNSW expression index (P2-3)
+			Limit(limit).
+			Find(&memories).Error
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search memories: %w", err)
 	}
 	return memories, nil
 }

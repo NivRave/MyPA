@@ -191,3 +191,28 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### D2-2.5 Follow-up fix to P1-4 (separate commit)
 - While wiring this, found that `Registry.Execute` reports `get_current_time` as handled, so P1-4 counted it as a side effect — contradicting D1-4.3. Fixed by excluding read-only built-ins from `markSideEffect`.
+
+---
+
+## P2-3 — Use the HNSW index (and two bigger bugs found on the way)
+
+### Finding 1 (more severe than the plan): vector search had no ORDER BY at all
+- GORM v1.31.2 `Order()` only handles `clause.OrderBy`, `clause.OrderByColumn` and `string`; a `gorm.Expr` falls through its type switch and is **silently dropped**. All three similarity queries (`SearchSimilarMemories`, its legacy fallback, `Client.SearchMemories`) therefore returned the first N matching rows in physical order — the per-message memory retrieval injected *arbitrary* memories, not relevant ones. A test inserting the nearest row last reproduced it (returned the 3 *least* similar rows).
+- **Fix:** `cosineOrder()` returns `clause.OrderBy{Expression: clause.Expr{…}}`. Documented in SYSTEM.md as a rule ("never pass gorm.Expr to Order").
+- **Expect a behaviour change after deploy:** retrieved memories will now actually be the relevant ones.
+
+### Finding 2: using the index naively would silently lose a user's memories
+- With HNSW, Postgres takes the `ef_search` (40) nearest rows *table-wide* and applies the tenant `WHERE` afterwards. Reproduced in testcontainers (pgvector 0.8.6) with realistic dense vectors: another family owning the 120 nearest rows → the user got **0 of 3** memories.
+- **Options:** (a) iterative scans (`hnsw.iterative_scan`, pgvector ≥ 0.8); (b) raise `hnsw.ef_search` (only shifts the cliff); (c) per-tenant partial indexes (unbounded index count); (d) keep sequential scan (exact; fine at today's size, O(n) later).
+- **Chosen:** (a) with `strict_order` (exact distance ordering; `relaxed_order` is faster but may reorder results and top-5 retrieval is cheap either way), set per query via `SET LOCAL` inside a transaction, enabled only when `pg_extension.extversion >= 0.8` (cached per pool) — on older pgvector the GUC prefix is reserved and `SET` would error.
+- A mutation check (forcing iterative scan off) makes the recall test fail, so the test really guards this.
+
+### D2-3.1 Index-matching expression (the plan's fix)
+- `embedding::halfvec(3072) <=> ?::halfvec(3072)` — verified with `EXPLAIN` to use `idx_topic_memories_embedding`; the old `embedding <=> ?` does not.
+- Note: on small tables the planner still prefers a B-tree index + sort for filtered queries (exact and cheap); HNSW kicks in as data grows. Tests force the HNSW path with `enable_sort = off`.
+
+### D2-3.2 Test data
+- Exactly orthogonal unit vectors produced an HNSW graph where the user's rows were unreachable (no inbound edges), so even iterative scans found nothing. That's a synthetic-data artefact; tests use seeded dense, correlated vectors (`mixVec`) that behave like real embeddings.
+
+### D2-3.3 [DECIDE] 768-dim embeddings — skipped per owner default
+- Revisit after P2-4 (memory unification): one re-embedding migration could do both.
