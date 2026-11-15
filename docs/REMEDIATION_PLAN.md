@@ -195,7 +195,7 @@ Generate the tool catalog section of `SYSTEM.md`/`README.md` from the registry (
 | P2-3 | Use the HNSW index | 2 | ☑ |
 | P2-4 | Unify memory systems | 2 | ☑ |
 | P2-5 | Skip embedding for trivial messages | 2 | ☑ |
-| P2-6 | Cache-friendly prompt ordering | 2 | ☐ |
+| P2-6 | Cache-friendly prompt ordering | 2 | ☑ |
 | P2-7 | Resolve user once per turn | 2 | ☐ |
 | P2-8 | Parallel users, ordered per user | 2 | ☐ |
 | P2-9 | Persist tool context in history | 2 | ☐ |

@@ -40,6 +40,8 @@ type ServerConfig struct {
 	AllowedUsersRaw    string `mapstructure:"allowed_users"`
 	DashboardAPISecret string `mapstructure:"dashboard_api_secret"`
 	JWTSecret          string `mapstructure:"jwt_secret"`
+	WeekStartDay       string `mapstructure:"week_start_day"` // e.g. "Sunday" (default) or "Monday"
+	WeekendDays        string `mapstructure:"weekend_days"`   // e.g. "Friday,Saturday" (default)
 }
 
 // TelegramConfig holds Telegram Bot API settings.
@@ -105,6 +107,8 @@ func Load() (*Config, error) {
 	v.SetDefault("server.orchestrator_port", 8081)
 	v.SetDefault("server.proxy_port", 8000)
 	v.SetDefault("server.default_timezone", "UTC")
+	v.SetDefault("server.week_start_day", "Sunday")
+	v.SetDefault("server.weekend_days", "Friday,Saturday")
 	v.SetDefault("gemini.model", "gemini-2.5-flash")
 
 	// Config file
@@ -151,6 +155,8 @@ func Load() (*Config, error) {
 		"TELEGRAM_SECRET_TOKEN": "telegram.secret_token",
 		"DASHBOARD_API_SECRET":  "server.dashboard_api_secret",
 		"JWT_SECRET":            "server.jwt_secret",
+		"WEEK_START_DAY":        "server.week_start_day",
+		"WEEKEND_DAYS":          "server.weekend_days",
 	}
 
 	for envKey, configKey := range envBindings {

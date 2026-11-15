@@ -254,3 +254,26 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 - **Why / challenge:** (a) would skip "remind me tomorrow" or "no meat tonight", losing relevant memories exactly when short messages carry intent. (c) costs more than the embedding it saves. With (b) the failure mode is benign: an unlisted filler word just means we embed as before.
 - "ok ok ok thanks thanks" (>3 filler words) is deliberately *not* trivial — the threshold is a hard cap so the rule stays predictable; it's a named constant (`maxTrivialTokens`) with a test.
 - CONFIRM messages never reach retrieval (handled earlier in `ProcessMessage`), so no special case is needed.
+
+---
+
+## P2-6 — Cache-friendly prompt ordering
+
+### D2-6.1 Section order
+- static instructions → calendar conventions → user profile → tool guidance → module sections → memories → current time. Each section changes more often than the one before it. User profile sits before tool guidance because it is stable per user across turns while the tool set varies per turn.
+- Challenge: Gemini also hashes tool declarations into the request; they vary per turn anyway (Tier-2 scoping), so filtering guidance by tools costs no extra cacheability beyond what tool selection already costs, and the static block (the bulk of the instructions) remains a shared prefix for every user.
+
+### D2-6.2 Tool guidance: filtered list in the engine vs per-module `SystemPromptSection`
+- **Options:** (a) keep guidance in the engine as a list keyed by tool names (`toolGuidance`, any/all conditions); (b) move each line into its module's `SystemPromptSection`; (c) derive guidance from tool descriptions only.
+- **Chosen:** (a).
+- **Why / challenge:** (b) is cleaner ownership but module sections are cached *per user* for 10 minutes regardless of which tools are active this turn, so the guidance would not follow tool selection; it would also churn 6 modules. (c) loses cross-tool workflows ("email with a flight → create a calendar event"), which are expressed with `all:` conditions. Revisit in P4-1 when `ProcessMessage` is split.
+
+### D2-6.3 Time precision and zone
+- Minute precision (plan). Also fixed: the old prompt printed `time.Now()` in the *server's* zone (UTC in Docker) while telling the model it was the user's timezone. Now rendered in `DEFAULT_TIMEZONE`.
+
+### D2-6.4 "User is in Israel / week starts Sunday"
+- **Options:** per-user preference (needs a model + tool change); deployment config; derive from timezone (wrong in general — e.g. US weeks start Sunday but weekend is Sat/Sun).
+- **Chosen:** deployment config `WEEK_START_DAY` (default Sunday) + `WEEKEND_DAYS` (default Friday,Saturday) — preserves today's behaviour; invalid values fall back to defaults rather than failing startup. "Israel" itself is dropped (the timezone conveys location). Per-user override is a possible follow-up via `update_user_preferences`.
+
+### D2-6.5 Static text edits
+- The instruction text is preserved, re-grouped. Two wording changes: the JSON-summarizing rule no longer names specific tools (it applies to all), and a new line "Only call tools that are available to you in this conversation turn."

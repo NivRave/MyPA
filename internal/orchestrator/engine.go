@@ -54,6 +54,7 @@ type Engine struct {
 	toolRegistry    *Registry
 	eventBus        *events.EventBus
 	intentMatcher   IntentMatcher
+	calendar        CalendarConventions // week start / weekend for the system prompt (P2-6)
 }
 
 var hebrewPrepositionRegex = regexp.MustCompile(`(^|[^\p{Hebrew}\w])([בלמכ])(\d+)`)
@@ -108,6 +109,22 @@ func (e *Engine) WithEventBus(bus *events.EventBus) *Engine {
 func (e *Engine) WithIntentMatcher(im IntentMatcher) *Engine {
 	e.intentMatcher = im
 	return e
+}
+
+// WithCalendarConventions sets the household's week start / weekend (WEEK_START_DAY, WEEKEND_DAYS).
+func (e *Engine) WithCalendarConventions(c CalendarConventions) *Engine {
+	e.calendar = c
+	return e
+}
+
+// location returns the configured default timezone (UTC if unset or invalid).
+func (e *Engine) location() *time.Location {
+	if tz := strings.TrimSpace(e.timezone); tz != "" {
+		if loc, err := time.LoadLocation(tz); err == nil {
+			return loc
+		}
+	}
+	return time.UTC
 }
 
 // formatAttachmentMarker formats a concise human-readable metadata marker for stripped attachments.
@@ -198,6 +215,7 @@ func NewEngine(
 		publisher:       pub,
 		timezone:        tz,
 		intentMatcher:   NewKeywordIntentMatcher(),
+		calendar:        DefaultCalendarConventions(),
 	}
 
 	e.calendarFactory = func(ctx context.Context, userID string) (CalendarClient, error) {
@@ -629,38 +647,26 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		return fmt.Errorf("failed to get chat history: %w", err)
 	}
 
-	// 3. Build the system prompt
-	userCtx := "the user"
-	if user.Name != "" {
-		userCtx = user.Name
+	// 3. Select this turn's tools first: the prompt's tool guidance follows them (P2-6).
+	// Dynamic Two-Tier Tool Context Selection (SCALE-01) + sticky follow-up domains (P2-2)
+	var matchedDomains []DomainGroup
+	var activeToolNames map[string]bool // nil = no registry → all guidance
+	if e.toolRegistry != nil {
+		if e.intentMatcher != nil {
+			matchedDomains = e.intentMatcher.MatchDomains(msg.Text)
+		}
+		selected := unionDomains(matchedDomains, e.loadStickyDomains(ctx, msg.UserID))
+		activeTools := e.toolRegistry.SelectDeclarations(selected, false)
+		ctx = llm.WithActiveTools(ctx, activeTools)
+		activeToolNames = make(map[string]bool, len(activeTools))
+		for _, d := range activeTools {
+			activeToolNames[d.Name] = true
+		}
 	}
-
-	systemPrompt := fmt.Sprintf(
-		"You are an omnipresent personal assistant. Your job is to help %s manage their time and tasks. "+
-		"If the user has a specific role or family members, keep that context in mind. (Role: %s, Family Group: %s). "+
-		"The current date and time is %s. The user's timezone is %s (assume this timezone for relative dates). "+
-		"If the user asks to schedule a meeting, block time, or create an event, you MUST use the create_calendar_event tool. "+
-		"If the user asks to change or update an event, use update_calendar_event. If they ask to cancel or delete an event, use delete_calendar_event. "+
-		"If the user asks to manage tasks, to-dos, or lists, use the Google Tasks tools (list_task_lists, create_task_list, list_tasks, create_task, complete_task, delete_task). You can manage multiple task lists. "+
-		"If the user asks to save, find, or retrieve contact information (like an email or phone number), use the search_contacts and create_contact tools. "+
-		"If the user asks to schedule a recurring workflow, macro, or cron job (e.g. 'every Monday at 9am'), use the schedule_workflow tool. "+
-		"If the user asks about recent news, current events, or information you don't know, use the search_web tool to search the internet. "+
-		"If the user tells you a personal fact or preference, use the remember_fact tool to save it for future reference (you can specify scope='personal' or 'family'). "+
-		"If the user asks to check, review, or organize their emails, you MUST DO IT FOR THEM using the search_emails tool. DO NOT create a calendar event to remind them to do it. You can search by 'newer_than:30d', 'is:unread', etc. For each email, optionally use read_email to analyze deeply. Based on content, you may draft_email_reply, create_task, create_calendar_event, archive_emails, or soft_delete_emails. You MUST actively categorize the emails by applying appropriate labels using apply_email_labels (find IDs via list_email_labels). If a new label makes sense, create it using the create_email_label tool. " +
-		"GMAIL AUTOMATION GUIDELINES: 1) When asked to organize receipts, use search_emails to find receipts/invoices, create/find a 'Receipts' label, and apply it to all matches using apply_email_labels. 2) When asked to manage subscriptions or clean up newsletters, search for newsletters, read them, and use the unsubscribe_email tool to unsubscribe. 3) When an email contains an upcoming meeting, flight, or event ticket, proactively use create_calendar_event to schedule it. 4) When an email asks a question or requires a response, proactively use draft_email_reply to draft a response for the user's review. Summarize all actions taken at the end. "+
-		"If the user shares a URL and asks you to save it for later, use the fetch_webpage tool to get a summary, and then use the create_task tool to add it to their Google Tasks with the summary in the notes. "+
-		"If the user sends an image of a flyer or invitation, extract the details and use create_calendar_event. "+
-		"If the user sends an image of a receipt, summarize the expense. "+
-		"If the user sends an image containing a personal fact (e.g. a business card), describe it and use the remember_fact tool to save it. "+
-		"If the user shares a document, text file (.txt, .md, .csv), or PDF, analyze its contents and fulfill any requests, questions, or workflows requested by the user. "+
-		"IMPORTANT: If the user provides a list (e.g., in an image, document, or text), you MUST process ALL items by executing multiple tool calls simultaneously. "+
-		"IMPORTANT: If a tool returns JSON or raw data (like list_unread_emails or list_tasks), you MUST summarize and format it into a clean, friendly, conversational response (e.g. using bullet points). NEVER output raw JSON to the user. "+
-		"IMPORTANT: The user is in Israel. The week starts on Sunday and ends on Thursday (Friday and Saturday are the weekend). When reasoning about 'next week' or 'this week', start the week on Sunday.",
-		userCtx, user.Role, user.FamilyGroup, time.Now().Format(time.RFC1123), e.timezone,
-	)
 
 	// Search long-term semantic memory — skipped for trivial acknowledgements (P2-5): an
 	// embedding of "thanks!" retrieves noise and costs an API call per message.
+	var memoryLines []string
 	var embedding []float32
 	if !isTrivialMessage(msg.Text) {
 		embedding, err = e.llm.GenerateEmbedding(ctx, msg.Text)
@@ -672,37 +678,34 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		if searchErr != nil {
 			slog.Warn("memory retrieval failed; continuing without memories", "user_id", msg.UserID, "error", searchErr)
 		}
-		if len(memories) > 0 {
-			var facts []string
-			for _, m := range memories {
-				scopeTag := ""
-				if m.Scope == "family" {
-					scopeTag = " (Family Shared)"
-				}
-				facts = append(facts, "- "+m.Fact+scopeTag)
+		for _, m := range memories {
+			scopeTag := ""
+			if m.Scope == "family" {
+				scopeTag = " (Family Shared)"
 			}
-			systemPrompt += "\n\nRelevant facts about the user from past conversations:\n" + strings.Join(facts, "\n")
+			memoryLines = append(memoryLines, "- "+m.Fact+scopeTag)
 		}
 	}
 
-	// Append dynamic system prompt instructions from registered tool modules
+	// Dynamic per-module system prompt sections (cached per user, P1-3)
+	moduleSections := ""
 	if e.toolRegistry != nil {
 		callCtx := e.buildCallContext(ctx, user, msg)
-		if extraPrompt := e.toolRegistry.CombinedSystemPrompt(ctx, callCtx); extraPrompt != "" {
-			systemPrompt += "\n\n" + extraPrompt
-		}
+		moduleSections = e.toolRegistry.CombinedSystemPrompt(ctx, callCtx)
 	}
 
-	// Dynamic Two-Tier Tool Context Selection (SCALE-01) + sticky follow-up domains (P2-2)
-	var matchedDomains []DomainGroup
-	if e.toolRegistry != nil {
-		if e.intentMatcher != nil {
-			matchedDomains = e.intentMatcher.MatchDomains(msg.Text)
-		}
-		selected := unionDomains(matchedDomains, e.loadStickyDomains(ctx, msg.UserID))
-		activeTools := e.toolRegistry.SelectDeclarations(selected, false)
-		ctx = llm.WithActiveTools(ctx, activeTools)
-	}
+	// Build the system prompt, most-stable sections first (P2-6, see prompt.go)
+	systemPrompt := buildSystemPrompt(promptInputs{
+		UserName:       user.Name,
+		Role:           user.Role,
+		FamilyGroup:    user.FamilyGroup,
+		ActiveTools:    activeToolNames,
+		ModuleSections: moduleSections,
+		Memories:       memoryLines,
+		Now:            time.Now(),
+		Location:       e.location(),
+		Calendar:       e.calendar,
+	})
 
 	// 4. Call LLM
 	promptText := msg.Text

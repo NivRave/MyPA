@@ -262,7 +262,8 @@ func main() {
 	// 9. Initialize Engine with ToolRegistry and EventBus
 	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, contactsClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone).
 		WithToolRegistry(registry).
-		WithEventBus(eventBus)
+		WithEventBus(eventBus).
+		WithCalendarConventions(orchestrator.ParseCalendarConventions(cfg.Server.WeekStartDay, cfg.Server.WeekendDays))
 
 	// Start Cron jobs
 	c := scheduler.StartCronJobs(engine, dbClient, automationRunner, cfg.Server.DefaultTimezone)
