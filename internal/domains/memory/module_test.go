@@ -692,7 +692,8 @@ func TestToolModule_SystemPromptSection(t *testing.T) {
 	assert.Contains(t, prompt, "**Liam** (baby • baby)")
 	assert.Contains(t, prompt, "birth_date: 2024-05-10")
 	assert.Contains(t, prompt, "weight_kg: 7.5")
-	assert.Contains(t, prompt, "Pinned Knowledge & Rules")
+	assert.Contains(t, prompt, "Pinned Knowledge")
+	assert.Contains(t, prompt, "<user_provided_data", "pins and profiles are framed as data (P3-1)")
 	assert.Contains(t, prompt, "[baby • allergies] Allergic to dairy drops")
 }
 

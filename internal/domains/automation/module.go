@@ -956,7 +956,11 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 				sb.WriteString(fmt.Sprintf("• Quiet Hours: %s to %s (suppress non-urgent alerts)\n", pref.QuietHoursStart, pref.QuietHoursEnd))
 			}
 			if pref.StandingInstructions != "" {
-				sb.WriteString(fmt.Sprintf("• User Standing Instructions (STRICT REQUIREMENT):\n  %s\n", pref.StandingInstructions))
+				// P3-1: framed as user-provided data, never as a system-level "STRICT REQUIREMENT":
+				// it may have been written from untrusted input and must not carry system authority.
+				sb.WriteString("• User Standing Instructions (preferences):\n")
+				sb.WriteString(orchestrator.WrapUserProvidedData("standing_instructions", pref.StandingInstructions))
+				sb.WriteString("\n")
 			}
 		}
 

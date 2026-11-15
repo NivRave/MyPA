@@ -173,6 +173,9 @@ func TestSEC09_IndirectInjection_DemarcationIntegrity(t *testing.T) {
 		assert.Contains(t, wrapped, "[SECURITY DIRECTIVE:")
 		assert.Contains(t, wrapped, "---------------- BEGIN UNTRUSTED DATA ----------------")
 		assert.Contains(t, wrapped, "----------------- END UNTRUSTED DATA -----------------")
-		assert.Contains(t, wrapped, payload)
+		// P3-1: a payload carrying the closing tag must not be embedded verbatim (it would end the
+		// block early); it is neutralized and only the wrapper's own closing tag remains.
+		assert.Equal(t, 1, strings.Count(wrapped, "</untrusted_external_content>"), "payload must not be able to close the block")
+		assert.Contains(t, wrapped, neutralizeTag(payload, "untrusted_external_content"))
 	}
 }

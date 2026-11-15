@@ -236,5 +236,6 @@ func TestEngine_HandleToolCall_FetchWebpage(t *testing.T) {
 
 	res, err := engine.handleToolCall(context.Background(), models.Message{UserID: "user1"}, nil, "system", toolCall)
 	require.NoError(t, err)
-	assert.Equal(t, "Read webpage", res)
+	assert.Contains(t, res, "Read webpage")
+	assert.Contains(t, res, "<untrusted_external_content", "external web content is wrapped (P3-1)")
 }

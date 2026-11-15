@@ -264,7 +264,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 		if sb.Len() > 0 {
 			sb.WriteString("\n")
 		}
-		sb.WriteString("### Pinned Knowledge & Rules\n")
+		sb.WriteString("### Pinned Knowledge\n")
 		for _, mem := range activePinned {
 			sub := ""
 			if mem.Subtopic != "" {
@@ -274,7 +274,9 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 		}
 	}
 
-	return strings.TrimSpace(sb.String())
+	// P3-1: profiles and pinned memories are stored user data (possibly derived from untrusted
+	// input); present them as data, not instructions.
+	return orchestrator.WrapUserProvidedData("memory_profiles_and_pins", strings.TrimSpace(sb.String()))
 }
 
 func (m *Module) executeRememberFact(ctx context.Context, callCtx orchestrator.CallContext, repo db.MemoryV2Repository, userID, familyGroup string, args map[string]interface{}) (string, error) {

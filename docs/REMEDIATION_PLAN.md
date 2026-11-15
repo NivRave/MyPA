@@ -199,7 +199,7 @@ Generate the tool catalog section of `SYSTEM.md`/`README.md` from the registry (
 | P2-7 | Resolve user once per turn | 2 | ☑ |
 | P2-8 | Parallel users, ordered per user | 2 | ☑ |
 | P2-9 | Persist tool context in history | 2 | ☑ |
-| P3-1 | Broader prompt-injection gate | 3 | ☐ |
+| P3-1 | Broader prompt-injection gate | 3 | ☑ |
 | P3-2 | JWT/claims hardening | 3 | ☐ |
 | P3-3 | Logging hygiene + rotation | 3 | ☐ |
 | P3-4 | Backup encryption & retention | 3 | ☐ |

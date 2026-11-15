@@ -142,8 +142,9 @@ func buildSystemPrompt(in promptInputs) string {
 	}
 
 	if len(in.Memories) > 0 {
+		// P3-1: memories may have been written from untrusted input earlier — present as data.
 		b.WriteString("\n\nRelevant facts about the user from past conversations:\n")
-		b.WriteString(strings.Join(in.Memories, "\n"))
+		b.WriteString(WrapUserProvidedData("retrieved_memories", strings.Join(in.Memories, "\n")))
 	}
 
 	loc := in.Location

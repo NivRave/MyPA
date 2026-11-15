@@ -344,10 +344,11 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
    - `/connect` generates 32-byte cryptographically random hex CSRF nonces stored in Redis (`oauth_state:<nonce> -> userID`) with 10-minute TTL.
    - `/auth/google/callback` atomically validates and deletes the nonce before exchanging the code, then persists an encrypted fallback in PostgreSQL (`encrypted_credentials`) via `durabilityModule.SaveCredentialFallback`.
 
-9. **Prompt Injection Boundaries & Meta-Tool Gates (`internal/orchestrator/security.go`, `engine.go`):**
-   - External inputs (`read_email`, `fetch_webpage`, WhatsApp document attachments) are demarcated with semantic XML delimiters: `<untrusted_external_content source="..."> ... </untrusted_external_content>`.
-   - Any ingestion of external content sets `TurnSecurityState.HasUntrustedContent = true`.
-   - If untrusted content was ingested during the turn, meta-tools (`update_user_preferences`, `create_automation_rule`, `schedule_workflow`, `register_external_api`) are blocked from automatic execution, staged in Redis (`pending_meta_tool:<userID>`), and require explicit conversational confirmation: `CONFIRM <TOOL_NAME>`.
+9. **Prompt Injection Boundaries & Sensitive-Tool Gates (`internal/orchestrator/security.go`, `engine.go`; broadened in *P3-1*):**
+   - **Untrusted sources (single list `untrustedOutputTools`):** `read_email`, `search_emails`, `fetch_webpage`, `search_web`, `call_external_api`. After any of them runs, `executeSingleTool` marks the turn untrusted and returns the output wrapped in `<untrusted_external_content …>`. Images and PDFs from any channel (Telegram photos, WhatsApp images/PDFs) and WhatsApp text documents also mark the turn untrusted. (Telegram documents are not ingested at all.) Voice notes are the user's own speech and are not marked.
+   - **Gate (single list `confirmationRequiredWhenUntrusted`):** in an untrusted turn these tools are staged in `pending_meta_tool:<userID>` and require `CONFIRM <TOOL>`: `update_user_preferences`, `create_automation_rule`, `schedule_workflow`, `register_external_api`, `call_external_api`, `soft_delete_emails`, `unsubscribe_email`, `delete_calendar_event`, `delete_task`, `create_shared_reminder`, `remember_fact`, `save_topic_memory`, `upsert_entity_profile`.
+   - **Stored user data is data, not instructions:** standing instructions, pinned memories, entity profiles and retrieved memories are wrapped with `WrapUserProvidedData` (`<user_provided_data kind=…>`): honoured as preferences/context, but cannot override rules, grant permissions or justify actions on their own. Nothing is labelled "STRICT REQUIREMENT" any more.
+   - **Breakout protection:** both wrappers neutralize their own closing tag inside the wrapped content (`neutralizeTag` inserts U+200B), so a payload containing `</untrusted_external_content>` cannot end the block early.
 
 ### 3.5 Redis Key Inventory Reference
 

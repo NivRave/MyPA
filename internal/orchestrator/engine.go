@@ -560,6 +560,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 			return fmt.Errorf("failed to download photo: %w", err)
 		}
 		photoMimeType = "image/jpeg"
+		// P3-1: images can carry instructions (screenshots, flyers, QR text).
+		secState.MarkUntrusted("telegram_photo")
 	} else if msg.VoiceFileID != "" {
 		filePath, err := e.tgClient.GetFile(ctx, msg.VoiceFileID)
 		if err != nil {
@@ -600,6 +602,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 				return fmt.Errorf("failed to download twilio photo: %w", err)
 			}
 			photoMimeType = msg.MediaContentType
+			secState.MarkUntrusted("whatsapp_image") // P3-1
 		} else if isTextDoc {
 			docData, err := e.twClient.DownloadMedia(ctx, msg.MediaURL)
 			if err != nil {
@@ -620,6 +623,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 				return fmt.Errorf("failed to download twilio pdf: %w", err)
 			}
 			photoMimeType = "application/pdf"
+			secState.MarkUntrusted("whatsapp_pdf") // P3-1
 			if strings.TrimSpace(msg.Text) == "" {
 				msg.Text = "Please process and analyze the attached document."
 			}
@@ -964,7 +968,10 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 	}
 	if toolCall.Name == "search_emails" {
 		res := e.executeSingleTool(ctx, msg, history, systemPrompt, toolCall)
-		if res == "You have no unread emails." {
+		// Output may be wrapped as untrusted content (P3-1), so match on content, not equality.
+		// NOTE: test-only legacy helper; with non-empty results it falls through and executes the
+		// tool a second time via handleToolCalls — slated for removal in P4-1.
+		if strings.Contains(res, "You have no unread emails.") {
 			return res, nil
 		}
 	}
@@ -974,12 +981,8 @@ func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history
 func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) string {
 	slog.Info("llm requested tool call", "tool", toolCall.Name)
 
-	isMetaTool := toolCall.Name == "update_user_preferences" ||
-		toolCall.Name == "create_automation_rule" ||
-		toolCall.Name == "schedule_workflow" ||
-		toolCall.Name == "register_external_api"
-
-	if isMetaTool {
+	// P3-1: one list of sensitive tools (security.go) instead of four hard-coded meta tools.
+	if RequiresConfirmationWhenUntrusted(toolCall.Name) {
 		secState := GetTurnSecurityState(ctx)
 		if secState != nil {
 			isUntrusted, sources := secState.IsUntrusted()
@@ -1001,7 +1004,7 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 
 				return fmt.Sprintf(
 					"🔒 **Interactive Security Confirmation Required**\n\n"+
-						"The assistant received a command to perform a privileged system action (`%s`) while processing external data (%s).\n"+
+						"The assistant tried to perform a sensitive action (`%s`) after reading external data (%s).\n"+
 						"To prevent indirect prompt injection, this modification was NOT applied automatically.\n\n"+
 						"👉 If you intended to make this change, please reply with:\n`CONFIRM %s`",
 					toolCall.Name, sourceDesc, strings.ToUpper(toolCall.Name),
@@ -1025,6 +1028,14 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 			if err != nil {
 				slog.Error("registry tool execution failed", "tool", toolCall.Name, "error", err)
 				out = fmt.Sprintf("❌ Error executing %s: %v", toolCall.Name, err)
+			}
+			// P3-1: output of external-data tools is attacker-controllable. Mark the turn untrusted
+			// (gating sensitive tools for the rest of it) and hand the result to the model wrapped.
+			if source, ok := untrustedOutputTools[toolCall.Name]; ok && err == nil {
+				GetTurnSecurityState(ctx).MarkUntrusted(source + ":" + toolCall.Name)
+				if !strings.Contains(out, "<untrusted_external_content") {
+					out = WrapUntrustedContent(source, toolCall.Name, out)
+				}
 			}
 			recordToolCall(ctx, toolCall.Name, toolCall.Args, out)
 			// The tool ran (possibly partially, even on error): retrying the turn would duplicate it.

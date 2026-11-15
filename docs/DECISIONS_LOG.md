@@ -343,3 +343,29 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### D2-9.4 TTL interaction with sticky domains / pending actions
 - 24 h history means yesterday's tool results are visible to today's first message. That is the intent ("delete that event" next morning). Prompt-injection exposure is unchanged: tool results were already in the turn that produced them; P3-1 broadens untrusted-content marking.
+
+---
+
+## P3-1 — Broader prompt-injection protection
+
+### D3-1.1 Central marking vs per-module marking
+- **Options:** (a) each module calls `MarkUntrusted` (status quo — only 3 call sites, easy to forget); (b) one `untrustedOutputTools` list consulted in `executeSingleTool`.
+- **Chosen:** (b), keeping existing module-level marking/wrapping as defence in depth (the engine skips re-wrapping already wrapped output). A new external-data tool is protected by adding one map entry.
+
+### D3-1.2 Gate list
+- Plan list + the original four meta tools, in one map (`confirmationRequiredWhenUntrusted`). Criteria: persists instructions, destroys data, messages other people, reaches external services, or writes long-term memory (memory poisoning is the persistent form of injection).
+- **Known limitation:** the pending-action slot holds one action; if an untrusted turn requests several gated tools, only the last is staged (the others report "confirmation required" to the model). A batch-confirm flow is a possible follow-up; acceptable because untrusted multi-write turns are exactly the case that deserves friction.
+- UX cost accepted: "read my email and delete the spam" now asks for confirmation of the deletion.
+
+### D3-1.3 Images, PDFs, documents, voice
+- Images and PDFs from any channel mark the turn untrusted (they can contain rendered instructions). Telegram *documents* are not ingested at all (`models.Message` has no document field) — nothing to mark. Voice notes are not marked: they are the user's own speech (residual risk: a played-back recording).
+
+### D3-1.4 Framing stored user data — deviation from the plan's wording
+- Plan: wrap standing instructions/memories with `WrapUntrustedContent`. That wrapper tells the model to *never follow* instructions inside, which would make the model ignore the user's legitimate preferences ("always answer in French").
+- **Chosen:** a separate `WrapUserProvidedData` framing — honour preferences and facts as context, but no authority to override rules, grant permissions, or by itself justify actions — and remove the "STRICT REQUIREMENT" label. Applied to standing instructions, pinned memories + entity profiles, and retrieved memories.
+
+### D3-1.5 Closing-tag breakout (not in the plan)
+- Both wrappers embedded content verbatim, so a payload containing `</untrusted_external_content>` could end the block early. Now neutralized with a zero-width space (`neutralizeTag`). An existing adversarial test asserted the payload appeared verbatim — updated to assert neutralization and exactly one closing tag.
+
+### Incidental: test-only `handleToolCall` double-executes `search_emails`
+- The helper runs `search_emails`, compares the output to an exact string, and otherwise falls through to `handleToolCalls`, which runs the tool again. Production does not use it (only tests). Made the shortcut content-based; removal belongs to P4-1.

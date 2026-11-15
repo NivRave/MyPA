@@ -173,9 +173,10 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
      `isAuthorized := record != nil && ((familyGroup != "" && record.FamilyGroup == familyGroup) || (record.UserID != "" && record.UserID == userID))`
    - Prohibits tool arguments from overriding caller tenant boundaries (`ActorID()` and `TenantFamilyGroup()`).
 
-7. **Prompt Injection Boundaries & Meta-Tool Gates:**
-   - Ingested external content (`read_email`, `fetch_webpage`, attachments) is demarcated with semantic XML delimiters: `<untrusted_external_content source="..."> ... </untrusted_external_content>`.
-   - When untrusted external content is ingested during a conversation turn, privileged meta-tools (`update_user_preferences`, `create_automation_rule`, `schedule_workflow`, `register_external_api`) require explicit conversational confirmation (`CONFIRM <TOOL_NAME>`).
+7. **Prompt Injection Boundaries & Sensitive-Tool Gates:**
+   - Content from emails (read and search), web pages and web search, external APIs, images/PDFs and documents is demarcated as untrusted (`<untrusted_external_content …>`); attacker-supplied closing tags are neutralized.
+   - After untrusted content is ingested in a turn, sensitive tools (preferences, automations, workflows, external APIs, deletions, unsubscribes, shared reminders, memory writes) require explicit confirmation (`CONFIRM <TOOL_NAME>`).
+   - Stored standing instructions and memories are presented to the model as user data, never as system-level requirements.
 
 ---
 

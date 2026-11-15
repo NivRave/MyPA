@@ -987,7 +987,9 @@ func TestChallenger2_PhotoData_5MB_10MB_StressPayloads(t *testing.T) {
 		// 2. Persistent Redis assertion:
 		history, err := engine.store.GetChatHistory(context.Background(), userID)
 		require.NoError(t, err)
-		require.Len(t, history, 4) // user, tool calls, tool results (P2-9), assistant
+		// Length depends on gating policy (P3-1: remember_fact in an image turn is staged for
+		// CONFIRM, so no tool pair is persisted); this test is about byte stripping.
+		require.NotEmpty(t, history)
 		for _, m := range history {
 			assert.Nil(t, m.PhotoData, "Redis chat history must contain ZERO binary bytes")
 		}
