@@ -92,12 +92,15 @@ services:
 
   ngrok:
     logging: *default-logging
-    image: ngrok/ngrok:latest
+    # Pinned by digest (ngrok agent 3.39.8) — P3-5. Bump deliberately (Dependabot, P5-4).
+    image: ngrok/ngrok:3.39.8@sha256:14d80d083e5b53145f416bbbd36238336c9de4016c43fd950eb2eb845670583b
     restart: unless-stopped
     command:
       - "http"
       - "proxy:8000"
-      - "--url=${NGROK_DOMAIN:-colt-angled-strive.ngrok-free.dev}"
+      # P3-5: no committed default domain. Without NGROK_DOMAIN ngrok fails loudly at start
+      # (a ${VAR:?} guard would break every compose command, incl. CI builds without a .env).
+      - "--url=${NGROK_DOMAIN:-}"
     environment:
       - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
     ports:
@@ -163,10 +166,14 @@ services:
 
   pgadmin:
     logging: *default-logging
-    image: dpage/pgadmin4
+    # P3-5: opt-in only — `docker compose --profile tools up -d pgadmin`.
+    profiles: ["tools"]
+    # Pinned by digest (pgAdmin 9.17).
+    image: dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@mypa.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      # No default password: pgAdmin refuses to start without one.
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-}
     ports:
       - "127.0.0.1:5050:80"
     depends_on:

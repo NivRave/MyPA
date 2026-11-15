@@ -214,7 +214,7 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
 | `TAVILY_API_KEY` | Tavily API key for real-time web research (`search_web`). | No | `tvly-...` |
 | `AUDIT_ARCHIVE_DIR` | Directory path for persisting 30-day session archive JSONL files in `audit-worker`. | No | `"/app/archives"` |
 | `NGROK_AUTHTOKEN` | Ngrok authentication token for public ingress tunneling. | No | `ngrok-token` |
-| `NGROK_DOMAIN` | Reserved static Ngrok domain tunneling to `proxy:8000`. | No | `your-domain.ngrok-free.dev` |
+| `NGROK_DOMAIN` | Reserved static Ngrok domain tunneling to `proxy:8000`. No default — ngrok won't start without it. | **Yes** (with ngrok) | `your-domain.ngrok-free.dev` |
 
 ---
 
@@ -259,7 +259,9 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
 
 1. **Start infrastructure containers:**
    ```bash
-   docker-compose up -d rabbitmq redis postgres pgadmin
+   docker-compose up -d rabbitmq redis postgres
+   # optional DB admin UI (opt-in profile; set PGADMIN_DEFAULT_PASSWORD first):
+   docker-compose --profile tools up -d pgadmin
    ```
 
 2. **Run Go microservices:**
@@ -314,7 +316,7 @@ go test -v ./tests/...
 | `rabbitmq` | `5672` | Message broker (`15672` management UI) |
 | `redis` | `6379` | Hot conversation state and OAuth token cache |
 | `postgres` | `5432` | PostgreSQL 15 with `pgvector` for domain tables, encrypted credentials, and semantic memory |
-| `pgadmin` | `5050` | Web interface for PostgreSQL administration |
+| `pgadmin` | `5050` | Web interface for PostgreSQL administration (opt-in: `--profile tools`) |
 | `ngrok` | `4040` | Public webhook ingress tunnel and traffic inspection UI |
 
 ---

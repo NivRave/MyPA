@@ -440,3 +440,22 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### Not done
 - Off-machine copy (owner to choose target). Encrypting the P2-9 conversation archives (`audit_archives`) with the same recipients is the natural next step.
+
+---
+
+## P3-5 — Compose: no committed domain, pinned images
+
+### D3-5.1 How to "require" NGROK_DOMAIN and the pgAdmin password
+- **Options:** (a) `${VAR:?message}`; (b) no default, let the program fail at start.
+- **Verified empirically:** Compose interpolates `${VAR:?}` for *every* service — including services in inactive profiles — and aborts the whole command. (a) on the pgAdmin password would break `docker compose up` for everyone not using pgAdmin; on `NGROK_DOMAIN` it would break `docker compose build` (and the P5-3 CI build, which has no `.env`).
+- **Chosen:** (b). `--url=${NGROK_DOMAIN:-}` → ngrok fails loudly at start without a domain; `PGADMIN_DEFAULT_PASSWORD: ${...:-}` → pgAdmin's entrypoint refuses to start without a password. The committed domain is gone from the file; a test asserts it stays gone.
+
+### D3-5.2 Pinning
+- **Options:** version tag (`ngrok/ngrok:3.39.8`), digest, both.
+- **Chosen:** `tag@sha256:digest` using the exact images already running on this machine (ngrok agent 3.39.8, pgAdmin 9.17), so pinning changes nothing at runtime. The digest is authoritative (immutable); the tag is for humans. Updating is a deliberate change — Dependabot (P5-4) can bump digests.
+
+### D3-5.3 pgAdmin opt-in
+- `profiles: ["tools"]`; start with `docker compose --profile tools up -d pgadmin`. Default email kept (not a secret).
+
+### Owner action
+- **Rotate exposure:** the old default ngrok domain is in git history. If the repo is (or was) public, treat that domain as known (Phase 0 note) — ngrok domains aren't secrets, but webhooks behind it rely on P1-1's secret checks.
