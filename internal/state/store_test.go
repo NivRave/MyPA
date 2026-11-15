@@ -61,8 +61,8 @@ func TestAppendAndGetChatHistory(t *testing.T) {
 	assert.Equal(t, "user", history[0].Role)
 	assert.Equal(t, "Hello", history[0].Content)
 
-	// Append 25 messages (should cap at 20)
-	for i := 0; i < 25; i++ {
+	// Append more than the cap (P2-9: ChatHistoryMaxMessages = 30)
+	for i := 0; i < ChatHistoryMaxMessages+5; i++ {
 		msg := models.ChatMessage{Role: "user", Content: "Message"}
 		err = store.AppendChatHistory(ctx, userID, msg)
 		require.NoError(t, err)
@@ -70,7 +70,15 @@ func TestAppendAndGetChatHistory(t *testing.T) {
 
 	history, err = store.GetChatHistory(ctx, userID)
 	require.NoError(t, err)
-	require.Len(t, history, 20)
+	require.Len(t, history, ChatHistoryMaxMessages)
+}
+
+// P2-9: chat history lives 24h in Redis (durable copy: Postgres audit_sessions).
+func TestChatHistory_TTLIs24h(t *testing.T) {
+	store, mr, cleanup := setupTestStore(t)
+	defer cleanup()
+	require.NoError(t, store.AppendChatHistory(context.Background(), "u-ttl", models.ChatMessage{Role: "user", Content: "hi"}))
+	assert.Equal(t, 24*time.Hour, mr.TTL("chat:u-ttl"))
 }
 
 func TestOAuthToken(t *testing.T) {

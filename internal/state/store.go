@@ -58,6 +58,12 @@ func formatAttachmentMarker(mimeType string, dataLen int) string {
 	return fmt.Sprintf("[Attachment: %s (%.1f KB)]", mimeType, sizeKB)
 }
 
+// Chat history bounds (P2-9).
+const (
+	ChatHistoryMaxMessages = 30
+	ChatHistoryTTL         = 24 * time.Hour
+)
+
 // AppendChatHistory adds a message to the user's conversation history.
 // SCALE-02 Defense-in-depth: guarantees raw PhotoData bytes are never persisted to Redis.
 func (s *Store) AppendChatHistory(ctx context.Context, userID string, msg models.ChatMessage) error {
@@ -82,10 +88,11 @@ func (s *Store) AppendChatHistory(ctx context.Context, userID string, msg models
 	pipe := s.client.Pipeline()
 	// Add to list (right push)
 	pipe.RPush(ctx, key, bytes)
-	// Keep only the last 20 messages
-	pipe.LTrim(ctx, key, -20, -1)
-	// Refresh TTL to 1 hour
-	pipe.Expire(ctx, key, 1*time.Hour)
+	// Keep only the last ChatHistoryMaxMessages messages (P2-9; readers must tolerate a cut
+	// between a tool call and its response — see orchestrator.sanitizeHistory)
+	pipe.LTrim(ctx, key, -ChatHistoryMaxMessages, -1)
+	// Refresh TTL (P2-9: 24h — the durable copy of every turn lives in Postgres audit_sessions)
+	pipe.Expire(ctx, key, ChatHistoryTTL)
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {

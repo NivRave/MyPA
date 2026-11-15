@@ -321,3 +321,25 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 - Unit: per-key FIFO with no overlap (200 tasks), cross-key independence, worker restart after drain, panic containment.
 - Integration (RabbitMQ testcontainer): slow user A doesn't delay user B; A's two messages stay ordered. Mutation check (all deliveries on one lane) fails as expected.
 - **Race detector:** no local C toolchain, so ran `go test -race` in a `golang:1.26` Linux container: dispatcher tests + orchestrator turn tests + a new 12-concurrent-users turn test (3 runs) — clean. CI does not run `-race` today → proposed for P5-3.
+
+---
+
+## P2-9 — Persist tool context in history ([DECIDE] resolved by owner 2026-11-15)
+
+**Owner decision:** Redis 24 h TTL, 30 messages, compact per-turn tool context; `tool_summary` on `audit_sessions` so it flows into the existing 30-day archive; archive gzip-compressed behind an interface; blob storage deferred to the P3-4 off-machine decision. (Owner first asked about moving Redis history to blob after 24 h; analysis showed every turn is already durable in Postgres → archive, and the Redis copy is tiny — so the space win is compressing the archive, not moving Redis.)
+
+### D2-9.1 How tool context is stored in history
+- **Options:** (a) a text note appended to the assistant reply ("[Actions: created evt_1]"); (b) a separate text message; (c) native function-call / function-response pairs, which `models.ChatMessage` (`ToolCalls`/`ToolResponses`) and `llm.Client.Chat` already support and replay as Gemini `functionCall`/`functionResponse` parts.
+- **Chosen:** (c).
+- **Why / challenge:** (a)/(b) put system-generated text into the model's own voice — models tend to imitate it in later replies. (c) is the format the model was trained on for tool use. Cost: Gemini requires a call turn to be immediately followed by its response turn, and `LTRIM` can split them → `sanitizeHistory` on load (tested by trimming at every offset). Multiple tool rounds in one turn are collapsed into one call/response pair (parallel calls are valid Gemini shape).
+- Bounds: results ≤ 400 runes (rune-safe for Hebrew), string args ≤ 200; read-only built-ins (`get_current_time`) omitted.
+
+### D2-9.2 Audit tool summary
+- One line, `name: result-prefix | …`, ≤ 1000 runes, stored as `text`. Published with the session (asynchronous telemetry) and therefore archived with it. Not exposed via GraphQL/dashboard yet — follow-up if wanted.
+
+### D2-9.3 Archive format and sink
+- gzip JSONL (`.jsonl.gz`), written to `<name>.tmp`, fsynced, then renamed — previously a crash could leave a truncated `.jsonl`. Sessions are deleted from Postgres only after `Write` succeeds (unchanged guarantee).
+- `ArchiveSink` interface with one implementation (`localGzipSink`). **Not done:** encryption at rest of archives (they contain conversations) — should reuse whatever P3-4 chooses for backups (`age`); and the blob/object-storage sink (needs the owner's provider choice).
+
+### D2-9.4 TTL interaction with sticky domains / pending actions
+- 24 h history means yesterday's tool results are visible to today's first message. That is the intent ("delete that event" next morning). Prompt-injection exposure is unchanged: tool results were already in the turn that produced them; P3-1 broadens untrusted-content marking.

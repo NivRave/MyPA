@@ -62,7 +62,7 @@ func TestEmpiricalChallenge_AuditArchiverFailureSafety_FileCreateError(t *testin
 	// Pre-create the directory with the exact collision name of the upcoming timestamp
 	// to force os.Create(filePath) to fail
 	targetTime := time.Now().Unix()
-	collisionDirName := fmt.Sprintf("audit_archive_%d.jsonl", targetTime)
+	collisionDirName := fmt.Sprintf("audit_archive_%d.jsonl.gz", targetTime)
 	collisionPath := filepath.Join(tempDir, collisionDirName)
 	err := os.Mkdir(collisionPath, 0755)
 	require.NoError(t, err)

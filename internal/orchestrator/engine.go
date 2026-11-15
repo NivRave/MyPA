@@ -353,11 +353,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	var llmResponse string
 	sessionID := uuid.New().String()
 	startTime := time.Now()
+	// Per-turn record of side effects and executed tools (P1-4, P2-2, P2-9). Declared before the
+	// telemetry defer so the audit session can carry the turn's tool summary.
+	effects := &turnEffects{}
 
 	defer func() {
 		e.wg.Add(1)
 		// Publish the telemetry session asynchronously
-		go func(msgText string, errStr string) {
+		go func(msgText string, errStr string, toolSummary string) {
 			defer e.wg.Done()
 			status := "success"
 			if errStr != "" {
@@ -375,6 +378,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 				EndTime:         time.Now(),
 				TotalDurationMs: time.Since(startTime).Milliseconds(),
 				Status:          status,
+				ToolSummary:     toolSummary,
 			}
 			
 			if e.publisher != nil {
@@ -388,14 +392,13 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 				return err.Error()
 			}
 			return ""
-		}())
+		}(), effects.toolSummary())
 	}()
 
 	secState := &TurnSecurityState{}
 	ctx = WithTurnSecurityState(ctx, secState)
 
 	// Runs before the telemetry defer above (LIFO), so telemetry sees the final error.
-	effects := &turnEffects{}
 	ctx = withTurnEffects(ctx, effects)
 	defer func() {
 		if err != nil && effects.any() {
@@ -647,6 +650,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	if err != nil {
 		return fmt.Errorf("failed to get chat history: %w", err)
 	}
+	// LTRIM may have split a tool call from its response; Gemini rejects that (P2-9).
+	history = sanitizeHistory(history)
 
 	// 3. Select this turn's tools first: the prompt's tool guidance follows them (P2-6).
 	// Dynamic Two-Tier Tool Context Selection (SCALE-01) + sticky follow-up domains (P2-2)
@@ -783,6 +788,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 		Role:    "user",
 		Content: persistedContent,
 	})
+	// P2-9: keep the turn's tool calls and (truncated) results, so a follow-up such as
+	// "delete that event" can refer to IDs created in this turn.
+	for _, m := range effects.historyMessages() {
+		_ = e.store.AppendChatHistory(ctx, msg.UserID, m)
+	}
 	_ = e.store.AppendChatHistory(ctx, msg.UserID, models.ChatMessage{Role: "assistant", Content: replyText})
 
 	return nil
@@ -1011,17 +1021,18 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 		callCtx := e.buildCallContext(ctx, user, msg)
 		res, handled, err := e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)
 		if handled {
-			recordToolCall(ctx, toolCall.Name)
+			out := res
+			if err != nil {
+				slog.Error("registry tool execution failed", "tool", toolCall.Name, "error", err)
+				out = fmt.Sprintf("❌ Error executing %s: %v", toolCall.Name, err)
+			}
+			recordToolCall(ctx, toolCall.Name, toolCall.Args, out)
 			// The tool ran (possibly partially, even on error): retrying the turn would duplicate it.
 			// Read-only built-ins computed locally are exempt.
 			if !readOnlyBuiltinTools[toolCall.Name] {
 				markSideEffect(ctx)
 			}
-			if err != nil {
-				slog.Error("registry tool execution failed", "tool", toolCall.Name, "error", err)
-				return fmt.Sprintf("❌ Error executing %s: %v", toolCall.Name, err)
-			}
-			return res
+			return out
 		}
 	}
 

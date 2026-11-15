@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/models"
@@ -20,27 +22,116 @@ type turnEffects struct {
 	happened atomic.Bool
 
 	mu    sync.Mutex
-	tools []string // names of tools executed this turn (for sticky domains, P2-2)
+	tools []toolRecord // tools executed this turn (sticky domains P2-2, history/audit P2-9)
 }
 
+// toolRecord is one executed tool call with its (untruncated) arguments and result.
+type toolRecord struct {
+	name   string
+	args   map[string]interface{}
+	result string
+}
+
+const (
+	// maxToolResultChars bounds each tool result kept in chat history (P2-9): enough for IDs,
+	// titles and links ("delete that event"), small enough to keep 30 messages cheap.
+	maxToolResultChars = 400
+	// maxToolArgChars bounds each string argument kept in history.
+	maxToolArgChars = 200
+	// maxToolSummaryChars bounds the per-turn summary stored on audit_sessions.tool_summary.
+	maxToolSummaryChars = 1000
+)
+
 // recordToolCall notes that a tool ran in the turn carried by ctx.
-func recordToolCall(ctx context.Context, name string) {
+func recordToolCall(ctx context.Context, name string, args map[string]interface{}, result string) {
 	if fx, ok := ctx.Value(turnEffectsKey{}).(*turnEffects); ok && fx != nil {
 		fx.mu.Lock()
-		fx.tools = append(fx.tools, name)
+		fx.tools = append(fx.tools, toolRecord{name: name, args: args, result: result})
 		fx.mu.Unlock()
 	}
 }
 
-// calledTools returns a copy of the tool names executed this turn.
-func (fx *turnEffects) calledTools() []string {
+func (fx *turnEffects) records() []toolRecord {
 	if fx == nil {
 		return nil
 	}
 	fx.mu.Lock()
 	defer fx.mu.Unlock()
-	return append([]string(nil), fx.tools...)
+	return append([]toolRecord(nil), fx.tools...)
 }
+
+// calledTools returns the names of the tools executed this turn.
+func (fx *turnEffects) calledTools() []string {
+	var names []string
+	for _, r := range fx.records() {
+		names = append(names, r.name)
+	}
+	return names
+}
+
+// historyMessages returns the turn's tool activity as a Gemini-compatible pair — an assistant
+// message with the calls immediately followed by a function message with the (truncated)
+// results — or nil when no state-relevant tool ran. Read-only built-ins are omitted.
+func (fx *turnEffects) historyMessages() []models.ChatMessage {
+	var calls []models.FunctionCall
+	var responses []models.FunctionResponse
+	for _, r := range fx.records() {
+		if readOnlyBuiltinTools[r.name] {
+			continue
+		}
+		calls = append(calls, models.FunctionCall{Name: r.name, Args: compactArgs(r.args)})
+		responses = append(responses, models.FunctionResponse{
+			Name:     r.name,
+			Response: map[string]interface{}{"result": truncateRunes(r.result, maxToolResultChars)},
+		})
+	}
+	if len(calls) == 0 {
+		return nil
+	}
+	return []models.ChatMessage{
+		{Role: "assistant", ToolCalls: calls},
+		{Role: "function", ToolResponses: responses},
+	}
+}
+
+// toolSummary is a one-line, bounded description of the turn's tool activity for the audit log.
+func (fx *turnEffects) toolSummary() string {
+	var parts []string
+	for _, r := range fx.records() {
+		if readOnlyBuiltinTools[r.name] {
+			continue
+		}
+		parts = append(parts, r.name+": "+truncateRunes(oneLine(r.result), 160))
+	}
+	return truncateRunes(strings.Join(parts, " | "), maxToolSummaryChars)
+}
+
+func compactArgs(args map[string]interface{}) map[string]interface{} {
+	if len(args) == 0 {
+		return map[string]interface{}{}
+	}
+	out := make(map[string]interface{}, len(args))
+	for k, v := range args {
+		if s, ok := v.(string); ok {
+			out[k] = truncateRunes(s, maxToolArgChars)
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// truncateRunes shortens s to at most n runes (plus an ellipsis), never splitting a UTF-8
+// sequence (Hebrew text is multi-byte).
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:n]) + "…"
+}
+
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 type turnEffectsKey struct{}
 

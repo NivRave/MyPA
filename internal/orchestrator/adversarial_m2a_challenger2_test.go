@@ -373,7 +373,10 @@ func TestChallenger2_PhotoData_MultimodalActiveTurnPreservation(t *testing.T) {
 	// Verify that after ProcessMessage, Redis persistence stripped PhotoData
 	history, err := engine.store.GetChatHistory(ctx, userID)
 	require.NoError(t, err)
-	require.Len(t, history, 2) // user + assistant
+	require.Len(t, history, 4) // user, tool calls, tool results (P2-9), assistant
+	for _, m := range history {
+		assert.Nil(t, m.PhotoData, "no history entry may carry image bytes")
+	}
 
 	assert.Equal(t, "user", history[0].Role)
 	assert.Nil(t, history[0].PhotoData, "PhotoData must be stripped from Redis chat history")
@@ -984,8 +987,10 @@ func TestChallenger2_PhotoData_5MB_10MB_StressPayloads(t *testing.T) {
 		// 2. Persistent Redis assertion:
 		history, err := engine.store.GetChatHistory(context.Background(), userID)
 		require.NoError(t, err)
-		require.Len(t, history, 2)
-		assert.Nil(t, history[0].PhotoData, "Redis chat history must contain ZERO binary bytes")
+		require.Len(t, history, 4) // user, tool calls, tool results (P2-9), assistant
+		for _, m := range history {
+			assert.Nil(t, m.PhotoData, "Redis chat history must contain ZERO binary bytes")
+		}
 		assert.Empty(t, history[0].PhotoMimeType)
 		assert.Contains(t, history[0].Content, "[Attachment: image/jpeg (5.0 MB)]")
 	})

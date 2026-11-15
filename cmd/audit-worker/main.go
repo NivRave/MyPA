@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -130,45 +129,12 @@ func archiveOldSessions(dbClient *db.Client, optionalDir ...string) error {
 		archiveDir = optionalDir[0]
 	}
 
-	if err := os.MkdirAll(archiveDir, 0755); err != nil {
-		slog.Error("failed to create archive directory", "dir", archiveDir, "error", err)
-		return fmt.Errorf("failed to create archive directory: %w", err)
-	}
-
-	filename := fmt.Sprintf("audit_archive_%d.jsonl", time.Now().Unix())
-	filePath := filepath.Join(archiveDir, filename)
-	f, err := os.Create(filePath)
+	// P2-9: gzip JSONL written atomically through an ArchiveSink (local disk today).
+	var sink ArchiveSink = localGzipSink{dir: archiveDir}
+	filePath, err := sink.Write(fmt.Sprintf("audit_archive_%d", time.Now().Unix()), sessions)
 	if err != nil {
-		slog.Error("failed to create archive file", "path", filePath, "error", err)
-		return fmt.Errorf("failed to create archive file: %w", err)
-	}
-
-	encoder := json.NewEncoder(f)
-	var encodeErr error
-	for _, s := range sessions {
-		if err := encoder.Encode(s); err != nil {
-			encodeErr = err
-			break
-		}
-	}
-	if encodeErr != nil {
-		slog.Error("failed to encode session to archive", "path", filePath, "error", encodeErr)
-		_ = f.Close()
-		_ = os.Remove(filePath)
-		return fmt.Errorf("failed to encode session: %w", encodeErr)
-	}
-
-	if err := f.Sync(); err != nil {
-		slog.Error("failed to sync archive file", "path", filePath, "error", err)
-		_ = f.Close()
-		_ = os.Remove(filePath)
-		return fmt.Errorf("failed to sync archive file: %w", err)
-	}
-
-	if err := f.Close(); err != nil {
-		slog.Error("failed to close archive file", "path", filePath, "error", err)
-		_ = os.Remove(filePath)
-		return fmt.Errorf("failed to close archive file: %w", err)
+		slog.Error("failed to write audit archive; sessions kept in the database", "dir", archiveDir, "error", err)
+		return err
 	}
 
 	// Delete only successfully archived sessions from DB
