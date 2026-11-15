@@ -120,7 +120,10 @@ mypa/
 │   │   ├── house_repo.go           # `HouseRepository` (HouseContractRecord, HomeMaintenanceItem, VehicleAsset)
 │   │   ├── finance_repo.go         # `FinanceRepository` (FinancialTransaction, CategoryBudget, RecurringBill)
 │   │   └── automation_repo.go      # `AutomationRepository` (ExternalAPIConnector, AutomationRule, UserPreference, PersonalCRMContact)
-│   ├── domains/                    # Modular `orchestrator.ToolModule` implementations:
+│   ├── domains/                    # Modular `orchestrator.ToolModule` implementations. Large modules (house, automation,
+│   │                               #   schedule, baby, finance — P4-2) are split: module.go (struct, NewModule/options, Name,
+│   │                               #   SystemPromptSection), declarations.go (genai tool schemas), handlers.go (Execute +
+│   │                               #   execute* per tool), service.go (helpers/business logic without genai types):
 │   │   ├── toolutil/               # Shared typed argument extractors & mutation publishing helpers
 │   │   ├── workspace_calendar/     # 4 Calendar tools (create, list, update, delete) emitting schedule mutations
 │   │   ├── workspace_gmail/        # 9 Gmail tools (search, read, reply, archive, delete, labels, unsubscribe)

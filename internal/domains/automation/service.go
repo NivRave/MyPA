@@ -1,0 +1,157 @@
+package automation
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/orchestrator"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Runner returns the internal Automation Runner instance.
+func (m *Module) Runner() *Runner {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.runner
+}
+
+// SetWorkflowsChanged sets or updates the workflow change callback.
+func (m *Module) SetWorkflowsChanged(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.workflowsChanged = fn
+}
+
+func calculateDaysUntil(dateStr string, now time.Time) (int, bool) {
+	dStr := strings.TrimSpace(dateStr)
+	var month time.Month
+	var day int
+
+	// Format: YYYY-MM-DD
+	if t, err := time.Parse("2006-01-02", dStr); err == nil {
+		month, day = t.Month(), t.Day()
+	} else if t, err := time.Parse("01-02", dStr); err == nil {
+		// Format: MM-DD
+		month, day = t.Month(), t.Day()
+	} else if t, err := time.Parse("2006/01/02", dStr); err == nil {
+		month, day = t.Month(), t.Day()
+	} else {
+		return 0, false
+	}
+
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	targetThisYear := time.Date(now.Year(), month, day, 0, 0, 0, 0, now.Location())
+
+	if targetThisYear.Before(today) {
+		targetNextYear := time.Date(now.Year()+1, month, day, 0, 0, 0, 0, now.Location())
+		days := int(targetNextYear.Sub(today).Hours() / 24)
+		return days, true
+	}
+
+	days := int(targetThisYear.Sub(today).Hours() / 24)
+	return days, true
+}
+
+func (m *Module) resolveEventBus(callCtx orchestrator.CallContext) *events.EventBus {
+	if m.bus != nil {
+		return m.bus
+	}
+	if callCtx.EventBus != nil {
+		return callCtx.EventBus
+	}
+	if bus, ok := callCtx.Extra["event_bus"].(*events.EventBus); ok {
+		return bus
+	}
+	return nil
+}
+
+func getUserAndFamily(callCtx orchestrator.CallContext) (string, string) {
+	return callCtx.ActorID(), callCtx.TenantFamilyGroup()
+}
+
+func getStringArg(args map[string]interface{}, key string) string {
+	if val, ok := args[key].(string); ok {
+		return val
+	}
+	return ""
+}
+
+func getInt64Arg(args map[string]interface{}, key string) (int64, bool) {
+	if val, ok := args[key].(float64); ok {
+		return int64(val), true
+	}
+	if val, ok := args[key].(int); ok {
+		return int64(val), true
+	}
+	if val, ok := args[key].(int64); ok {
+		return val, true
+	}
+	if str, ok := args[key].(string); ok {
+		if parsed, err := strconv.ParseInt(strings.TrimSpace(str), 10, 64); err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
+func normalizeJSONSlice(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "[]"
+	}
+	if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+		return trimmed
+	}
+	// Comma-separated fallback
+	items := strings.Split(trimmed, ",")
+	var list []string
+	for _, it := range items {
+		if s := strings.TrimSpace(it); s != "" {
+			list = append(list, s)
+		}
+	}
+	bytes, _ := json.Marshal(list)
+	return string(bytes)
+}
+
+func appendQueryParams(targetURL, queryParams string) string {
+	trimmed := strings.TrimSpace(queryParams)
+	if trimmed == "" {
+		return targetURL
+	}
+
+	// Try JSON map
+	var qMap map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &qMap); err == nil && len(qMap) > 0 {
+		values := url.Values{}
+		for k, v := range qMap {
+			values.Set(k, fmt.Sprint(v))
+		}
+		if strings.Contains(targetURL, "?") {
+			return targetURL + "&" + values.Encode()
+		}
+		return targetURL + "?" + values.Encode()
+	}
+
+	// Direct query string
+	trimmed = strings.TrimPrefix(trimmed, "?")
+	if strings.Contains(targetURL, "?") {
+		return targetURL + "&" + trimmed
+	}
+	return targetURL + "?" + trimmed
+}
+
+func jsonMarshalNoEscape(v interface{}) (string, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		return "", err
+	}
+	return strings.TrimRight(buf.String(), "\n"), nil
+}
