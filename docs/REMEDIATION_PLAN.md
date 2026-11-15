@@ -193,7 +193,7 @@ Generate the tool catalog section of `SYSTEM.md`/`README.md` from the registry (
 | P2-1 | Make all tools reachable | 2 | ☑ |
 | P2-2 | Sticky domains | 2 | ☑ |
 | P2-3 | Use the HNSW index | 2 | ☑ |
-| P2-4 | Unify memory systems | 2 | ☐ |
+| P2-4 | Unify memory systems | 2 | ☑ |
 | P2-5 | Skip embedding for trivial messages | 2 | ☐ |
 | P2-6 | Cache-friendly prompt ordering | 2 | ☐ |
 | P2-7 | Resolve user once per turn | 2 | ☐ |

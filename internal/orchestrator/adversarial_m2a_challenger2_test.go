@@ -289,7 +289,7 @@ func TestChallenger2_PhotoData_MultimodalActiveTurnPreservation(t *testing.T) {
 	ctx := context.Background()
 	userID := "adv-user-multimodal"
 
-	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
 
@@ -909,7 +909,7 @@ func TestChallenger2_PhotoData_5MB_10MB_StressPayloads(t *testing.T) {
 			raw5MB[i] = byte(i % 211)
 		}
 
-		dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 		tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 		llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
 

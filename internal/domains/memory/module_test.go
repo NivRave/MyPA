@@ -825,12 +825,6 @@ func (m *testLLMClient) GenerateEmbedding(ctx context.Context, text string) ([]f
 
 type testDBClient struct {
 	orchestrator.DBClient
-	savedMemories []models.Memory
-}
-
-func (m *testDBClient) SaveMemory(mem models.Memory) error {
-	m.savedMemories = append(m.savedMemories, mem)
-	return nil
 }
 
 func TestRememberFact_Execution(t *testing.T) {
@@ -859,15 +853,17 @@ func TestRememberFact_Execution(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, res, "Fact saved to family memory successfully")
 
-	require.Len(t, dbMock.savedMemories, 1)
-	assert.Equal(t, "tg_123", dbMock.savedMemories[0].UserID)
-	assert.Equal(t, "family", dbMock.savedMemories[0].Scope)
-	assert.Equal(t, "Likes dark chocolate 85%", dbMock.savedMemories[0].Fact)
-
-	// Check that TopicMemory was also recorded in repo
-	mems, err := repo.SearchTopicMemories(ctx, "tg_123", "FamAlpha", "personal", "chocolate", nil)
+	// P2-4: remember_fact writes exactly one TopicMemory (the single memory store);
+	// a family-scoped fact is filed under topic "family".
+	mems, err := repo.SearchTopicMemories(ctx, "tg_123", "FamAlpha", models.TopicFamily, "chocolate", nil)
 	require.NoError(t, err)
 	require.Len(t, mems, 1)
 	assert.Equal(t, "Likes dark chocolate 85%", mems[0].Fact)
+	assert.Equal(t, "tg_123", mems[0].UserID)
+	assert.Equal(t, "FamAlpha", mems[0].FamilyGroup)
+	assert.Equal(t, "family", mems[0].Scope)
+	all, err := repo.SearchTopicMemories(ctx, "tg_123", "FamAlpha", "", "", nil)
+	require.NoError(t, err)
+	assert.Len(t, all, 1, "no duplicate write")
 }
 

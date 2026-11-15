@@ -1,13 +1,11 @@
 package db
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/nivik/mypa/internal/models"
-	"github.com/pgvector/pgvector-go"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -71,6 +69,12 @@ func NewClient(dsn string) (*Client, error) {
 		return nil, fmt.Errorf("failed to apply custom database indexes: %w", err)
 	}
 
+	// P2-4: one memory store. Fatal on failure: after this release nothing reads the legacy
+	// table, so an unmigrated fact would silently disappear from the assistant's memory.
+	if _, err := MigrateLegacyMemories(db); err != nil {
+		return nil, err
+	}
+
 	slog.Info("connected to postgres, tuned connection pool, and ran migrations successfully",
 		"max_open_conns", 25,
 		"max_idle_conns", 10,
@@ -122,39 +126,6 @@ func (c *Client) InsertAuditEvent(event models.AuditEvent) error {
 		return fmt.Errorf("failed to insert audit event: %w", result.Error)
 	}
 	return nil
-}
-
-// SaveMemory stores a semantic memory fact and its vector embedding.
-func (c *Client) SaveMemory(memory models.Memory) error {
-	result := c.DB.Create(&memory)
-	if result.Error != nil {
-		return fmt.Errorf("failed to insert memory: %w", result.Error)
-	}
-	return nil
-}
-
-// SearchMemories finds the most relevant memories using cosine distance.
-func (c *Client) SearchMemories(userIDs []string, embedding pgvector.Vector, limit int) ([]models.Memory, error) {
-	var memories []models.Memory
-	
-	if len(userIDs) == 0 {
-		return memories, nil
-	}
-
-	// <=> is the cosine distance operator in pgvector
-	// We want to match if user_id is the primary user (index 0) OR if it's any user in the list AND scope is 'family'
-	primaryUser := userIDs[0]
-	
-	err := withVectorScan(context.Background(), c.DB, func(tx *gorm.DB) error {
-		return tx.Where("(user_id = ? AND scope = 'personal') OR (user_id IN ? AND scope = 'family')", primaryUser, userIDs).
-			Order(cosineOrder(embedding)). // matches the HNSW expression index (P2-3)
-			Limit(limit).
-			Find(&memories).Error
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to search memories: %w", err)
-	}
-	return memories, nil
 }
 
 // GetUniqueUsers returns a list of unique user IDs from the audit sessions.

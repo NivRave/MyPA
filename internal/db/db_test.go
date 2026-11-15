@@ -179,37 +179,28 @@ func TestAuditEvents(t *testing.T) {
 func TestMemories(t *testing.T) {
 	client, cleanup := setupTestDB(t)
 	defer cleanup()
+	ctx := context.Background()
 
 	userID := "user-456"
 
 	vec1 := make([]float32, 3072)
 	vec1[0] = 1.0
-	
-	mem1 := models.Memory{
-		UserID:    userID,
-		Fact:      "I love apples",
-		Embedding: pgvector.NewVector(vec1),
-		CreatedAt: time.Now(),
-	}
-	err := client.SaveMemory(mem1)
-	require.NoError(t, err)
+	require.NoError(t, client.SaveTopicMemory(ctx, &models.TopicMemory{
+		UserID: userID, Topic: models.TopicPersonal, Subtopic: "fact", Scope: "personal",
+		Fact: "I love apples", Embedding: pgvector.NewVector(vec1),
+	}))
 
 	vec2 := make([]float32, 3072)
 	vec2[1] = 1.0
-
-	mem2 := models.Memory{
-		UserID:    userID,
-		Fact:      "I love bananas",
-		Embedding: pgvector.NewVector(vec2),
-		CreatedAt: time.Now(),
-	}
-	err = client.SaveMemory(mem2)
-	require.NoError(t, err)
+	require.NoError(t, client.SaveTopicMemory(ctx, &models.TopicMemory{
+		UserID: userID, Topic: models.TopicPersonal, Subtopic: "fact", Scope: "personal",
+		Fact: "I love bananas", Embedding: pgvector.NewVector(vec2),
+	}))
 
 	searchVec := make([]float32, 3072)
 	searchVec[0] = 0.9
 
-	results, err := client.SearchMemories([]string{userID}, pgvector.NewVector(searchVec), 1)
+	results, err := client.SearchSimilarMemories(ctx, userID, "", pgvector.NewVector(searchVec), 1)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "I love apples", results[0].Fact)
@@ -298,27 +289,32 @@ func TestTopicMemories_VectorSearchAndFallback(t *testing.T) {
 	assert.Equal(t, "Baby drinks 150ml milk formula", results[0].Fact)
 	assert.Equal(t, "baby", results[0].Topic)
 
-	// 2. Test fallback to legacy memories when 0 topic memories match
+	// 2. A fact that exists only in the legacy table becomes searchable after the P2-4 migration
+	// (there is no runtime fallback to the legacy table any more).
 	legacyUser := "user-legacy-only"
 	legacyVec := make([]float32, 3072)
 	legacyVec[2] = 1.0
-	legacyMem := models.Memory{
+	require.NoError(t, client.DB.Create(&models.Memory{
 		UserID:    legacyUser,
 		Fact:      "Grandma's birthday is on June 12",
 		Scope:     "personal",
 		Embedding: pgvector.NewVector(legacyVec),
 		CreatedAt: time.Now(),
-	}
-	err = client.SaveMemory(legacyMem)
-	require.NoError(t, err)
+	}).Error)
 
 	queryLegacy := make([]float32, 3072)
 	queryLegacy[2] = 0.9
+	before, err := client.SearchSimilarMemories(ctx, legacyUser, "", pgvector.NewVector(queryLegacy), 1)
+	require.NoError(t, err)
+	assert.Empty(t, before, "no runtime read of the legacy table")
+
+	_, err = MigrateLegacyMemories(client.DB)
+	require.NoError(t, err)
 	fbResults, err := client.SearchSimilarMemories(ctx, legacyUser, "", pgvector.NewVector(queryLegacy), 1)
 	require.NoError(t, err)
 	require.Len(t, fbResults, 1)
 	assert.Equal(t, "Grandma's birthday is on June 12", fbResults[0].Fact)
-	assert.Equal(t, "general", fbResults[0].Topic)
+	assert.Equal(t, models.TopicPersonal, fbResults[0].Topic)
 }
 
 func TestSharedReminders_DueAndSent(t *testing.T) {

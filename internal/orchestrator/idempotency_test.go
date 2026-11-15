@@ -35,7 +35,7 @@ func setupIdempotencyEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *
 	engine.SetToolRegistry(reg)
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
-	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	return engine, tgMock, llmMock, &toolRuns
 }
 

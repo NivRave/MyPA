@@ -689,6 +689,21 @@ func (mr *MockDBClientMockRecorder) GetDueReminders() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDueReminders", reflect.TypeOf((*MockDBClient)(nil).GetDueReminders))
 }
 
+// GetDueSharedReminders mocks base method.
+func (m *MockDBClient) GetDueSharedReminders() ([]models.SharedTaskReminder, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDueSharedReminders")
+	ret0, _ := ret[0].([]models.SharedTaskReminder)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDueSharedReminders indicates an expected call of GetDueSharedReminders.
+func (mr *MockDBClientMockRecorder) GetDueSharedReminders() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDueSharedReminders", reflect.TypeOf((*MockDBClient)(nil).GetDueSharedReminders))
+}
+
 // GetLastAuditSessionForUser mocks base method.
 func (m *MockDBClient) GetLastAuditSessionForUser(userID string) (*models.AuditSession, error) {
 	m.ctrl.T.Helper()
@@ -793,6 +808,20 @@ func (mr *MockDBClientMockRecorder) MarkReminderSent(id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkReminderSent", reflect.TypeOf((*MockDBClient)(nil).MarkReminderSent), id)
 }
 
+// MarkSharedReminderSent mocks base method.
+func (m *MockDBClient) MarkSharedReminderSent(id uint) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkSharedReminderSent", id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MarkSharedReminderSent indicates an expected call of MarkSharedReminderSent.
+func (mr *MockDBClientMockRecorder) MarkSharedReminderSent(id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkSharedReminderSent", reflect.TypeOf((*MockDBClient)(nil).MarkSharedReminderSent), id)
+}
+
 // RedeemPairingCode mocks base method.
 func (m *MockDBClient) RedeemPairingCode(codeID string, u models.User) error {
 	m.ctrl.T.Helper()
@@ -805,20 +834,6 @@ func (m *MockDBClient) RedeemPairingCode(codeID string, u models.User) error {
 func (mr *MockDBClientMockRecorder) RedeemPairingCode(codeID, u any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RedeemPairingCode", reflect.TypeOf((*MockDBClient)(nil).RedeemPairingCode), codeID, u)
-}
-
-// SaveMemory mocks base method.
-func (m *MockDBClient) SaveMemory(memory models.Memory) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SaveMemory", memory)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// SaveMemory indicates an expected call of SaveMemory.
-func (mr *MockDBClientMockRecorder) SaveMemory(memory any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveMemory", reflect.TypeOf((*MockDBClient)(nil).SaveMemory), memory)
 }
 
 // SaveReminder mocks base method.
@@ -849,19 +864,19 @@ func (mr *MockDBClientMockRecorder) SaveWorkflow(w any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveWorkflow", reflect.TypeOf((*MockDBClient)(nil).SaveWorkflow), w)
 }
 
-// SearchMemories mocks base method.
-func (m *MockDBClient) SearchMemories(userIDs []string, embedding pgvector.Vector, limit int) ([]models.Memory, error) {
+// SearchSimilarMemories mocks base method.
+func (m *MockDBClient) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SearchMemories", userIDs, embedding, limit)
-	ret0, _ := ret[0].([]models.Memory)
+	ret := m.ctrl.Call(m, "SearchSimilarMemories", ctx, userID, familyGroup, embedding, limit)
+	ret0, _ := ret[0].([]models.TopicMemory)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// SearchMemories indicates an expected call of SearchMemories.
-func (mr *MockDBClientMockRecorder) SearchMemories(userIDs, embedding, limit any) *gomock.Call {
+// SearchSimilarMemories indicates an expected call of SearchSimilarMemories.
+func (mr *MockDBClientMockRecorder) SearchSimilarMemories(ctx, userID, familyGroup, embedding, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SearchMemories", reflect.TypeOf((*MockDBClient)(nil).SearchMemories), userIDs, embedding, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SearchSimilarMemories", reflect.TypeOf((*MockDBClient)(nil).SearchSimilarMemories), ctx, userID, familyGroup, embedding, limit)
 }
 
 // UpsertUser mocks base method.
@@ -876,35 +891,6 @@ func (m *MockDBClient) UpsertUser(u models.User) error {
 func (mr *MockDBClientMockRecorder) UpsertUser(u any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertUser", reflect.TypeOf((*MockDBClient)(nil).UpsertUser), u)
-}
-
-// GetDueSharedReminders mocks base method.
-func (m *MockDBClient) GetDueSharedReminders() ([]models.SharedTaskReminder, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetDueSharedReminders")
-	ret0, _ := ret[0].([]models.SharedTaskReminder)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetDueSharedReminders indicates an expected call of GetDueSharedReminders.
-func (mr *MockDBClientMockRecorder) GetDueSharedReminders() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDueSharedReminders", reflect.TypeOf((*MockDBClient)(nil).GetDueSharedReminders))
-}
-
-// MarkSharedReminderSent mocks base method.
-func (m *MockDBClient) MarkSharedReminderSent(id uint) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkSharedReminderSent", id)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// MarkSharedReminderSent indicates an expected call of MarkSharedReminderSent.
-func (mr *MockDBClientMockRecorder) MarkSharedReminderSent(id any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkSharedReminderSent", reflect.TypeOf((*MockDBClient)(nil).MarkSharedReminderSent), id)
 }
 
 // MockEventPublisher is a mock of EventPublisher interface.

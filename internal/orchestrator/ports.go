@@ -73,8 +73,9 @@ type ContactsClient interface {
 }
 
 type DBClient interface {
-	SaveMemory(memory models.Memory) error
-	SearchMemories(userIDs []string, embedding pgvector.Vector, limit int) ([]models.Memory, error)
+	// SearchSimilarMemories is the single memory retrieval path (P2-4): the caller's personal
+	// memories plus their family group's shared ones, nearest first.
+	SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error)
 	GetUniqueUsers() ([]string, error)
 	GetLastAuditSessionForUser(userID string) (*models.AuditSession, error)
 	SaveReminder(reminder models.ScheduledReminder) error

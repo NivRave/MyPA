@@ -123,8 +123,7 @@ func (r *MemoryV2Repo) SearchTopicMemories(ctx context.Context, userID, familyGr
 	return memories, nil
 }
 
-// SearchSimilarMemories searches for active, valid topic memories using pgvector cosine distance,
-// with transparent fallback to legacy memories if 0 results are found.
+// SearchSimilarMemories searches for active, valid topic memories using pgvector cosine distance.
 func (r *MemoryV2Repo) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
 	var memories []models.TopicMemory
 	if limit <= 0 {
@@ -149,35 +148,7 @@ func (r *MemoryV2Repo) SearchSimilarMemories(ctx context.Context, userID, family
 	if err != nil {
 		return nil, err
 	}
-
-	// Transparent Fallback: If 0 results in topic_memories, query legacy memories table
-	if len(memories) == 0 {
-		var legacy []models.Memory
-		searchIDs := []string{userID}
-		if familyGroup != "" {
-			searchIDs = append(searchIDs, familyGroup)
-		}
-		legErr := withVectorScan(ctx, r.db, func(tx *gorm.DB) error {
-			return tx.Where("(user_id = ? AND scope = 'personal') OR (user_id IN ? AND scope = 'family')", userID, searchIDs).
-				Order(cosineOrder(embedding)).
-				Limit(limit).
-				Find(&legacy).Error
-		})
-		if legErr == nil {
-			for _, lm := range legacy {
-				memories = append(memories, models.TopicMemory{
-					UserID:    lm.UserID,
-					Topic:     "general",
-					Subtopic:  "fact",
-					Fact:      lm.Fact,
-					Scope:     lm.Scope,
-					Embedding: lm.Embedding,
-					CreatedAt: lm.CreatedAt,
-				})
-			}
-		}
-	}
-
+	// No legacy `memories` fallback (P2-4): MigrateLegacyMemories copies v1 rows at startup.
 	return memories, nil
 }
 

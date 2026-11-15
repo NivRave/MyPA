@@ -2,11 +2,13 @@ package orchestrator_test
 
 import (
 	"context"
+	"sync"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nivik/mypa/internal/domains/automation"
+	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/domains/memory"
 	"github.com/nivik/mypa/internal/domains/shared"
 	"github.com/nivik/mypa/internal/domains/web_research"
@@ -150,15 +152,24 @@ type mockDBClient struct {
 	savedReminders   []models.ScheduledReminder
 	savedWorkflows   []models.Workflow
 	deletedWorkflows []uint
-	savedMemories    []models.Memory
 }
 
-func (m *mockDBClient) SaveMemory(memory models.Memory) error {
-	m.savedMemories = append(m.savedMemories, memory)
-	return nil
-}
-func (m *mockDBClient) SearchMemories(userIDs []string, embedding pgvector.Vector, limit int) ([]models.Memory, error) {
+func (m *mockDBClient) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
 	return nil, nil
+}
+
+// recordingMemoryRepo captures what memory tools write to the single (v2) memory store.
+type recordingMemoryRepo struct {
+	db.MemoryV2Repository
+	mu    sync.Mutex
+	saved []models.TopicMemory
+}
+
+func (r *recordingMemoryRepo) SaveTopicMemory(ctx context.Context, m *models.TopicMemory) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.saved = append(r.saved, *m)
+	return nil
 }
 func (m *mockDBClient) GetUniqueUsers() ([]string, error) { return nil, nil }
 func (m *mockDBClient) GetLastAuditSessionForUser(userID string) (*models.AuditSession, error) {
@@ -239,7 +250,8 @@ func TestARCH01_28Tools_ModularizationAndDynamicDispatch(t *testing.T) {
 	modTasks := workspace_tasks.NewModule(workspace_tasks.WithClient(tasksMock), workspace_tasks.WithEventBus(eventBus))
 	modContacts := workspace_contacts.NewModule(workspace_contacts.WithClient(contactsMock), workspace_contacts.WithEventBus(eventBus))
 	modWeb := web_research.NewModule(web_research.WithClient(tavilyMock))
-	modMemory := memory.NewModule(nil)
+	memRepo := &recordingMemoryRepo{}
+	modMemory := memory.NewModule(memRepo)
 	modShared := shared.NewModule(nil, eventBus, nil)
 	modAuto := automation.NewModule(nil, automation.WithEventBus(eventBus))
 
@@ -383,8 +395,8 @@ func TestARCH01_28Tools_ModularizationAndDynamicDispatch(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, handled)
 		assert.Contains(t, res, "Fact saved to personal memory successfully.")
-		require.Len(t, mockDB.savedMemories, 1)
-		assert.Equal(t, "canonical_user_42", mockDB.savedMemories[0].UserID)
+		require.Len(t, memRepo.saved, 1)
+		assert.Equal(t, "canonical_user_42", memRepo.saved[0].UserID)
 
 		// 7. Dispatch shared tool (schedule_reminder)
 		res, handled, err = reg.Execute(ctx, callCtx, "schedule_reminder", map[string]interface{}{
@@ -450,7 +462,8 @@ func TestARCH04_All28Tools_AntiIDOR_IdentitySpoofingStress(t *testing.T) {
 	reg.Register(workspace_tasks.NewModule(workspace_tasks.WithClient(tasksMock), workspace_tasks.WithEventBus(eventBus)))
 	reg.Register(workspace_contacts.NewModule(workspace_contacts.WithClient(contactsMock), workspace_contacts.WithEventBus(eventBus)))
 	reg.Register(web_research.NewModule(web_research.WithClient(tavilyMock)))
-	reg.Register(memory.NewModule(nil))
+	memRepo := &recordingMemoryRepo{}
+	reg.Register(memory.NewModule(memRepo))
 	reg.Register(shared.NewModule(nil, eventBus, nil))
 	reg.Register(automation.NewModule(nil, automation.WithEventBus(eventBus)))
 
@@ -536,8 +549,8 @@ func TestARCH04_All28Tools_AntiIDOR_IdentitySpoofingStress(t *testing.T) {
 	args["fact"] = "Secret victim password"
 	_, _, err = reg.Execute(ctx, callCtx, "remember_fact", args)
 	require.NoError(t, err)
-	require.NotEmpty(t, mockDB.savedMemories)
-	lastMem := mockDB.savedMemories[len(mockDB.savedMemories)-1]
+	require.NotEmpty(t, memRepo.saved)
+	lastMem := memRepo.saved[len(memRepo.saved)-1]
 	assert.Equal(t, "canonical_victim_platform_id", lastMem.UserID, "Memory must be saved with canonical ActorID()")
 	assert.NotEqual(t, "attacker_spoofed_user", lastMem.UserID)
 

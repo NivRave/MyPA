@@ -34,9 +34,10 @@ func (m *testToolModule) Execute(ctx context.Context, callCtx CallContext, toolN
 func (m *testToolModule) SystemPromptSection(ctx context.Context, callCtx CallContext) string { return "" }
 
 func TestEngine_HandleToolCall_RememberFact(t *testing.T) {
-	engine, _, llmMock, dbMock, cleanup := setupTestEngine(t)
+	engine, _, llmMock, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
+	var saved models.TopicMemory
 	reg := NewRegistry()
 	reg.Register(&testToolModule{
 		name:  "memory",
@@ -44,11 +45,7 @@ func TestEngine_HandleToolCall_RememberFact(t *testing.T) {
 		exec: func(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
 			fact, _ := args["fact"].(string)
 			emb, _ := callCtx.LLM.GenerateEmbedding(ctx, fact)
-			_ = callCtx.DB.SaveMemory(models.Memory{
-				UserID:    callCtx.ActorID(),
-				Fact:      fact,
-				Embedding: pgvector.NewVector(emb),
-			})
+			saved = models.TopicMemory{UserID: callCtx.ActorID(), Fact: fact, Embedding: pgvector.NewVector(emb)}
 			return "Saved fact!", nil
 		},
 	})
@@ -61,17 +58,14 @@ func TestEngine_HandleToolCall_RememberFact(t *testing.T) {
 	}
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), "I like cats").Return([]float32{0.1, 0.2}, nil)
-	dbMock.EXPECT().SaveMemory(gomock.Any()).DoAndReturn(func(mem models.Memory) error {
-		assert.Equal(t, "user1", mem.UserID)
-		assert.Equal(t, "I like cats", mem.Fact)
-		assert.Equal(t, pgvector.NewVector([]float32{0.1, 0.2}), mem.Embedding)
-		return nil
-	})
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Saved fact!"}, nil)
 
 	res, err := engine.handleToolCall(context.Background(), msg, nil, "system", toolCall)
 	require.NoError(t, err)
 	assert.Equal(t, "Saved fact!", res)
+	assert.Equal(t, "user1", saved.UserID)
+	assert.Equal(t, "I like cats", saved.Fact)
+	assert.Equal(t, pgvector.NewVector([]float32{0.1, 0.2}), saved.Embedding)
 }
 
 func TestEngine_HandleToolCall_ReadEmail(t *testing.T) {

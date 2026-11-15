@@ -206,7 +206,7 @@ func TestProcessMessage_TextMessage(t *testing.T) {
 
 	// Mock DB calls for history and memories
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
-	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.Memory{}, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
 	
 	llmResponse := &llm.Response{
 		Text: "Hello there!",
@@ -240,7 +240,7 @@ func TestProcessMessage_WhatsApp_TextDocument(t *testing.T) {
 	twMock.EXPECT().DownloadMedia(gomock.Any(), "https://api.twilio.com/media/doc123").Return([]byte(docContent), nil).Times(1)
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
-	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.Memory{}, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
 
 	llmResponse := &llm.Response{
 		Text: "Checklist received and scheduled!",
@@ -280,7 +280,7 @@ func TestProcessMessage_WhatsApp_PDFDocument(t *testing.T) {
 	twMock.EXPECT().DownloadMedia(gomock.Any(), "https://api.twilio.com/media/pdf123").Return(pdfBytes, nil).Times(1)
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
-	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.Memory{}, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
 
 	llmResponse := &llm.Response{
 		Text: "Document analyzed!",
@@ -382,7 +382,7 @@ func TestProcessMessage_ContentBlocked_RetrySuccess(t *testing.T) {
 	}
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
-	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.Memory{}, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
 
 	// 1st call fails with ContentBlockedError
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), "תזכיר לי ב18 לנקות את השואב", gomock.Any(), gomock.Any()).
@@ -417,7 +417,7 @@ func TestProcessMessage_ContentBlocked_PersistentError(t *testing.T) {
 	}
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
-	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.Memory{}, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
 
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), "some blocked text without numbers", gomock.Any(), gomock.Any()).
 		Return(nil, &llm.ContentBlockedError{BlockReason: "SAFETY"}).Times(1)
@@ -650,7 +650,7 @@ func TestProcessMessage_PhotoDataStrippedFromRedis(t *testing.T) {
 	userID := "user-photo-strip"
 	photo := []byte("fake-photo-data-bytes-for-receipt")
 
-	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
 	tgMock.EXPECT().GetFile(gomock.Any(), "photo-123").Return("path/to/photo.jpg", nil)
 	tgMock.EXPECT().DownloadFile(gomock.Any(), "path/to/photo.jpg").Return(photo, nil)
@@ -819,7 +819,7 @@ func TestProcessMessage_TwoTierToolScoping(t *testing.T) {
 
 	ctx := context.Background()
 
-	dbMock.EXPECT().SearchMemories(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
 	// Register baby and finance modules
 	reg := NewRegistry()

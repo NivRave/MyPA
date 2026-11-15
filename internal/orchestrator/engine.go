@@ -662,22 +662,12 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	// Search long-term semantic memory
 	embedding, err := e.llm.GenerateEmbedding(ctx, msg.Text)
 	if err == nil && len(embedding) > 0 {
-		var searchUserIDs []string
-		searchUserIDs = append(searchUserIDs, msg.UserID)
-		
-		// Find other family members
-		if user.FamilyGroup != "" {
-			familyUsers, err := e.db.GetUsersByFamilyGroup(user.FamilyGroup)
-			if err == nil {
-				for _, u := range familyUsers {
-					if u.PlatformID != msg.UserID {
-						searchUserIDs = append(searchUserIDs, u.PlatformID)
-					}
-				}
-			}
+		// P2-4: single memory store. Visibility (own personal + family-shared) is enforced by
+		// the repository's tenant filter, so no per-member user ID list is needed.
+		memories, searchErr := e.db.SearchSimilarMemories(ctx, msg.UserID, user.FamilyGroup, pgvector.NewVector(embedding), 5)
+		if searchErr != nil {
+			slog.Warn("memory retrieval failed; continuing without memories", "user_id", msg.UserID, "error", searchErr)
 		}
-
-		memories, _ := e.db.SearchMemories(searchUserIDs, pgvector.NewVector(embedding), 5)
 		if len(memories) > 0 {
 			var facts []string
 			for _, m := range memories {

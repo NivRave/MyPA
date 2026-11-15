@@ -173,14 +173,9 @@ func TestVectorSearch_ReturnsNearestFirst(t *testing.T) {
 	require.Len(t, got, 3)
 	assert.Equal(t, []string{"w=0.95", "w=0.70", "w=0.50"}, []string{got[0].Fact, got[1].Fact, got[2].Fact})
 
-	// Legacy v1 path (engine per-message retrieval) must order too.
-	for i, w := range weights {
-		require.NoError(t, client.SaveMemory(models.Memory{
-			UserID: "user_o", Scope: "personal", Fact: fmt.Sprintf("v1 w=%.2f", w), Embedding: mixVec(w, int64(200+i)),
-		}))
-	}
-	legacy, err := client.SearchMemories([]string{"user_o"}, mixVec(1.0, 0), 1)
+	// The engine's retrieval entry point (Client.SearchSimilarMemories) orders too.
+	top, err := client.SearchSimilarMemories(ctx, "user_o", "fam_o", mixVec(1.0, 0), 1)
 	require.NoError(t, err)
-	require.Len(t, legacy, 1)
-	assert.Equal(t, "v1 w=0.95", legacy[0].Fact)
+	require.Len(t, top, 1)
+	assert.Equal(t, "w=0.95", top[0].Fact)
 }

@@ -216,3 +216,30 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### D2-3.3 [DECIDE] 768-dim embeddings — skipped per owner default
 - Revisit after P2-4 (memory unification): one re-embedding migration could do both.
+
+---
+
+## P2-4 — Unify memory systems
+
+### D2-4.1 Migration mechanism
+- **Options:** (a) idempotent `INSERT … SELECT … WHERE NOT EXISTS` run on every startup; (b) one-shot script run manually; (c) versioned migration (P4-3 territory — goose isn't introduced yet).
+- **Chosen:** (a), in `db.NewClient` after `ApplyCustomIndexes`, **fatal on error**.
+- **Why / challenge:** (b) is easy to forget, and once this release ships nothing reads the legacy table — an unmigrated fact would silently vanish from the assistant's memory. Fatal-on-error is deliberate for the same reason. Cost: one anti-join per startup over a small table. When P4-3 introduces versioned migrations this becomes a one-time migration.
+
+### D2-4.2 Dedup key for already dual-written facts
+- `(user_id, fact)` exact match. The old `remember_fact` already dual-wrote most facts (always as topic `personal`, even family-scoped ones); those keep their existing v2 row. Rejected: matching on embedding similarity (expensive, fuzzy) or deleting/re-creating v2 rows (would lose pins/supersession).
+
+### D2-4.3 Family group for migrated rows
+- v1 rows have no family group (v1 family visibility was "any family member's user_id"). Taken from `users.family_group` via `LEFT JOIN`; users with no `users` row keep `''` (still visible to themselves).
+
+### D2-4.4 Remove the runtime legacy fallback
+- `SearchSimilarMemories` used to fall back to `memories` when v2 had 0 hits — and it passed the *family group name* as a user ID, so family-scoped legacy facts were never actually found. Removed; the startup migration replaces it.
+
+### D2-4.5 Port shape
+- Reused the existing `Client.SearchSimilarMemories(ctx, userID, familyGroup, emb, limit)` for the `DBClient` port instead of adding a new method (an initial `SearchSimilarTopicMemories` collided with an existing keyword-search helper and duplicated it). `SaveMemory`/`SearchMemories` removed from the port and from `db.Client`. Engine no longer needs `GetUsersByFamilyGroup` for retrieval — tenant visibility is the repo's job.
+
+### D2-4.6 `remember_fact` without a v2 repo
+- Now returns an error message instead of silently writing only to v1. In production the repo always resolves from `*db.Client`.
+
+### D2-4.7 Dropping the `memories` table
+- Not done in code (plan: "keep old table until verified"). **Owner action:** after confirming retrieval in production, `DROP TABLE memories;` and remove `models.Memory` from AutoMigrate (a P4-3 versioned migration is the right vehicle).
