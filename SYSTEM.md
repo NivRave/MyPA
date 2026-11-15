@@ -542,7 +542,7 @@ Primary queues are declared with dead-letter exchange bindings ensuring zero mes
 - **Dead-Letter Exchange (DLX):** Direct exchange `mypa.dlx` (`durable: true`, `autoDelete: false`).
 - **Primary Queue Bindings:** Declared with `x-dead-letter-exchange: mypa.dlx` and `x-dead-letter-routing-key: <queue>.dlq`.
 - **Dead-Letter Queues (DLQs):** Dedicated durable queues (`telegram.inbound.dlq`, `audit.events.dlq`) bound to `mypa.dlx` with routing keys matching their primary queue names plus `.dlq`.
-- **Consumer QoS:** Enforces `prefetchCount: 1` on consumers to guarantee fair dispatching across worker replicas.
+- **Consumer concurrency (*P2-8*):** `Qos(prefetch)` (`RABBITMQ_PREFETCH`, default 4) bounds deliveries in flight. Each delivery is routed by `consumeLoop` to a `keyedDispatcher` lane keyed by `source:userID` ([`keyed_dispatcher.go`](./internal/broker/keyed_dispatcher.go)): different users are processed in parallel, one user's messages strictly in arrival order. Lanes exist only while they have work. Retry backoff sleeps inside the lane's worker, so it delays only that user. Handler panics are converted to errors (normal retry/DLQ path) so a delivery can never stay unacked and pin a prefetch slot. Before reconnecting, in-flight work is drained so a redelivery never runs alongside its original. `ConsumeRaw` (audit-worker) uses a single lane (serial). amqp091-go `Ack`/`Nack`/`Reject` take the channel mutex, so concurrent settlement is safe. Note: a retried message is republished to the queue tail, so after a *failure* a user's later message can be processed before the retry (pre-existing).
 
 | Queue Name | Dead-Letter Queue | Producer | Consumer | Go Payload Struct | JSON Fields |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -691,6 +691,7 @@ The consumer loop guarantees resilient, bounded message processing:
 | `DATABASE_URL` | `database.url` | — | `orchestrator`, `audit-worker` | PostgreSQL connection string (`postgres://...`) |
 | `REDIS_URL` | `redis.url` | — | `orchestrator` | Redis connection string (`redis://redis:6379/0`) |
 | `RABBITMQ_URL` | `rabbitmq.url` | — | `gateway`, `orchestrator`, `audit-worker` | AMQP 0-9-1 URL (`amqp://...`) |
+| `RABBITMQ_PREFETCH` | `rabbitmq.prefetch` | `4` | `orchestrator` | Max concurrent conversation turns; users run in parallel, each user's messages in order (*P2-8*) |
 | `ENCRYPTION_KEY` | `encryption.key` | **Required** (orchestrator) | `orchestrator` (`internal/crypto`) | Primary secret for HKDF-SHA256 salted AES-256-GCM encryption at rest; orchestrator refuses to start if missing/placeholder. Dev fallback key only inside `go test` binaries |
 | `TELEGRAM_SECRET_TOKEN` | `telegram.secret_token` | Required if Telegram configured | `gateway` | Shared webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header using constant-time compare; also sent as `secret_token` in `setWebhook`. 1–256 chars `[A-Za-z0-9_-]`. Gateway refuses to start if missing while `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_URL` is set |
 | `TELEGRAM_WEBHOOK_URL` | `telegram.webhook_url` | `""` | `gateway` | Public URL of `/webhook/telegram`; when set, the gateway registers it via `setWebhook` on startup (requires `TELEGRAM_BOT_TOKEN`) |

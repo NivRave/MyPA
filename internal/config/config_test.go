@@ -40,6 +40,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "gemini-2.5-flash", cfg.Gemini.Model)
 	assert.Equal(t, "Sunday", cfg.Server.WeekStartDay)
 	assert.Equal(t, "Friday,Saturday", cfg.Server.WeekendDays)
+	assert.Equal(t, 4, cfg.RabbitMQ.Prefetch)
 }
 
 func TestLoad_EnvVars(t *testing.T) {

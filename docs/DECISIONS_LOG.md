@@ -295,3 +295,29 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### Incidental: flaky cross-tenant baby test (separate commit)
 - `TestSEC04_CrossTenant_BabyProfileAndCareLogs_Isolation` asserted the JSON response did not contain the substring `"120"` (the other family's 120 ml feeding). The response embeds nanosecond timestamps, and one run produced `…36.1200304` → false failure. Replaced with structural assertions on the parsed JSON (`logs_returned == 0`, no `recent_logs`, zero feedings/volume) — stricter, and clock-independent. Grepped for the same numeric-substring pattern elsewhere: none.
+
+---
+
+## P2-8 — Parallel users, ordered per user
+
+### D2-8.1 Concurrency model
+- **Options:** (a) N independent consumers on the queue (no per-user ordering — two messages from one user could race, corrupting chat history order); (b) consistent-hash exchange / per-user queues (broker-side ordering, heavy topology change); (c) single consumer, `Qos(N)`, in-process keyed lanes; (d) per-user mutex around the handler with one goroutine per delivery (orders by lock acquisition, which is *not* FIFO in Go).
+- **Chosen:** (c). FIFO per key is guaranteed by the lane's queue (unlike (d)); total concurrency is bounded by prefetch with no extra semaphore; no topology change. Revisit only if the orchestrator is scaled to multiple replicas (then (b), or keep one replica — see P4-4 ADR).
+
+### D2-8.2 Retry delay
+- **Options:** TTL'd retry queue dead-lettering back to the main queue (no sleeping goroutine, survives restarts); sleep inside the lane worker.
+- **Chosen:** sleep inside the lane worker (plan's second option): delays only that user, zero topology change, ≤ 1.4 s total. The TTL-queue approach is the better long-term design if retries grow longer — noted.
+
+### D2-8.3 Panics
+- Converted to handler errors (`callContained`) so the delivery is retried/dead-lettered. Merely recovering in the worker would leave the delivery unacked forever, permanently consuming a prefetch slot.
+
+### D2-8.4 Reconnect
+- On channel close the loop drains in-flight lanes before reconnecting, so a redelivered message never runs concurrently with its still-running original (P1-4's dedup claim would also catch it).
+
+### D2-8.5 Default prefetch = 4
+- A family assistant rarely has > 4 simultaneous turns; each turn may hold several Gemini/Google calls. Configurable via `RABBITMQ_PREFETCH`.
+
+### Verification
+- Unit: per-key FIFO with no overlap (200 tasks), cross-key independence, worker restart after drain, panic containment.
+- Integration (RabbitMQ testcontainer): slow user A doesn't delay user B; A's two messages stay ordered. Mutation check (all deliveries on one lane) fails as expected.
+- **Race detector:** no local C toolchain, so ran `go test -race` in a `golang:1.26` Linux container: dispatcher tests + orchestrator turn tests + a new 12-concurrent-users turn test (3 runs) — clean. CI does not run `-race` today → proposed for P5-3.

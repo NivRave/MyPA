@@ -93,7 +93,8 @@ func main() {
 	// 5. Initialize RabbitMQ Consumer
 	var consumer *broker.Consumer
 	for i := 0; i < 5; i++ {
-		consumer, err = broker.NewConsumer(cfg.RabbitMQ.URL, "telegram.inbound")
+		// Parallel across users, ordered per user; RABBITMQ_PREFETCH bounds concurrent turns (P2-8).
+		consumer, err = broker.NewConsumerWithOptions(cfg.RabbitMQ.URL, "telegram.inbound", broker.WithPrefetch(cfg.RabbitMQ.Prefetch))
 		if err == nil {
 			break
 		}

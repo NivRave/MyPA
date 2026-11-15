@@ -53,7 +53,8 @@ type TelegramConfig struct {
 
 // RabbitMQConfig holds RabbitMQ connection settings.
 type RabbitMQConfig struct {
-	URL string `mapstructure:"url"`
+	URL      string `mapstructure:"url"`
+	Prefetch int    `mapstructure:"prefetch"` // max deliveries in flight per consumer (P2-8)
 }
 
 // RedisConfig holds Redis connection settings.
@@ -108,6 +109,7 @@ func Load() (*Config, error) {
 	v.SetDefault("server.proxy_port", 8000)
 	v.SetDefault("server.default_timezone", "UTC")
 	v.SetDefault("server.week_start_day", "Sunday")
+	v.SetDefault("rabbitmq.prefetch", 4)
 	v.SetDefault("server.weekend_days", "Friday,Saturday")
 	v.SetDefault("gemini.model", "gemini-2.5-flash")
 
@@ -139,6 +141,7 @@ func Load() (*Config, error) {
 		"TELEGRAM_BOT_TOKEN":    "telegram.bot_token",
 		"TELEGRAM_WEBHOOK_URL":  "telegram.webhook_url",
 		"RABBITMQ_URL":          "rabbitmq.url",
+		"RABBITMQ_PREFETCH":     "rabbitmq.prefetch",
 		"REDIS_URL":             "redis.url",
 		"DATABASE_URL":          "database.url",
 		"GEMINI_API_KEY":        "gemini.api_key",
