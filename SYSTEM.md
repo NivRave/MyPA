@@ -101,7 +101,10 @@ mypa/
 │   ├── gateway/main.go             # Webhook ingestion HTTP service (:8080)
 │   ├── orchestrator/main.go        # LLM engine, ToolRegistry, EventBus, OAuth & GraphQL server (:8081)
 │   ├── proxy/main.go               # Unified reverse proxy (:8000)
-│   └── audit-worker/main.go        # Async RabbitMQ telemetry consumer & 30-day session archiver
+│   ├── audit-worker/main.go        # Async RabbitMQ telemetry consumer & 30-day session archiver
+│   └── devtools/listmodels/        # Dev-only utility (lists Gemini models); not in any image
+├── scripts/clean.{ps1,sh}          # Remove local build artefacts (bin/, root *.exe/*.test, coverage)
+├── docs/                           # REMEDIATION_PLAN.md, DECISIONS_LOG.md, adr/ (architecture decisions); reviews/ is gitignored
 ├── internal/
 │   ├── audio/                      # Groq Whisper API client (`whisper-large-v3`) for voice transcription
 │   ├── broker/                     # RabbitMQ AMQP 0-9-1 `Publisher` and `Consumer`

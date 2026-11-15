@@ -525,3 +525,23 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 - Recommendation in the ADR: (1) one binary with a `--role` flag (default `all`) replacing proxy+gateway+orchestrator, packages unchanged; (2) keep RabbitMQ for now (P1-4/P2-8 removed the correctness arguments for switching); if it is replaced later, prefer River (transactional enqueue, in backups, periodic jobs with leader election) **with an explicit per-user ordering guard**, because open-source River has no per-key FIFO; Redis Streams is the smaller-change alternative.
 - Challenge noted: the gateway's ingress isolation only matters during orchestrator restarts (seconds), which Telegram covers with its own webhook retries.
 - Verification: documentation only; no code changed, so the P4-3 build/test run applies unchanged.
+
+## P5-1 — Remove stray files
+
+### D5-1.1 What was deleted
+- Untracked: `tmp_orch.exe`, `graph.test.exe`, `test_db.exe`, `ngrok.exe` (~143 MB; ngrok runs in its compose container since P3-5), `bin/` (stale `gateway/orchestrator/proxy.exe`).
+- **Plan premise partly wrong:** `coverage` (a Go cover profile from August) was **tracked**, not untracked — removed with `git rm` and now gitignored (`/coverage`, `/bin/`).
+- `_test_oauth.go` deleted: it printed an auth URL for hard-coded fake credentials; `internal/calendar` tests cover `NewOAuthConfig`.
+
+### D5-1.2 `_list_models.go` → `cmd/devtools/listmodels`
+- Options: delete; keep as `_`-file; **move to `cmd/devtools/listmodels/main.go`** (chosen).
+- Go ignores files starting with `_`, so it had never been vetted — and indeed it **no longer compiled** (`Models.List` now returns `(Page, error)` in genai v1.67). Moved and rewritten with the `Models.All` iterator; it is now covered by `go vet ./...` and `go build ./...`. Listing available models is genuinely useful when changing `GEMINI_MODEL`. Not added to the Dockerfile.
+
+### D5-1.3 REVIEW.md stays private
+- Moved to `docs/reviews/2026-11-03-review.md` as planned, but `.gitignore` deliberately listed `REVIEW.md` under "audit reports", so `docs/reviews/` is now gitignored too rather than committing a 57 KB security review. Owner can un-ignore it if the review should be versioned.
+- `.agents/teamwork/` left untouched (pre-agreed).
+
+### D5-1.4 Clean script instead of `make clean`
+- Options: Makefile `clean` target; Taskfile; a Go program; **`scripts/clean.ps1` + `scripts/clean.sh`** (chosen).
+- `make` is not installed on the owner's Windows machine, so a Makefile would be documentation, not a tool. A Go program for `rm -rf` is overkill. Two ~15-line scripts (PowerShell for Windows, POSIX sh for CI/Git Bash) with the same target list; both were exercised against probe files and leave sources untouched. `scripts/` and `coverage` added to `.dockerignore`.
+- Added `.gitattributes` (`*.sh text eol=lf`): with `core.autocrlf=true` a checked-out `clean.sh` would get CRLF and fail on `set -eu\r`.

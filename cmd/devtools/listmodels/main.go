@@ -1,3 +1,6 @@
+// Command listmodels prints the Gemini models available to GEMINI_API_KEY (read from the
+// environment or a local .env). Developer utility: `go run ./cmd/devtools/listmodels`.
+// Not built into any container image.
 package main
 
 import (
@@ -18,25 +21,15 @@ func main() {
 	}
 
 	ctx := context.Background()
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey: apiKey,
-	})
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: apiKey})
 	if err != nil {
 		log.Fatalf("failed to create client: %v", err)
 	}
 
-	// List models
-	pager := client.Models.List(ctx, nil)
-	for {
-		models, err := pager.NextPage()
+	for m, err := range client.Models.All(ctx) {
 		if err != nil {
 			log.Fatalf("failed to list models: %v", err)
 		}
-		if len(models) == 0 {
-			break
-		}
-		for _, m := range models {
-			fmt.Println(m.Name)
-		}
+		fmt.Println(m.Name)
 	}
 }

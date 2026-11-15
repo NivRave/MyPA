@@ -304,6 +304,8 @@ docker-compose build
 go test -v ./tests/...
 ```
 
+To remove local build artefacts (root `*.exe`/`*.test`, `bin/`, coverage files): `powershell -File scripts/clean.ps1` (Windows) or `sh scripts/clean.sh`. Build outputs belong in `bin/` (gitignored).
+
 ---
 
 ## Services
@@ -337,6 +339,7 @@ dashboard/                  # Next.js 16 (React 19) Web Control Dashboard (App R
     shared/                 # Multi-user family spaces & shared reminders console
 cmd/
   audit-worker/             # Asynchronous audit logging worker
+  devtools/listmodels/      # Dev utility: list Gemini models for GEMINI_API_KEY (not containerized)
   gateway/                  # Telegram & WhatsApp webhook ingestion service
   orchestrator/             # LLM reasoning, domain modules, GraphQL & scheduler service
   proxy/                    # Unified reverse proxy & API gateway
