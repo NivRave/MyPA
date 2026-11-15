@@ -518,3 +518,10 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### D4-3.6 Dependency bumps from `go mod tidy`
 - Adding goose raised shared transitive deps via MVS (x/crypto 0.54→0.58, x/net, x/sys, pgx 5.10→5.11, testify 1.11→1.12, otel 1.44→1.47, grpc 1.83→1.84, …). All minor/patch; full test suite + compose build pass. Not pinned back: MVS requires them and they include security-relevant x/crypto/x/net updates.
+
+## P4-4 — Service topology (ADR only)
+
+- Written as [`docs/adr/0001-service-topology.md`](adr/0001-service-topology.md); **nothing implemented** (pre-agreed).
+- Recommendation in the ADR: (1) one binary with a `--role` flag (default `all`) replacing proxy+gateway+orchestrator, packages unchanged; (2) keep RabbitMQ for now (P1-4/P2-8 removed the correctness arguments for switching); if it is replaced later, prefer River (transactional enqueue, in backups, periodic jobs with leader election) **with an explicit per-user ordering guard**, because open-source River has no per-key FIFO; Redis Streams is the smaller-change alternative.
+- Challenge noted: the gateway's ingress isolation only matters during orchestrator restarts (seconds), which Telegram covers with its own webhook retries.
+- Verification: documentation only; no code changed, so the P4-3 build/test run applies unchanged.
