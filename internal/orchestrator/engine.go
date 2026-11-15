@@ -409,6 +409,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	if err != nil || user == nil {
 		return e.handleUnauthenticatedUser(ctx, msg)
 	}
+	ctx = withTurnUser(ctx, user) // P2-7: resolved once; tool calls reuse it
 
 	// Interactive confirmation gate redemption for staged privileged actions
 	trimmedText := strings.TrimSpace(msg.Text)
@@ -1001,8 +1002,10 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 	
 	// Delegate to modular ToolRegistry if registered
 	if e.toolRegistry != nil {
-		var user *models.User
-		if e.db != nil {
+		// P2-7: reuse the user resolved at the start of the turn; look it up only for callers
+		// outside a turn (direct invocations, tests).
+		user := turnUser(ctx)
+		if user == nil && e.db != nil {
 			user, _ = e.db.GetUser(msg.UserID)
 		}
 		callCtx := e.buildCallContext(ctx, user, msg)

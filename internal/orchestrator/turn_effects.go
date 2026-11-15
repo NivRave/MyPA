@@ -66,6 +66,19 @@ func (fx *turnEffects) any() bool { return fx != nil && fx.happened.Load() }
 var readOnlyBuiltinTools = map[string]bool{
 	"get_current_time": true,
 }
+// turnUserKey carries the user resolved once at the start of a turn (P2-7), so tool calls don't
+// each re-query the database for the same row.
+type turnUserKey struct{}
+
+func withTurnUser(ctx context.Context, u *models.User) context.Context {
+	return context.WithValue(ctx, turnUserKey{}, u)
+}
+
+func turnUser(ctx context.Context) *models.User {
+	u, _ := ctx.Value(turnUserKey{}).(*models.User)
+	return u
+}
+
 // inboundClaim is the dedup claim for one inbound message (zero value = no claim held).
 type inboundClaim struct {
 	store *state.Store

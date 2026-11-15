@@ -277,3 +277,21 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### D2-6.5 Static text edits
 - The instruction text is preserved, re-grouped. Two wording changes: the JSON-summarizing rule no longer names specific tools (it applies to all), and a new line "Only call tools that are available to you in this conversation turn."
+
+---
+
+## P2-7 — Resolve user once per turn
+
+### D2-7.1 Carrier
+- **Options:** (a) context value set after the pre-auth lookup; (b) thread `*models.User` through `handleToolCalls` → `executeToolsConcurrently` → `executeSingleTool` signatures; (c) a per-turn struct (merging `TurnSecurityState`/`turnEffects`).
+- **Chosen:** (a), next to the other per-turn context state (`turnEffects`).
+- **Why / challenge:** (b) is more explicit but touches every signature in the tool loop and dozens of test call sites, with P4-1 about to restructure exactly that code. (c) is the right end state — noted for P4-1 (one `turnState` instead of three context keys). A fallback `GetUser` remains for calls outside a turn (tests, direct use) so behaviour is unchanged there.
+
+### D2-7.2 Staleness
+- A user's role/family group changing mid-turn is not observed until the next turn. Turns last seconds to minutes; authorization-critical paths that span turns (e.g. `CONFIRM RESTORE`) re-check on their own turn. Accepted.
+
+### Verification
+- Mutation check: without `withTurnUser`, a 3-tool turn made 4 `GetUser` calls; with it, 1.
+
+### Incidental: flaky cross-tenant baby test (separate commit)
+- `TestSEC04_CrossTenant_BabyProfileAndCareLogs_Isolation` asserted the JSON response did not contain the substring `"120"` (the other family's 120 ml feeding). The response embeds nanosecond timestamps, and one run produced `…36.1200304` → false failure. Replaced with structural assertions on the parsed JSON (`logs_returned == 0`, no `recent_logs`, zero feedings/volume) — stricter, and clock-independent. Grepped for the same numeric-substring pattern elsewhere: none.
