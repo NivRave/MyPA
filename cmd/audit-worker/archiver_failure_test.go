@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestEmpiricalChallenge_AuditArchiverFailureSafety_DirCreationError(t *testing.T) {
+func TestAuditArchiverFailureSafety_DirCreationError(t *testing.T) {
 	client, cleanup := setupTestDB(t)
 	defer cleanup()
 
@@ -43,7 +43,7 @@ func TestEmpiricalChallenge_AuditArchiverFailureSafety_DirCreationError(t *testi
 	assert.Equal(t, oldSessionID, check.ID)
 }
 
-func TestEmpiricalChallenge_AuditArchiverFailureSafety_FileCreateError(t *testing.T) {
+func TestAuditArchiverFailureSafety_FileCreateError(t *testing.T) {
 	client, cleanup := setupTestDB(t)
 	defer cleanup()
 

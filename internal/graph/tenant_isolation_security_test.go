@@ -20,7 +20,7 @@ import (
 // CHALLENGE 1: ADVERSARIAL ID PARSING & INJECTION
 // ============================================================================
 
-func TestAdversarial_M1C_MaliciousIDParsing(t *testing.T) {
+func TestAdversarial_MaliciousIDParsing(t *testing.T) {
 	client := getTestDBClient(t)
 	if client == nil {
 		t.Skip("Database required for full resolver test")
@@ -140,7 +140,7 @@ func TestAdversarial_M1C_MaliciousIDParsing(t *testing.T) {
 // CHALLENGE 2: CROSS-TENANT ISOLATION & ADVERSARIAL ACCESS
 // ============================================================================
 
-func TestAdversarial_M1C_CrossTenantIsolation_Mutations(t *testing.T) {
+func TestAdversarial_CrossTenantIsolation_Mutations(t *testing.T) {
 	client := getTestDBClient(t)
 	if client == nil {
 		t.Skip("Database required for full resolver test")
@@ -279,7 +279,7 @@ func TestAdversarial_M1C_CrossTenantIsolation_Mutations(t *testing.T) {
 	})
 }
 
-func TestAdversarial_M1C_CrossTenantIsolation_Queries(t *testing.T) {
+func TestAdversarial_CrossTenantIsolation_Queries(t *testing.T) {
 	client := getTestDBClient(t)
 	if client == nil {
 		t.Skip("Database required for full resolver test")
@@ -420,7 +420,7 @@ func TestAdversarial_M1C_CrossTenantIsolation_Queries(t *testing.T) {
 // CHALLENGE 2B: IDOR ON RECORD MUTATIONS (Cross-Tenant Record Modification)
 // ============================================================================
 
-func TestAdversarial_M1C_CrossTenant_RecordIDOR(t *testing.T) {
+func TestAdversarial_CrossTenant_RecordIDOR(t *testing.T) {
 	client := getTestDBClient(t)
 	if client == nil {
 		t.Skip("Database required for full resolver test")
@@ -615,7 +615,7 @@ func TestAdversarial_M1C_CrossTenant_RecordIDOR(t *testing.T) {
 // CHALLENGE 2C: AUDIT SESSIONS & USER SESSIONS TENANT ISOLATION
 // ============================================================================
 
-func TestAdversarial_M1C_AuditSessions_TenantIsolation(t *testing.T) {
+func TestAdversarial_AuditSessions_TenantIsolation(t *testing.T) {
 	client := getTestDBClient(t)
 	if client == nil {
 		t.Skip("Database required for full resolver test")
@@ -740,7 +740,7 @@ func TestAdversarial_M1C_AuditSessions_TenantIsolation(t *testing.T) {
 // CHALLENGE 3: MUTATION EVENT EMISSION & SNAPSHOT DURABILITY
 // ============================================================================
 
-func TestAdversarial_M1C_MutationEventEmission_Snapshots(t *testing.T) {
+func TestAdversarial_MutationEventEmission_Snapshots(t *testing.T) {
 	client := getTestDBClient(t)
 	if client == nil {
 		t.Skip("Database required for full resolver test")

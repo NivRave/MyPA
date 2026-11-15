@@ -34,9 +34,9 @@ func (m *mockDummyModule) SystemPromptSection(ctx context.Context, callCtx CallC
 	return ""
 }
 
-// TestChallenge1_ToolDynamicDispatch verifies modular tools execute properly through
+// TestToolDynamicDispatch verifies modular tools execute properly through
 // e.toolRegistry.Execute and e.executeSingleTool.
-func TestChallenge1_ToolDynamicDispatch(t *testing.T) {
+func TestToolDynamicDispatch(t *testing.T) {
 	reg := NewRegistry()
 
 	var executedTools []string
@@ -101,9 +101,9 @@ func TestChallenge1_ToolDynamicDispatch(t *testing.T) {
 	})
 }
 
-// TestChallenge1_SEC09_InteractiveGate_UntrustedTurn verifies that all privileged meta-tools
+// TestSEC09_InteractiveGate_UntrustedTurn verifies that all privileged meta-tools
 // are strictly intercepted and staged in Redis during an untrusted turn.
-func TestChallenge1_SEC09_InteractiveGate_UntrustedTurn(t *testing.T) {
+func TestSEC09_InteractiveGate_UntrustedTurn(t *testing.T) {
 	mr, err := miniredis.Run()
 	require.NoError(t, err)
 	defer mr.Close()

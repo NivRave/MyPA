@@ -9,7 +9,7 @@ import (
 	"google.golang.org/genai"
 )
 
-func TestEmpiricalChallenge_ToolsSchemas(t *testing.T) {
+func TestToolsSchemas(t *testing.T) {
 	require.NotNil(t, CalendarEventTool, "CalendarEventTool must not be nil")
 	require.NotEmpty(t, CalendarEventTool.FunctionDeclarations, "FunctionDeclarations must not be empty")
 

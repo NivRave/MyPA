@@ -19,9 +19,9 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-// TestChallenge3_DoubleEscaping_TelegramPipeline simulates the full engine.sendMessage pipeline
+// TestDoubleEscaping_TelegramPipeline simulates the full engine.sendMessage pipeline
 // where markdown text is converted by markdown.ToTelegramHTML and then sent to tgClient.SendMessage.
-func TestChallenge3_DoubleEscaping_TelegramPipeline(t *testing.T) {
+func TestDoubleEscaping_TelegramPipeline(t *testing.T) {
 	var capturedPayload SendMessageRequest
 
 	mockTransport := roundTripperFunc(func(req *http.Request) (*http.Response, error) {

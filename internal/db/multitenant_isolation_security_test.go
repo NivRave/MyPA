@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEmpirical_MultiTenant_AdversarialSQLInjectionAndWildcards tests that adversarial
+// TestMultiTenant_AdversarialSQLInjectionAndWildcards tests that adversarial
 // tenant strings (wildcards %, empty "", SQL fragments ' OR 1=1 --) cannot bypass tenant boundaries
 // in any of the 8 database repositories.
-func TestEmpirical_MultiTenant_AdversarialSQLInjectionAndWildcards(t *testing.T) {
+func TestMultiTenant_AdversarialSQLInjectionAndWildcards(t *testing.T) {
 	client, cleanup := setupTestDB(t)
 	defer cleanup()
 
@@ -165,9 +165,9 @@ func TestEmpirical_MultiTenant_AdversarialSQLInjectionAndWildcards(t *testing.T)
 	}
 }
 
-// TestEmpirical_MultiTenant_EmptyScopeLeakVulnerability documents and empirically proves
+// TestMultiTenant_EmptyScopeLeakVulnerability documents and empirically proves
 // the SEC-04 fail-open vulnerability when callers omit familyGroup and userID (empty strings "").
-func TestEmpirical_MultiTenant_EmptyScopeLeakVulnerability(t *testing.T) {
+func TestMultiTenant_EmptyScopeLeakVulnerability(t *testing.T) {
 	client, cleanup := setupTestDB(t)
 	defer cleanup()
 
@@ -255,9 +255,9 @@ func TestEmpirical_MultiTenant_EmptyScopeLeakVulnerability(t *testing.T) {
 	t.Logf("SEC-04 Empirical Observation: AutomationRepo.ListAPIConnectors(\"\", \"\") returned %d rows (fails open)", len(leakedConns))
 }
 
-// TestEmpirical_MultiTenant_ConcurrentStress tests concurrent reads and writes across
+// TestMultiTenant_ConcurrentStress tests concurrent reads and writes across
 // 8 distinct tenants executing parallel operations across all 8 domain tables without cross-contamination.
-func TestEmpirical_MultiTenant_ConcurrentStress(t *testing.T) {
+func TestMultiTenant_ConcurrentStress(t *testing.T) {
 	client, cleanup := setupTestDB(t)
 	defer cleanup()
 

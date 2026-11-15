@@ -17,13 +17,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestChallenger1_Scale01_CacheHitMissAndTTL verifies:
+// TestScale01_CacheHitMissAndTTL verifies:
 // 1. After a cache miss, Redis stores ctx_prompt:<familyGroup>:<userID>:<module> with ~10-minute TTL.
 // 2. Subsequent calls return cached content without invoking module SystemPromptSection.
 // 3. Partial cache hits only invoke missing modules and re-populate the cache.
 // 4. Fallback to ActorID works when FamilyGroup is absent.
 // 5. Empty prompt sections are cached properly to prevent repetitive empty DB queries.
-func TestChallenger1_Scale01_CacheHitMissAndTTL(t *testing.T) {
+func TestScale01_CacheHitMissAndTTL(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()
 
@@ -126,14 +126,14 @@ func TestChallenger1_Scale01_CacheHitMissAndTTL(t *testing.T) {
 	assert.True(t, mr.Exists("ctx_prompt:actor_alone_99:actor_alone_99:baby"), "Must cache using ActorID when FamilyGroup is empty")
 }
 
-// TestChallenger1_Scale01_EventBusInvalidationStress verifies:
+// TestScale01_EventBusInvalidationStress verifies:
 // 1. Publishing MutationEvent topic "baby" evicts ctx_prompt:<familyGroup>:*:baby (every member) and ctx_prompt:<actorUserID>:*:baby.
 // 2. Unrelated tenant keys (e.g. fam_beta) are NOT evicted.
 // 3. Unrelated module keys (e.g. finance, house) are NOT evicted.
 // 4. Aliased topics (e.g. "calendar" -> "schedule" and "workspace_calendar") evict both mapped modules.
 // 5. Entity-level fallbacks (e.g. entity_type: "topic_memory") evict "memory".
 // 6. Topic case-insensitivity and whitespace trimming work robustly.
-func TestChallenger1_Scale01_EventBusInvalidationStress(t *testing.T) {
+func TestScale01_EventBusInvalidationStress(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()
 
@@ -207,13 +207,13 @@ func TestChallenger1_Scale01_EventBusInvalidationStress(t *testing.T) {
 	assert.True(t, mr.Exists("ctx_prompt:fam_alpha:u_alpha:house"), "house must still exist")
 }
 
-// TestChallenger1_Scale01_800msBoundedTimeoutStress verifies:
+// TestScale01_800msBoundedTimeoutStress verifies:
 // 1. When slow/hanging modules sleep for 2+ seconds or block indefinitely,
 //    CombinedSystemPrompt unblocks and returns within ~800ms-1100ms.
 // 2. Prompt contains outputs from fast modules.
 // 3. Prompt safely omits timed-out modules without panicking or stalling.
 // 4. Timed-out modules are NOT cached to Redis.
-func TestChallenger1_Scale01_800msBoundedTimeoutStress(t *testing.T) {
+func TestScale01_800msBoundedTimeoutStress(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()
 
@@ -328,12 +328,12 @@ func (m *mockFailingPromptCache) InvalidateFamilyPromptSections(ctx context.Cont
 	return 0, nil
 }
 
-// TestChallenger1_Scale01_RedisFailureDegradation verifies:
+// TestScale01_RedisFailureDegradation verifies:
 // 1. When Redis MGet fails with network errors, CombinedSystemPrompt degrades to live evaluation.
 // 2. When Redis Set fails (e.g. OOM or read-only replica), CombinedSystemPrompt still returns cleanly.
 // 3. When Redis Invalidate fails, EventBus does not crash or abort mutation publishing.
 // 4. When miniredis is abruptly closed mid-operation, no panic occurs.
-func TestChallenger1_Scale01_RedisFailureDegradation(t *testing.T) {
+func TestScale01_RedisFailureDegradation(t *testing.T) {
 	callCtx := CallContext{
 		User: &models.User{FamilyGroup: "fam_deg_1", PlatformID: "u_deg"},
 	}
@@ -386,10 +386,10 @@ func TestChallenger1_Scale01_RedisFailureDegradation(t *testing.T) {
 	assert.Equal(t, "Live evaluation content is active", promptAfterCrash)
 }
 
-// TestChallenger1_Scale01_ConcurrencyAndRaceStress executes intense concurrent
+// TestScale01_ConcurrencyAndRaceStress executes intense concurrent
 // prompt generations, cache invalidations, and module queries across 40 goroutines
 // under `go test -race` to prove zero data races or deadlocks.
-func TestChallenger1_Scale01_ConcurrencyAndRaceStress(t *testing.T) {
+func TestScale01_ConcurrencyAndRaceStress(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()
 

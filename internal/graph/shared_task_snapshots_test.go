@@ -11,12 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEmpirical_M1C_CompleteSharedTask_Snapshots verifies:
+// TestCompleteSharedTask_Snapshots verifies:
 // 1. BeforeJSON captures the pre-completion state (IsCompleted == false).
 // 2. AfterJSON captures the completed state (IsCompleted == true).
 // 3. Completing a non-existent task returns error and emits NO event.
 // 4. Cross-tenant attempt to complete another family's task returns error and emits NO event.
-func TestEmpirical_M1C_CompleteSharedTask_Snapshots(t *testing.T) {
+func TestCompleteSharedTask_Snapshots(t *testing.T) {
 	client := getTestDBClient(t)
 	if client == nil {
 		t.Skip("Database required for full resolver test")

@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestEmpiricalChallenge_DockerComposeNetworkIsolation(t *testing.T) {
+func TestDockerComposeNetworkIsolation(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
 
@@ -62,7 +62,7 @@ func TestEmpiricalChallenge_DockerComposeNetworkIsolation(t *testing.T) {
 	t.Logf("Total verified 127.0.0.1 port bindings: %d", totalPortBindingsChecked)
 }
 
-func TestEmpiricalChallenge_DockerComposeEnvInterpolation(t *testing.T) {
+func TestDockerComposeEnvInterpolation(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
 

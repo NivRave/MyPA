@@ -28,13 +28,13 @@ import (
 	"google.golang.org/genai"
 )
 
-// TestChallenger2_Full13Modules_TokenReduction verifies SCALE-01:
+// TestFull13Modules_TokenReduction verifies SCALE-01:
 // 1. All 13 production domain modules register >= 67 total tool declarations.
 // 2. CoreDeclarations() strictly returns the 8 Tier 1 core tools.
 // 3. SelectDeclarations for DomainBaby injects exactly 13 tools (8 core + 5 baby).
 // 4. Achieves >= 80% token reduction (13 / 67 tools).
 // 5. Ambient default selection (no matched domain) injects only Core + Calendar + Tasks tools.
-func TestChallenger2_Full13Modules_TokenReduction(t *testing.T) {
+func TestFull13Modules_TokenReduction(t *testing.T) {
 	reg := orchestrator.NewRegistry()
 
 	// Register all 13 production modules
@@ -147,12 +147,12 @@ func (t *testRewriteTransport) RoundTrip(req *http.Request) (*http.Response, err
 	return http.DefaultTransport.RoundTrip(req)
 }
 
-// TestChallenger2_LLMChat_WithActiveTools_BypassesStaticTools verifies that:
+// TestLLMChat_WithActiveTools_BypassesStaticTools verifies that:
 // 1. When WithActiveTools is set in context, Client.Chat passes ONLY the scoped tools to Gemini,
 //    bypassing the static 28-tool CalendarEventTool.
 // 2. When WithNoTools is set in context, Client.Chat passes tools: nil.
 // 3. When neither is set, Client.Chat falls back to the static tools.
-func TestChallenger2_LLMChat_WithActiveTools_BypassesStaticTools(t *testing.T) {
+func TestLLMChat_WithActiveTools_BypassesStaticTools(t *testing.T) {
 	var lastCapturedReq capturedRequest
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

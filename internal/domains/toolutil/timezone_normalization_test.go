@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEmpirical_TimezoneNormalization_AsiaJerusalem tests parsing naive dates/times
+// TestTimezoneNormalization_AsiaJerusalem tests parsing naive dates/times
 // in Asia/Jerusalem during both Standard Time (UTC+2) and Daylight Saving Time (UTC+3).
-func TestEmpirical_TimezoneNormalization_AsiaJerusalem(t *testing.T) {
+func TestTimezoneNormalization_AsiaJerusalem(t *testing.T) {
 	locJerusalem, err := time.LoadLocation("Asia/Jerusalem")
 	require.NoError(t, err)
 
@@ -61,9 +61,9 @@ func TestEmpirical_TimezoneNormalization_AsiaJerusalem(t *testing.T) {
 	assert.Equal(t, 22, dateOnlyTime.Hour(), "Midnight in Jerusalem (UTC+2) is 22:00 previous day in UTC")
 }
 
-// TestEmpirical_TimezoneNormalization_AmericaNewYork tests parsing naive dates/times
+// TestTimezoneNormalization_AmericaNewYork tests parsing naive dates/times
 // in America/New_York during both Standard Time (EST, UTC-5) and Daylight Saving Time (EDT, UTC-4).
-func TestEmpirical_TimezoneNormalization_AmericaNewYork(t *testing.T) {
+func TestTimezoneNormalization_AmericaNewYork(t *testing.T) {
 	locNY, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
 
@@ -93,9 +93,9 @@ func TestEmpirical_TimezoneNormalization_AmericaNewYork(t *testing.T) {
 	assert.Equal(t, 5, dateOnlyTime.Hour(), "Midnight in NY (UTC-5) is 05:00 UTC same day")
 }
 
-// TestEmpirical_TimezoneNormalization_ExplicitOffsetPrecedence verifies that when
+// TestTimezoneNormalization_ExplicitOffsetPrecedence verifies that when
 // an explicit offset is provided in the string, it overrides the location parameter.
-func TestEmpirical_TimezoneNormalization_ExplicitOffsetPrecedence(t *testing.T) {
+func TestTimezoneNormalization_ExplicitOffsetPrecedence(t *testing.T) {
 	locNY, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
 
@@ -121,8 +121,8 @@ func TestEmpirical_TimezoneNormalization_ExplicitOffsetPrecedence(t *testing.T) 
 	assert.Equal(t, 9, t3.Hour(), "Explicit Z must yield 09:00 UTC")
 }
 
-// TestEmpirical_TimezoneNormalization_EdgeCases verifies nil location and error handling.
-func TestEmpirical_TimezoneNormalization_EdgeCases(t *testing.T) {
+// TestTimezoneNormalization_EdgeCases verifies nil location and error handling.
+func TestTimezoneNormalization_EdgeCases(t *testing.T) {
 	// Nil location defaults to UTC
 	t1, err := ParseTimeInLocation("2026-11-08 09:00:00", nil)
 	require.NoError(t, err)

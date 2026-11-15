@@ -27,13 +27,13 @@ import (
 // STRESS SUITE 1: CONCURRENT TOOL EXECUTION (errgroup, 10-50 parallel calls)
 // ============================================================================
 
-// TestEmpirical_ExecuteToolsConcurrently_50ToolsOrderAlignment tests 50 parallel
+// TestExecuteToolsConcurrently_50ToolsOrderAlignment tests 50 parallel
 // tool calls with varied completion times, errors, and panics.
 // It verifies:
 // 1. Strict 1:1 order alignment (funcCalls[i] and funcResponses[i] match toolCalls[i]).
 // 2. No deadlocks under heavy parallel load.
 // 3. Multi-tool panic recovery.
-func TestEmpirical_ExecuteToolsConcurrently_50ToolsOrderAlignment(t *testing.T) {
+func TestExecuteToolsConcurrently_50ToolsOrderAlignment(t *testing.T) {
 	engine, _, _, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
@@ -112,9 +112,9 @@ func TestEmpirical_ExecuteToolsConcurrently_50ToolsOrderAlignment(t *testing.T) 
 	t.Logf("50 parallel tools completed in %v with strict order alignment", elapsed)
 }
 
-// TestEmpirical_ExecuteToolsConcurrently_SingleToolPanic tests single tool execution (n=1).
+// TestExecuteToolsConcurrently_SingleToolPanic tests single tool execution (n=1).
 // Adversarial challenge: Does n=1 safely catch panics like n>1?
-func TestEmpirical_ExecuteToolsConcurrently_SingleToolPanic(t *testing.T) {
+func TestExecuteToolsConcurrently_SingleToolPanic(t *testing.T) {
 	engine, _, _, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
@@ -162,9 +162,9 @@ func TestEmpirical_ExecuteToolsConcurrently_SingleToolPanic(t *testing.T) {
 	}
 }
 
-// TestEmpirical_ExecuteToolsConcurrently_MaxLimitRespected asserts that errgroup.Group
+// TestExecuteToolsConcurrently_MaxLimitRespected asserts that errgroup.Group
 // bounded limit (MaxConcurrentTools = 8) is strictly respected under heavy load.
-func TestEmpirical_ExecuteToolsConcurrently_MaxLimitRespected(t *testing.T) {
+func TestExecuteToolsConcurrently_MaxLimitRespected(t *testing.T) {
 	engine, _, _, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
@@ -218,9 +218,9 @@ func TestEmpirical_ExecuteToolsConcurrently_MaxLimitRespected(t *testing.T) {
 	assert.LessOrEqual(t, maxObserved, int64(MaxConcurrentTools), "Active concurrent tool executions must never exceed MaxConcurrentTools (8)")
 }
 
-// TestEmpirical_ExecuteToolsConcurrently_ContextCancellationMidFlight tests context cancellation
+// TestExecuteToolsConcurrently_ContextCancellationMidFlight tests context cancellation
 // while 30 parallel tools are in progress.
-func TestEmpirical_ExecuteToolsConcurrently_ContextCancellationMidFlight(t *testing.T) {
+func TestExecuteToolsConcurrently_ContextCancellationMidFlight(t *testing.T) {
 	engine, _, _, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
@@ -272,8 +272,8 @@ func TestEmpirical_ExecuteToolsConcurrently_ContextCancellationMidFlight(t *test
 	}
 }
 
-// TestEmpirical_ExecuteToolsConcurrently_PreCancelledContext tests pre-cancelled context.
-func TestEmpirical_ExecuteToolsConcurrently_PreCancelledContext(t *testing.T) {
+// TestExecuteToolsConcurrently_PreCancelledContext tests pre-cancelled context.
+func TestExecuteToolsConcurrently_PreCancelledContext(t *testing.T) {
 	engine, _, _, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
@@ -296,10 +296,10 @@ func TestEmpirical_ExecuteToolsConcurrently_PreCancelledContext(t *testing.T) {
 // STRESS SUITE 2: BOUNDED RECURSION DEPTH (handleToolCalls >= 8)
 // ============================================================================
 
-// TestEmpirical_BoundedRecursion_TerminatesAtDepth8 tests that even if the LLM
+// TestBoundedRecursion_TerminatesAtDepth8 tests that even if the LLM
 // persistently returns tool calls, the engine strictly stops after iteration 8
 // and enforces WithNoTools(ctx).
-func TestEmpirical_BoundedRecursion_TerminatesAtDepth8(t *testing.T) {
+func TestBoundedRecursion_TerminatesAtDepth8(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -385,9 +385,9 @@ func TestEmpirical_BoundedRecursion_TerminatesAtDepth8(t *testing.T) {
 	assert.Equal(t, int64(8), atomic.LoadInt64(&toolCallCount), "Exactly 8 tool execution rounds must take place")
 }
 
-// TestEmpirical_BoundedRecursion_ImmediateHaltWhenDepthGTE8 tests calling handleToolCalls
+// TestBoundedRecursion_ImmediateHaltWhenDepthGTE8 tests calling handleToolCalls
 // with iteration >= 8 directly.
-func TestEmpirical_BoundedRecursion_ImmediateHaltWhenDepthGTE8(t *testing.T) {
+func TestBoundedRecursion_ImmediateHaltWhenDepthGTE8(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -424,10 +424,10 @@ func TestEmpirical_BoundedRecursion_ImmediateHaltWhenDepthGTE8(t *testing.T) {
 	assert.Equal(t, "Terminated at step 15.", res15)
 }
 
-// TestEmpirical_BoundedRecursion_StubbornLLMIgnoresNoTools tests what happens if an adversarial
+// TestBoundedRecursion_StubbornLLMIgnoresNoTools tests what happens if an adversarial
 // or misbehaving LLM returns ToolCalls during the terminal summary.
 // Verification: The engine MUST NOT continue recursing.
-func TestEmpirical_BoundedRecursion_StubbornLLMIgnoresNoTools(t *testing.T) {
+func TestBoundedRecursion_StubbornLLMIgnoresNoTools(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -456,9 +456,9 @@ func TestEmpirical_BoundedRecursion_StubbornLLMIgnoresNoTools(t *testing.T) {
 // STRESS SUITE 3: PROMPT CACHE CONCURRENCY & CONSISTENCY UNDER LOAD
 // ============================================================================
 
-// TestEmpirical_PromptCache_ThunderingHerd tests 100 simultaneous goroutines
+// TestPromptCache_ThunderingHerd tests 100 simultaneous goroutines
 // requesting CombinedSystemPrompt on a cold cache for the same familyGroup.
-func TestEmpirical_PromptCache_ThunderingHerd(t *testing.T) {
+func TestPromptCache_ThunderingHerd(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()
 
@@ -511,9 +511,9 @@ func TestEmpirical_PromptCache_ThunderingHerd(t *testing.T) {
 	t.Logf("Thundering herd: 100 concurrent callers completed with zero race or data inconsistency")
 }
 
-// TestEmpirical_PromptCache_SimultaneousMutationsAndReads stresses the prompt cache
+// TestPromptCache_SimultaneousMutationsAndReads stresses the prompt cache
 // with 50 readers, 25 EventBus invalidators, and dynamic module output updates simultaneously.
-func TestEmpirical_PromptCache_SimultaneousMutationsAndReads(t *testing.T) {
+func TestPromptCache_SimultaneousMutationsAndReads(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()
 
@@ -600,9 +600,9 @@ func TestEmpirical_PromptCache_SimultaneousMutationsAndReads(t *testing.T) {
 	t.Logf("Simultaneous mutations & reads: %d successful reads with 0 errors", atomic.LoadInt64(&readSuccesses))
 }
 
-// TestEmpirical_PromptCache_RedisFailureUnderConcurrency tests 50 concurrent callers
+// TestPromptCache_RedisFailureUnderConcurrency tests 50 concurrent callers
 // when Redis throws errors or connection failures.
-func TestEmpirical_PromptCache_RedisFailureUnderConcurrency(t *testing.T) {
+func TestPromptCache_RedisFailureUnderConcurrency(t *testing.T) {
 	callCtx := CallContext{
 		User: &models.User{FamilyGroup: "fam_fail_stress", PlatformID: "u_fail"},
 	}

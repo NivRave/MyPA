@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestEmpirical_TimezoneOffsetNormalization(t *testing.T) {
+func TestTimezoneOffsetNormalization(t *testing.T) {
 	t.Run("Asia_Jerusalem_StandardTime_Winter", func(t *testing.T) {
 		loc, err := time.LoadLocation("Asia/Jerusalem")
 		if err != nil {

@@ -545,3 +545,17 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 - Options: Makefile `clean` target; Taskfile; a Go program; **`scripts/clean.ps1` + `scripts/clean.sh`** (chosen).
 - `make` is not installed on the owner's Windows machine, so a Makefile would be documentation, not a tool. A Go program for `rm -rf` is overkill. Two ~15-line scripts (PowerShell for Windows, POSIX sh for CI/Git Bash) with the same target list; both were exercised against probe files and leave sources untouched. `scripts/` and `coverage` added to `.dockerignore`.
 - Added `.gitattributes` (`*.sh text eol=lf`): with `core.autocrlf=true` a checked-out `clean.sh` would get CRLF and fail on `set -eu\r`.
+
+## P5-2 — Behaviour-named tests
+
+### D5-2.1 Scope: files *and* function prefixes, but keep review IDs
+- Options: rename files only; rename files + strip agent-iteration prefixes from function names (chosen); also strip review-finding IDs.
+- 28 files renamed (e.g. `adversarial_m2a_challenger2_test.go` → `turn_engine_adversarial_test.go`, `cooldown_adversarial_iter2_test.go` → `cooldown_medication_classes_test.go`, `adversarial_sec01_test.go` → `auth_gate_security_test.go`); 74 test functions lost prefixes that only named the agent run (`TestChallenger2_`, `TestChallenge1_`, `TestChallenge2_/3_`, `TestEmpirical_`, `TestEmpiricalChallenge_`, `_M1C_`).
+- **Kept** review-finding IDs (`SEC01`, `SEC09`, `ARCH01`, `Scale01`, `bug03_lifecycle_test.go`): they trace a test to the security review finding it guards, which is behavioural information.
+
+### D5-2.2 No merges, no deletions
+- Exact-duplicate scan (normalized test bodies per package): **0 duplicates**, so nothing deleted.
+- Merging small files (e.g. the two timezone files) would need hand-written import unions for no behavioural gain; kept as separate behaviour-named files.
+
+### D5-2.3 Verification that no test case was lost
+- `go test -list '.*' ./...` before vs after: 612 = 612 entries; the 74 removed names map one-to-one onto the 74 added names under the prefix rules (checked as a bijection). Renames were byte-level regex substitutions (line endings preserved); `go vet` proves no collisions. Full test suite + compose build re-run.

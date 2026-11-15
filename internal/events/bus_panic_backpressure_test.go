@@ -12,11 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEmpirical_EventBus_PanicIsolationAndSubsequentExecution stress-tests that
+// TestEventBus_PanicIsolationAndSubsequentExecution stress-tests that
 // when an asynchronous handler panics ("simulated fatal subscriber failure"),
 // the worker pool intercepts the panic, logs the stack trace, and continues
 // processing subsequent events on that same worker without crashing or hanging.
-func TestEmpirical_EventBus_PanicIsolationAndSubsequentExecution(t *testing.T) {
+func TestEventBus_PanicIsolationAndSubsequentExecution(t *testing.T) {
 	// Worker count 2 so we test worker survivability
 	bus := NewEventBus(WithWorkerCount(2), WithQueueCapacity(100))
 	defer bus.Close()
@@ -70,12 +70,12 @@ func TestEmpirical_EventBus_PanicIsolationAndSubsequentExecution(t *testing.T) {
 	assert.Equal(t, int64(totalPanics), panicCount.Load(), "All 20 panic events must have triggered panic handler")
 }
 
-// TestEmpirical_EventBus_Backpressure1200EventsQueueSaturation verifies:
+// TestEventBus_Backpressure1200EventsQueueSaturation verifies:
 // 1. Queue capacity is bounded at 1024 (default).
 // 2. Scribing 1,200 events when the worker queue is saturated does NOT deadlock or crash.
 // 3. DroppedCount() strictly increments for all events exceeding capacity.
 // 4. Memory does not grow unboundedly (events are dropped non-blockingly).
-func TestEmpirical_EventBus_Backpressure1200EventsQueueSaturation(t *testing.T) {
+func TestEventBus_Backpressure1200EventsQueueSaturation(t *testing.T) {
 	// 1 worker, default capacity 1024
 	bus := NewEventBus(WithWorkerCount(1), WithQueueCapacity(1024))
 	defer bus.Close()
@@ -120,9 +120,9 @@ func TestEmpirical_EventBus_Backpressure1200EventsQueueSaturation(t *testing.T) 
 	close(releaseWorker)
 }
 
-// TestEmpirical_EventBus_ConcurrentMultipleSubscribersPanicsAndDrops tests concurrent publishers
+// TestEventBus_ConcurrentMultipleSubscribersPanicsAndDrops tests concurrent publishers
 // publishing to multiple async subscribers, some of which panic while others succeed.
-func TestEmpirical_EventBus_ConcurrentMultipleSubscribersPanicsAndDrops(t *testing.T) {
+func TestEventBus_ConcurrentMultipleSubscribersPanicsAndDrops(t *testing.T) {
 	bus := NewEventBus(WithWorkerCount(4), WithQueueCapacity(1024))
 	defer bus.Close()
 

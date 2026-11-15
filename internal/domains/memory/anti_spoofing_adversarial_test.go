@@ -24,10 +24,10 @@ type mockDBForMemory struct {
 	orchestrator.DBClient
 }
 
-// TestChallenge2_Memory_AntiSpoofing verifies that memory tools (remember_fact, save_topic_memory,
+// TestMemory_AntiSpoofing verifies that memory tools (remember_fact, save_topic_memory,
 // search_topic_memories, upsert_entity_profile) strictly use callCtx.ActorID() and callCtx.TenantFamilyGroup(),
 // preventing caller-controlled argument overrides from cross-tenant spoofing.
-func TestChallenge2_Memory_AntiSpoofing(t *testing.T) {
+func TestMemory_AntiSpoofing(t *testing.T) {
 	repo := newInMemoryRepo()
 	bus := events.NewEventBus()
 	receivedEvents := make(chan events.MutationEvent, 20)

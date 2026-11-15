@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEmpirical_Testcontainers_ConcurrentSingletonInitialization stress tests
+// TestTestcontainers_ConcurrentSingletonInitialization stress tests
 // simultaneous multi-threaded calls to GetPostgresDSN, GetRedisAddr, NewTestDB, and NewTestRedis.
-func TestEmpirical_Testcontainers_ConcurrentSingletonInitialization(t *testing.T) {
+func TestTestcontainers_ConcurrentSingletonInitialization(t *testing.T) {
 	const concurrency = 15
 	var wg sync.WaitGroup
 	ctx := context.Background()
@@ -53,10 +53,10 @@ func TestEmpirical_Testcontainers_ConcurrentSingletonInitialization(t *testing.T
 	}
 }
 
-// TestEmpirical_Testcontainers_CleanDatabaseTeardown assertions:
+// TestTestcontainers_CleanDatabaseTeardown assertions:
 // Validates that parallel isolated databases (CREATE DATABASE testdb_<uuid>)
 // drop cleanly on cleanup() with 0 orphaned databases and 0 lingering connections.
-func TestEmpirical_Testcontainers_CleanDatabaseTeardown(t *testing.T) {
+func TestTestcontainers_CleanDatabaseTeardown(t *testing.T) {
 	const numDatabases = 5
 	ctx := context.Background()
 
@@ -131,9 +131,9 @@ func TestEmpirical_Testcontainers_CleanDatabaseTeardown(t *testing.T) {
 	assert.Equal(t, int64(0), leakingConns, "Zero connection leaks allowed in pg_stat_activity for testdb_*")
 }
 
-// TestEmpirical_Testcontainers_Redis_SequentialIsolation verifies
+// TestTestcontainers_Redis_SequentialIsolation verifies
 // that sequential Redis test clients flush keys cleanly.
-func TestEmpirical_Testcontainers_Redis_SequentialIsolation(t *testing.T) {
+func TestTestcontainers_Redis_SequentialIsolation(t *testing.T) {
 	const numClients = 5
 	for i := 0; i < numClients; i++ {
 		rdb, cleanup := NewTestRedis(t)

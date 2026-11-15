@@ -11,14 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEmpirical_M1C_VectorDimensionAndScanSafety stress-tests:
+// TestVectorDimensionAndScanSafety stress-tests:
 // 1. Saving topic memories without pre-computed embeddings (uninitialized pgvector.Vector) against PostgreSQL (preventing SQLSTATE 22000).
 // 2. Saving topic memories with explicit zero-length float slice (pgvector.NewVector([]float32{})).
 // 3. Direct GORM insertion (client.DB.Create) triggering BeforeCreate hook.
 // 4. Direct GORM update/save (client.DB.Save) triggering BeforeSave hook.
 // 5. Reading & scanning via GetTopicMemory and ListTopicMemories without "unsupported data type: <nil>".
 // 6. PinTopicMemory toggling and saving without dimension error.
-func TestEmpirical_M1C_VectorDimensionAndScanSafety(t *testing.T) {
+func TestVectorDimensionAndScanSafety(t *testing.T) {
 	client, cleanup := setupTestDB(t)
 	defer cleanup()
 

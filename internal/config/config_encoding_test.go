@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestEmpiricalChallenge_GqlgenYamlEncoding(t *testing.T) {
+func TestGqlgenYamlEncoding(t *testing.T) {
 	// Find repo root (two levels up from internal/config)
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
@@ -50,7 +50,7 @@ func TestEmpiricalChallenge_GqlgenYamlEncoding(t *testing.T) {
 	assert.NotEmpty(t, modelConfig, "gqlgen.yml must specify model config")
 }
 
-func TestEmpiricalChallenge_ConfigYamlAndEnvExample(t *testing.T) {
+func TestConfigYamlAndEnvExample(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
 

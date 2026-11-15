@@ -21,10 +21,10 @@ func (m *mockDBForReminders) SaveReminder(r models.ScheduledReminder) error {
 	return nil
 }
 
-// TestChallenge2_Shared_AntiSpoofing verifies that the shared module strictly uses
+// TestShared_AntiSpoofing verifies that the shared module strictly uses
 // callCtx.ActorID() and callCtx.TenantFamilyGroup() when creating shared spaces,
 // shared task reminders, and personal scheduled reminders, ignoring foreign spoofed args.
-func TestChallenge2_Shared_AntiSpoofing(t *testing.T) {
+func TestShared_AntiSpoofing(t *testing.T) {
 	repo := newInMemoryRepo()
 	bus := events.NewEventBus()
 	receivedEvents := make(chan events.MutationEvent, 20)

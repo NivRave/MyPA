@@ -9,13 +9,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEmpirical_DB_ConnectionPoolBoundaryAndLifecycle tests:
+// TestDB_ConnectionPoolBoundaryAndLifecycle tests:
 // 1. MaxOpenConnections is strictly configured to 25.
 // 2. Concurrency stress: 35 concurrent queries against the 25-connection pool.
 //    Verifies that all 35 queries complete successfully without connection leaks or deadlocks.
 // 3. Ping() and Close() lifecycle: Ping succeeds when open, Close drains connections,
 //    and Ping fails cleanly after Close().
-func TestEmpirical_DB_ConnectionPoolBoundaryAndLifecycle(t *testing.T) {
+func TestDB_ConnectionPoolBoundaryAndLifecycle(t *testing.T) {
 	client, cleanup := setupTestDB(t)
 	defer cleanup()
 
@@ -70,12 +70,12 @@ func TestEmpirical_DB_ConnectionPoolBoundaryAndLifecycle(t *testing.T) {
 	assert.Contains(t, err.Error(), "closed", "Error message should indicate closed database")
 }
 
-// TestEmpirical_DB_PgvectorHNSW_HalfvecSyntaxAndFallbackSafety tests:
+// TestDB_PgvectorHNSW_HalfvecSyntaxAndFallbackSafety tests:
 // 1. DDL verification: verify the HNSW index statement in migrations uses halfvec(3072).
 // 2. Verify that naive vector(3072) HNSW index fails in PostgreSQL because 3072 > 2000.
 // 3. Graceful fallback safety: if vector index creation fails (e.g. pgvector < 0.7.0 without halfvec),
 //    ApplyCustomIndexes logs a warning and does NOT return an error, preventing startup abort.
-func TestEmpirical_DB_PgvectorHNSW_HalfvecSyntaxAndFallbackSafety(t *testing.T) {
+func TestDB_PgvectorHNSW_HalfvecSyntaxAndFallbackSafety(t *testing.T) {
 	client, cleanup := setupTestDB(t)
 	defer cleanup()
 

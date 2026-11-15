@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEmpirical_GraphQL_MutationEvents_NoEmissionOnFailure validates that:
+// TestGraphQL_MutationEvents_NoEmissionOnFailure validates that:
 // 1. When an unauthorized tenant attempts an operation, NO MutationEvent is emitted.
 // 2. When an invalid input fails, NO MutationEvent is emitted.
 // 3. When a legitimate mutation succeeds, an exact MutationEvent with BeforeJSON/AfterJSON is emitted.
-func TestEmpirical_GraphQL_MutationEvents_NoEmissionOnFailure(t *testing.T) {
+func TestGraphQL_MutationEvents_NoEmissionOnFailure(t *testing.T) {
 	resolver, tracker, cleanup := setupTestResolver(t)
 	defer cleanup()
 
@@ -86,9 +86,9 @@ func TestEmpirical_GraphQL_MutationEvents_NoEmissionOnFailure(t *testing.T) {
 	}
 }
 
-// TestEmpirical_GraphQL_MutationEvents_PayloadCompleteness verifies that all state-modifying
+// TestGraphQL_MutationEvents_PayloadCompleteness verifies that all state-modifying
 // domain mutations emit structurally sound MutationEvents with required metadata.
-func TestEmpirical_GraphQL_MutationEvents_PayloadCompleteness(t *testing.T) {
+func TestGraphQL_MutationEvents_PayloadCompleteness(t *testing.T) {
 	resolver, tracker, cleanup := setupTestResolver(t)
 	defer cleanup()
 

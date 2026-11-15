@@ -17,9 +17,9 @@ import (
 	"google.golang.org/genai"
 )
 
-// TestChallenger2_IntentMatcher_Comprehensive tests bilingual keyword matching,
+// TestIntentMatcher_Comprehensive tests bilingual keyword matching,
 // Hebrew prefixes, multi-domain inputs, emojis, and ambiguous edge cases.
-func TestChallenger2_IntentMatcher_Comprehensive(t *testing.T) {
+func TestIntentMatcher_Comprehensive(t *testing.T) {
 	matcher := NewKeywordIntentMatcher()
 
 	tests := []struct {
@@ -211,12 +211,12 @@ func TestChallenger2_IntentMatcher_Comprehensive(t *testing.T) {
 	}
 }
 
-// TestChallenger2_PhotoData_Stripping_DirectRedisInspection verifies SCALE-02:
+// TestPhotoData_Stripping_DirectRedisInspection verifies SCALE-02:
 // - A 2MB photo appended to chat history is stripped of raw bytes before JSON persistence.
 // - Direct inspection of the Redis list item confirms photo_data is null/omitted and photo_mime_type is empty.
 // - The persisted content contains the formatted attachment marker "[Attachment: image/jpeg (2.0 MB)]".
 // - The persisted JSON payload size is < 500 bytes (not > 2.6 MB base64).
-func TestChallenger2_PhotoData_Stripping_DirectRedisInspection(t *testing.T) {
+func TestPhotoData_Stripping_DirectRedisInspection(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()
 
@@ -278,11 +278,11 @@ func TestChallenger2_PhotoData_Stripping_DirectRedisInspection(t *testing.T) {
 	assert.Contains(t, history[0].Content, "[Attachment: image/jpeg (2.0 MB)]")
 }
 
-// TestChallenger2_PhotoData_MultimodalActiveTurnPreservation verifies that:
+// TestPhotoData_MultimodalActiveTurnPreservation verifies that:
 // 1. During an active conversational turn with tool calling, the in-memory loopHistory
 //    strictly preserves PhotoData and PhotoMimeType across all recursive tool iterations.
 // 2. Only upon final persistence to Redis chat history is PhotoData stripped.
-func TestChallenger2_PhotoData_MultimodalActiveTurnPreservation(t *testing.T) {
+func TestPhotoData_MultimodalActiveTurnPreservation(t *testing.T) {
 	engine, tgMock, llmMock, dbMock, cleanup := setupTestEngine(t)
 	defer cleanup()
 
@@ -384,12 +384,12 @@ func TestChallenger2_PhotoData_MultimodalActiveTurnPreservation(t *testing.T) {
 	assert.Contains(t, history[0].Content, "[Attachment: image/jpeg (1.0 MB)]")
 }
 
-// TestChallenger2_BoundedRecursion_Ceiling8_And_WithNoTools verifies SCALE-03:
+// TestBoundedRecursion_Ceiling8_And_WithNoTools verifies SCALE-03:
 // - Tool recursion strictly stops at iteration 8.
 // - Iteration 8 executes with llm.WithNoTools(ctx) and a terminal summary prompt.
 // - Even if an adversarial mock LLM returns another ToolCall on iteration 8,
 //   the engine guarantees termination and does NOT loop to iteration 9.
-func TestChallenger2_BoundedRecursion_Ceiling8_And_WithNoTools(t *testing.T) {
+func TestBoundedRecursion_Ceiling8_And_WithNoTools(t *testing.T) {
 	engine, _, llmMock, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
@@ -461,13 +461,13 @@ func TestChallenger2_BoundedRecursion_Ceiling8_And_WithNoTools(t *testing.T) {
 	assert.Equal(t, "✅ All requested actions have been completed up to the maximum iteration limit.", result)
 }
 
-// TestChallenger2_ConcurrentTools_4Calls_StrictOrderingAndParallelism verifies SCALE-03:
+// TestConcurrentTools_4Calls_StrictOrderingAndParallelism verifies SCALE-03:
 // - 4 tool calls with staggered durations (80ms, 20ms, 60ms, 30ms) execute concurrently.
 // - Total runtime is bounded near max(duration) (~80ms-110ms), NOT sequential sum (190ms).
 // - Function calls and function responses maintain exact 1:1 order alignment regardless
 //   of which goroutine finished first.
 // - Panic in one of the tools is safely caught without terminating the turn or process.
-func TestChallenger2_ConcurrentTools_4Calls_StrictOrderingAndParallelism(t *testing.T) {
+func TestConcurrentTools_4Calls_StrictOrderingAndParallelism(t *testing.T) {
 	engine, _, llmMock, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
@@ -591,7 +591,7 @@ func TestChallenger2_ConcurrentTools_4Calls_StrictOrderingAndParallelism(t *test
 // ADVERSARIAL STRESS SUITE: INTENT MATCHER (ReDoS, Morphological & Edge Cases)
 // -----------------------------------------------------------------------------
 
-func TestChallenger2_IntentMatcher_AdversarialStressAndReDoS(t *testing.T) {
+func TestIntentMatcher_AdversarialStressAndReDoS(t *testing.T) {
 	matcher := NewKeywordIntentMatcher()
 
 	t.Run("Empty, Whitespace, and Control Characters", func(t *testing.T) {
@@ -686,7 +686,7 @@ func TestChallenger2_IntentMatcher_AdversarialStressAndReDoS(t *testing.T) {
 // ADVERSARIAL STRESS SUITE: SELECT DECLARATIONS
 // -----------------------------------------------------------------------------
 
-func TestChallenger2_Registry_SelectDeclarations_AdversarialCombinations(t *testing.T) {
+func TestRegistry_SelectDeclarations_AdversarialCombinations(t *testing.T) {
 	reg := NewRegistry()
 
 	memMod := &mockToolModule{
@@ -824,7 +824,7 @@ func TestChallenger2_Registry_SelectDeclarations_AdversarialCombinations(t *test
 // ADVERSARIAL STRESS SUITE: 5MB–10MB PHOTODATA PAYLOAD SANITIZATION
 // -----------------------------------------------------------------------------
 
-func TestChallenger2_PhotoData_5MB_10MB_StressPayloads(t *testing.T) {
+func TestPhotoData_5MB_10MB_StressPayloads(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()
 
