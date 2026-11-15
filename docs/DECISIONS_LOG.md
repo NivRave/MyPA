@@ -490,3 +490,31 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### D4-2.2 Scope boundary
 - `handlers.go` holds most lines because business logic is interleaved inside the `execute*` methods (argument parsing + repository calls + formatting). Pulling that into `service.go` would be a behavioural refactor per tool — out of scope for a "no behaviour change" item; the file split makes that follow-up reviewable per module.
+
+## P4-3 — Versioned migrations (goose)
+
+### D4-3.1 Tool: goose (pre-agreed), Provider API
+- Options: **goose** (chosen, pre-agreed), golang-migrate, Atlas (declarative diff from GORM models), keep AutoMigrate.
+- Atlas would derive migrations from models automatically, but adds a CLI + HCL/config surface and a second source of truth for "desired" schema; golang-migrate has no Go-function migrations (needed for the P2-4 legacy-memory copy). goose supports embedded SQL + Go migrations in one ordered sequence.
+- Used goose v3.29 `NewProvider` (no package-level globals, so tests can run providers against separate databases) with `lock.NewPostgresSessionLocker` — an advisory lock so two migrators (e.g. a replica restarting during a deploy) cannot interleave.
+
+### D4-3.2 Baseline = pg_dump of the AutoMigrate schema
+- Options: (a) hand-write CREATE TABLEs; (b) **dump the schema the old code actually produced** (chosen); (c) baseline = "run AutoMigrate once as a Go migration".
+- (c) keeps GORM's migrator in the production path, which is exactly what P4-3 removes. (a) is error-prone for 29 tables / 99 indexes. (b) is exact by construction: a fresh pgvector:pg15 database was built with the old `NewClient`, dumped with `pg_dump --schema-only --no-owner --no-privileges --no-comments`, and `SET`/`set_config(search_path)`/`\restrict` lines stripped (non-SQL or connection-state-leaking). All 29 models are registered via `init()`, so the dump is complete.
+- Down for the baseline is intentionally a no-op comment: "un-creating" the whole schema is not a meaningful rollback.
+
+### D4-3.3 Adopting existing (pre-goose) databases
+- Options: (a) require operators to run `goose ... fix`/manual SQL; (b) make the baseline idempotent (`IF NOT EXISTS` everywhere); (c) **auto-adopt** (chosen).
+- (b) silently masks drift between the live DB and the baseline. (c): if `users` exists and `goose_db_version` does not, `Migrate` creates the version table and records versions 0 and 1 without executing the baseline, inside a transaction holding `pg_advisory_xact_lock` with a re-check. Version 2 (legacy memories copy) still runs — it is idempotent (`INSERT … WHERE NOT EXISTS`), so databases that already ran it in P2-4 are unaffected.
+- Residual risk (accepted): a pre-goose DB that was *older* than the baseline (missing a column) would be adopted as-is. Mitigation: every pre-goose DB ran AutoMigrate on each start, so any DB that ran the current code already matches.
+
+### D4-3.4 Explicit step, services refuse to start
+- Options: migrate on every service start (status quo semantics); **explicit `-migrate-only` step + startup check** (chosen).
+- Chosen per plan: a dedicated one-shot `migrate` compose service (orchestrator image, `command: ["-migrate-only"]`, `restart: "no"`); `orchestrator`/`audit-worker` depend on it with `service_completed_successfully` and call `db.EnsureMigrated`, which fails fast with an actionable message. No new binary/Dockerfile target needed (reuses orchestrator, which already has the DB config).
+
+### D4-3.5 AutoMigrate kept for tests only — with a drift guard
+- `NewClient` split into `db.Open` (connect + ping, production) and `db.NewClientAutoMigrate` (tests/dev). The rename makes any accidental production use visible in review.
+- Risk: with two schema paths, a model change could ship without a migration and tests (which AutoMigrate) would still pass. **`TestMigrations_FreshDatabaseMatchesModels`** builds one DB via goose and one via AutoMigrate and compares columns (type, nullability, default) and index definitions. Mutation-checked: adding a field to a model makes it fail. Also `_AdoptsExistingDatabase`, `_Idempotent`, `TestEnsureMigrated`.
+
+### D4-3.6 Dependency bumps from `go mod tidy`
+- Adding goose raised shared transitive deps via MVS (x/crypto 0.54→0.58, x/net, x/sys, pgx 5.10→5.11, testify 1.11→1.12, otel 1.44→1.47, grpc 1.83→1.84, …). All minor/patch; full test suite + compose build pass. Not pinned back: MVS requires them and they include security-relevant x/crypto/x/net updates.

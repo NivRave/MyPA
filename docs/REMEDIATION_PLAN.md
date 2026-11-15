@@ -206,7 +206,7 @@ Generate the tool catalog section of `SYSTEM.md`/`README.md` from the registry (
 | P3-5 | Compose: no committed domain, pinned images | 3 | ☑ |
 | P4-1 | Split ProcessMessage | 4 | ☑ |
 | P4-2 | Split domain modules | 4 | ☑ |
-| P4-3 | Versioned migrations | 4 | ☐ |
+| P4-3 | Versioned migrations | 4 | ☑ |
 | P4-4 | Service topology ADR | 4 | ☐ |
 | P5-1 | Remove stray files | 5 | ☐ |
 | P5-2 | Test file organization | 5 | ☐ |

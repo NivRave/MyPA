@@ -22,7 +22,7 @@ func getLiveDB(t *testing.T) *db.Client {
 	if dsn == "" {
 		dsn = "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable"
 	}
-	client, err := db.NewClient(dsn)
+	client, err := db.NewClientAutoMigrate(dsn)
 	if err != nil {
 		t.Skipf("skipping live postgres test: %v", err)
 		return nil

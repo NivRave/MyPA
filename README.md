@@ -246,6 +246,7 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
    ```bash
    docker-compose up -d --build
    ```
+   *(the one-shot `migrate` service applies database migrations first; the orchestrator and audit-worker start only after it succeeds)*
    *(ngrok starts automatically inside Docker using `NGROK_AUTHTOKEN` and `NGROK_DOMAIN` from `.env`, exposing the tunnel inspection UI at `http://localhost:4040` and the Web Dashboard at `http://localhost:3030`)*
 
 3. **Set Webhooks:**
@@ -267,6 +268,7 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
 2. **Run Go microservices:**
    ```bash
    go run ./cmd/gateway
+   go run ./cmd/orchestrator -migrate-only   # apply schema migrations first (P4-3)
    go run ./cmd/orchestrator
    go run ./cmd/proxy
    go run ./cmd/audit-worker

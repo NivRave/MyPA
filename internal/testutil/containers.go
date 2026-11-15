@@ -167,7 +167,7 @@ func NewTestDB(t *testing.T) (*db.Client, func()) {
 	u.Path = "/" + dbName
 	testDSN := u.String()
 
-	client, err := db.NewClient(testDSN)
+	client, err := db.NewClientAutoMigrate(testDSN)
 	if err != nil {
 		_ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
 		t.Fatalf("failed to create db client for %s: %v", dbName, err)

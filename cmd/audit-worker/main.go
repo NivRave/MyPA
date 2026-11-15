@@ -32,7 +32,7 @@ func main() {
 
 	var dbClient *db.Client
 	for i := 0; i < 5; i++ {
-		dbClient, err = db.NewClient(cfg.Database.URL)
+		dbClient, err = db.Open(cfg.Database.URL)
 		if err == nil {
 			break
 		}
@@ -41,6 +41,14 @@ func main() {
 	}
 	if err != nil {
 		slog.Error("failed to connect to db after retries", "error", err)
+		os.Exit(1)
+	}
+	// P4-3: never run against a schema with pending migrations.
+	if sqlDB, sqlErr := dbClient.DB.DB(); sqlErr != nil {
+		slog.Error("failed to access database handle", "error", sqlErr)
+		os.Exit(1)
+	} else if err := db.EnsureMigrated(context.Background(), sqlDB); err != nil {
+		slog.Error("refusing to start", "error", err)
 		os.Exit(1)
 	}
 

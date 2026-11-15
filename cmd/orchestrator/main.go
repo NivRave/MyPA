@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"github.com/nivik/mypa/internal/logging"
 	"log/slog"
@@ -51,6 +52,9 @@ import (
 )
 
 func main() {
+	migrateOnly := flag.Bool("migrate-only", false, "apply database schema migrations and exit (P4-3)")
+	flag.Parse()
+
 	// Initialize logger
 	logging.Setup() // JSON on stdout at LOG_LEVEL (default info); P3-3
 
@@ -59,6 +63,11 @@ func main() {
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
+	}
+
+	// P4-3: schema changes are an explicit step (the `migrate` compose service runs this).
+	if *migrateOnly {
+		os.Exit(runMigrations(cfg.Database.URL))
 	}
 
 	if err := cfg.Validate(config.ServiceOrchestrator); err != nil {
@@ -134,7 +143,7 @@ func main() {
 	db.RegisterWave2Models()
 	var dbClient *db.Client
 	for i := 0; i < 5; i++ {
-		dbClient, err = db.NewClient(dbURL)
+		dbClient, err = db.Open(dbURL)
 		if err == nil {
 			break
 		}
@@ -143,6 +152,14 @@ func main() {
 	}
 	if err != nil {
 		slog.Error("failed to initialize database after retries", "error", err)
+		os.Exit(1)
+	}
+	// P4-3: never run against a schema with pending migrations.
+	if sqlDB, sqlErr := dbClient.DB.DB(); sqlErr != nil {
+		slog.Error("failed to access database handle", "error", sqlErr)
+		os.Exit(1)
+	} else if err := db.EnsureMigrated(ctx, sqlDB); err != nil {
+		slog.Error("refusing to start", "error", err)
 		os.Exit(1)
 	}
 
@@ -350,6 +367,41 @@ func setupAuthRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClien
 		saver = fallbackSaver[0]
 	}
 	return setupRouter(oauthCfg, store, tgClient, nil, saver)
+}
+
+// runMigrations applies all pending schema migrations and returns the process exit code.
+func runMigrations(databaseURL string) int {
+	if strings.TrimSpace(databaseURL) == "" {
+		slog.Error("DATABASE_URL is required for -migrate-only")
+		return 1
+	}
+	var client *db.Client
+	var err error
+	for i := 0; i < 10; i++ { // the database may still be starting
+		if client, err = db.Open(databaseURL); err == nil {
+			break
+		}
+		slog.Warn("migrate: database not ready, retrying", "attempt", i+1, "error", err)
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		slog.Error("migrate: cannot connect to database", "error", err)
+		return 1
+	}
+	defer client.Close()
+	sqlDB, err := client.DB.DB()
+	if err != nil {
+		slog.Error("migrate: database handle", "error", err)
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	if err := db.Migrate(ctx, sqlDB); err != nil {
+		slog.Error("migrate: failed", "error", err)
+		return 1
+	}
+	slog.Info("migrate: schema is up to date")
+	return 0
 }
 
 // authCfg holds the validated /graphql auth settings (set in main). Zero value = fail closed:

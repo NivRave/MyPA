@@ -76,6 +76,7 @@ flowchart LR
 | **`gateway`** | [`cmd/gateway/main.go`](./cmd/gateway/main.go) | `gcr.io/distroless/static-debian12` | `8080` | High-throughput HTTP webhook receiver for Telegram (`/webhook/telegram`) and Twilio WhatsApp (`/webhook/twilio`); normalizes payloads into [`models.Message`](./internal/models/models.go#L9-L22) and publishes to RabbitMQ `telegram.inbound`. |
 | **`orchestrator`** | [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go) | `debian:12-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8081` | Core brain: consumes `telegram.inbound`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](./internal/orchestrator/registry.go#L30-L43) registry (70 modular tools across 13 modules), dual-lane [`EventBus`](./internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](./internal/scheduler/scheduler.go). |
 | **`audit-worker`** | [`cmd/audit-worker/main.go`](./cmd/audit-worker/main.go) | `gcr.io/distroless/static-debian12` | — | Consumes `audit.events` from RabbitMQ, persists [`models.AuditSession`](./internal/models/models.go#L80-L92) rows to PostgreSQL, and runs a 24h ticker archiving sessions older than 30 days. |
+| **`migrate`** | [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go) (`-migrate-only`) | orchestrator image | — | One-shot (*P4-3*): applies goose migrations ([`internal/db/migrations/`](./internal/db/migrations)) and exits. `orchestrator` and `audit-worker` depend on it with `condition: service_completed_successfully`. |
 | **`dashboard`** | [`dashboard/`](./dashboard/package.json) | `node:20-alpine` (Next.js standalone) | `3030:3000` | Next.js App Router web console for managing family spaces, memories, baby logs, house assets, finances, automations, pairing codes, and mutation rollbacks. |
 | **`postgres`** | `pgvector/pgvector:pg15` | Official Postgres 15 + `pgvector` | `5432` | Primary relational + vector store (29 tables). |
 | **`redis`** | `redis:7-alpine` | Official Redis 7 (`--appendonly yes`) | `6379` | Hot rolling conversation state (`chat:<userID>`) and OAuth token cache (`token:<userID>`). |
@@ -108,7 +109,7 @@ mypa/
 │   ├── config/                     # Viper + godotenv loader & `ALLOWED_USERS` parser
 │   ├── contacts/                   # Google People API v1 client (search & create contacts)
 │   ├── crypto/                     # AES-256-GCM encryption/decryption at rest (`ENCRYPTION_KEY`)
-│   ├── db/                         # GORM PostgreSQL client, dynamic migration registry, backup/restore & domain repos:
+│   ├── db/                         # GORM PostgreSQL client, goose migrations (migrations/), backup/restore & domain repos:
 │   │   ├── db.go                   # `db.Client` initialization, `vector` extension & core Wave 0 queries
 │   │   ├── migrations.go           # `RegisterModel`, `RegisterWave1Models`, `RegisterWave2Models`
 │   │   ├── backup.go               # `pg_dump` / `pg_restore` streaming backup/restore, age encryption, GFS retention (P3-4)
@@ -404,7 +405,8 @@ The message broker layer ([`internal/broker/`](./internal/broker/)) provides dec
 ## 4. PostgreSQL + `pgvector` Database Schema Reference
 
 ### 4.1 Migration Registration Mechanism ([`internal/db/migrations.go`](./internal/db/migrations.go))
-- On startup, [`db.NewClient(dsn)`](./internal/db/db.go#L23-L53) enables `pgvector` (`CREATE EXTENSION IF NOT EXISTS vector`) and runs `db.AutoMigrate(allModels...)` combining core Wave 0 models with all models registered via `db.RegisterModel(...)`, `db.RegisterWave1Models()`, and `db.RegisterWave2Models()`. Models are automatically deduplicated by `reflect.TypeOf`, guaranteeing idempotent execution.
+- **Schema management (*P4-3*, goose):** production never AutoMigrates. Versioned migrations live in [`internal/db/migrations/`](./internal/db/migrations) (embedded; `00001_baseline.sql` generated from the pre-goose schema) plus Go migrations in [`schema_migrations.go`](./internal/db/schema_migrations.go) (version 2 = P2-4 legacy-memory copy). They run as an **explicit step**: `orchestrator -migrate-only` (the `migrate` compose service, which `orchestrator` and `audit-worker` wait on via `service_completed_successfully`). Both services call `db.EnsureMigrated` at startup and refuse to run with pending migrations. A pre-goose database is **adopted** at version 1 (goose version table created, baseline not executed) the first time `Migrate` runs. A Postgres advisory lock serializes concurrent migrators. `db.NewClientAutoMigrate` (AutoMigrate + `ApplyCustomIndexes` + legacy copy) exists for tests/dev only; `TestMigrations_FreshDatabaseMatchesModels` compares a goose-built and an AutoMigrate-built schema column-by-column and index-by-index, so a model change without a migration fails CI.
+  - **Adding a schema change:** add `internal/db/migrations/000NN_<name>.sql` (`-- +goose Up` / `-- +goose Down`) *and* update the GORM model.
 - **Connection Pool Sizing (SCALE-05 Part B):** Configures production-grade pool limits on `*sql.DB`:
   - `SetMaxOpenConns(25)`: Prevents exhausting PostgreSQL's `max_connections` (100) across services (`orchestrator` 25 + `audit-worker` 10 + headroom 65).
   - `SetMaxIdleConns(10)`: Maintains warm connections for instantaneous tool queries.
@@ -510,10 +512,10 @@ The underlying `*sql.DB` connection pool is explicitly tuned on initialization t
 - **`MaxIdleConns = 10`:** Retains a hot pool of idle connections to handle sudden bursts of concurrent LLM tool executions without reconnect overhead.
 - **`ConnMaxLifetime = 30m`:** Recycles long-lived connections periodically to clear server-side resource state and balance across Postgres restarts.
 - **`ConnMaxIdleTime = 5m`:** Closes idle connections after 5 minutes of inactivity to conserve database memory.
-- **Startup Verification & Client Lifecycle:** `NewClient` immediately runs `sqlDB.Ping()` to fail fast if credentials or connectivity are invalid. Clean process shutdown is supported via `Client.Close() error` and `Client.Ping() error`.
+- **Startup Verification & Client Lifecycle:** `db.Open` immediately runs `sqlDB.Ping()` to fail fast if credentials or connectivity are invalid. Clean process shutdown is supported via `Client.Close() error` and `Client.Ping() error`.
 
 #### Vector HNSW & Composite Multi-Tenant Database Indexes ([`internal/db/migrations.go`](./internal/db/migrations.go))
-Applied automatically during migration initialization via `ApplyCustomIndexes`:
+Part of the goose baseline (`00001_baseline.sql`); `ApplyCustomIndexes` creates the same indexes on the AutoMigrate (tests/dev) path:
 1. **`pgvector` HNSW `halfvec(3072)` Indexes:**
    - `idx_topic_memories_embedding` on `topic_memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`.
    - `idx_memories_embedding` on `memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`.

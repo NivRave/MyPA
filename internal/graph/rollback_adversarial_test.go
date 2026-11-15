@@ -16,7 +16,7 @@ import (
 
 func getTestDBClient(t *testing.T) *db.Client {
 	dsn := "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable"
-	client, err := db.NewClient(dsn)
+	client, err := db.NewClientAutoMigrate(dsn)
 	if err != nil {
 		t.Skipf("Postgres DB not accessible at localhost:5432: %v; skipping DB integration test", err)
 		return nil

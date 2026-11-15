@@ -15,9 +15,10 @@ type Client struct {
 	DB *gorm.DB
 }
 
-// NewClient initializes the database connection, configures the connection pool,
-// runs auto-migrations, and applies custom indexes.
-func NewClient(dsn string) (*Client, error) {
+// Open connects to PostgreSQL with a tuned pool and verifies connectivity. It does NOT change the
+// schema: production applies versioned migrations (Migrate / `orchestrator -migrate-only`, P4-3)
+// and checks them with EnsureMigrated.
+func Open(dsn string) (*Client, error) {
 	if dsn == "" {
 		return nil, fmt.Errorf("database URL is empty")
 	}
@@ -27,7 +28,7 @@ func NewClient(dsn string) (*Client, error) {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// 1. Configure underlying sql.DB connection pool sizing
+	// Configure underlying sql.DB connection pool sizing
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve generic database object: %w", err)
@@ -38,17 +39,35 @@ func NewClient(dsn string) (*Client, error) {
 	sqlDB.SetConnMaxLifetime(30 * time.Minute) // Periodically recycle connections
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)  // Reclaim idle connections
 
-	// 2. Verify database connectivity (health check / fail-fast)
+	// Verify database connectivity (health check / fail-fast)
 	if err := sqlDB.Ping(); err != nil {
 		return nil, fmt.Errorf("database ping failed: %w", err)
 	}
+	slog.Info("connected to postgres", "max_open_conns", 25, "max_idle_conns", 10)
+	return &Client{DB: db}, nil
+}
 
-	// 3. Ensure pgvector extension exists
-	if err := db.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error; err != nil {
-		return nil, fmt.Errorf("failed to create vector extension: %w", err)
+// NewClientAutoMigrate opens a connection and builds the schema with GORM AutoMigrate.
+// FOR TESTS AND LOCAL EXPERIMENTS ONLY (P4-3): production uses Open + Migrate. The equivalence
+// of the two paths is enforced by TestMigrations_FreshDatabaseMatchesModels.
+func NewClientAutoMigrate(dsn string) (*Client, error) {
+	c, err := Open(dsn)
+	if err != nil {
+		return nil, err
 	}
+	if err := AutoMigrateSchema(c.DB); err != nil {
+		_ = c.Close()
+		return nil, err
+	}
+	return c, nil
+}
 
-	// 4. Auto-migrate schemas
+// AutoMigrateSchema creates/updates tables from the Go models, applies the custom indexes and the
+// legacy-memory data copy — the pre-goose startup behaviour (tests/dev only).
+func AutoMigrateSchema(db *gorm.DB) error {
+	if err := db.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error; err != nil {
+		return fmt.Errorf("failed to create vector extension: %w", err)
+	}
 	baseModels := []interface{}{
 		&models.AuditSession{},
 		&models.AuditEvent{},
@@ -59,30 +78,16 @@ func NewClient(dsn string) (*Client, error) {
 		&models.Workflow{},
 	}
 	allModels := append(baseModels, GetRegisteredModels()...)
-
 	if err := db.AutoMigrate(allModels...); err != nil {
-		return nil, fmt.Errorf("failed to migrate database: %w", err)
+		return fmt.Errorf("failed to migrate database: %w", err)
 	}
-
-	// 5. Apply performance and HNSW composite indexes
 	if err := ApplyCustomIndexes(db); err != nil {
-		return nil, fmt.Errorf("failed to apply custom database indexes: %w", err)
+		return fmt.Errorf("failed to apply custom database indexes: %w", err)
 	}
-
-	// P2-4: one memory store. Fatal on failure: after this release nothing reads the legacy
-	// table, so an unmigrated fact would silently disappear from the assistant's memory.
 	if _, err := MigrateLegacyMemories(db); err != nil {
-		return nil, err
+		return err
 	}
-
-	slog.Info("connected to postgres, tuned connection pool, and ran migrations successfully",
-		"max_open_conns", 25,
-		"max_idle_conns", 10,
-		"conn_max_lifetime", "30m",
-		"conn_max_idle_time", "5m",
-	)
-
-	return &Client{DB: db}, nil
+	return nil
 }
 
 // Ping verifies database liveness.
@@ -108,7 +113,6 @@ func (c *Client) Close() error {
 	}
 	return sqlDB.Close()
 }
-
 
 // InsertAuditSession saves a new audit session to the database.
 func (c *Client) InsertAuditSession(session models.AuditSession) error {
@@ -176,6 +180,7 @@ func (c *Client) MarkReminderSent(id uint) error {
 	}
 	return nil
 }
+
 // GetUser retrieves a user by their platform ID.
 func (c *Client) GetUser(platformID string) (*models.User, error) {
 	var user models.User
@@ -228,6 +233,7 @@ func (c *Client) RedeemPairingCode(codeID string, user models.User) error {
 		return nil
 	})
 }
+
 // GetUsersByFamilyGroup retrieves all users in a family group.
 func (c *Client) GetUsersByFamilyGroup(familyGroup string) ([]models.User, error) {
 	var users []models.User

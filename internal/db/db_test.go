@@ -71,7 +71,9 @@ func getTestSingletonPostgres(ctx context.Context) (string, *gorm.DB, error) {
 	return testPgAdminDSN, testPgAdminDB, testPgErr
 }
 
-func setupTestDB(t *testing.T) (*Client, func()) {
+// newEmptyTestDatabase creates an isolated, empty database in the shared container and returns its
+// DSN (dropped on test cleanup).
+func newEmptyTestDatabase(t *testing.T) string {
 	t.Helper()
 	ctx := context.Background()
 
@@ -86,35 +88,37 @@ func setupTestDB(t *testing.T) (*Client, func()) {
 	if err := adminDB.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName)).Error; err != nil {
 		t.Fatalf("failed to create isolated test database %s: %v", dbName, err)
 	}
+	t.Cleanup(func() {
+		_ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
+	})
 
 	u, err := url.Parse(adminDSN)
 	if err != nil {
-		_ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
 		t.Fatalf("failed to parse admin DSN: %v", err)
 	}
 	u.Path = "/" + dbName
-	testDSN := u.String()
+	return u.String()
+}
 
-	client, err := NewClient(testDSN)
+func setupTestDB(t *testing.T) (*Client, func()) {
+	t.Helper()
+	testDSN := newEmptyTestDatabase(t)
+
+	client, err := NewClientAutoMigrate(testDSN)
 	if err != nil {
-		_ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
-		t.Fatalf("failed to create db client for %s: %v", dbName, err)
+		t.Fatalf("failed to create db client: %v", err)
 	}
 
 	cleanup := func() {
 		if client != nil {
 			_ = client.Close()
 		}
-		if adminDB != nil {
-			_ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
-		}
 	}
-
 	return client, cleanup
 }
 
-func TestNewClient_EmptyDSN(t *testing.T) {
-	_, err := NewClient("")
+func TestOpen_EmptyDSN(t *testing.T) {
+	_, err := Open("")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "database URL is empty")
 }
@@ -409,5 +413,3 @@ func TestDB_PingAndClose(t *testing.T) {
 	err = client.Close()
 	require.NoError(t, err, "Close must succeed on connection pool")
 }
-
-

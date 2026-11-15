@@ -48,9 +48,29 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./backups:/backups
     restart: unless-stopped
+
+  # P4-3: one-shot schema migration job. The orchestrator and audit-worker start only after it
+  # completes successfully, and themselves refuse to run with pending migrations.
+  migrate:
+    logging: *default-logging
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: orchestrator
+    command: ["-migrate-only"]
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   audit-worker:
     logging: *default-logging
@@ -70,6 +90,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   proxy:
