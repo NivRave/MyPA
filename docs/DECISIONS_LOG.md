@@ -415,3 +415,28 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### Not covered
 - Third-party containers' own logs (Postgres statement logging, RabbitMQ) may contain data; their defaults don't log message bodies. The dashboard (Next.js) doesn't log message content.
+
+---
+
+## P3-4 — Backup encryption & retention ([DECIDE] resolved: `age`; off-machine copy deferred)
+
+### D3-4.1 Encryption tool & integration
+- **Owner choice:** `age`. Integrated via the reference Go library `filippo.io/age` v1.2.1 rather than shelling out to an `age` binary (no extra package in the image, testable in-process).
+- **Streaming:** `pg_dump -Fc` → stdout → `age.Encrypt` → `0600` temp file → fsync → rename. No plaintext dump ever touches the disk. Restore streams `age.Decrypt` into `pg_restore`'s stdin (custom-format restore from a pipe is sequential — fine for this size; parallel `-j` restore would need a seekable file).
+- **Keys:** public keys only on the server (`BACKUP_AGE_RECIPIENTS`); the private key (`BACKUP_AGE_IDENTITY_FILE`) is needed only to restore — keep it off-box, mount it when restoring. Multiple recipients allowed (e.g. owner + offline escrow key).
+
+### D3-4.2 Missing recipients → warn, don't fail
+- **Options:** refuse to back up (fail closed) or write unencrypted with a warning.
+- **Chosen:** warn. The dump sits on the same host as the live database, so an unencrypted local dump adds little exposure, while a skipped backup is unrecoverable. Encryption matters most once copies leave the machine — the off-machine copy decision should *require* recipients.
+
+### D3-4.3 Password out of argv
+- `pgConnArgs` strips the password from the URL and passes `PGPASSWORD` in the child env (argv is world-readable via `ps`/`/proc`). `.pgpass` rejected: needs a file with strict permissions in the container for no extra benefit.
+
+### D3-4.4 Retention
+- 3 latest + newest per day (7 days) + newest per ISO week (4 weeks). The **latest-3** rule is essential: a `/restore` (P1-5) takes a same-day safety backup; a pure per-day rule would prune the very file about to be restored. Only `backup_<ts>.dump[.age]` files are ever deleted. Timestamps are parsed from names (not mtime) so copies/rsync don't confuse the policy.
+
+### D3-4.5 Restore path validation (fix to P1-5)
+- P1-5 accepted only `filepath.Ext == ".dump"`, which would reject every encrypted backup (`.dump.age`). Now uses `db.IsBackupFile`; tested.
+
+### Not done
+- Off-machine copy (owner to choose target). Encrypting the P2-9 conversation archives (`audit_archives`) with the same recipients is the natural next step.

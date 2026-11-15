@@ -46,7 +46,12 @@ func StartCronJobs(engine *orchestrator.Engine, dbClient *db.Client, runner *aut
 		}
 		backupDir := "/backups" // This will be mounted in docker-compose.yml
 
-		path, err := db.BackupDatabase(databaseURL, backupDir, 3)
+		opts, err := db.BackupOptionsFromEnv() // age encryption + GFS retention (P3-4)
+		if err != nil {
+			slog.Error("Scheduled backup skipped: invalid backup configuration", "error", err)
+			return
+		}
+		path, err := db.BackupDatabase(databaseURL, backupDir, opts)
 		if err != nil {
 			slog.Error("Scheduled backup failed", "error", err)
 			return

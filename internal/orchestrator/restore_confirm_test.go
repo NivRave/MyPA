@@ -32,7 +32,7 @@ type fakeBackups struct {
 func (f *fakeBackups) ops() backupOps {
 	return backupOps{
 		dir: f.dir,
-		backup: func(_ string, dir string, _ int) (string, error) {
+		backup: func(_ string, dir string) (string, error) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			f.backupCalls++
@@ -193,4 +193,17 @@ func TestRestore_RoleRevokedBeforeConfirm_Denied(t *testing.T) {
 
 	assert.Empty(t, h.fake.restored)
 	assert.Contains(t, joined(out), "Permission denied")
+}
+
+// P3-4: encrypted backups (.dump.age) must pass the staged-path validation.
+func TestRestore_EncryptedBackupIsAccepted(t *testing.T) {
+	h := newRestoreHarness(t)
+	out := h.replies()
+	enc := filepath.Join(h.fake.dir, "backup_2026-11-15_03-00-00.dump.age")
+	require.NoError(t, os.WriteFile(enc, []byte("age-encrypted"), 0o600))
+
+	h.send(t, "/restore")
+	h.send(t, "CONFIRM RESTORE")
+
+	require.Equal(t, []string{enc}, h.fake.restored, "the newest (encrypted) backup is staged and restored; out: %s", joined(out))
 }

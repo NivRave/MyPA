@@ -19,7 +19,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
-	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/markdown"
@@ -533,7 +532,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 			return e.sendMessage(ctx, msg, "❌ Backup failed: DATABASE_URL not set.")
 		}
 		markSideEffect(ctx)
-		path, err := db.BackupDatabase(databaseURL, "/backups", 3)
+		ops := e.backups.withDefaults()
+		path, err := ops.backup(databaseURL, ops.dir) // encrypted + GFS retention (P3-4)
 		if err != nil {
 			slog.Error("Manual backup failed", "error", err)
 			return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Backup failed: %v", err))

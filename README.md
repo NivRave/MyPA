@@ -197,6 +197,8 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
 | `ALLOWED_USERS` | Bootstrap allowed users formatted as `"platform_id:Name:Role:FamilyGroup"`. | No | `123456789:Admin:admin:TheFamily` |
 | `DEFAULT_TIMEZONE` | Default IANA timezone used for system prompts and localized datetime parsing. | No | `"Asia/Jerusalem"` / `"UTC"` |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error`. Message text is only logged at `debug`. | No | `info` |
+| `BACKUP_AGE_RECIPIENTS` | age public key(s) (`age1…`, comma-separated) used to encrypt nightly and `/backup` dumps. Generate a pair with `age-keygen -o backup.key`. | Recommended | `age1…` |
+| `BACKUP_AGE_IDENTITY_FILE` | Path to the matching age private key, only needed to restore an encrypted backup. Keep it off the server. | For restore | `/run/secrets/backup.key` |
 | `WEEK_START_DAY` | First day of the week used when the assistant reasons about "this/next week". | No | `Sunday` |
 | `WEEKEND_DAYS` | Comma-separated weekend days. | No | `Friday,Saturday` |
 | `GRAPHQL_ENDPOINT` | Upstream GraphQL URL used by Next.js server actions and SSR data fetching. | No | `http://proxy:8000/graphql` |

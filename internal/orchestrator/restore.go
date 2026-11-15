@@ -22,24 +22,36 @@ const (
 	restoreConfirmTTL = 5 * time.Minute
 	// defaultBackupDir is the backup volume mounted in docker-compose.yml.
 	defaultBackupDir = "/backups"
-	// backupRetention mirrors the scheduler's rolling retention.
-	backupRetention = 3
 )
 
 // backupOps abstracts pg_dump/pg_restore so the destructive flow can be tested without a DB.
 type backupOps struct {
 	dir     string
-	backup  func(databaseURL, dir string, keep int) (string, error)
+	backup  func(databaseURL, dir string) (string, error)
 	restore func(databaseURL, path string) error
 	latest  func(dir string) (string, error)
 }
 
+// defaultBackupOps uses the real pg_dump/pg_restore with encryption keys and retention from the
+// environment (BACKUP_AGE_RECIPIENTS, BACKUP_AGE_IDENTITY_FILE; P3-4).
 func defaultBackupOps() backupOps {
 	return backupOps{
-		dir:     defaultBackupDir,
-		backup:  db.BackupDatabase,
-		restore: db.RestoreDatabase,
-		latest:  db.GetLatestBackup,
+		dir: defaultBackupDir,
+		backup: func(databaseURL, dir string) (string, error) {
+			opts, err := db.BackupOptionsFromEnv()
+			if err != nil {
+				return "", err
+			}
+			return db.BackupDatabase(databaseURL, dir, opts)
+		},
+		restore: func(databaseURL, path string) error {
+			opts, err := db.RestoreOptionsFromEnv()
+			if err != nil {
+				return err
+			}
+			return db.RestoreDatabase(databaseURL, path, opts)
+		},
+		latest: db.GetLatestBackup,
 	}
 }
 
@@ -119,9 +131,9 @@ func (e *Engine) executeConfirmedRestore(ctx context.Context, user *models.User,
 
 	ops := e.backups.withDefaults()
 	target, _ := pending.Args["backup_path"].(string)
-	// Defense in depth: the staged record lives in Redis; only accept a .dump file directly
+	// Defense in depth: the staged record lives in Redis; only accept a backup file directly
 	// inside the backup directory.
-	if target == "" || filepath.Ext(target) != ".dump" || filepath.Clean(filepath.Dir(target)) != filepath.Clean(ops.dir) {
+	if target == "" || !db.IsBackupFile(filepath.Base(target)) || filepath.Clean(filepath.Dir(target)) != filepath.Clean(ops.dir) {
 		slog.Error("rejecting staged restore with invalid backup path", "path", target)
 		return e.sendMessage(ctx, msg, "❌ Restore aborted: the staged backup path is invalid. Run /restore again.")
 	}
@@ -131,7 +143,8 @@ func (e *Engine) executeConfirmedRestore(ctx context.Context, user *models.User,
 
 	markSideEffect(ctx)
 	_ = e.sendMessage(ctx, msg, "🔄 Taking a safety backup of the current database before restoring...")
-	safety, err := ops.backup(databaseURL, ops.dir, backupRetention+1) // +1 so the safety copy never evicts the target
+	// Retention always keeps the 3 newest backups, so the safety copy can never evict the target.
+	safety, err := ops.backup(databaseURL, ops.dir)
 	if err != nil {
 		slog.Error("pre-restore safety backup failed; restore aborted", "error", err)
 		return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Restore aborted: safety backup failed (%v). The database was not changed.", err))
