@@ -281,6 +281,14 @@ MyPA enforces defense-in-depth security across all edge ingress, compute, data p
    npm run dev
    ```
 
+### Upgrade note: RabbitMQ 3.13 → 4.3 (P5-4)
+
+The broker now runs `rabbitmq:4.3.7` with a fixed `hostname: rabbitmq`. Previously the node name came from the random container ID, so the first start after this change is a **fresh, empty node** (exchanges/queues are re-declared by the services on startup). Messages still sitting in the old node are not migrated:
+
+1. Stop ingestion: `docker compose stop gateway`.
+2. Let the orchestrator drain `telegram.inbound`; check `telegram.inbound.dlq` / `audit.events.dlq` at `http://localhost:15672` and export anything you want to keep.
+3. `docker compose up -d` — the new broker starts; from now on its data survives container recreation.
+
 ---
 
 ## Testing & Quality Verification

@@ -1,0 +1,45 @@
+# Dependabot (P5-4). PRs target `dev` (never master); minor/patch updates are grouped per
+# ecosystem to keep PR volume low, majors arrive individually for review.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      go-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /dashboard
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  # Base images in Dockerfile (Go services) and dashboard/Dockerfile (digest-pinned node).
+  - package-ecosystem: docker
+    directories: [/, /dashboard]
+    target-branch: dev
+    schedule:
+      interval: weekly
+
+  # Images in docker-compose.yml (digest-pinned rabbitmq, ngrok, pgadmin).
+  - package-ecosystem: docker-compose
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+
+  # SHA-pinned actions in .github/workflows (updates both the SHA and the version comment).
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

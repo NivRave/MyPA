@@ -77,10 +77,10 @@ flowchart LR
 | **`orchestrator`** | [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go) | `debian:12-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8081` | Core brain: consumes `telegram.inbound`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](./internal/orchestrator/registry.go#L30-L43) registry (70 modular tools across 13 modules), dual-lane [`EventBus`](./internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](./internal/scheduler/scheduler.go). |
 | **`audit-worker`** | [`cmd/audit-worker/main.go`](./cmd/audit-worker/main.go) | `gcr.io/distroless/static-debian12` | — | Consumes `audit.events` from RabbitMQ, persists [`models.AuditSession`](./internal/models/models.go#L80-L92) rows to PostgreSQL, and runs a 24h ticker archiving sessions older than 30 days. |
 | **`migrate`** | [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go) (`-migrate-only`) | orchestrator image | — | One-shot (*P4-3*): applies goose migrations ([`internal/db/migrations/`](./internal/db/migrations)) and exits. `orchestrator` and `audit-worker` depend on it with `condition: service_completed_successfully`. |
-| **`dashboard`** | [`dashboard/`](./dashboard/package.json) | `node:20-alpine` (Next.js standalone) | `3030:3000` | Next.js App Router web console for managing family spaces, memories, baby logs, house assets, finances, automations, pairing codes, and mutation rollbacks. |
+| **`dashboard`** | [`dashboard/`](./dashboard/package.json) | `node:24.22.3-alpine` (digest-pinned; Next.js 16.4 standalone) | `3030:3000` | Next.js App Router web console for managing family spaces, memories, baby logs, house assets, finances, automations, pairing codes, and mutation rollbacks. |
 | **`postgres`** | `pgvector/pgvector:pg15` | Official Postgres 15 + `pgvector` | `5432` | Primary relational + vector store (29 tables). |
 | **`redis`** | `redis:7-alpine` | Official Redis 7 (`--appendonly yes`) | `6379` | Hot rolling conversation state (`chat:<userID>`) and OAuth token cache (`token:<userID>`). |
-| **`rabbitmq`** | `rabbitmq:3.13-management-alpine` | Official RabbitMQ 3.13 | `5672`, `15672` | Durable AMQP 0-9-1 broker decoupling webhook ingestion and audit telemetry. |
+| **`rabbitmq`** | `rabbitmq:4.3.7-management-alpine` (digest-pinned) | Official RabbitMQ 4.3 | `5672`, `15672` | Durable AMQP 0-9-1 broker decoupling webhook ingestion and audit telemetry. `hostname: rabbitmq` keeps the node name (`rabbit@rabbitmq`) stable so the `rabbitmq_data` volume survives container recreation (*P5-4*). |
 | **`ngrok`** | `ngrok/ngrok:3.39.8@sha256:14d8…` (digest-pinned, *P3-5*) | Official Ngrok container | `4040` | Tunnels public HTTPS webhook traffic to `proxy:8000`. Requires `NGROK_DOMAIN` (no committed default). |
 | **`pgadmin`** | `dpage/pgadmin4:9.17@sha256:2f4c…` (digest-pinned, *P3-5*) | Official pgAdmin 4 | `5050:80` | Web UI for inspecting PostgreSQL tables. **Opt-in** (`profiles: [tools]`): `docker compose --profile tools up -d pgadmin`; no default password. |
 
@@ -103,6 +103,7 @@ mypa/
 │   ├── proxy/main.go               # Unified reverse proxy (:8000)
 │   ├── audit-worker/main.go        # Async RabbitMQ telemetry consumer & 30-day session archiver
 │   └── devtools/listmodels/        # Dev-only utility (lists Gemini models); not in any image
+├── .github/dependabot.yml          # Weekly updates → PRs to dev: gomod, npm, docker, docker-compose, github-actions (P5-4)
 ├── .github/workflows/ci.yml       # CI (P5-3): go test -race, golangci-lint (.golangci.yml), govulncheck, dashboard, compose build
 ├── scripts/clean.{ps1,sh}          # Remove local build artefacts (bin/, root *.exe/*.test, coverage)
 ├── docs/                           # REMEDIATION_PLAN.md, DECISIONS_LOG.md, adr/ (architecture decisions); reviews/ is gitignored

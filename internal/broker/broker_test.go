@@ -21,7 +21,7 @@ func setupTestRabbitMQ(t *testing.T) (string, func()) { sharedRabbitOnce.Do(func
 	ctx := context.Background()
 
 	rabbitContainer, err := rabbitmq.Run(ctx,
-		"rabbitmq:3.12-management-alpine",
+		"rabbitmq:4.3.7-management-alpine",
 	)
 	if err != nil {
 		sharedRabbitErr = fmt.Errorf("failed to start container: %w", err); return

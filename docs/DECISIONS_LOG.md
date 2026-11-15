@@ -591,3 +591,26 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 - CI runs `go test -race -count=1 -p 1 ./...` (proposed in P2-8). Verified locally beforehand: the full suite under `-race` in `golang:1.26` with the Docker socket mounted for testcontainers. **No data races in 41 packages.**
 - One failure: `TestIntentMatcher_AdversarialStressAndReDoS` asserts absolute wall-clock budgets (100 KB < 250 ms, 1 MB < 3 s); under `-race` it took 0.44 s / 6.4 s. Options: skip the subtest under race; run `-race` only on selected packages; **scale budgets by a build-tagged `timingSlack` constant** (chosen; `race_on_test.go` = 10, `race_off_test.go` = 1 — the stdlib's `internal/race.Enabled` pattern). Scaling keeps the assertion meaningful: real ReDoS is exponential, not a constant factor. Re-run twice under `-race` and once without: green.
 - Risk noted: other wall-clock assertions passed under `-race` locally but could flake on slower shared CI runners; if one does, apply the same `timingSlack` pattern in that package.
+
+## P5-4 — Dependency updates
+
+### D5-4.1 Version policy
+- Latest patch of the chosen release line, **digest-pinned** where it is an image, with Dependabot (below) proposing updates. Chosen: `node:24.22.3-alpine` (Node 24 = active LTS; 20 is EOL; 22 is already maintenance-only), `rabbitmq:4.3.7-management-alpine` (4.4.0 skipped: a brand-new minor for the one stateful broker), `gqlgen v0.17.98`, `vitest 5.1.0`. CI's Node moved to 24 to match the image.
+
+### D5-4.2 RabbitMQ 4.3 — compatibility and a persistence bug
+- Compatibility: all exchanges/queues are durable, non-exclusive classic queues with DLX arguments; 4.x removes classic mirroring and deprecates *transient* non-exclusive queues — neither is used. Integration tests (`internal/broker`, `tests/e2e`) now run on the same 4.3.7 image (they were on 3.12 while production ran 3.13).
+- **Found a real persistence bug:** the compose service had no `hostname`, so the node name was `rabbit@<container-id>` (confirmed on the running stack: `rabbit@15fdd0d9ad5d`). Every container recreation (image update, `compose up` after config change) started a fresh empty node; queued and dead-lettered messages were stranded in the volume. Added `hostname: rabbitmq`.
+- **Verified empirically** (scratch script, 4.3.7): create a vhost → `docker rm -f` → recreate on the same volume. Without hostname: vhost gone. With hostname: vhost persists.
+- In-place 3.13→4.3 data upgrade: not needed and not attempted — the hostname change means the first 4.3 start is a fresh node anyway; topology is re-declared by the services. README documents the operator step (stop gateway, drain, export DLQs if wanted).
+
+### D5-4.3 gqlgen 0.17.49 → 0.17.98
+- First regenerated with the *old* version as a baseline: generated files were in sync (only CRLF), but `gqlgen generate` quarantined 22 hand-written helpers at the bottom of `schema.resolvers.go` under a "will be deleted" warning. Moved them byte-for-byte to `internal/graph/converters.go` (gqlgen's own recommendation), so regeneration is now stable.
+- Upgrade: `generated.go` shrank ~9k lines (newer, more compact codegen); resolver file changed only in header/type-block formatting. gqlparser 2.5.16→2.5.64 came along.
+
+### D5-4.4 Dashboard test toolchain
+- vitest 3→5.1 (fixes the dev-only tinypool critical deferred in P5-3) needs vite as a peer: added `vite ^8.3.8` explicitly, `@types/node ^24`. `@vitejs/plugin-react` → **5.2.0, not 6.x**: 6 is a rolldown/oxc rewrite whose peer resolution conflicted; 5.2 supports vite 4–8 and nothing here needs 6. All 33 tests unchanged and passing.
+- `npm audit --audit-level=high` is now clean for **all** dependencies (only moderate/low in dev tooling remain), so the CI full-audit step is now **blocking**.
+
+### D5-4.5 Dependabot (not Renovate)
+- Options: Renovate (more powerful grouping/automerge, needs an app install), **Dependabot** (native to GitHub, zero install; chosen). Ecosystems: gomod, npm (`/dashboard`), docker (`/`, `/dashboard`), docker-compose, github-actions. All PRs target `dev`; minor/patch grouped per ecosystem; majors individual. It understands the `@sha # vX` action pins and image digests.
+- Not done (noted): the Go service base images (`golang:1.26-alpine`, `distroless/static-debian12`, `debian:12-slim`) and `redis:7-alpine` / `pgvector:pg15` are still tag-pinned, not digest-pinned — Dependabot will track tags; digest-pinning them is a small follow-up.
