@@ -153,3 +153,19 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### D1-5.6 "Same for any future destructive admin commands"
 - `isDestructiveAction` + the staged-action pattern in `restore.go` is the template. `/backup` is not destructive (additive, retention-bounded) and stays immediate.
+
+---
+
+## P2-1 — Make all tools reachable
+
+### D2-1.1 New domains vs promoting to core
+- **Options:** (a) promote the 4 tools to Tier-1 core (always sent); (b) new `DomainMemory` + `DomainHistory` keyword groups; (c) per-tool domain mapping instead of per-module.
+- **Chosen:** (b).
+- **Why / challenge:** (a) is simplest and guarantees availability, but costs ~4 declarations (~500 tokens) on *every* turn for tools used rarely, against the design goal of Tier-2 scoping. (c) would be more precise but changes the mapping model for all modules; module-level mapping works here because each module's core tools are already handled by `CoreToolNames`, so mapping `memory`/`durability` only adds their non-core tools.
+- **Risk accepted:** keyword routing misses phrasings not in the lists. P2-2 (sticky domains) reduces this for follow-ups; the invariant test guarantees no tool is *structurally* unreachable.
+
+### D2-1.2 Keyword choices
+- Broad words like "changed"/"export" may add the history tools to unrelated turns (false positive = 2 extra declarations, harmless). Hebrew "תזכור" (remember) is included while "תזכורת" (reminder) is not matched thanks to the existing word-end guard.
+
+### D2-1.3 Invariant test location
+- An external test package (`orchestrator_test`) so it can import every domain module (they import `orchestrator`, so an internal test would be an import cycle). The module list mirrors `cmd/orchestrator/main.go`; adding a module there without adding it to the test is the remaining gap — noted for P5-5 (generate the catalogue from one registration list).

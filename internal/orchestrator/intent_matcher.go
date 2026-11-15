@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -19,6 +20,10 @@ const (
 	DomainContacts   DomainGroup = "contacts"
 	DomainAutomation DomainGroup = "automation"
 	DomainShared     DomainGroup = "shared"
+	// DomainMemory carries the non-core memory tools (entity profiles).
+	DomainMemory DomainGroup = "memory"
+	// DomainHistory carries the non-core durability tools (change log, data export).
+	DomainHistory DomainGroup = "history"
 )
 
 // IntentMatcher inspects text and returns relevant DomainGroups.
@@ -132,12 +137,40 @@ func (m *KeywordIntentMatcher) initPatterns() {
 		"אוטומציה", "אוטומציות", "כלל", "כללים", "חוק", "חוקים", "וורקפלו", "קרון", "טריגר", "וובהוק", "ממשק", "העדפה", "העדפות", "פרסונה", "הנחיות קבועות", "שעות שקט",
 	})
 
+	m.patterns[DomainMemory] = buildRegex([]string{
+		// English
+		"remember", "remembered", "recall", "memory", "memories", "forget",
+		"profile", "profiles", "who is", "who's", "what do you know", "know about",
+		// Hebrew ("תזכור" matches but "תזכורת"/reminder does not, thanks to the word-end guard)
+		"זוכר", "זוכרת", "תזכור", "תזכרי", "לזכור", "זכרון", "זיכרון", "זכרונות", "זיכרונות",
+		"פרופיל", "פרופילים", "מי זה", "מי זאת", "מה אתה יודע", "מה את יודעת",
+	})
+
+	m.patterns[DomainHistory] = buildRegex([]string{
+		// English
+		"history", "changes", "changed", "change log", "changelog", "recent changes", "audit",
+		"export", "exports", "download my data", "undo", "revert", "rollback",
+		// Hebrew
+		"היסטוריה", "היסטוריית", "שינויים", "השתנה", "מה השתנה", "ייצוא", "לייצא", "ייצא", "יצוא",
+		"בטל", "ביטול", "לבטל", "שחזר", "לשחזר",
+	})
+
 	m.patterns[DomainShared] = buildRegex([]string{
 		// English
 		"shared", "share", "family", "partner", "spouse", "hand-off", "shared reminder", "shared space", "notify partner", "family group",
 		// Hebrew
 		"משותף", "לשתף", "שיתוף", "משפחה", "בן זוג", "בת זוג", "תזכורת משותפת", "מרחב משותף", "קבוצה משפחתית",
 	})
+}
+
+// SupportedDomains returns every domain this matcher has keywords for (sorted).
+func (m *KeywordIntentMatcher) SupportedDomains() []DomainGroup {
+	out := make([]DomainGroup, 0, len(m.patterns))
+	for d := range m.patterns {
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }
 
 // MatchDomains scans text against compiled domain patterns and returns matching domain groups.

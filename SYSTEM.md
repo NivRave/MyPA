@@ -231,6 +231,9 @@ Rather than injecting all 70 registered tool schemas on every call (~9,500 input
    - `DomainContacts` (4 tools): `search_contacts`, `create_contact`, `upsert_personal_crm`, `query_personal_crm`.
    - `DomainAutomation` (11 tools): `register_external_api`, `list_external_apis`, `call_external_api`, `create_automation_rule`, `list_automation_rules`, `delete_automation_rule`, `update_user_preferences`, `get_user_preferences`, `schedule_workflow`, `list_workflows`, `delete_workflow`.
    - `DomainShared` (4 tools): `configure_shared_topic`, `create_shared_reminder`, `complete_shared_reminder`, `list_shared_activity`.
+   - `DomainMemory` (2 tools, *P2-1*): `upsert_entity_profile`, `get_entity_profile` (keywords: remember, recall, profile, who is / זוכר, תזכור, פרופיל, מי זה…).
+   - `DomainHistory` (2 tools, *P2-1*): `list_recent_changes`, `export_topic_data` (keywords: history, changes, what changed, export, undo / היסטוריה, שינויים, מה השתנה, ייצוא, בטל…).
+   - *Reachability invariant:* `TestEveryRegisteredToolIsReachable` (`internal/orchestrator/tool_reachability_test.go`) builds every production module and fails if any declared tool is neither Tier 1 core nor mapped (`ModuleDomainMapping`) to a domain the matcher can select.
    - *Token Savings:* Average turn consumes ~1,680 to ~2,380 tokens across 12–20 tools, representing a 75% to 82% token reduction per LLM interaction.
 
 **Unified Durability Rollback Engine (`internal/domains/durability`):**

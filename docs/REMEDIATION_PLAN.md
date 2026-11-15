@@ -190,7 +190,7 @@ Generate the tool catalog section of `SYSTEM.md`/`README.md` from the registry (
 | P1-3 | Per-user prompt cache keys | 1 | ☑ |
 | P1-4 | Inbound idempotency + non-retryable after side effects | 1 | ☑ |
 | P1-5 | `/restore` confirmation + pre-restore backup | 1 | ☑ |
-| P2-1 | Make all tools reachable | 2 | ☐ |
+| P2-1 | Make all tools reachable | 2 | ☑ |
 | P2-2 | Sticky domains | 2 | ☐ |
 | P2-3 | Use the HNSW index | 2 | ☐ |
 | P2-4 | Unify memory systems | 2 | ☐ |

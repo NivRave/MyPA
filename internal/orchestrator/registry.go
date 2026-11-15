@@ -359,6 +359,10 @@ var ModuleDomainMapping = map[string]DomainGroup{
 	"workspace_contacts": DomainContacts,
 	"automation":         DomainAutomation,
 	"shared":             DomainShared,
+	// Core tools of these modules (remember_fact, save_topic_memory, search_topic_memories,
+	// undo_last_action) are always offered; the mapping exposes the remaining ones.
+	"memory":     DomainMemory,
+	"durability": DomainHistory,
 }
 
 // CoreDeclarations returns only the Tier 1 core function declarations.
