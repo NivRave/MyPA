@@ -1,6 +1,7 @@
 package baby_test
 
 import (
+	"encoding/json"
 	"context"
 	"testing"
 
@@ -85,7 +86,21 @@ func TestSEC04_CrossTenant_BabyProfileAndCareLogs_Isolation(t *testing.T) {
 	})
 	require.NoError(t, err)
 	t.Logf("Family Beta query logs response: %s", queryResp)
-	assert.NotContains(t, queryResp, "120", "Family Beta must NOT see Family Alpha's 120ml feeding log")
+	// Assert on the parsed structure: a substring check for "120" was flaky because the response
+	// embeds nanosecond timestamps (e.g. "…36.1200304") that can contain "120" by chance.
+	var betaView struct {
+		LogsReturned int               `json:"logs_returned"`
+		RecentLogs   []json.RawMessage `json:"recent_logs"`
+		Trends       struct {
+			TotalFeedings      int     `json:"total_feedings"`
+			TotalFeedingVolume float64 `json:"total_feeding_volume"`
+		} `json:"trends"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(queryResp), &betaView))
+	assert.Zero(t, betaView.LogsReturned, "Family Beta must NOT see Family Alpha's 120ml feeding log")
+	assert.Empty(t, betaView.RecentLogs)
+	assert.Zero(t, betaView.Trends.TotalFeedings)
+	assert.Zero(t, betaView.Trends.TotalFeedingVolume)
 
 	// Attack D: Try to get milestone suggestions for Leo
 	_, err = mod.Execute(ctx, callCtxBeta, "get_baby_milestone_suggestions", map[string]interface{}{
