@@ -8,6 +8,7 @@ import (
 	"github.com/nivik/mypa/internal/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 // Client handles database operations.
@@ -23,7 +24,7 @@ func Open(dsn string) (*Client, error) {
 		return nil, fmt.Errorf("database URL is empty")
 	}
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: newSQLLogger()})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -45,6 +46,24 @@ func Open(dsn string) (*Client, error) {
 	}
 	slog.Info("connected to postgres", "max_open_conns", 25, "max_idle_conns", 10)
 	return &Client{DB: db}, nil
+}
+
+// slowSQLThreshold is the duration above which a successful query is logged at WARN.
+const slowSQLThreshold = 200 * time.Millisecond
+
+// newSQLLogger routes GORM through the process-wide slog handler (JSON, same as every other line)
+// instead of GORM's default coloured stdout logger (BL-2):
+//   - ParameterizedQueries: SQL is logged with $1 placeholders, never the bound values — those are
+//     phone numbers, chat IDs and user content (P3-3: no personal data in logs).
+//   - IgnoreRecordNotFoundError: a miss is normal control flow, not an error.
+//   - Warn level: only failed and slow (> slowSQLThreshold) statements are logged.
+func newSQLLogger() gormlogger.Interface {
+	return gormlogger.NewSlogLogger(slog.Default(), gormlogger.Config{
+		SlowThreshold:             slowSQLThreshold,
+		LogLevel:                  gormlogger.Warn,
+		ParameterizedQueries:      true,
+		IgnoreRecordNotFoundError: true,
+	})
 }
 
 // NewClientAutoMigrate opens a connection and builds the schema with GORM AutoMigrate.

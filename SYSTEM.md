@@ -819,7 +819,7 @@ Failed syncs are **not retried**; the event stays in MyPA with an empty `externa
 | Environment Variable | Viper Config Key | Default | Used By | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `ALLOWED_USERS` | `server.allowed_users` | `""` | `orchestrator` | Comma-separated bootstrap users: `"platform_id:Name:Role:FamilyGroup"` |
-| `LOG_LEVEL` | *(direct `os.Getenv`, `internal/logging`)* | `info` | all Go services | `debug`/`info`/`warn`/`error`. Message content is logged only at `debug` (*P3-3*); at `info` user messages appear as `message_id` + `text_len` |
+| `LOG_LEVEL` | *(direct `os.Getenv`, `internal/logging`)* | `info` | all Go services | `debug`/`info`/`warn`/`error`. Message content is logged only at `debug` (*P3-3*); at `info` user messages appear as `message_id` + `text_len`. GORM logs through the same JSON handler (`db.newSQLLogger`, *BL-2*): only failed or slow (> 200 ms) statements, as `SQL executed` with `trace.sql` using `$n` placeholders — bound values are never logged — and `record not found` is not logged at all |
 | `DEFAULT_TIMEZONE` | `server.default_timezone` | `"UTC"` | `orchestrator` | Default IANA timezone injected into system prompt |
 | `WEEK_START_DAY` | `server.week_start_day` | `"Sunday"` | `orchestrator` | First day of the household week, stated in the system prompt (*P2-6*); invalid values fall back to the default |
 | `WEEKEND_DAYS` | `server.weekend_days` | `"Friday,Saturday"` | `orchestrator` | Comma-separated weekend days for the system prompt (*P2-6*) |
