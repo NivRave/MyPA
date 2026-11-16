@@ -124,6 +124,39 @@ func TestCompose_ContainerURLsTargetServiceNames(t *testing.T) {
 	assert.GreaterOrEqual(t, checked, 8, "expected the Go services to declare their infrastructure URLs")
 }
 
+// BL-7: every external image — compose services and Dockerfile bases — is pinned to an immutable
+// digest (with a readable tag), so a rebuild can never silently pick up different bits.
+// Dependabot (P5-4) bumps tag+digest pairs deliberately.
+func TestAllExternalImagesArePinnedByDigest(t *testing.T) {
+	_, services := loadCompose(t)
+	for name, svc := range services {
+		if svc.Image == "" {
+			continue // built from a Dockerfile, checked below
+		}
+		assert.Contains(t, svc.Image, "@sha256:", "compose service %s: %s", name, svc.Image)
+	}
+
+	for _, df := range []string{"Dockerfile", filepath.Join("dashboard", "Dockerfile")} {
+		data, err := os.ReadFile(filepath.Join("..", "..", df))
+		require.NoError(t, err)
+		stages := map[string]bool{}
+		for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+			f := strings.Fields(line)
+			if len(f) < 2 || !strings.EqualFold(f[0], "FROM") {
+				continue
+			}
+			ref := f[1]
+			if len(f) >= 4 && strings.EqualFold(f[2], "AS") {
+				stages[strings.ToLower(f[3])] = true
+			}
+			if stages[strings.ToLower(ref)] && !strings.Contains(ref, "@") {
+				continue // FROM <earlier stage>
+			}
+			assert.Contains(t, ref, "@sha256:", "%s: FROM %s", df, ref)
+		}
+	}
+}
+
 // pgAdmin is opt-in and has no default credentials.
 func TestCompose_PgAdminOptInWithoutDefaultPassword(t *testing.T) {
 	raw, services := loadCompose(t)
