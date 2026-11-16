@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/testutil"
 	"github.com/nivik/mypa/internal/graph"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
@@ -15,12 +16,9 @@ import (
 )
 
 func getTestDBClient(t *testing.T) *db.Client {
-	dsn := "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable"
-	client, err := db.NewClientAutoMigrate(dsn)
-	if err != nil {
-		t.Skipf("Postgres DB not accessible at localhost:5432: %v; skipping DB integration test", err)
-		return nil
-	}
+	t.Helper()
+	client, cleanup := testutil.NewTestDB(t)
+	t.Cleanup(cleanup)
 	return client
 }
 
@@ -28,9 +26,6 @@ func getTestDBClient(t *testing.T) *db.Client {
 // RollbackMutation rejects attempts to mutate system tables (users, pairing_codes, etc.).
 func TestSEC06_RollbackMutation_SystemTablesRejected(t *testing.T) {
 	client := getTestDBClient(t)
-	if client == nil {
-		return
-	}
 
 	resolver := &graph.Resolver{DB: client}
 	mutResolver := resolver.Mutation()
@@ -90,9 +85,6 @@ func TestSEC06_RollbackMutation_SystemTablesRejected(t *testing.T) {
 // if an error occurs during rollback execution, the transaction aborts and is_undone remains false.
 func TestSEC06_RollbackMutation_TransactionRollbackOnStatementFailure(t *testing.T) {
 	client := getTestDBClient(t)
-	if client == nil {
-		return
-	}
 
 	resolver := &graph.Resolver{DB: client}
 	mutResolver := resolver.Mutation()
@@ -138,9 +130,6 @@ func TestSEC06_RollbackMutation_TransactionRollbackOnStatementFailure(t *testing
 // cannot rollback mutations belonging to another tenant/family.
 func TestSEC06_RollbackMutation_NonAdminTenantBoundary(t *testing.T) {
 	client := getTestDBClient(t)
-	if client == nil {
-		return
-	}
 
 	resolver := &graph.Resolver{DB: client}
 	mutResolver := resolver.Mutation()

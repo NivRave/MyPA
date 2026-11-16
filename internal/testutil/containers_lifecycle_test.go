@@ -9,6 +9,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	postgresDriver "gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // TestTestcontainers_ConcurrentSingletonInitialization stress tests
@@ -60,9 +63,13 @@ func TestTestcontainers_CleanDatabaseTeardown(t *testing.T) {
 	const numDatabases = 5
 	ctx := context.Background()
 
-	_, adminDB, err := getSingletonPostgres(ctx)
+	adminDSN, err := GetPostgresDSN(ctx)
 	require.NoError(t, err)
-	require.NotNil(t, adminDB)
+	adminDB, err := gorm.Open(postgresDriver.Open(adminDSN), &gorm.Config{Logger: logger.Discard})
+	require.NoError(t, err)
+	if sqlDB, err := adminDB.DB(); err == nil {
+		defer sqlDB.Close()
+	}
 
 	// Measure baseline orphaned test databases
 	var initialCount int64

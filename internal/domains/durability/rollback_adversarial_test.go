@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/testutil"
 	"github.com/nivik/mypa/internal/domains/durability"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
@@ -18,16 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getLiveDB(t *testing.T) *db.Client {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable"
-	}
-	client, err := db.NewClientAutoMigrate(dsn)
-	if err != nil {
-		t.Skipf("skipping live postgres test: %v", err)
-		return nil
-	}
+func newTestDBClient(t *testing.T) *db.Client {
+	t.Helper()
+	client, cleanup := testutil.NewTestDB(t)
+	t.Cleanup(cleanup)
 	return client
 }
 
@@ -35,10 +29,7 @@ func getLiveDB(t *testing.T) *db.Client {
 // every system entity variant (users, pairing_codes, encrypted_credentials, audit_sessions, schema_migrations).
 // Module.Rollback MUST unconditionally reject all of them.
 func TestAdversarial_SystemEntitiesVeto(t *testing.T) {
-	client := getLiveDB(t)
-	if client == nil {
-		return
-	}
+	client := newTestDBClient(t)
 
 	bus := events.NewEventBus()
 	module := durability.NewModule(client, bus)
@@ -90,10 +81,7 @@ func TestAdversarial_SystemEntitiesVeto(t *testing.T) {
 // (BabyCareLog, FinancialTransaction, ScheduleEvent) on live PostgreSQL atomically reverts the database row
 // and marks mutation_logs.is_undone = true.
 func TestAdversarial_DomainRollbackLiveDB(t *testing.T) {
-	client := getLiveDB(t)
-	if client == nil {
-		return
-	}
+	client := newTestDBClient(t)
 
 	bus := events.NewEventBus()
 	module := durability.NewModule(client, bus)
@@ -276,10 +264,7 @@ func TestAdversarial_DomainRollbackLiveDB(t *testing.T) {
 // TestAdversarial_RollbackAtomicityOnFailure tests that if an SQL statement fails during rollback,
 // the entire transaction rolls back and is_undone remains false.
 func TestAdversarial_RollbackAtomicityOnFailure(t *testing.T) {
-	client := getLiveDB(t)
-	if client == nil {
-		return
-	}
+	client := newTestDBClient(t)
 
 	bus := events.NewEventBus()
 	module := durability.NewModule(client, bus)
@@ -319,10 +304,7 @@ func TestAdversarial_RollbackAtomicityOnFailure(t *testing.T) {
 
 // TestAdversarial_EngineProcessMessageUndo tests conversational /undo execution through Engine.
 func TestAdversarial_EngineProcessMessageUndo(t *testing.T) {
-	client := getLiveDB(t)
-	if client == nil {
-		return
-	}
+	client := newTestDBClient(t)
 
 	bus := events.NewEventBus()
 	durMod := durability.NewModule(client, bus)

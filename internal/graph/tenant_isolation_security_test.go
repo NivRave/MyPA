@@ -22,10 +22,6 @@ import (
 
 func TestAdversarial_MaliciousIDParsing(t *testing.T) {
 	client := getTestDBClient(t)
-	if client == nil {
-		t.Skip("Database required for full resolver test")
-		return
-	}
 
 	bus := events.NewEventBus()
 	resolver := graph.NewResolver(graph.ResolverConfig{
@@ -142,10 +138,6 @@ func TestAdversarial_MaliciousIDParsing(t *testing.T) {
 
 func TestAdversarial_CrossTenantIsolation_Mutations(t *testing.T) {
 	client := getTestDBClient(t)
-	if client == nil {
-		t.Skip("Database required for full resolver test")
-		return
-	}
 
 	bus := events.NewEventBus()
 	resolver := graph.NewResolver(graph.ResolverConfig{
@@ -281,10 +273,6 @@ func TestAdversarial_CrossTenantIsolation_Mutations(t *testing.T) {
 
 func TestAdversarial_CrossTenantIsolation_Queries(t *testing.T) {
 	client := getTestDBClient(t)
-	if client == nil {
-		t.Skip("Database required for full resolver test")
-		return
-	}
 
 	bus := events.NewEventBus()
 	resolver := graph.NewResolver(graph.ResolverConfig{
@@ -422,10 +410,6 @@ func TestAdversarial_CrossTenantIsolation_Queries(t *testing.T) {
 
 func TestAdversarial_CrossTenant_RecordIDOR(t *testing.T) {
 	client := getTestDBClient(t)
-	if client == nil {
-		t.Skip("Database required for full resolver test")
-		return
-	}
 
 	bus := events.NewEventBus()
 	resolver := graph.NewResolver(graph.ResolverConfig{
@@ -617,10 +601,6 @@ func TestAdversarial_CrossTenant_RecordIDOR(t *testing.T) {
 
 func TestAdversarial_AuditSessions_TenantIsolation(t *testing.T) {
 	client := getTestDBClient(t)
-	if client == nil {
-		t.Skip("Database required for full resolver test")
-		return
-	}
 
 	bus := events.NewEventBus()
 	resolver := graph.NewResolver(graph.ResolverConfig{
@@ -742,10 +722,6 @@ func TestAdversarial_AuditSessions_TenantIsolation(t *testing.T) {
 
 func TestAdversarial_MutationEventEmission_Snapshots(t *testing.T) {
 	client := getTestDBClient(t)
-	if client == nil {
-		t.Skip("Database required for full resolver test")
-		return
-	}
 
 	bus := events.NewEventBus()
 	var publishedEvents []events.MutationEvent

@@ -21,6 +21,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-8 | Medium | WhatsApp delivery failures are invisible (no Twilio status callback) | done 2026-11-16 (`fix/bl-8`, DP-4) |
 | BL-9 | Low | Replies recap earlier turns' actions as if done in this turn | done 2026-11-16 (`fix/bl-9`, DP-10) — confirm in live use |
 | BL-10 | Low | WhatsApp formatter nests `*` when a heading contains bold | done 2026-11-16 (`fix/bl-10`, DP-7) |
+| BL-11 | Medium | Integration tests ran against the live compose database | done 2026-11-16 (`fix/bl-11`, DP-13); leftover fixtures → OP-9 |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -114,6 +115,18 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** while inside a heading, skip emphasis markers (track a `inHeading` flag); table test
   `### 📅 **Event Details**` → `*📅 Event Details*`.
 
+### BL-11 — Integration tests ran against the live compose database (Medium)
+- **Found:** 2026-11-16, while sizing DE-2: `users` held 156 rows, 154 of them `AttackerFamily`/`VictimFamily`
+  fixtures created 2026-11-07…16 in 71 distinct minutes — one batch per local `go test ./...` run.
+- **Evidence:** six test helpers (graph, scheduler ×2, orchestrator, automation, durability) defaulted to
+  `postgres://mypa:mypa_password@localhost:5432/mypa` (or a host `DATABASE_URL`) — the compose Postgres,
+  published on `127.0.0.1:5432` with the default credentials — and called `NewClientAutoMigrate`, so they
+  also ran GORM AutoMigrate on the schema the `migrate` service owns. In CI there is no such server, so the
+  same tests silently **skipped**. Deletes were all scoped to test identifiers; no real rows were removed.
+- **Fix:** `internal/testutil/pgtest` (container per test binary, empty database per test, prod image) is
+  the only DB source; `testutil.NewTestDB` and `internal/db` tests use it. Guard
+  `TestNoTestReachesTheLiveDatabase` rejects the compose DSN and `os.Getenv("DATABASE_URL")` in any test.
+
 ## Operations (owner)
 
 | ID | Task | Status |
@@ -125,6 +138,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | OP-5 | Log in to the dashboard once (`JWT_SECRET` was rotated, old sessions are invalid). | open |
 | OP-6 | Choose an off-machine backup target (backups are encrypted but stay on this disk). | open |
 | OP-7 | After a few stable weeks: migration to drop the legacy `memories` table. | open |
+| OP-9 | Purge the test fixtures BL-11 left in the live DB: 154 fixture users plus 722 audit sessions, 167 automation rules, 268 mutation logs, 243 reminders, 176 topic memories, 89 maintenance items, 2 preferences, 1 baby log — each predicate names a fixture identity (`AttackerFamily`/`VictimFamily` users, `*_IDOR`, `DurabilityTestFamily`, `durability_test_*`, `FamilyAlphaSnapshots`, `victim-usr`/`attacker-usr`). Dry run (rolled back) left exactly the MyFamily data. Take a backup first. | open — awaiting owner approval |
 | OP-8 | WhatsApp runs on the Twilio **sandbox**: membership expires and replies then fail with 63015 (hit 2026-11-16). Short term: re-send `join <word>` to the sandbox number. Long term: register a WhatsApp sender in Twilio. | open |
 
 ## Decisions pending

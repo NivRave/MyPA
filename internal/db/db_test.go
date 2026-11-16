@@ -2,102 +2,22 @@ package db
 
 import (
 	"context"
-	"fmt"
-	"net/url"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/testutil/pgtest"
 	"github.com/pgvector/pgvector-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
-	postgresDriver "gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
 
-var (
-	testPgOnce      sync.Once
-	testPgContainer *postgres.PostgresContainer
-	testPgAdminDSN  string
-	testPgAdminDB   *gorm.DB
-	testPgErr       error
-)
-
-func getTestSingletonPostgres(ctx context.Context) (string, *gorm.DB, error) {
-	testPgOnce.Do(func() {
-		dbName := "testdb"
-		dbUser := "user"
-		dbPassword := "password"
-
-		container, err := postgres.Run(ctx,
-			"pgvector/pgvector:pg16",
-			postgres.WithDatabase(dbName),
-			postgres.WithUsername(dbUser),
-			postgres.WithPassword(dbPassword),
-			testcontainers.WithWaitStrategy(
-				wait.ForLog("database system is ready to accept connections").
-					WithOccurrence(2).
-					WithStartupTimeout(60*time.Second),
-			),
-		)
-		if err != nil {
-			testPgErr = fmt.Errorf("failed to start postgres container: %w", err)
-			return
-		}
-
-		connStr, err := container.ConnectionString(ctx, "sslmode=disable")
-		if err != nil {
-			testPgErr = fmt.Errorf("failed to get connection string: %w", err)
-			return
-		}
-
-		adminDB, err := gorm.Open(postgresDriver.Open(connStr), &gorm.Config{})
-		if err != nil {
-			testPgErr = fmt.Errorf("failed to connect admin gorm db: %w", err)
-			return
-		}
-
-		testPgContainer = container
-		testPgAdminDSN = connStr
-		testPgAdminDB = adminDB
-	})
-
-	return testPgAdminDSN, testPgAdminDB, testPgErr
-}
-
-// newEmptyTestDatabase creates an isolated, empty database in the shared container and returns its
-// DSN (dropped on test cleanup).
+// newEmptyTestDatabase returns the DSN of a fresh, isolated database that is dropped on test
+// cleanup (BL-11: one shared helper for every package, see internal/testutil/pgtest).
 func newEmptyTestDatabase(t *testing.T) string {
 	t.Helper()
-	ctx := context.Background()
-
-	adminDSN, adminDB, err := getTestSingletonPostgres(ctx)
-	if err != nil {
-		t.Fatalf("failed to initialize postgres testcontainer: %v", err)
-	}
-
-	uniqueID := strings.ReplaceAll(uuid.New().String(), "-", "")
-	dbName := fmt.Sprintf("testdb_%s", uniqueID)
-
-	if err := adminDB.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName)).Error; err != nil {
-		t.Fatalf("failed to create isolated test database %s: %v", dbName, err)
-	}
-	t.Cleanup(func() {
-		_ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
-	})
-
-	u, err := url.Parse(adminDSN)
-	if err != nil {
-		t.Fatalf("failed to parse admin DSN: %v", err)
-	}
-	u.Path = "/" + dbName
-	return u.String()
+	return pgtest.NewDatabase(t)
 }
 
 func setupTestDB(t *testing.T) (*Client, func()) {

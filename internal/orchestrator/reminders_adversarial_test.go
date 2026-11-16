@@ -3,12 +3,12 @@ package orchestrator_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/testutil"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"github.com/stretchr/testify/assert"
@@ -35,16 +35,10 @@ func (s *spyTelegramClient) GetFile(ctx context.Context, fileID string) (string,
 	return "", nil
 }
 
-func getLiveDB(t *testing.T) *db.Client {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable"
-	}
-	client, err := db.NewClientAutoMigrate(dsn)
-	if err != nil {
-		t.Skipf("skipping live postgres test: %v", err)
-		return nil
-	}
+func newTestDBClient(t *testing.T) *db.Client {
+	t.Helper()
+	client, cleanup := testutil.NewTestDB(t)
+	t.Cleanup(cleanup)
 	return client
 }
 
@@ -55,10 +49,7 @@ func getLiveDB(t *testing.T) *db.Client {
 // - Already sent -> not dispatched
 // - Empty AssignedToUserID -> falls back to CreatedByUserID
 func TestAdversarial_SharedTaskRemindersDelivery(t *testing.T) {
-	client := getLiveDB(t)
-	if client == nil {
-		return
-	}
+	client := newTestDBClient(t)
 
 	testDad := "adv_dad_user"
 	testMom := "adv_mom_user"

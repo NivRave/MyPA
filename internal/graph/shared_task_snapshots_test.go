@@ -18,10 +18,6 @@ import (
 // 4. Cross-tenant attempt to complete another family's task returns error and emits NO event.
 func TestCompleteSharedTask_Snapshots(t *testing.T) {
 	client := getTestDBClient(t)
-	if client == nil {
-		t.Skip("Database required for full resolver test")
-		return
-	}
 
 	bus := events.NewEventBus()
 
