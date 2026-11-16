@@ -672,3 +672,6 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### DP-6 Ignore every `.env` variant (BL-3)
 - `.gitignore` had exactly `.env`, so `.env.bak`/`.env.local`/`.env.prod` (copies made while editing secrets) were committable. Options: list known names (misses the next one) or **`.env.*` + `!.env.example`** (chosen: deny by default, allow the one template). Guarded by `TestGitignore_IgnoresEveryEnvCopyButTheExample`, which asks `git check-ignore --no-index` rather than reading the file text.
+
+### DP-7 WhatsApp bold is written only at the outermost level (BL-10)
+- A heading containing bold rendered as `*📅 *Event Details**` (live reply, 2026-11-16): headings and `**strong**` each wrapped their text in `*`, and WhatsApp cannot nest identical markers. Options: strip `**` inside headings only (misses bold-in-bold), or **a bold-depth counter shared by headings and strong emphasis, writing `*` only on the outermost open/close** (chosen: one rule covers both). Italic (`_`) is unaffected — `*_x_*` is valid WhatsApp. Table tests cover heading+bold, bold-in-bold, heading+italic, and bold after a heading.
