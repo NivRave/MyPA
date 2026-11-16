@@ -821,9 +821,9 @@ What each module adds to the system prompt and whether its writes emit `Mutation
 | `ORCHESTRATOR_URL` | `server.orchestrator_url` | `http://orchestrator:8081` | `proxy` | Internal upstream URL for GraphQL/OAuth proxy |
 | `BACKUP_AGE_RECIPIENTS` | *(direct `os.Getenv`, `db.BackupOptionsFromEnv`)* | `""` | `orchestrator` | Comma-separated age public keys (`age1…`) used to encrypt backups; empty → unencrypted backups with a warning (*P3-4*) |
 | `BACKUP_AGE_IDENTITY_FILE` | *(direct `os.Getenv`, `db.RestoreOptionsFromEnv`)* | `""` | `orchestrator` | Path to the age private key; needed only to `/restore` an encrypted backup (*P3-4*) |
-| `DATABASE_URL` | `database.url` | — | `orchestrator`, `audit-worker` | PostgreSQL connection string (`postgres://...`) |
-| `REDIS_URL` | `redis.url` | — | `orchestrator` | Redis connection string (`redis://redis:6379/0`) |
-| `RABBITMQ_URL` | `rabbitmq.url` | — | `gateway`, `orchestrator`, `audit-worker` | AMQP 0-9-1 URL (`amqp://...`) |
+| `DATABASE_URL` | `database.url` | — | `orchestrator`, `audit-worker` | PostgreSQL connection string (`postgres://...`). **Host runs only** (`localhost`): compose sets the container value itself from `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` + host `postgres` and never reads this one (`TestCompose_ContainerURLsTargetServiceNames`) |
+| `REDIS_URL` | `redis.url` | — | `orchestrator` | Redis connection string. **Host runs only** (`redis://localhost:6379/0`); containers always use `redis://redis:6379/0` |
+| `RABBITMQ_URL` | `rabbitmq.url` | — | `gateway`, `orchestrator`, `audit-worker` | AMQP 0-9-1 URL. **Host runs only** (`localhost`); containers get one built from `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` + host `rabbitmq` |
 | `RABBITMQ_PREFETCH` | `rabbitmq.prefetch` | `4` | `orchestrator` | Max concurrent conversation turns; users run in parallel, each user's messages in order (*P2-8*) |
 | `ENCRYPTION_KEY` | `encryption.key` | **Required** (orchestrator) | `orchestrator` (`internal/crypto`) | Primary secret for HKDF-SHA256 salted AES-256-GCM encryption at rest; orchestrator refuses to start if missing/placeholder. Dev fallback key only inside `go test` binaries |
 | `TELEGRAM_SECRET_TOKEN` | `telegram.secret_token` | Required if Telegram configured | `gateway` | Shared webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header using constant-time compare; also sent as `secret_token` in `setWebhook`. 1–256 chars `[A-Za-z0-9_-]`. Gateway refuses to start if missing while `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_URL` is set |

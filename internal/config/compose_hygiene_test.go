@@ -98,6 +98,32 @@ func TestCompose_ThirdPartyToolImagesPinned(t *testing.T) {
 	}
 }
 
+// Containers must reach infrastructure by its compose service name. The .env URLs are for
+// services run on the host (`go run`, usually localhost), so compose must never interpolate
+// them into a container: `${RABBITMQ_URL:-...}` would hand a container "localhost", i.e. itself.
+// Credentials still come from .env via the *_USER/*_PASS components.
+func TestCompose_ContainerURLsTargetServiceNames(t *testing.T) {
+	_, services := loadCompose(t)
+	wantHost := map[string]string{
+		"RABBITMQ_URL": "@rabbitmq:5672/",
+		"REDIS_URL":    "redis://redis:6379/",
+		"DATABASE_URL": "@postgres:5432/",
+	}
+	checked := 0
+	for name, svc := range services {
+		for key, host := range wantHost {
+			v, ok := svc.Environment[key]
+			if !ok {
+				continue
+			}
+			checked++
+			assert.NotContains(t, v, "${"+key, "%s: %s must not be taken from the host .env (it may point at localhost)", name, key)
+			assert.Contains(t, v, host, "%s: %s must target the compose service", name, key)
+		}
+	}
+	assert.GreaterOrEqual(t, checked, 8, "expected the Go services to declare their infrastructure URLs")
+}
+
 // pgAdmin is opt-in and has no default credentials.
 func TestCompose_PgAdminOptInWithoutDefaultPassword(t *testing.T) {
 	raw, services := loadCompose(t)
