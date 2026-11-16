@@ -129,6 +129,7 @@ func setupRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
 
 	twHandler := twilio.NewHandler(pub, cfg.Twilio.AuthToken)
 	r.Post("/webhook/twilio", twHandler.HandleWebhook)
+	r.Post("/webhook/twilio/status", twHandler.HandleStatusCallback) // BL-8 delivery reports
 
 	r.Post("/webhook/telegram", func(w http.ResponseWriter, r *http.Request) {
 		if !telegramSecretValid(cfg.Telegram.SecretToken, r.Header.Get("X-Telegram-Bot-Api-Secret-Token")) {

@@ -53,17 +53,7 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Always verify the Twilio signature. Fail closed when no auth token is configured:
-	// an HMAC keyed with "" is computable by anyone, so it must never be accepted.
-	if h.authToken == "" {
-		slog.Error("twilio webhook rejected: TWILIO_AUTH_TOKEN is not configured", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden: invalid signature", http.StatusForbidden)
-		return
-	}
-	sig := r.Header.Get("X-Twilio-Signature")
-	if sig == "" || !h.validateSignature(r, r.PostForm, sig) {
-		slog.Warn("twilio webhook signature verification failed", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden: invalid signature", http.StatusForbidden)
+	if !h.authenticated(w, r) {
 		return
 	}
 
@@ -100,6 +90,69 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.WriteHeader(http.StatusOK)
+}
+
+// authenticated verifies the X-Twilio-Signature of a parsed request and writes 403 when it fails.
+// It fails closed when no auth token is configured: an HMAC keyed with "" is computable by anyone.
+func (h *Handler) authenticated(w http.ResponseWriter, r *http.Request) bool {
+	if h.authToken == "" {
+		slog.Error("twilio webhook rejected: TWILIO_AUTH_TOKEN is not configured", "path", r.URL.Path, "remote_addr", r.RemoteAddr)
+		http.Error(w, "Forbidden: invalid signature", http.StatusForbidden)
+		return false
+	}
+	sig := r.Header.Get("X-Twilio-Signature")
+	if sig == "" || !h.validateSignature(r, r.PostForm, sig) {
+		slog.Warn("twilio webhook signature verification failed", "path", r.URL.Path, "remote_addr", r.RemoteAddr)
+		http.Error(w, "Forbidden: invalid signature", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// deliveryErrorHints explains common WhatsApp delivery failures to the operator (BL-8).
+var deliveryErrorHints = map[string]string{
+	"63003": "WhatsApp could not find the recipient address",
+	"63015": "recipient is not (or no longer) a sandbox participant: re-send the sandbox 'join <word>' message",
+	"63016": "outside the 24-hour session window: free-form replies need a recent user message (or an approved template)",
+	"63018": "rate limit exceeded for this sender",
+	"63024": "invalid message recipient",
+	"63038": "account daily message limit exceeded",
+}
+
+// HandleStatusCallback receives Twilio delivery reports for outbound messages (BL-8). Failed or
+// undelivered messages are logged at WARN with the error code and a hint; other statuses at DEBUG.
+// It never publishes anything and never logs message content.
+func (h *Handler) HandleStatusCallback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+	if !h.authenticated(w, r) {
+		return
+	}
+
+	status := r.PostForm.Get("MessageStatus")
+	attrs := []any{
+		"message_sid", r.PostForm.Get("MessageSid"),
+		"status", status,
+		"user_id", strings.TrimPrefix(r.PostForm.Get("To"), "whatsapp:"),
+	}
+	switch status {
+	case "failed", "undelivered":
+		code := r.PostForm.Get("ErrorCode")
+		attrs = append(attrs, "error_code", code)
+		if hint, ok := deliveryErrorHints[code]; ok {
+			attrs = append(attrs, "hint", hint)
+		}
+		slog.Warn("whatsapp message not delivered", attrs...)
+	default:
+		slog.Debug("whatsapp delivery status", attrs...)
+	}
 	w.WriteHeader(http.StatusOK)
 }
 

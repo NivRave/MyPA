@@ -66,7 +66,7 @@ An event-driven, multi-tenant personal and family AI operating system accessible
      ```bash
      curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=<NGROK_URL>/webhook/telegram&secret_token=<TELEGRAM_SECRET_TOKEN>"
      ```
-   - **WhatsApp:** Set `<NGROK_URL>/webhook/twilio` (e.g., `https://your-domain.ngrok-free.dev/webhook/twilio`) in your Twilio WhatsApp Sandbox settings.
+   - **WhatsApp:** Set `<NGROK_URL>/webhook/twilio` (e.g., `https://your-domain.ngrok-free.dev/webhook/twilio`) in your Twilio WhatsApp Sandbox settings. Also set `TWILIO_STATUS_CALLBACK_URL=<NGROK_URL>/webhook/twilio/status` in `.env`, so replies Twilio accepts but cannot deliver show up in `docker-compose logs gateway` as `whatsapp message not delivered` (with the error code and a hint, e.g. 63015 = re-join the sandbox).
 
 ### Running Locally (Development)
 

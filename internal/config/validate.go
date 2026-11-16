@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -84,6 +85,7 @@ func (c *Config) Validate(service string) error {
 			errs = append(errs, errors.New("JWT_SECRET must differ from ENCRYPTION_KEY"))
 		}
 		errs = append(errs, c.validateTwilio()...)
+		errs = append(errs, c.validateTwilioStatusCallback()...)
 	}
 
 	if len(errs) == 0 {
@@ -110,6 +112,23 @@ func (c *Config) validateTelegramIngress() []error {
 func (c *Config) validateTwilio() []error {
 	if c.Twilio.AccountSID != "" && c.Twilio.AuthToken == "" {
 		return []error{errors.New("TWILIO_AUTH_TOKEN is required when TWILIO_ACCOUNT_SID is set (webhook signatures cannot be verified)")}
+	}
+	return nil
+}
+
+// validateTwilioStatusCallback: optional (BL-8), but if set Twilio must be able to call it — an
+// absolute https URL, not an .env.example placeholder.
+func (c *Config) validateTwilioStatusCallback() []error {
+	raw := strings.TrimSpace(c.Twilio.StatusCallbackURL)
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return []error{errors.New("TWILIO_STATUS_CALLBACK_URL must be an absolute https URL (e.g. https://<public-host>/webhook/twilio/status)")}
+	}
+	if strings.Contains(strings.ToLower(raw), "your-") || strings.Contains(raw, "<YOUR_") {
+		return []error{errors.New("TWILIO_STATUS_CALLBACK_URL still contains the .env.example placeholder value")}
 	}
 	return nil
 }

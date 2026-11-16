@@ -89,6 +89,20 @@ func TestValidate(t *testing.T) {
 			}, wantErr: []string{"DATABASE_URL", "placeholder"}},
 		{name: "Orchestrator_TwilioSIDWithoutToken", service: ServiceOrchestrator, base: orchestratorOK,
 			mutate: func(c *Config) { c.Twilio.AccountSID = "AC1" }, wantErr: []string{"TWILIO_AUTH_TOKEN"}},
+		// BL-8: optional, but if set it must be an absolute https URL Twilio can call back.
+		{name: "Orchestrator_StatusCallbackHTTPSOK", service: ServiceOrchestrator, base: orchestratorOK,
+			mutate: func(c *Config) { c.Twilio.StatusCallbackURL = "https://gw.example/webhook/twilio/status" }},
+		{name: "Orchestrator_StatusCallbackNotHTTPS", service: ServiceOrchestrator, base: orchestratorOK,
+			mutate:  func(c *Config) { c.Twilio.StatusCallbackURL = "http://gw.example/webhook/twilio/status" },
+			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
+		{name: "Orchestrator_StatusCallbackRelative", service: ServiceOrchestrator, base: orchestratorOK,
+			mutate:  func(c *Config) { c.Twilio.StatusCallbackURL = "/webhook/twilio/status" },
+			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
+		{name: "Orchestrator_StatusCallbackPlaceholder", service: ServiceOrchestrator, base: orchestratorOK,
+			mutate: func(c *Config) {
+				c.Twilio.StatusCallbackURL = "https://your-ngrok-url.ngrok-free.dev/webhook/twilio/status"
+			},
+			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
 
 		// --- proxy ---
 		{name: "Proxy_OK", service: ServiceProxy,

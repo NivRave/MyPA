@@ -18,7 +18,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-5 | Low | Queue `telegram.inbound` also carries WhatsApp traffic | open |
 | BL-6 | Low | Proxy logs a WARN for every browser `/favicon.ico` | open |
 | BL-7 | Low | Go base images, `redis`, `pgvector` not digest-pinned | open |
-| BL-8 | Medium | WhatsApp delivery failures are invisible (no Twilio status callback) | open |
+| BL-8 | Medium | WhatsApp delivery failures are invisible (no Twilio status callback) | done 2026-11-16 (`fix/bl-8`, DP-4) |
 | BL-9 | Low | Replies recap earlier turns' actions as if done in this turn | open |
 | BL-10 | Low | WhatsApp formatter nests `*` when a heading contains bold | open |
 

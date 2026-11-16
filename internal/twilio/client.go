@@ -53,6 +53,10 @@ func (c *Client) sendSingleMessage(ctx context.Context, to string, body string) 
 	data.Set("To", to)
 	data.Set("From", c.cfg.FromNumber)
 	data.Set("Body", body)
+	if c.cfg.StatusCallbackURL != "" {
+		// BL-8: "accepted" is not "delivered"; Twilio reports the outcome to the gateway.
+		data.Set("StatusCallback", c.cfg.StatusCallbackURL)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(data.Encode()))
 	if err != nil {
