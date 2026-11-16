@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/nivik/mypa/internal/logging"
 	"log/slog"
@@ -18,7 +17,6 @@ import (
 	"github.com/nivik/mypa/internal/markdown"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
-	"golang.org/x/oauth2"
 
 	"google.golang.org/genai"
 )
@@ -211,20 +209,7 @@ func NewEngine(
 		calendar:       DefaultCalendarConventions(),
 	}
 
-	e.calendarFactory = func(ctx context.Context, userID string) (CalendarClient, error) {
-		tokenBytes, err := e.store.GetOAuthToken(ctx, userID)
-		if err != nil || tokenBytes == nil {
-			return nil, fmt.Errorf("unauthorized")
-		}
-
-		var tok oauth2.Token
-		if err := json.Unmarshal(tokenBytes, &tok); err != nil {
-			return nil, fmt.Errorf("unauthorized")
-		}
-
-		ts := e.oauthCfg.TokenSource(ctx, &tok)
-		return calendar.NewClient(ctx, ts)
-	}
+	e.calendarFactory = NewCalendarFactory(e.store.GetOAuthToken, e.oauthCfg)
 
 	return e
 }

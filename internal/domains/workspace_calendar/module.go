@@ -3,8 +3,9 @@ package workspace_calendar
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"strings"
+	"log/slog"
 
 	"github.com/nivik/mypa/internal/domains/toolutil"
 	"github.com/nivik/mypa/internal/events"
@@ -175,9 +176,11 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 	actorID := callCtx.ActorID()
 	calClient, err := m.factory(ctx, actorID)
 	if err != nil {
-		if strings.EqualFold(err.Error(), "unauthorized") {
+		if errors.Is(err, orchestrator.ErrCalendarNotConnected) {
 			return "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again.", nil
 		}
+		// A stored token that cannot be used is an incident the operator must see (BL-1).
+		slog.Warn("google calendar operation failed", "op", toolName, "user_id", actorID, "error", err)
 		return "⚠️ Your Google connection expired or is invalid. Please send /connect again.", nil
 	}
 

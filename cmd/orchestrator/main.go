@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/nivik/mypa/internal/logging"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/playground"
-	"golang.org/x/oauth2"
 
 	"github.com/nivik/mypa/internal/audio"
 	"github.com/nivik/mypa/internal/broker"
@@ -226,18 +224,7 @@ func main() {
 	sharedModule := shared.NewModule(dbClient, eventBus, sharedNotifier)
 
 	// Track 1D: Multi-Schedule & Virtual Sub-Calendars
-	calendarFactory := func(calCtx context.Context, userID string) (orchestrator.CalendarClient, error) {
-		tokenBytes, err := store.GetOAuthToken(calCtx, userID)
-		if err != nil || tokenBytes == nil {
-			return nil, fmt.Errorf("unauthorized")
-		}
-		var tok oauth2.Token
-		if err := json.Unmarshal(tokenBytes, &tok); err != nil {
-			return nil, fmt.Errorf("unauthorized")
-		}
-		ts := oauthCfg.TokenSource(calCtx, &tok)
-		return calendar.NewClient(calCtx, ts)
-	}
+	calendarFactory := orchestrator.NewCalendarFactory(store.GetOAuthToken, oauthCfg)
 	scheduleModule := schedule.NewModule(dbClient, schedule.WithCalendarFactory(calendarFactory), schedule.WithEventBus(eventBus))
 
 	// Track 2E: Baby & Family Care Tracker

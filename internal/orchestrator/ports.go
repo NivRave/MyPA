@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 
 	"github.com/nivik/mypa/internal/gmail"
 	"github.com/nivik/mypa/internal/llm"
@@ -34,6 +35,12 @@ type LLMClient interface {
 	Chat(ctx context.Context, systemPrompt string, history []models.ChatMessage, userMessage string, photoData []byte, photoMimeType string) (*llm.Response, error)
 	GenerateEmbedding(ctx context.Context, text string) ([]float32, error)
 }
+
+// ErrCalendarNotConnected is returned by a calendar factory when the user has no stored Google
+// token (never ran /connect) — a normal state, unlike a token that exists but cannot be read or
+// used, which factories report as a wrapped error. The message stays "unauthorized" for callers
+// that still compare text (BL-1).
+var ErrCalendarNotConnected = errors.New("unauthorized")
 
 // CalendarClient defines the interface for interacting with Google Calendar.
 type CalendarClient interface {

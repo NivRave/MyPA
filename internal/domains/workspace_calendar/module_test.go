@@ -55,7 +55,7 @@ func TestWorkspaceCalendar_Operations(t *testing.T) {
 
 	factory := func(ctx context.Context, userID string) (orchestrator.CalendarClient, error) {
 		if userID == "unauth_user" {
-			return nil, errors.New("unauthorized")
+			return nil, orchestrator.ErrCalendarNotConnected
 		}
 		if userID == "expired_user" {
 			return nil, errors.New("invalid_grant")

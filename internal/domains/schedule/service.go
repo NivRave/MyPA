@@ -2,7 +2,10 @@ package schedule
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -44,6 +47,56 @@ func (m *Module) resolveCalendarClient(ctx context.Context, callCtx orchestrator
 		}
 	}
 	return nil, nil
+}
+
+// googleState records what happened with Google Calendar for one operation (BL-1), so the tool
+// result can say so instead of silently presenting MyPA-only data as the full picture.
+type googleState int
+
+const (
+	googleOK           googleState = iota // client available and the call succeeded
+	googleOff                             // no calendar integration configured: stay silent
+	googleNotConnected                    // user never ran /connect: tell them, no warning
+	googleFailed                          // connected but failing: tell them and log a warning
+)
+
+const (
+	noteGoogleNotConnected = "⚠️ Google Calendar is not connected, so only MyPA's own events are shown. Send /connect to include it."
+	noteGoogleUnavailable  = "⚠️ Google Calendar could not be reached, so only MyPA's own events are shown. If this keeps happening, send /connect again."
+)
+
+// googleCalendar resolves userID's Google Calendar client for op. Real failures are logged here;
+// a nil client comes with the reason.
+func (m *Module) googleCalendar(ctx context.Context, callCtx orchestrator.CallContext, userID, op string) (orchestrator.CalendarClient, googleState) {
+	client, err := m.resolveCalendarClient(ctx, callCtx, userID)
+	switch {
+	case err == nil && client != nil:
+		return client, googleOK
+	case err == nil:
+		return nil, googleOff
+	case errors.Is(err, orchestrator.ErrCalendarNotConnected):
+		return nil, googleNotConnected
+	default:
+		logGoogleFailure(op, userID, err)
+		return nil, googleFailed
+	}
+}
+
+// logGoogleFailure records a failed Google Calendar operation. Never log event content (P3-3).
+func logGoogleFailure(op, userID string, err error) {
+	slog.Warn("google calendar operation failed", "op", op, "user_id", userID, "error", err)
+}
+
+// withGoogleNote appends the user-facing explanation for a degraded Google read, if any.
+func withGoogleNote(result string, state googleState) string {
+	switch state {
+	case googleNotConnected:
+		return result + "\n\n" + noteGoogleNotConnected
+	case googleFailed:
+		return result + "\n\n" + noteGoogleUnavailable
+	default:
+		return result
+	}
 }
 
 // resolveEventBus retrieves the active EventBus.

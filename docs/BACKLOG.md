@@ -11,7 +11,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 
 | ID | Sev | Title | Status |
 | :--- | :--- | :--- | :--- |
-| BL-1 | High | Schedule module silently drops Google Calendar errors | open |
+| BL-1 | High | Schedule module silently drops Google Calendar errors | done 2026-11-16 (`fix/bl-1`, DP-2) |
 | BL-2 | Medium | GORM default logger: raw SQL with personal data, non-JSON, "record not found" as error | open |
 | BL-3 | Low | `.gitignore` only ignores `.env`, not `.env.*` copies | open |
 | BL-4 | Low | `migrate`/`audit-worker` inherit unused `localhost` URLs from `env_file` | open |
@@ -79,9 +79,9 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | ID | Task | Status |
 | :--- | :--- | :--- |
 | OP-1 | Move `C:\Users\nivik\.mypa\backup-age.key` into a password manager, then delete the local copy (needed to restore encrypted backups — set `BACKUP_AGE_IDENTITY_FILE` only while restoring). Delete `C:\Users\nivik\.mypa\env-backup-*` once the new `.env` has proven itself. | open |
-| OP-2 | Second Google user (platform id ending `0357`) runs `/connect`; then delete both `legacy-token:*` Redis keys (tokens encrypted under the old public fallback key). The owner's own key can already go. | open |
-| OP-3 | Old `pgadmin` container (pre-P3-5 image, unpinned, old credentials) is still running; stop/remove it. Start the new one with `docker compose --profile tools up -d pgadmin` when needed. | open |
-| OP-4 | Push `dev`; watch the first CI run. A `-race` timing flake on runners → apply the `timingSlack` pattern (D5-3). | open |
+| OP-2 | Second Google user (platform id ending `0357`) runs `/connect`; then delete both `legacy-token:*` Redis keys (tokens encrypted under the old public fallback key). The owner's own key can already go. | partly done — owner reconnected, owner's legacy key deleted 2026-11-16; second user pending |
+| OP-3 | Old `pgadmin` container (pre-P3-5 image, unpinned, old credentials) is still running; stop/remove it. Start the new one with `docker compose --profile tools up -d pgadmin` when needed. | done 2026-11-16 (stopped and removed) |
+| OP-4 | Push `dev`; watch the first CI run. A `-race` timing flake on runners → apply the `timingSlack` pattern (D5-3). | pushed 2026-11-16; first CI result pending |
 | OP-5 | Log in to the dashboard once (`JWT_SECRET` was rotated, old sessions are invalid). | open |
 | OP-6 | Choose an off-machine backup target (backups are encrypted but stay on this disk). | open |
 | OP-7 | After a few stable weeks: migration to drop the legacy `memories` table. | open |

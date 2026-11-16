@@ -131,8 +131,10 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 	formattedTitle := ev.FormattedTitle(prefixTag)
 
 	// Virtual Sub-Calendar: Google Calendar sync for primary user
+	gState := googleOff
 	if syncToGoogle {
-		calClient, _ := m.resolveCalendarClient(ctx, callCtx, userID)
+		var calClient orchestrator.CalendarClient
+		calClient, gState = m.googleCalendar(ctx, callCtx, userID, "create")
 		if calClient != nil {
 			calEv := models.CalendarEvent{
 				Title:       formattedTitle,
@@ -151,17 +153,25 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 			} else {
 				googleID, err = calClient.CreateEvent(ctx, calEv)
 			}
-			if err == nil && googleID != "" {
+			switch {
+			case err != nil:
+				logGoogleFailure("create", userID, err)
+				gState = googleFailed
+			case googleID != "":
 				ev.ExternalGoogleEventID = googleID
 			}
 		}
 	}
 
-	// Partner Calendar Sync (Topic 9.3)
+	// Partner Calendar Sync (Topic 9.3). A partner without Google is normal; a failing one is reported.
+	partnerFailed := false
 	if isShared && syncToGoogle && familyGroup != "" {
 		partnerUsers := m.findPartnerUsers(callCtx, userID, familyGroup)
 		for _, partner := range partnerUsers {
-			partnerCal, _ := m.resolveCalendarClient(ctx, callCtx, partner.PlatformID)
+			partnerCal, pState := m.googleCalendar(ctx, callCtx, partner.PlatformID, "create_partner")
+			if pState == googleFailed {
+				partnerFailed = true
+			}
 			if partnerCal != nil {
 				calEv := models.CalendarEvent{
 					Title:       formattedTitle,
@@ -180,7 +190,12 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 				} else {
 					partnerID, err = partnerCal.CreateEvent(ctx, calEv)
 				}
-				if err == nil && partnerID != "" {
+				if err != nil {
+					logGoogleFailure("create_partner", partner.PlatformID, err)
+					partnerFailed = true
+					continue
+				}
+				if partnerID != "" {
 					ev.PartnerGoogleEventID = partnerID
 					break
 				}
@@ -225,20 +240,27 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 		sb.WriteString(fmt.Sprintf("• **Details**: %s\n", description))
 	}
 
-	if ev.SyncToGoogle {
-		if ev.ExternalGoogleEventID != "" {
-			sb.WriteString("• **Google Calendar**: Synced ✅\n")
-		} else {
-			sb.WriteString("• **Google Calendar**: Sync enabled (offline/pending)\n")
-		}
-	} else {
+	// Nothing retries a failed sync later, so never promise "pending" (BL-1).
+	switch {
+	case !ev.SyncToGoogle:
 		sb.WriteString("• **Google Calendar**: Internal-only (database)\n")
+	case ev.ExternalGoogleEventID != "":
+		sb.WriteString("• **Google Calendar**: Synced ✅\n")
+	case gState == googleNotConnected:
+		sb.WriteString("• **Google Calendar**: Not connected — saved in MyPA only (send /connect to sync future events)\n")
+	case gState == googleFailed:
+		sb.WriteString("• **Google Calendar**: ⚠️ Sync failed — saved in MyPA only\n")
+	default:
+		sb.WriteString("• **Google Calendar**: Not configured — saved in MyPA only\n")
 	}
 
 	if ev.IsShared {
-		if ev.PartnerGoogleEventID != "" {
+		switch {
+		case ev.PartnerGoogleEventID != "":
 			sb.WriteString("• **Partner Calendar**: Synced ✅\n")
-		} else {
+		case partnerFailed:
+			sb.WriteString("• **Partner Calendar**: ⚠️ Sync failed — shared in the family space only\n")
+		default:
 			sb.WriteString("• **Partner Calendar**: Shared in family space\n")
 		}
 	}
@@ -300,11 +322,16 @@ func (m *Module) executeListTopicSchedule(ctx context.Context, callCtx orchestra
 	}
 
 	// Merge with Google Calendar events if enabled
+	gState := googleOff
 	if includeGoogle {
-		calClient, _ := m.resolveCalendarClient(ctx, callCtx, userID)
+		var calClient orchestrator.CalendarClient
+		calClient, gState = m.googleCalendar(ctx, callCtx, userID, "list")
 		if calClient != nil {
 			gEvents, err := calClient.ListEvents(ctx, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339), "")
-			if err == nil {
+			if err != nil {
+				logGoogleFailure("list", userID, err)
+				gState = googleFailed
+			} else {
 				knownIDs := make(map[string]bool)
 				for _, e := range eventsList {
 					if e.ExternalGoogleEventID != "" {
@@ -373,7 +400,7 @@ func (m *Module) executeListTopicSchedule(ctx context.Context, callCtx orchestra
 		if topicLabel == "" {
 			topicLabel = "all"
 		}
-		return fmt.Sprintf("No scheduled events found for topic '%s' between %s and %s.", topicLabel, startTime.Format("Jan 02"), endTime.Format("Jan 02")), nil
+		return withGoogleNote(fmt.Sprintf("No scheduled events found for topic '%s' between %s and %s.", topicLabel, startTime.Format("Jan 02"), endTime.Format("Jan 02")), gState), nil
 	}
 
 	var sb strings.Builder
@@ -402,7 +429,7 @@ func (m *Module) executeListTopicSchedule(ctx context.Context, callCtx orchestra
 		sb.WriteString("\n")
 	}
 
-	return strings.TrimSpace(sb.String()), nil
+	return withGoogleNote(strings.TrimSpace(sb.String()), gState), nil
 }
 
 func (m *Module) executeConfigureTopicCalendar(ctx context.Context, callCtx orchestrator.CallContext, repo db.ScheduleRepository, args map[string]interface{}) (string, error) {
@@ -497,21 +524,36 @@ func (m *Module) executeDeleteTopicEvent(ctx context.Context, callCtx orchestrat
 		return fmt.Sprintf("Event with ID %d not found.", eventID), nil
 	}
 
-	// Delete from Google Calendar if synced
+	// Delete from Google Calendar if synced; a copy we could not remove is reported (BL-1).
+	googleCopyLeft := false
 	if existing.ExternalGoogleEventID != "" {
-		calClient, _ := m.resolveCalendarClient(ctx, callCtx, existing.UserID)
+		calClient, st := m.googleCalendar(ctx, callCtx, existing.UserID, "delete")
 		if calClient != nil {
-			_ = calClient.DeleteEvent(ctx, existing.ExternalGoogleEventID)
+			if err := calClient.DeleteEvent(ctx, existing.ExternalGoogleEventID); err != nil {
+				logGoogleFailure("delete", existing.UserID, err)
+				googleCopyLeft = true
+			}
+		} else if st == googleNotConnected || st == googleFailed {
+			googleCopyLeft = true
 		}
 	}
 
 	// Delete from Partner Google Calendar if synced
+	partnerCopyLeft := false
 	if existing.PartnerGoogleEventID != "" && existing.FamilyGroup != "" {
 		partnerUsers := m.findPartnerUsers(callCtx, existing.UserID, existing.FamilyGroup)
 		for _, partner := range partnerUsers {
-			partnerCal, _ := m.resolveCalendarClient(ctx, callCtx, partner.PlatformID)
+			partnerCal, st := m.googleCalendar(ctx, callCtx, partner.PlatformID, "delete_partner")
+			if st == googleFailed {
+				partnerCopyLeft = true
+			}
 			if partnerCal != nil {
-				_ = partnerCal.DeleteEvent(ctx, existing.PartnerGoogleEventID)
+				if err := partnerCal.DeleteEvent(ctx, existing.PartnerGoogleEventID); err != nil {
+					logGoogleFailure("delete_partner", partner.PlatformID, err)
+					partnerCopyLeft = true
+				} else {
+					partnerCopyLeft = false
+				}
 				break
 			}
 		}
@@ -537,7 +579,14 @@ func (m *Module) executeDeleteTopicEvent(ctx context.Context, callCtx orchestrat
 		})
 	}
 
-	return fmt.Sprintf("🗑️ Schedule event '%s' (ID: %d) successfully deleted.", existing.Title, eventID), nil
+	res := fmt.Sprintf("🗑️ Schedule event '%s' (ID: %d) successfully deleted.", existing.Title, eventID)
+	if googleCopyLeft {
+		res += "\n⚠️ The copy could not be removed from Google Calendar — please delete it there manually."
+	}
+	if partnerCopyLeft {
+		res += "\n⚠️ The copy could not be removed from your partner's Google Calendar — please delete it there manually."
+	}
+	return res, nil
 }
 
 func (m *Module) executeUpdateTopicEvent(ctx context.Context, callCtx orchestrator.CallContext, repo db.ScheduleRepository, args map[string]interface{}) (string, error) {
@@ -580,17 +629,23 @@ func (m *Module) executeUpdateTopicEvent(ctx context.Context, callCtx orchestrat
 		_ = existing.SetTags(tags)
 	}
 
-	// Update on Google Calendar if event was synced
+	// Update on Google Calendar if event was synced; a stale Google copy is reported (BL-1).
+	googleStale := false
 	if existing.ExternalGoogleEventID != "" {
-		calClient, _ := m.resolveCalendarClient(ctx, callCtx, existing.UserID)
+		calClient, st := m.googleCalendar(ctx, callCtx, existing.UserID, "update")
 		if calClient != nil {
-			_ = calClient.UpdateEvent(ctx, existing.ExternalGoogleEventID, models.CalendarEvent{
+			if err := calClient.UpdateEvent(ctx, existing.ExternalGoogleEventID, models.CalendarEvent{
 				Title:       existing.FormattedTitle(""),
 				Description: existing.Description,
 				StartTime:   existing.StartTime.Format(time.RFC3339),
 				EndTime:     existing.EndTime.Format(time.RFC3339),
 				Timezone:    "UTC",
-			})
+			}); err != nil {
+				logGoogleFailure("update", existing.UserID, err)
+				googleStale = true
+			}
+		} else if st == googleNotConnected || st == googleFailed {
+			googleStale = true
 		}
 	}
 
@@ -615,5 +670,9 @@ func (m *Module) executeUpdateTopicEvent(ctx context.Context, callCtx orchestrat
 		})
 	}
 
-	return fmt.Sprintf("✅ Schedule event '%s' (ID: %d) updated.", existing.Title, eventID), nil
+	res := fmt.Sprintf("✅ Schedule event '%s' (ID: %d) updated.", existing.Title, eventID)
+	if googleStale {
+		res += "\n⚠️ The change was not updated in Google Calendar — the copy there still shows the old details."
+	}
+	return res, nil
 }

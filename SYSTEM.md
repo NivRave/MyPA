@@ -744,6 +744,12 @@ What each module adds to the system prompt and whether its writes emit `Mutation
 | **`finance`** | [`internal/domains/finance`](./internal/domains/finance/module.go) | Current month spending vs. `CategoryBudget` thresholds and upcoming `RecurringBill` due dates (next 7 days). | All mutating actions: Yes |
 | **`automation`** | [`internal/domains/automation`](./internal/domains/automation/module.go) | User's `PreferredLanguage`, `TonePersona`, `DefaultCurrency`, `QuietHours`, `StandingInstructions`, and upcoming 30-day CRM birthdays/anniversaries. | `register_external_api`, `create_automation_rule`, `delete_automation_rule`, `update_user_preferences`, `upsert_personal_crm`: Yes |
 
+**Google Calendar availability (*BL-1*).** One factory, `orchestrator.NewCalendarFactory`, builds every per-user Calendar client (used by `schedule`, `workspace_calendar` and the engine). It returns `orchestrator.ErrCalendarNotConnected` only when the user has no stored token; an unreadable/undecodable token is a wrapped error. Callers distinguish three outcomes and never fail silently:
+- *not connected* — normal: the tool result says so and suggests `/connect`; no warning is logged.
+- *connected but failing* (token unusable or Google API error) — `slog.Warn("google calendar operation failed", op, user_id, error)` (never event content) **and** a line in the tool result: `list_topic_schedule` appends "Google Calendar could not be reached…" (also when no local events were found); `schedule_topic_event` reports `⚠️ Sync failed — saved in MyPA only` (partner: `⚠️ Sync failed — shared in the family space only`); `update_topic_event`/`delete_topic_event` say the Google copy was not updated/removed.
+- *no calendar integration wired* — silent (tests/dev).
+Failed syncs are **not retried**; the event stays in MyPA with an empty `external_google_event_id`.
+
 ---
 
 ## 7. GraphQL API & Next.js Dashboard Reference
