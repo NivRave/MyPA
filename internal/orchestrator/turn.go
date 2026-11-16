@@ -174,6 +174,17 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg models.Mess
 	return response, nil
 }
 
+// The history carries earlier turns' tool calls (P2-9), so a summary request must be scoped to the
+// user's latest message, or the model recaps old actions as if it just performed them (BL-9).
+const (
+	continuationPrompt = "Please continue fulfilling the user's latest message. What's next? If you are completely done, " +
+		"reply to the user with a friendly, nicely formatted summary of what you did for their latest message only — " +
+		"tool calls from earlier turns in the history were already reported, so do not list them as new actions."
+	toolLimitSummaryPrompt = "Maximum tool execution limit reached (8 steps). Do NOT call any more tools. " +
+		"Reply to the user with a friendly, clear summary of what you did for their latest message only " +
+		"(not actions from earlier turns), and say what is still left to do."
+)
+
 // MaxToolRecursionDepth is the maximum number of recursive tool loops allowed per turn.
 const MaxToolRecursionDepth = 8
 
@@ -297,11 +308,8 @@ func (e *Engine) handleToolCalls(
 		slog.Warn("max tool recursion reached, requesting terminal summary without tools",
 			"user_id", msg.UserID, "iteration", iteration)
 
-		terminalPrompt := "Maximum tool execution limit reached (8 steps). Do NOT call any more tools. " +
-			"Please provide a friendly, clear, and comprehensive final summary of all actions completed so far directly to the user."
-
 		// Force no-tools call to guarantee conversational termination
-		summaryResp, err := e.llm.Chat(llm.WithNoTools(ctx), systemPrompt, extendedHistory, terminalPrompt, nil, "")
+		summaryResp, err := e.llm.Chat(llm.WithNoTools(ctx), systemPrompt, extendedHistory, toolLimitSummaryPrompt, nil, "")
 		if err != nil {
 			return "✅ Actions were executed (maximum 8 steps reached).", nil
 		}
@@ -312,7 +320,7 @@ func (e *Engine) handleToolCalls(
 	}
 
 	// Normal continuation prompt
-	prompt := "Please continue fulfilling the user's request. What's next? If you are completely done, provide a friendly, nicely formatted final summary of all your actions directly to the user."
+	prompt := continuationPrompt
 
 	summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, prompt, nil, "")
 	if err != nil {
@@ -333,7 +341,6 @@ func (e *Engine) handleToolCalls(
 	}
 	return "", nil
 }
-
 
 func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) string {
 	slog.Info("llm requested tool call", "tool", toolCall.Name)
