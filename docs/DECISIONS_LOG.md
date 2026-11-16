@@ -675,3 +675,6 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 
 ### DP-7 WhatsApp bold is written only at the outermost level (BL-10)
 - A heading containing bold rendered as `*📅 *Event Details**` (live reply, 2026-11-16): headings and `**strong**` each wrapped their text in `*`, and WhatsApp cannot nest identical markers. Options: strip `**` inside headings only (misses bold-in-bold), or **a bold-depth counter shared by headings and strong emphasis, writing `*` only on the outermost open/close** (chosen: one rule covers both). Italic (`_`) is unaffected — `*_x_*` is valid WhatsApp. Table tests cover heading+bold, bold-in-bold, heading+italic, and bold after a heading.
+
+### DP-8 Quiet 404s on the public proxy (BL-6)
+- Every browser OAuth callback page fetched `/favicon.ico` → `WARN proxy route not found`. Options: (a) answer only `/favicon.ico` with 204 (other scanner noise stays WARN); (b) only downgrade the log; (c) **both: favicon → 204 with no log, any other unknown path → DEBUG + 404** (chosen). The proxy is the ngrok-exposed endpoint, so random paths from the internet are routine traffic, not incidents; WARN is reserved for things an operator should act on (e.g. unauthenticated `/graphql`, which stays WARN).

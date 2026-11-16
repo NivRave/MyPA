@@ -105,7 +105,13 @@ func setupProxy(gatewayStr, orchestratorStr string) (*http.ServeMux, error) {
 			return
 		}
 
-		slog.Warn("proxy route not found", "path", r.URL.Path)
+		// BL-6: this is the public endpoint — browsers and scanners hit random paths constantly.
+		// Routine, not an incident: answer quietly so real WARNs stand out.
+		if r.URL.Path == "/favicon.ico" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		slog.Debug("proxy route not found", "path", r.URL.Path)
 		http.Error(w, "Not found", http.StatusNotFound)
 	})
 
