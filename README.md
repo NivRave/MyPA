@@ -49,7 +49,9 @@ An event-driven, multi-tenant personal and family AI operating system accessible
    cp .env.example .env
    # Edit .env with your API keys, OAuth credentials, and security secrets
    ```
-   Required: `ENCRYPTION_KEY` and `JWT_SECRET` (two *different* `openssl rand -hex 32` values), `DASHBOARD_API_SECRET`, `DASHBOARD_FAMILY_GROUP`, `GEMINI_API_KEY`, `DATABASE_URL`, `REDIS_URL`, `RABBITMQ_URL`; plus `TELEGRAM_SECRET_TOKEN` when Telegram is configured and `TWILIO_AUTH_TOKEN` when `TWILIO_ACCOUNT_SID` is set. Recommended: `BACKUP_AGE_RECIPIENTS`. Every service validates its keys at startup and lists anything missing. Full reference: [SYSTEM.md §8.1](./SYSTEM.md#81-environment-variables-internalconfigconfiggo--internalcryptoaesgo).
+   Required: `ENCRYPTION_KEY` and `JWT_SECRET` (two *different* `openssl rand -hex 32` values), `DASHBOARD_API_SECRET`, `DASHBOARD_FAMILY_GROUP`, `GEMINI_API_KEY`, and the infrastructure credentials `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` and `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`; plus `TELEGRAM_SECRET_TOKEN` when Telegram is configured and `TWILIO_AUTH_TOKEN` when `TWILIO_ACCOUNT_SID` is set. Recommended: `BACKUP_AGE_RECIPIENTS`. Every service validates its keys at startup and lists anything missing. Full reference: [SYSTEM.md §8.1](./SYSTEM.md#81-environment-variables-internalconfigconfiggo--internalcryptoaesgo).
+
+   Docker builds each container's broker/Redis/database URL from those credentials and the service names (`rabbitmq`, `redis`, `postgres`); the `RABBITMQ_URL`, `REDIS_URL` and `DATABASE_URL` keys in `.env` are **ignored by Docker** and only used when you run a service on the host (below).
 
 2. **Build and start all services (including containerized ngrok):**
    ```bash
@@ -74,7 +76,7 @@ An event-driven, multi-tenant personal and family AI operating system accessible
    docker-compose --profile tools up -d pgadmin
    ```
 
-2. **Run Go microservices:**
+2. **Run Go microservices:** each reads `.env` from the working directory, so there `RABBITMQ_URL`, `REDIS_URL` and `DATABASE_URL` must point at `localhost` (the ports are published on `127.0.0.1`), using the same credentials as above — see `.env.example`.
    ```bash
    go run ./cmd/gateway
    go run ./cmd/orchestrator -migrate-only   # apply schema migrations first (P4-3)
