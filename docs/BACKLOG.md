@@ -19,6 +19,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-6 | Low | Proxy logs a WARN for every browser `/favicon.ico` | open |
 | BL-7 | Low | Go base images, `redis`, `pgvector` not digest-pinned | open |
 | BL-8 | Medium | WhatsApp delivery failures are invisible (no Twilio status callback) | open |
+| BL-9 | Low | Replies recap earlier turns' actions as if done in this turn | open |
+| BL-10 | Low | WhatsApp formatter nests `*` when a heading contains bold | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -90,6 +92,27 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   63016 → "outside the 24h window"). Tests: signature required, WARN on failed, nothing on delivered.
 - **Also (owner):** move off the Twilio sandbox to a registered WhatsApp sender — sandbox membership
   expires and replies silently stop (OP-8).
+
+### BL-9 — Replies claim actions from earlier turns (Low)
+- **Found:** 2026-11-16, reviewing the reply to a resent voice note ("schedule a test event tomorrow 10:00").
+- **Evidence:** the 07:17 turn made exactly one tool call (`create_calendar_event`), but the reply listed
+  "*Calendar Checked:* Retrieved your schedule for today" **and** "*New Event Created*" as "what was done".
+  The calendar read happened in an earlier turn (06:47); since P2-9 the history carries previous turns'
+  tool calls and results, and the model summarised all of them as this turn's work.
+- **Impact:** the user cannot trust the "what I did" summary; harmless here, misleading for writes
+  (e.g. claiming a payment/reminder was created now when it was an older one).
+- **Fix (to evaluate):** system-prompt rule "describe only actions taken in this turn"; and/or mark
+  replayed tool history as earlier turns (e.g. a turn-boundary note before the current message). Test with
+  a prompt-construction unit test (history from a previous turn is labelled as such).
+- **Related:** the same resend created a **duplicate** event — correct for the model (the user asked
+  again), but only because the first reply was never delivered (BL-8).
+
+### BL-10 — WhatsApp formatter nests bold markers in headings (Low)
+- **Found:** 2026-11-16, same review: a reply rendered as `*📅 *Event Details**`.
+- **Evidence:** `internal/markdown/whatsapp.go` wraps `ast.Heading` in `*…*` and also emits `*` for any
+  level-2 `ast.Emphasis` inside it; WhatsApp does not nest, so the asterisks show literally.
+- **Fix:** while inside a heading, skip emphasis markers (track a `inHeading` flag); table test
+  `### 📅 **Event Details**` → `*📅 Event Details*`.
 
 ## Operations (owner)
 
