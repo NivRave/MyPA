@@ -18,6 +18,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-5 | Low | Queue `telegram.inbound` also carries WhatsApp traffic | open |
 | BL-6 | Low | Proxy logs a WARN for every browser `/favicon.ico` | open |
 | BL-7 | Low | Go base images, `redis`, `pgvector` not digest-pinned | open |
+| BL-8 | Medium | WhatsApp delivery failures are invisible (no Twilio status callback) | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -74,6 +75,22 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   `debian:12-slim`, `redis:7-alpine`, `pgvector/pgvector:pg15` are tag-pinned only.
 - **Fix:** pin by digest like the others; Dependabot keeps them current.
 
+### BL-8 — WhatsApp delivery failures are invisible (Medium)
+- **Found:** 2026-11-16, "I sent a voice note and it doesn't do anything". The note was received,
+  transcribed and acted on (`create_calendar_event`), and both replies were accepted by Twilio's REST API
+  — then **failed asynchronously** with error 63015 (sandbox: recipient is no longer a sandbox
+  participant). Our logs showed a perfectly successful turn; only Twilio's message log had the truth.
+- **Evidence:** no `StatusCallback` anywhere in the code; `engine.sendMessage` treats "accepted" as
+  "delivered"; diagnosis needed a manual query of the Twilio Messages API.
+- **Impact:** any delivery problem (sandbox expiry, 24-hour session window, blocked number, daily
+  limits) looks like the bot ignoring the user, with nothing for the operator to see.
+- **Fix:** send `StatusCallback=<public URL>/webhook/twilio/status` with each outbound message; a
+  signature-verified gateway handler logs `failed`/`undelivered` at WARN with `error_code` and
+  message SID (no body). Optional: a small error-code → hint map (63015 → "re-join the sandbox",
+  63016 → "outside the 24h window"). Tests: signature required, WARN on failed, nothing on delivered.
+- **Also (owner):** move off the Twilio sandbox to a registered WhatsApp sender — sandbox membership
+  expires and replies silently stop (OP-8).
+
 ## Operations (owner)
 
 | ID | Task | Status |
@@ -85,6 +102,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | OP-5 | Log in to the dashboard once (`JWT_SECRET` was rotated, old sessions are invalid). | open |
 | OP-6 | Choose an off-machine backup target (backups are encrypted but stay on this disk). | open |
 | OP-7 | After a few stable weeks: migration to drop the legacy `memories` table. | open |
+| OP-8 | WhatsApp runs on the Twilio **sandbox**: membership expires and replies then fail with 63015 (hit 2026-11-16). Short term: re-send `join <word>` to the sandbox number. Long term: register a WhatsApp sender in Twilio. | open |
 
 ## Decisions pending
 
