@@ -13,7 +13,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | :--- | :--- | :--- | :--- |
 | BL-1 | High | Schedule module silently drops Google Calendar errors | done 2026-11-16 (`fix/bl-1`, DP-2) |
 | BL-2 | Medium | GORM default logger: raw SQL with personal data, non-JSON, "record not found" as error | done 2026-11-16 (`fix/bl-2`, DP-5) |
-| BL-3 | Low | `.gitignore` only ignores `.env`, not `.env.*` copies | open |
+| BL-3 | Low | `.gitignore` only ignores `.env`, not `.env.*` copies | done 2026-11-16 (`fix/bl-3`, DP-6) |
 | BL-4 | Low | `migrate`/`audit-worker` inherit unused `localhost` URLs from `env_file` | open |
 | BL-5 | Low | Queue `telegram.inbound` also carries WhatsApp traffic | open |
 | BL-6 | Low | Proxy logs a WARN for every browser `/favicon.ico` | open |

@@ -12,8 +12,10 @@
 *.test
 *.out
 
-# Environment
+# Environment: every .env variant holds secrets; only the template is tracked (BL-3)
 .env
+.env.*
+!.env.example
 
 # IDE
 .idea/
