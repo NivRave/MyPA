@@ -29,7 +29,7 @@ flowchart LR
 
     subgraph Core["Orchestrator & Workers"]
         Orch["Orchestrator (:8081)"]
-        Registry["ToolModule Registry (70 Tools / 13 Modules)"]
+        Registry["ToolModule Registry"]
         Bus["Internal MutationEvent Bus"]
         Cron["Cron Scheduler (Asia/Jerusalem)"]
         AuditW["Audit Worker"]
@@ -74,7 +74,7 @@ flowchart LR
 | :--- | :--- | :--- | :---: | :--- |
 | **`proxy`** | [`cmd/proxy/main.go`](./cmd/proxy/main.go) | `gcr.io/distroless/static-debian12` | `8000` | Unified reverse proxy routing `/webhook/*` to `gateway:8080` and `/graphql`, `/playground`, `/auth/google/*` to `orchestrator:8081`. |
 | **`gateway`** | [`cmd/gateway/main.go`](./cmd/gateway/main.go) | `gcr.io/distroless/static-debian12` | `8080` | High-throughput HTTP webhook receiver for Telegram (`/webhook/telegram`) and Twilio WhatsApp (`/webhook/twilio`); normalizes payloads into [`models.Message`](./internal/models/models.go#L9-L22) and publishes to RabbitMQ `telegram.inbound`. |
-| **`orchestrator`** | [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go) | `debian:12-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8081` | Core brain: consumes `telegram.inbound`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](./internal/orchestrator/registry.go#L30-L43) registry (70 modular tools across 13 modules), dual-lane [`EventBus`](./internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](./internal/scheduler/scheduler.go). |
+| **`orchestrator`** | [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go) | `debian:12-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8081` | Core brain: consumes `telegram.inbound`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](./internal/orchestrator/registry.go#L30-L43) registry (<!-- gen:tool-summary -->68 tools across 13 modules<!-- /gen:tool-summary -->), dual-lane [`EventBus`](./internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](./internal/scheduler/scheduler.go). |
 | **`audit-worker`** | [`cmd/audit-worker/main.go`](./cmd/audit-worker/main.go) | `gcr.io/distroless/static-debian12` | — | Consumes `audit.events` from RabbitMQ, persists [`models.AuditSession`](./internal/models/models.go#L80-L92) rows to PostgreSQL, and runs a 24h ticker archiving sessions older than 30 days. |
 | **`migrate`** | [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go) (`-migrate-only`) | orchestrator image | — | One-shot (*P4-3*): applies goose migrations ([`internal/db/migrations/`](./internal/db/migrations)) and exits. `orchestrator` and `audit-worker` depend on it with `condition: service_completed_successfully`. |
 | **`dashboard`** | [`dashboard/`](./dashboard/package.json) | `node:24.22.3-alpine` (digest-pinned; Next.js 16.4 standalone) | `3030:3000` | Next.js App Router web console for managing family spaces, memories, baby logs, house assets, finances, automations, pairing codes, and mutation rollbacks. |
@@ -102,7 +102,8 @@ mypa/
 │   ├── orchestrator/main.go        # LLM engine, ToolRegistry, EventBus, OAuth & GraphQL server (:8081)
 │   ├── proxy/main.go               # Unified reverse proxy (:8000)
 │   ├── audit-worker/main.go        # Async RabbitMQ telemetry consumer & 30-day session archiver
-│   └── devtools/listmodels/        # Dev-only utility (lists Gemini models); not in any image
+│   ├── devtools/listmodels/        # Dev-only utility (lists Gemini models); not in any image
+│   └── devtools/gendocs/           # Regenerates the tool-catalogue sections of SYSTEM.md/README.md (P5-5)
 ├── .github/dependabot.yml          # Weekly updates → PRs to dev: gomod, npm, docker, docker-compose, github-actions (P5-4)
 ├── .github/workflows/ci.yml       # CI (P5-3): go test -race, golangci-lint (.golangci.yml), govulncheck, dashboard, compose build
 ├── scripts/clean.{ps1,sh}          # Remove local build artefacts (bin/, root *.exe/*.test, coverage)
@@ -162,6 +163,7 @@ mypa/
 │   ├── tasks/                      # Google Tasks v1 client (task lists & tasks CRUD)
 │   ├── tavily/                     # Tavily web search REST client
 │   ├── telegram/                   # Telegram Bot API client & webhook update parser
+│   ├── toolcatalog/                # ProductionModules() list + Markdown rendering of the tool catalogue (drift-guarded)
 │   └── twilio/                     # Twilio WhatsApp REST client, webhook handler & message chunker
 ├── dashboard/                      # Next.js 16 + React 19 + Tailwind CSS v4 Web Control Dashboard
 │   └── src/app/                    # App Router pages (`/`, `/audit`, `/automations`, `/baby`, `/finance`, `/house`, `/logs`, `/memory`, `/oauth`, `/sessions`, `/settings`, `/shared`, `/tools`, `/users`)
@@ -192,7 +194,7 @@ mypa/
    - If `resp.ToolCalls` is non-empty, [`handleToolCalls`](./internal/orchestrator/engine.go) delegates to `executeToolsConcurrently` which executes parallel tool calls concurrently via `errgroup.WithContext(ctx)` bounded by `MaxConcurrentTools = 8` with index-based slice assignment preserving strict 1:1 ordering and per-goroutine panic recovery. After checking the SEC-09 interactive confirmation gate for meta-tools, `executeSingleTool` dynamically dispatches the call via `e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)`, building `callCtx` from the user resolved once at the start of the turn (`withTurnUser`, *P2-7*; a `GetUser` lookup happens only for calls outside a turn). All tools receive standardized canonical identity through `callCtx.ActorID()` and `callCtx.TenantFamilyGroup()`.
    - Tool execution appends `Role: "assistant"` (`ToolCalls`) and `Role: "function"` (`ToolResponses`), and recurses up to a strict limit of 8 iterations (`const MaxToolRecursionDepth = 8`). Upon reaching iteration 8, the engine forces a final summary call via `llm.WithNoTools(ctx)` to guarantee clean conversational termination without further tool loops.
 6. **Delivery, State & Telemetry (SCALE-02):**
-   - Formats markdown for WhatsApp (`markdown.ToWhatsApp`) or single-pass Telegram HTML (`markdown.ToTelegramHTML`), safely chunking messages via `markdown.SafeChunkTelegramHTML` (which preserves balanced HTML open-tag stacks across chunks up to 4,000 characters) and sends via `twClient` or `tgClient`.
+   - Formats markdown for WhatsApp (`markdown.ToWhatsApp`) or single-pass Telegram HTML (`markdown.ToTelegramHTML`), safely chunking messages via `markdown.SafeChunkTelegramHTML` (which preserves balanced HTML open-tag stacks across chunks up to 4,000 characters) and sends via `twClient` or `tgClient`. WhatsApp replies are split at 1,500 characters per message (`twilio.SplitMessage`).
    - Appends the user message, then (*P2-9*) the turn's tool activity as a Gemini-native pair — an assistant message with `tool_calls` (string args ≤ 200 chars) followed by a `function` message with `tool_responses` (results ≤ `maxToolResultChars` = 400 runes; read-only built-ins omitted) — then the assistant reply, to Redis (`chat:<userID>`). On load, `sanitizeHistory` drops call/response halves split by `LTRIM` and leading non-user messages (Gemini rejects both). SCALE-02 strips raw `PhotoData` bytes and formats a concise attachment metadata marker (`[Attachment: <mime> (<size>)]`), keeping Redis list size < 10KB while preserving active-turn vision reasoning.
    - Asynchronously publishes [`models.AuditSession`](./internal/models/models.go#L80-L92) to RabbitMQ `audit.events` via `defer`.
 
@@ -219,30 +221,27 @@ type ToolModule interface {
 }
 ```
 
-**Registered Domain Modules (13 total wired in [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go)):**
-- **5 Workspace Base Modules:** `workspace_calendar` (4 tools), `workspace_gmail` (9 tools), `workspace_tasks` (6 tools), `workspace_contacts` (2 tools), `web_research` (2 tools).
+**Registered Domain Modules (<!-- gen:module-count -->13<!-- /gen:module-count --> wired in [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go)):**
+- **5 Workspace Base Modules:** `workspace_calendar`, `workspace_gmail`, `workspace_tasks`, `workspace_contacts`, `web_research` (per-module tool lists: §6).
 - **8 Life Domain Modules:** `durability` (Topic 1 & `/undo`), `memory` (Topic 2 & `remember_fact`), `shared` (Topic 9 & `schedule_reminder`), `schedule` (Topic 3), `baby` (Topic 4), `house` (Topic 5 & 8.1), `finance` (Topic 6), `automation` (Topics 7, 8.2, 8.3 & workflow management).
 
 **Two-Tier Tool Domain Grouping (SCALE-01):**
-Rather than injecting all 70 registered tool schemas on every call (~9,500 input tokens), the orchestrator dynamically scopes tools into two tiers:
-1. **Tier 1 Core Tools (8 ubiquitous tools, ~1,120 tokens):** Always injected into every user turn.
-   - `remember_fact`, `save_topic_memory`, `search_topic_memories` (`memory`)
-   - `schedule_reminder` (`shared`)
-   - `search_web`, `fetch_webpage` (`web_research`)
-   - `undo_last_action` (`durability`)
-   - `get_current_time` (`registry`)
-2. **Tier 2 Domain Groups (Injected on-demand via `KeywordIntentMatcher`):**
-   - `DomainBaby` (5 tools): `upsert_baby_profile`, `log_baby_care`, `query_baby_logs_and_trends`, `get_baby_milestone_suggestions`, `manage_baby_inventory`.
-   - `DomainFinance` (4 tools): `log_financial_transaction`, `get_financial_summary`, `set_category_budget`, `manage_recurring_bills`.
-   - `DomainHouse` (4 tools): `save_house_contract_or_receipt`, `list_house_contracts`, `manage_home_maintenance`, `manage_vehicle_asset`.
-   - `DomainCalendar` (9 tools): `create_calendar_event`, `list_calendar_events`, `update_calendar_event`, `delete_calendar_event`, `schedule_topic_event`, `list_topic_schedule`, `configure_topic_calendar`, `delete_topic_event`, `update_topic_event`.
-   - `DomainGmail` (9 tools): `search_emails`, `read_email`, `draft_email_reply`, `archive_emails`, `soft_delete_emails`, `list_email_labels`, `apply_email_labels`, `create_email_label`, `unsubscribe_email`.
-   - `DomainTasks` (6 tools): `list_task_lists`, `create_task_list`, `list_tasks`, `create_task`, `complete_task`, `delete_task`.
-   - `DomainContacts` (4 tools): `search_contacts`, `create_contact`, `upsert_personal_crm`, `query_personal_crm`.
-   - `DomainAutomation` (11 tools): `register_external_api`, `list_external_apis`, `call_external_api`, `create_automation_rule`, `list_automation_rules`, `delete_automation_rule`, `update_user_preferences`, `get_user_preferences`, `schedule_workflow`, `list_workflows`, `delete_workflow`.
-   - `DomainShared` (4 tools): `configure_shared_topic`, `create_shared_reminder`, `complete_shared_reminder`, `list_shared_activity`.
-   - `DomainMemory` (2 tools, *P2-1*): `upsert_entity_profile`, `get_entity_profile` (keywords: remember, recall, profile, who is / זוכר, תזכור, פרופיל, מי זה…).
-   - `DomainHistory` (2 tools, *P2-1*): `list_recent_changes`, `export_topic_data` (keywords: history, changes, what changed, export, undo / היסטוריה, שינויים, מה השתנה, ייצוא, בטל…).
+Rather than injecting all <!-- gen:tool-count -->68<!-- /gen:tool-count --> registered tool schemas on every call (~9,500 input tokens), the orchestrator dynamically scopes tools into two tiers:
+<!-- BEGIN GENERATED: tool-tiers -->
+1. **Tier 1 Core Tools (8 tools):** always injected into every user turn: `get_current_time` (`registry`), `search_web` (`web_research`), `fetch_webpage` (`web_research`), `undo_last_action` (`durability`), `save_topic_memory` (`memory`), `search_topic_memories` (`memory`), `remember_fact` (`memory`), `schedule_reminder` (`shared`).
+2. **Tier 2 Domain Groups** (injected on demand via `KeywordIntentMatcher`):
+   - `calendar` (9 tools): `create_calendar_event`, `list_calendar_events`, `update_calendar_event`, `delete_calendar_event`, `schedule_topic_event`, `list_topic_schedule`, `configure_topic_calendar`, `delete_topic_event`, `update_topic_event`.
+   - `gmail` (9 tools): `search_emails`, `read_email`, `draft_email_reply`, `archive_emails`, `soft_delete_emails`, `list_email_labels`, `apply_email_labels`, `create_email_label`, `unsubscribe_email`.
+   - `tasks` (6 tools): `list_task_lists`, `create_task_list`, `list_tasks`, `create_task`, `complete_task`, `delete_task`.
+   - `contacts` (2 tools): `search_contacts`, `create_contact`.
+   - `history` (2 tools): `list_recent_changes`, `export_topic_data`.
+   - `memory` (2 tools): `upsert_entity_profile`, `get_entity_profile`.
+   - `shared` (4 tools): `configure_shared_topic`, `create_shared_reminder`, `complete_shared_reminder`, `list_shared_activity`.
+   - `baby` (5 tools): `upsert_baby_profile`, `log_baby_care`, `query_baby_logs_and_trends`, `get_baby_milestone_suggestions`, `manage_baby_inventory`.
+   - `house` (4 tools): `save_house_contract_or_receipt`, `list_house_contracts`, `manage_home_maintenance`, `manage_vehicle_asset`.
+   - `finance` (4 tools): `log_financial_transaction`, `get_financial_summary`, `set_category_budget`, `manage_recurring_bills`.
+   - `automation` (13 tools): `register_external_api`, `list_external_apis`, `call_external_api`, `create_automation_rule`, `list_automation_rules`, `delete_automation_rule`, `update_user_preferences`, `get_user_preferences`, `upsert_personal_crm`, `query_personal_crm`, `schedule_workflow`, `list_workflows`, `delete_workflow`.
+<!-- END GENERATED: tool-tiers -->
    - *Sticky follow-ups (*P2-2*):* the selection is `MatchDomains(text) ∪ turn_domains:<userID>`; after the LLM loop the engine stores this turn's matched domains plus `Registry.DomainsForTools(called tools)`, so "yes, delete the second one" keeps the previous turn's Gmail tools.
    - *Reachability invariant:* `TestEveryRegisteredToolIsReachable` (`internal/orchestrator/tool_reachability_test.go`) builds every production module and fails if any declared tool is neither Tier 1 core nor mapped (`ModuleDomainMapping`) to a domain the matcher can select.
    - *Token Savings:* Average turn consumes ~1,680 to ~2,380 tokens across 12–20 tools, representing a 75% to 82% token reduction per LLM interaction.
@@ -296,6 +295,8 @@ To prevent slow network I/O, external partner notifications, and automation webh
 ### 3.4 Security Architecture & Defense-in-Depth
 
 Milestone 1A hardens the entire system across ingress, internal execution, storage, and egress:
+
+- **Request body limits:** `http.MaxBytesReader` caps bodies at 10 MB for webhooks (gateway and proxy `/webhook/*`) and 1 MB for GraphQL (proxy and orchestrator).
 
 1. **Pre-Auth Gate & Admin RBAC (`internal/orchestrator/engine.go`):**
    - At the very top of `ProcessMessage`, `e.db.GetUser(msg.UserID)` verifies caller identity before downloading media, transcribing voice, or running LLM prompts.
@@ -582,54 +583,166 @@ The consumer loop guarantees resilient, bounded message processing:
 
 ---
 
-## 6. Complete AI Agent Tool Catalog (All 70 Tools)
+## 6. Complete AI Agent Tool Catalog
 
-### 6.1 Base Workspace & System Tools (28 Base Tools + Built-in System Tools — [`internal/llm/tools.go`](./internal/llm/tools.go) & [`internal/orchestrator/registry.go`](./internal/orchestrator/registry.go))
+> Generated from the live `ToolModule` declarations by `go run ./cmd/devtools/gendocs`; do not edit by hand (`internal/toolcatalog` `TestDocsAreUpToDate` fails on drift).
 
-| Tool Name | Category | Required & Optional Parameters (`*` = required) | Description |
+<!-- BEGIN GENERATED: tool-catalog -->
+68 tools across 13 modules. Tier 1 = always offered to the model; Tier 2 = offered when the intent matcher selects the module's domain (see §3.2).
+
+### 6.1 Registry built-ins (1 tool)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
-| `get_current_time` | System / Time | `timezone` (optional IANA timezone, e.g. `'Asia/Jerusalem'`) | Returns the current ISO8601 date, time, weekday, and unix timestamp in the requested or default timezone. |
-| `create_calendar_event` | Google Calendar | `title`*, `start_time`* (RFC3339), `end_time`* (RFC3339), `timezone`*, `description`, `recurrence` (`[]string`) | Creates an event on the user's primary Google Calendar. |
-| `list_calendar_events` | Google Calendar | `time_min` (RFC3339), `time_max` (RFC3339), `query` | Lists/searches events from primary Google Calendar. |
-| `update_calendar_event` | Google Calendar | `id`*, `title`, `start_time`, `end_time`, `description`, `timezone`, `recurrence` | Updates an existing Google Calendar event. |
-| `delete_calendar_event` | Google Calendar | `id`* | Deletes an event from primary Google Calendar. |
-| `remember_fact` | Memory | `fact`*, `scope` (`"personal"`\|`"family"`) | Alias that embeds the fact and writes one `TopicMemory` (topic `personal`, or `family` for family scope; subtopic `fact`) — *P2-4*. |
-| `search_emails` | Gmail | `query`*, `max_results` (default 5) | Searches user's Gmail via Gmail query syntax. |
-| `read_email` | Gmail | `message_id`* | Reads the full body of a Gmail message. |
-| `draft_email_reply` | Gmail | `message_id`*, `reply_text`* | Creates a reply draft in Gmail. |
-| `archive_emails` | Gmail | `message_ids`* (`[]string`) | Removes `INBOX` label from messages. |
-| `soft_delete_emails` | Gmail | `message_ids`* (`[]string`) | Moves Gmail messages to Trash. |
-| `list_email_labels` | Gmail | *(none)* | Lists all Gmail label names and IDs. |
-| `apply_email_labels` | Gmail | `message_ids`* (`[]string`), `label_id`* | Applies a label to a batch of Gmail messages. |
-| `create_email_label` | Gmail | `label_name`* | Creates a new Gmail label. |
-| `unsubscribe_email` | Gmail | `message_id`* | Extracts `List-Unsubscribe` link and triggers unsubscribe. |
-| `list_task_lists` | Google Tasks | *(none)* | Lists all Google Tasks lists. |
-| `create_task_list` | Google Tasks | `title`* | Creates a new Google Tasks list. |
-| `list_tasks` | Google Tasks | `list_id` (default `@default`) | Lists pending tasks in a task list. |
-| `create_task` | Google Tasks | `title`*, `list_id`, `notes`, `due` (RFC3339) | Creates a new task in Google Tasks. |
-| `complete_task` | Google Tasks | `task_id`*, `list_id` | Marks a Google Task as completed. |
-| `delete_task` | Google Tasks | `task_id`*, `list_id` | Deletes a task from Google Tasks. |
-| `search_web` | Web Search | `query`* | Searches the live web via Tavily API (declared in `CalendarEventTool`, handled by the `web_research` module). |
-| `fetch_webpage` | Web Scraper | `url`* | Extracts readable markdown from a URL and summarizes/processes it. |
-| `search_contacts` | Google Contacts | `query`* | Searches Google People API contacts. |
-| `create_contact` | Google Contacts | `name`*, `email`, `phone` | Creates a contact in Google Contacts. |
-| `schedule_reminder` | Reminders v1 | `message`*, `due_time`* (RFC3339) | Saves a one-time reminder in `scheduled_reminders` (polled every minute). |
-| `schedule_workflow` | Workflows v1 | `name`*, `cron_expression`*, `instruction`* | Saves a recurring natural-language cron workflow in `workflows`. |
-| `list_workflows` | Workflows v1 | *(none)* | Lists active recurring workflows for the user. |
-| `delete_workflow` | Workflows v1 | `id`* | Deletes a workflow by ID and reloads cron scheduler. |
+| `get_current_time` | 1 (core) | `timezone` (string) | Returns the current date, time, and day of the week in the user's local timezone. |
 
-### 6.2 Modular Domain Tools (42 Tools Across 8 `ToolModule` Packages)
+### 6.2 `workspace_calendar` (4 tools)
 
-| Module (`Name()`) | Package Path | `SystemPromptSection` Injects | Registered Tools (`*` = required param) | Emits `MutationEvent`? |
-| :--- | :--- | :--- | :--- | :---: |
-| **`durability`** | [`internal/domains/durability`](./internal/domains/durability/module.go) | Undo (`undo_last_action`), change history, and JSON/CSV export instructions. | • `undo_last_action` (`reason`, `mutation_id`)<br>• `list_recent_changes` (`topic`, `limit`)<br>• `export_topic_data` (`topic`*, `format`, `limit`) | `undo_last_action`: Yes (`action: "undo"`) |
-| **`memory`** | [`internal/domains/memory`](./internal/domains/memory/module.go) | Active `EntityProfile` cards + pinned `TopicMemory` facts for the user/family. | • `save_topic_memory` (`topic`*, `fact`*, `subtopic`, `tags`, `scope`, `is_pinned`, `supersedes_memory_id`)<br>• `search_topic_memories` (`topic`, `query`, `tags`, `scope`)<br>• `upsert_entity_profile` (`topic`*, `entity_type`*, `entity_name`*, `attributes`*)<br>• `get_entity_profile` (`topic`*, `entity_name`*) | `save_topic_memory`: Yes<br>`upsert_entity_profile`: Yes |
-| **`shared`** | [`internal/domains/shared`](./internal/domains/shared/module.go) | Configured `SharedSpace` topics, permissions, and notify modes for the family. | • `configure_shared_topic` (`topic`*, `can_view`, `can_edit`, `notify_mode`, `shared_with_user_id`)<br>• `create_shared_reminder` (`title`*, `topic`, `due_time`, `assigned_to_user_id`)<br>• `complete_shared_reminder` (`id`*)<br>• `list_shared_activity` (`topic`, `include_completed`) | `configure_shared_topic`: Yes<br>`create_shared_reminder`: Yes<br>`complete_shared_reminder`: Yes |
-| **`schedule`** | [`internal/domains/schedule`](./internal/domains/schedule/module.go) | Configured `TopicCalendarConfig` prefixes/colors + upcoming 7-day `ScheduleEvent` items. | • `schedule_topic_event` (`title`*, `topic`*, `start_time`*, `end_time`, `description`, `tags`, `sync_to_google`, `is_shared`, `recurrence`)<br>• `list_topic_schedule` (`topic`, `tags`, `start_time`, `end_time`, `include_google`)<br>• `configure_topic_calendar` (`topic`*, `prefix_tag`, `color_id`, `target_calendar_id`, `sync_to_google_default`, `include_in_morning_briefing`)<br>• `delete_topic_event` (`event_id`*)<br>• `update_topic_event` (`event_id`*, `title`, `start_time`, `end_time`, `description`, `tags`) | All except `list_topic_schedule`: Yes |
-| **`baby`** | [`internal/domains/baby`](./internal/domains/baby/module.go) | Exact baby age (days/weeks/months + adjusted age), current developmental leap, medication cooldown status, and low inventory alerts. | • `upsert_baby_profile` (`name`*, `date_of_birth`*, `id`, `due_date`, `gender`, `birth_weight_grams`, `current_weight_grams`, `height_cm`, `pediatrician_info`, `allergies_notes`)<br>• `log_baby_care` (`log_type`*, `baby_id`, `baby_name`, `value_numeric`, `unit`, `details`, `timestamp`, `force`)<br>• `query_baby_logs_and_trends` (`baby_id`, `baby_name`, `log_type`, `time_range`, `start_time`, `end_time`, `limit`)<br>• `get_baby_milestone_suggestions` (`baby_id`, `baby_name`, `category`)<br>• `manage_baby_inventory` (`action`*, `item_name`, `quantity`, `delta`, `unit`, `low_threshold`) | `upsert_baby_profile`: Yes<br>`log_baby_care`: Yes<br>`manage_baby_inventory` (`set`/`adjust`): Yes |
-| **`house`** | [`internal/domains/house`](./internal/domains/house/module.go) | Expiring contracts/warranties within notice window, overdue/upcoming maintenance tasks, and vehicle test/insurance/service alerts. | • `save_house_contract_or_receipt` (`record_type`*, `title`*, `contract_id`, `vendor_or_landlord`, `contact_details`, `amount`, `currency`, `start_date`, `expiration_date`, `notice_period_days`, `key_terms`)<br>• `list_house_contracts` (`record_type`, `expiring_within_days`, `search_query`)<br>• `manage_home_maintenance` (`action`*, `item_id`, `task_name`, `category`, `interval_days`, `next_due_at`, `contractor_info`, `notes`, `overdue_only`)<br>• `manage_vehicle_asset` (`action`*, `asset_id`, `name`, `license_plate`, `insurance_expiry`, `annual_test_expiry`, `last_service_date`, `current_mileage_km`, `next_service_mileage_km`, `notes`) | All mutating actions: Yes |
-| **`finance`** | [`internal/domains/finance`](./internal/domains/finance/module.go) | Current month spending vs. `CategoryBudget` thresholds and upcoming `RecurringBill` due dates (next 7 days). | • `log_financial_transaction` (`amount`*, `category`*, `merchant`, `type`, `currency`, `transaction_date`, `notes`, `source`, `is_shared`)<br>• `get_financial_summary` (`start_date`, `end_date`, `category`)<br>• `set_category_budget` (`category`*, `monthly_limit`*, `currency`, `alert_threshold_pct`)<br>• `manage_recurring_bills` (`action`*, `bill_id`, `name`, `category`, `expected_amount`, `currency`, `billing_cycle`, `next_due_day`, `auto_renew`) | All mutating actions: Yes |
-| **`automation`** | [`internal/domains/automation`](./internal/domains/automation/module.go) | User's `PreferredLanguage`, `TonePersona`, `DefaultCurrency`, `QuietHours`, `StandingInstructions`, and upcoming 30-day CRM birthdays/anniversaries. | • `register_external_api` (`name`*, `base_url`*, `default_method`, `auth_headers`, `description`)<br>• `list_external_apis` (`family_group`)<br>• `call_external_api` (`connector_name`, `connector_id`, `url`, `path`, `method`, `query_params`, `body`)<br>• `create_automation_rule` (`name`*, `trigger_type`*, `trigger_topic`*, `action_instruction`*, `condition_json`, `is_active`)<br>• `list_automation_rules` (`trigger_topic`)<br>• `delete_automation_rule` (`rule_id`*)<br>• `update_user_preferences` (`preferred_language`, `tone_persona`, `default_currency`, `quiet_hours_start`, `quiet_hours_end`, `briefing_topics`, `standing_instructions`)<br>• `get_user_preferences` ()<br>• `upsert_personal_crm` (`person_name`*, `id`, `relationship`, `important_dates`, `gift_ideas_and_sizes`, `medical_notes`)<br>• `query_personal_crm` (`query`, `relationship`) | `register_external_api`, `create_automation_rule`, `delete_automation_rule`, `update_user_preferences`, `upsert_personal_crm`: Yes |
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `create_calendar_event` | 2 (`calendar`) | `title`* (string), `start_time`* (string), `end_time`* (string), `timezone`* (string), `description` (string), `recurrence` ([]string) | Creates a new event on the user's Google Calendar. Call this when the user asks to schedule a meeting, block time, or create an event. |
+| `list_calendar_events` | 2 (`calendar`) | `query` (string), `time_max` (string), `time_min` (string) | Retrieves events from the user's Google Calendar. Call this when the user asks what is on their schedule, if they have meetings, or to query their calendar. |
+| `update_calendar_event` | 2 (`calendar`) | `id`* (string), `description` (string), `end_time` (string), `recurrence` ([]string), `start_time` (string), `timezone` (string), `title` (string) | Updates an existing event on the user's Google Calendar. Call this when the user asks to change, reschedule, or modify an event. |
+| `delete_calendar_event` | 2 (`calendar`) | `id`* (string) | Deletes an event from the user's Google Calendar. Call this when the user asks to cancel, remove, or delete an event. |
+
+### 6.3 `workspace_gmail` (9 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `search_emails` | 2 (`gmail`) | `query`* (string), `max_results` (integer) | Searches the user's Gmail using standard Gmail query syntax. Use this to find recent emails or specific threads (e.g., 'newer_than:30d', 'is:unread', 'from:john'). |
+| `read_email` | 2 (`gmail`) | `message_id`* (string) | Reads the contents of a specific email by its ID. |
+| `draft_email_reply` | 2 (`gmail`) | `message_id`* (string), `reply_text`* (string) | Drafts a reply to an email. Does not send it. |
+| `archive_emails` | 2 (`gmail`) | `message_ids`* ([]string) | Archives one or more emails by removing them from the INBOX. |
+| `soft_delete_emails` | 2 (`gmail`) | `message_ids`* ([]string) | Moves one or more emails to the native Gmail Trash bin (soft delete). |
+| `list_email_labels` | 2 (`gmail`) | — | Lists all available Gmail labels and their IDs for the user. |
+| `apply_email_labels` | 2 (`gmail`) | `message_ids`* ([]string), `label_id`* (string) | Applies a specific Gmail label to one or more emails. |
+| `create_email_label` | 2 (`gmail`) | `label_name`* (string) | Creates a new Gmail label and returns its ID. Use this when you want to categorize an email and the appropriate label doesn't exist yet. |
+| `unsubscribe_email` | 2 (`gmail`) | `message_id`* (string) | Attempts to unsubscribe from a newsletter or mailing list by parsing the List-Unsubscribe header of a specific email. Call this when the user asks to unsubscribe from an email. |
+
+### 6.4 `workspace_tasks` (6 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `list_task_lists` | 2 (`tasks`) | — | Lists all of the user's available task lists (like 'Groceries', 'Default', etc.) and their IDs. |
+| `create_task_list` | 2 (`tasks`) | `title`* (string) | Creates a new task list. |
+| `list_tasks` | 2 (`tasks`) | `list_id` (string) | Lists the user's pending Google Tasks from a specific task list. |
+| `create_task` | 2 (`tasks`) | `title`* (string), `due` (string), `list_id` (string), `notes` (string) | Creates a new task on a specific Google Tasks list. |
+| `complete_task` | 2 (`tasks`) | `task_id`* (string), `list_id` (string) | Marks a task as completed in Google Tasks. |
+| `delete_task` | 2 (`tasks`) | `task_id`* (string), `list_id` (string) | Deletes a task entirely from Google Tasks. |
+
+### 6.5 `workspace_contacts` (2 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `search_contacts` | 2 (`contacts`) | `query`* (string) | Searches the user's Google Contacts by name. Call this when the user asks for someone's email or phone number. |
+| `create_contact` | 2 (`contacts`) | `name`* (string), `email` (string), `phone` (string) | Creates a new Google Contact. Call this when the user asks to save a phone number, email, or contact information. |
+
+### 6.6 `web_research` (2 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `search_web` | 1 (core) | `query`* (string) | Searches the live web using Tavily for current news, facts, recent events, or information you don't know. |
+| `fetch_webpage` | 1 (core) | `url`* (string) | Fetches and returns the main article text content of a webpage. Use this when the user sends a link and wants you to read, summarize, or save it. |
+
+### 6.7 `durability` (3 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `undo_last_action` | 1 (core) | `mutation_id` (string), `reason` (string) | Reverts the user's or family's most recent mutation or change (such as an expense, baby feeding log, schedule entry, or task) using the recorded BeforeJSON state and marks it undone. |
+| `list_recent_changes` | 2 (`history`) | `limit` (integer), `topic` (string) | Lists recent data mutations and changes across life domains (baby, house, finance, schedule, memory). Use when user asks 'what did I change recently?', 'show audit log', or 'who updated what?'. |
+| `export_topic_data` | 2 (`history`) | `topic`* (string), `format` (string), `limit` (integer) | Exports structured data and mutation history for a specific topic (baby, house, finance, memory, schedule, or all) as formatted JSON or CSV. |
+
+### 6.8 `memory` (5 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `save_topic_memory` | 1 (core) | `topic`* (string), `fact`* (string), `is_pinned` (boolean), `scope` (string), `subtopic` (string), `supersedes_memory_id` (integer), `tags` ([]string) | Saves a structured fact, habit, or preference into long-term topic memory with tags, scope, and temporal tracking. Automatically links or supersedes older conflicting facts when supersedes_memory_id is provided. |
+| `search_topic_memories` | 1 (core) | `query` (string), `scope` (string), `tags` ([]string), `topic` (string) | Searches active (non-superseded) topic-mapped long-term memories by topic, text query, and tags. |
+| `upsert_entity_profile` | 2 (`memory`) | `topic`* (string), `entity_type`* (string), `entity_name`* (string), `attributes`* (object) | Creates or updates a structured living entity profile card (e.g. BabyProfile, Property, Vehicle, FamilyMember) with key-value attributes stored in JSONB. |
+| `get_entity_profile` | 2 (`memory`) | `topic`* (string), `entity_name`* (string) | Retrieves a structured living entity profile card by topic and entity name or type. |
+| `remember_fact` | 1 (core) | `fact`* (string), `scope` (string) | Saves a semantic memory fact and its vector embedding for long-term recall. |
+
+### 6.9 `shared` (5 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `configure_shared_topic` | 2 (`shared`) | `topic`* (string), `can_edit` (boolean), `can_view` (boolean), `notify_mode` (string), `shared_with_user_id` (string) | Configure family sharing rules, access permissions, and notification modes for a topic (e.g., 'baby', 'house', 'finance', 'schedule', 'work', 'personal'). |
+| `create_shared_reminder` | 2 (`shared`) | `title`* (string), `assigned_to_user_id` (string), `due_time` (string), `topic` (string) | Create a shared family task or reminder under a topic (e.g. 'baby', 'house', 'finance', 'family') that can be claimed and completed by any family member. |
+| `complete_shared_reminder` | 2 (`shared`) | `id`* (integer) | Claim and complete a shared family task or reminder, recording who completed it, updating status, and notifying family members. |
+| `list_shared_activity` | 2 (`shared`) | `include_completed` (boolean), `topic` (string) | Query configured shared spaces and active or completed shared family tasks and reminders. |
+| `schedule_reminder` | 1 (core) | `message`* (string), `due_time`* (string) | Schedules a point-in-time reminder alert for the user at a specified due date and time. |
+
+### 6.10 `schedule` (5 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `schedule_topic_event` | 2 (`calendar`) | `title`* (string), `topic`* (string), `start_time`* (string), `description` (string), `end_time` (string), `is_shared` (boolean), `recurrence` (string), `sync_to_google` (boolean), `tags` ([]string) | Create a topic-tagged schedule event with virtual sub-calendar support. Events can be synchronized with Google Calendar (with topic prefix e.g. [Baby], [House] and custom color coding) or kept internal-only for high-frequency routines (baby feedings, meds, workouts). If shared, also synchronizes to partner's calendar. |
+| `list_topic_schedule` | 2 (`calendar`) | `end_time` (string), `include_google` (boolean), `start_time` (string), `tags` ([]string), `topic` (string) | Query and list schedule events filtered by topic, tags, and time range. Merges database schedule events with Google Calendar events. |
+| `configure_topic_calendar` | 2 (`calendar`) | `topic`* (string), `color_id` (string), `include_in_morning_briefing` (boolean), `prefix_tag` (string), `sync_to_google_default` (boolean), `target_calendar_id` (string) | Customize virtual sub-calendar settings for a topic: custom bracket prefix tag, Google Calendar color ID (1-11), internal-only vs Google sync default, and morning briefing inclusion. |
+| `delete_topic_event` | 2 (`calendar`) | `event_id`* (integer) | Delete a topic-tagged schedule event by ID, removing it from the database and any synced Google Calendars (including partner's calendar). |
+| `update_topic_event` | 2 (`calendar`) | `event_id`* (integer), `description` (string), `end_time` (string), `start_time` (string), `tags` ([]string), `title` (string) | Update an existing schedule event's title, time, notes, tags, or sync status across database and Google Calendars. |
+
+### 6.11 `baby` (5 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `upsert_baby_profile` | 2 (`baby`) | `name`* (string), `date_of_birth`* (string), `allergies_notes` (string), `birth_weight_grams` (integer), `current_weight_grams` (integer), `due_date` (string), `gender` (string), `height_cm` (number), `id` (integer), `pediatrician_info` (string) | Create or update a baby/child profile with name, date of birth, due date, birth weight, current height/weight, pediatrician details, and allergies. |
+| `log_baby_care` | 2 (`baby`) | `log_type`* (string), `baby_id` (integer), `baby_name` (string), `details` (string), `force` (boolean), `timestamp` (string), `unit` (string), `value_numeric` (number) | Log a baby care event: feeding (ml/breast), diaper (wet/dirty/both), sleep duration, temperature, medication (with automatic safety cooldown check), milestone, or growth measurement. |
+| `query_baby_logs_and_trends` | 2 (`baby`) | `baby_id` (integer), `baby_name` (string), `end_time` (string), `limit` (integer), `log_type` (string), `start_time` (string), `time_range` (string) | Query baby care logs and aggregated trend statistics (total feeding volume, sleep totals, diaper count, last medication, fever checks) over a time range (e.g. today, last 24h, 3 days, 7 days). |
+| `get_baby_milestone_suggestions` | 2 (`baby`) | `baby_id` (integer), `baby_name` (string), `category` (string) | Get developmental milestone insights, current Wonder Weeks cognitive leap, upcoming vaccination schedule, recommended pediatric checkups, feeding transitions, and wake windows based on exact age. |
+| `manage_baby_inventory` | 2 (`baby`) | `action`* (string), `delta` (number), `item_name` (string), `low_threshold` (number), `quantity` (number), `unit` (string) | Track and manage baby supplies (formula, diapers, wipes, Vitamin D drops). View stock levels, record consumption or restocks, and check low-threshold alerts. |
+
+### 6.12 `house` (4 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `save_house_contract_or_receipt` | 2 (`house`) | `record_type`* (string), `title`* (string), `amount` (number), `contact_details` (string), `contract_id` (integer), `currency` (string), `expiration_date` (string), `key_terms` (string), `notice_period_days` (integer), `start_date` (string), `vendor_or_landlord` (string) | Store or update house leases, mortgages, utility contracts, appliance warranties, insurance policies, and repair receipts. |
+| `list_house_contracts` | 2 (`house`) | `expiring_within_days` (integer), `record_type` (string), `search_query` (string) | List and search house contracts, leases, warranties, insurance policies, or receipts with optional expiration and category filters. |
+| `manage_home_maintenance` | 2 (`house`) | `action`* (string), `category` (string), `contractor_info` (string), `interval_days` (integer), `item_id` (integer), `next_due_at` (string), `notes` (string), `overdue_only` (boolean), `task_name` (string) | Manage preventive home upkeep schedules (HVAC, plumbing, appliances, pest control), log completions, list overdue tasks, or get seasonal suggestions. |
+| `manage_vehicle_asset` | 2 (`house`) | `action`* (string), `annual_test_expiry` (string), `asset_id` (integer), `current_mileage_km` (integer), `insurance_expiry` (string), `last_service_date` (string), `license_plate` (string), `name` (string), `next_service_mileage_km` (integer), `notes` (string) | Log and track family vehicles, annual licensing/test dates, insurance policy expiry, odometer mileage, and service maintenance history. |
+
+### 6.13 `finance` (4 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `log_financial_transaction` | 2 (`finance`) | `amount`* (number), `category`* (string), `currency` (string), `is_shared` (boolean), `merchant` (string), `notes` (string), `source` (string), `transaction_date` (string), `type` (string) | Record an expense or income transaction with automatic category budget threshold checking and >30% historical average anomaly detection. |
+| `get_financial_summary` | 2 (`finance`) | `category` (string), `end_date` (string), `start_date` (string), `user_id` (string) | Aggregate spending and income summary by category, user, and date range against monthly budgets. |
+| `set_category_budget` | 2 (`finance`) | `category`* (string), `monthly_limit`* (number), `alert_threshold_pct` (number), `currency` (string) | Configure or update monthly budget limits and alert thresholds per category. |
+| `manage_recurring_bills` | 2 (`finance`) | `action`* (string), `auto_renew` (boolean), `bill_id` (integer), `billing_cycle` (string), `category` (string), `currency` (string), `expected_amount` (number), `name` (string), `next_due_day` (integer) | List, add, update, or delete recurring subscriptions and utility bills. |
+
+### 6.14 `automation` (13 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `register_external_api` | 2 (`automation`) | `name`* (string), `base_url`* (string), `auth_headers` (string), `default_method` (string), `description` (string) | Register an external REST API or Webhook connector with securely encrypted authentication headers (e.g. Bearer token, API Key). |
+| `list_external_apis` | 2 (`automation`) | — | List all registered external API connectors available to the user and family group (with auth headers securely masked). |
+| `call_external_api` | 2 (`automation`) | `body` (string), `connector_id` (integer), `connector_name` (string), `method` (string), `path` (string), `query_params` (string), `url` (string) | Execute an external HTTP request using a registered API connector or direct URL, protected by strict SSRF guardrails against local and private networks. |
+| `create_automation_rule` | 2 (`automation`) | `name`* (string), `trigger_type`* (string), `trigger_topic`* (string), `action_instruction`* (string), `condition_json` (string), `is_active` (boolean) | Create an event-driven automation rule (When -> If -> Then) triggered by data mutations, keywords, or threshold limits. |
+| `list_automation_rules` | 2 (`automation`) | `trigger_topic` (string) | List configured automation rules, optionally filtered by topic. |
+| `delete_automation_rule` | 2 (`automation`) | `rule_id`* (integer) | Delete an existing automation rule by its numeric ID. |
+| `update_user_preferences` | 2 (`automation`) | `briefing_topics` (string), `default_currency` (string), `preferred_language` (string), `quiet_hours_end` (string), `quiet_hours_start` (string), `standing_instructions` (string), `tone_persona` (string) | Update runtime user preferences, persona tone, default currency, quiet hours, briefing topics, and custom standing instructions for the assistant. |
+| `get_user_preferences` | 2 (`automation`) | — | Retrieve current user customization preferences, persona settings, and standing instructions. |
+| `upsert_personal_crm` | 2 (`automation`) | `person_name`* (string), `gift_ideas_and_sizes` (string), `id` (integer), `important_dates` (string), `medical_notes` (string), `relationship` (string) | Save or update a personal/family CRM contact with important dates (birthdays, anniversaries), gift ideas, clothing/shoe sizes, and medical notes. |
+| `query_personal_crm` | 2 (`automation`) | `query` (string), `relationship` (string) | Search personal and family CRM contacts by name, relationship, gift ideas, or medical notes. |
+| `schedule_workflow` | 2 (`automation`) | `name`* (string), `cron_expression`* (string), `instruction`* (string) | Schedules a recurring autonomous prompt/workflow instruction using a cron expression. |
+| `list_workflows` | 2 (`automation`) | — | Lists all scheduled recurring workflows and their cron expressions for the current user. |
+| `delete_workflow` | 2 (`automation`) | `id`* (string) | Deletes a scheduled recurring workflow by its ID. |
+<!-- END GENERATED: tool-catalog -->
+
+### Module behaviour (hand-maintained)
+
+What each module adds to the system prompt and whether its writes emit `MutationEvent`s (rollback/audit/partner sync). Tool lists live in the generated tables above.
+
+| Module (`Name()`) | Package Path | `SystemPromptSection` Injects | Emits `MutationEvent`? |
+| :--- | :--- | :--- | :---: |
+| **`durability`** | [`internal/domains/durability`](./internal/domains/durability/module.go) | Undo (`undo_last_action`), change history, and JSON/CSV export instructions. | `undo_last_action`: Yes (`action: "undo"`) |
+| **`memory`** | [`internal/domains/memory`](./internal/domains/memory/module.go) | Active `EntityProfile` cards + pinned `TopicMemory` facts for the user/family. | `save_topic_memory`: Yes<br>`upsert_entity_profile`: Yes |
+| **`shared`** | [`internal/domains/shared`](./internal/domains/shared/module.go) | Configured `SharedSpace` topics, permissions, and notify modes for the family. | `configure_shared_topic`: Yes<br>`create_shared_reminder`: Yes<br>`complete_shared_reminder`: Yes |
+| **`schedule`** | [`internal/domains/schedule`](./internal/domains/schedule/module.go) | Configured `TopicCalendarConfig` prefixes/colors + upcoming 7-day `ScheduleEvent` items. | All except `list_topic_schedule`: Yes |
+| **`baby`** | [`internal/domains/baby`](./internal/domains/baby/module.go) | Exact baby age (days/weeks/months + adjusted age), current developmental leap, medication cooldown status, and low inventory alerts. | `upsert_baby_profile`: Yes<br>`log_baby_care`: Yes<br>`manage_baby_inventory` (`set`/`adjust`): Yes |
+| **`house`** | [`internal/domains/house`](./internal/domains/house/module.go) | Expiring contracts/warranties within notice window, overdue/upcoming maintenance tasks, and vehicle test/insurance/service alerts. | All mutating actions: Yes |
+| **`finance`** | [`internal/domains/finance`](./internal/domains/finance/module.go) | Current month spending vs. `CategoryBudget` thresholds and upcoming `RecurringBill` due dates (next 7 days). | All mutating actions: Yes |
+| **`automation`** | [`internal/domains/automation`](./internal/domains/automation/module.go) | User's `PreferredLanguage`, `TonePersona`, `DefaultCurrency`, `QuietHours`, `StandingInstructions`, and upcoming 30-day CRM birthdays/anniversaries. | `register_external_api`, `create_automation_rule`, `delete_automation_rule`, `update_user_preferences`, `upsert_personal_crm`: Yes |
 
 ---
 
@@ -663,7 +776,7 @@ The consumer loop guarantees resilient, bounded message processing:
 - **Centralized Typed Client ([`dashboard/src/lib/graphql.ts`](./dashboard/src/lib/graphql.ts)):** Implements `graphqlFetch<TData, TVariables>` with automatic `Authorization: Bearer <DASHBOARD_API_SECRET>` header injection, endpoint discovery via `GRAPHQL_ENDPOINT` / `NEXT_PUBLIC_PROXY_URL`, and complete TypeScript type declarations for all domain entities.
 - **Clean Empty States & Zero Mock Data:** Hardcoded mock statistics in `dashboard/src/app/baby/page.tsx` and other life domain consoles are completely removed. All pages render clean empty states when database records are absent.
 - **Client Error Boundary ([`dashboard/src/app/error.tsx`](./dashboard/src/app/error.tsx)):** React client error boundary component catching uncaught rendering errors, displaying user-friendly diagnostics, and providing a clean reset/retry action.
-- **Comprehensive Vitest Component Test Suite:** Automated component testing with Vitest and `@testing-library/react` (31 tests across 4 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`), verifying typed GraphQL client queries, error boundaries, empty states, and form interactions.
+- **Comprehensive Vitest Component Test Suite:** Automated component testing with Vitest and `@testing-library/react` (4 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`), verifying typed GraphQL client queries, error boundaries, empty states, and form interactions.
 
 | Route | Source File | Primary GraphQL Operations Used |
 | :--- | :--- | :--- |
@@ -802,13 +915,13 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
 
 ### Section 3: Modular LLM Tool Integration & Two-Tier Routing
 1. **Unified `orchestrator.ToolModule` Plugin Contract:**
-   - Implement `orchestrator.ToolModule` across all 70 modular tools (28 migrated base workspace tools + 42 domain tools across 8 life domains):
+   - Every tool is provided by an `orchestrator.ToolModule` (catalogue: §6, generated):
      - `Name() string`: Unique domain identifier (e.g., `"baby"`, `"finance"`, `"durability"`).
      - `Declarations() []*genai.FunctionDeclaration`: Standardized schemas without tool-arg tenant overrides.
      - `Execute(ctx, callCtx, toolName, args) (string, error)`: Resolves tenant identity strictly from `callCtx.ActorID()` and `callCtx.TenantFamilyGroup()`.
      - `SystemPromptSection(ctx, callCtx) string`: Concise domain briefing.
 2. **Two-Tier Intent Routing (`internal/orchestrator/registry.go`):**
-   - **Tier 1 Core Tools (8 tools):** Always injected into every prompt turn (`remember_fact`, `save_topic_memory`, `search_topic_memories`, `schedule_reminder`, `search_web`, `fetch_webpage`, `undo_last_action`, `get_current_time`).
+   - **Tier 1 Core Tools** (`CoreToolNames`): always injected into every prompt turn (current list: §3.2, generated).
    - **Tier 2 Domain Groups:** Injected on-demand via `KeywordIntentMatcher` based on English and Hebrew query intent prefixes, reducing prompt token overhead by ~75% (from ~9,500 to ~1,680–2,380 tokens).
 3. **Bounded Multi-Turn Tool Recursion (`internal/orchestrator/engine.go`):**
    - Enforce a strict ceiling of `MaxToolRecursionDepth = 8` iterations per conversational turn.
@@ -878,7 +991,7 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
 3. **Client Error Boundary (`dashboard/src/app/error.tsx`):**
    - Implement React client error boundaries displaying user-friendly error diagnostics with a recovery button.
 4. **Comprehensive Vitest Component Test Suites:**
-   - Maintain and run Vitest component tests (31 tests across 4 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`).
+   - Maintain and run Vitest component tests (4 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`).
    - Run tests before completion: `npm test --prefix dashboard`.
 5. **Full Container Build Verification:**
    - Always verify the complete multi-stage container build succeeds: `docker-compose build`.

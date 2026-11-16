@@ -212,4 +212,4 @@ Generate the tool catalog section of `SYSTEM.md`/`README.md` from the registry (
 | P5-2 | Test file organization | 5 | ☑ |
 | P5-3 | CI coverage | 5 | ☑ |
 | P5-4 | Dependency updates | 5 | ☑ |
-| P5-5 | Generated docs | 5 | ☐ |
+| P5-5 | Generated docs | 5 | ☑ |

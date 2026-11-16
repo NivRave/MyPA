@@ -614,3 +614,24 @@ Format per decision: **Options** → **Chosen** → **Why / challenge** → **Fo
 ### D5-4.5 Dependabot (not Renovate)
 - Options: Renovate (more powerful grouping/automerge, needs an app install), **Dependabot** (native to GitHub, zero install; chosen). Ecosystems: gomod, npm (`/dashboard`), docker (`/`, `/dashboard`), docker-compose, github-actions. All PRs target `dev`; minor/patch grouped per ecosystem; majors individual. It understands the `@sha # vX` action pins and image digests.
 - Not done (noted): the Go service base images (`golang:1.26-alpine`, `distroless/static-debian12`, `debian:12-slim`) and `redis:7-alpine` / `pgvector:pg15` are still tag-pinned, not digest-pinned — Dependabot will track tags; digest-pinning them is a small follow-up.
+
+## P5-5 — Documentation drift
+
+### D5-5.1 Generated regions in the docs, guarded by a test
+- Options: (a) a separate generated `TOOLS.md`; (b) **marker-delimited regions inside SYSTEM.md/README.md** (chosen); (c) keep hand-written docs and add only a count check.
+- (a) splits the blueprint AGENTS.md tells agents to read; (c) catches counts but not stale descriptions/params. (b): block markers `<!-- BEGIN GENERATED: name -->…<!-- END GENERATED: name -->` and inline `<!-- gen:name -->…<!-- /gen:name -->` (invisible when rendered; inline works inside table cells). Regions: `tool-catalog` (§6, per-module tables with tier, parameters, descriptions), `tool-tiers` (§3.2 Tier-1 list + Tier-2 domain groups), `tool-summary` / `tool-count` / `module-count` (prose).
+- `go run ./cmd/devtools/gendocs` rewrites them (`-check` for a dry run). **`internal/toolcatalog` `TestDocsAreUpToDate`** runs in the normal `go test ./...`, so CI fails on drift without a new CI step. Line endings of each doc are preserved.
+
+### D5-5.2 One module list, checked against main.go
+- The tool list comes from `toolcatalog.ProductionModules()` (nil dependencies; `Declarations()` is pure in all 13 modules — verified). The reachability test's private copy now calls it, so there is a single list.
+- Risk: someone wires a new module in `cmd/orchestrator/main.go` and forgets the list → docs silently incomplete. **`TestProductionModulesMatchOrchestratorMain`** parses main.go's AST and compares the `<domainpkg>.NewModule(` calls with the list. Options considered: moving module construction out of main into a shared package (cleaner, but a larger refactor of startup wiring — not worth it for docs); grepping main.go (brittle).
+- Both guards mutation-tested: duplicating a module in the list → sync test fails; editing a tool description → docs test fails ("SYSTEM.md is stale: run gendocs").
+
+### D5-5.3 What generation revealed / what was kept by hand
+- The docs said **70** tools; the code declares **68** (13 modules + the registry's built-in `get_current_time`). The per-domain tier lists were accurate — only the headline counts had drifted.
+- The old §6.2 table also carried knowledge the code cannot generate (what each module's `SystemPromptSection` injects; whether it emits `MutationEvent`s). Kept as a hand-maintained **"Module behaviour"** table directly after the generated region, minus its tool-list column.
+- Counts inside the Mermaid diagram and the playbook prose were removed rather than generated (HTML comments are not safe inside Mermaid). Stale hand-written dashboard test counts ("31 tests") were dropped instead of updated.
+
+### D5-5.4 README trimmed to overview + quick start (404 → 134 lines)
+- Kept verbatim: Quick Start (Docker, local dev, RabbitMQ upgrade note) and Testing & CI. New: a short Highlights list, a Documentation index linking SYSTEM.md sections (all 10 anchors checked against GitHub's slug rules), compact required-env list in Quick Start, Prerequisites updated (Go 1.26, Node 24 — the old text said Go 1.24).
+- Removed (all covered by SYSTEM.md — checked before deleting): ASCII architecture, pillars, per-domain feature detail, dashboard route table, security section, env-var table (all 22 vars present in §8.1), services table, project structure. Two details existed only in the README and were **moved into SYSTEM.md** first: request body limits (`MaxBytesReader` 10 MB webhooks / 1 MB GraphQL) and WhatsApp's 1,500-character chunking — both re-verified in code.

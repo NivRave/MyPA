@@ -3,43 +3,15 @@ package orchestrator_test
 import (
 	"testing"
 
-	"github.com/nivik/mypa/internal/domains/automation"
-	"github.com/nivik/mypa/internal/domains/baby"
-	"github.com/nivik/mypa/internal/domains/durability"
-	"github.com/nivik/mypa/internal/domains/finance"
-	"github.com/nivik/mypa/internal/domains/house"
-	"github.com/nivik/mypa/internal/domains/memory"
-	"github.com/nivik/mypa/internal/domains/schedule"
-	"github.com/nivik/mypa/internal/domains/shared"
-	"github.com/nivik/mypa/internal/domains/web_research"
-	"github.com/nivik/mypa/internal/domains/workspace_calendar"
-	"github.com/nivik/mypa/internal/domains/workspace_contacts"
-	"github.com/nivik/mypa/internal/domains/workspace_gmail"
-	"github.com/nivik/mypa/internal/domains/workspace_tasks"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/toolcatalog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// allProductionModules mirrors the registrations in cmd/orchestrator/main.go. Declarations()
-// does not touch dependencies, so nil repos/clients are fine here.
-func allProductionModules() []orchestrator.ToolModule {
-	return []orchestrator.ToolModule{
-		workspace_calendar.NewModule(nil),
-		workspace_gmail.NewModule(),
-		workspace_tasks.NewModule(),
-		workspace_contacts.NewModule(),
-		web_research.NewModule(),
-		durability.NewModule(nil),
-		memory.NewModule(nil),
-		shared.NewModule(nil, nil, nil),
-		schedule.NewModule(nil),
-		baby.NewModule(nil),
-		house.NewModule(nil),
-		finance.NewModule(nil),
-		automation.NewModule(nil),
-	}
-}
+// allProductionModules is the single list of production modules (kept in sync with
+// cmd/orchestrator/main.go by toolcatalog.TestProductionModulesMatchOrchestratorMain).
+func allProductionModules() []orchestrator.ToolModule { return toolcatalog.ProductionModules() }
 
 // Every registered tool must be offered to the model in at least one turn: either it is a
 // Tier-1 core tool, or its module maps to a domain the intent matcher can actually select.
