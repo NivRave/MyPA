@@ -60,6 +60,7 @@ type composeService struct {
 	Command     composeCommand `yaml:"command"`
 	Profiles    []string       `yaml:"profiles"`
 	Environment composeEnv     `yaml:"environment"`
+	EnvFile     []string       `yaml:"env_file"`
 }
 
 func loadCompose(t *testing.T) (string, map[string]composeService) {
@@ -155,6 +156,25 @@ func TestAllExternalImagesArePinnedByDigest(t *testing.T) {
 			assert.Contains(t, ref, "@sha256:", "%s: FROM %s", df, ref)
 		}
 	}
+}
+
+// BL-4: env_file injects the host .env into the container, including host-side *_URL values that
+// point at localhost. Any service that loads it must override all three, even if it does not use
+// them today, so a future code path can never silently read "localhost" (the DP-1 trap).
+func TestCompose_EnvFileServicesOverrideEveryInfraURL(t *testing.T) {
+	_, services := loadCompose(t)
+	checked := 0
+	for name, svc := range services {
+		if len(svc.EnvFile) == 0 {
+			continue
+		}
+		checked++
+		for _, key := range []string{"RABBITMQ_URL", "REDIS_URL", "DATABASE_URL"} {
+			_, ok := svc.Environment[key]
+			assert.True(t, ok, "%s loads env_file but does not override %s", name, key)
+		}
+	}
+	assert.GreaterOrEqual(t, checked, 4, "gateway, orchestrator, migrate and audit-worker load .env")
 }
 
 // pgAdmin is opt-in and has no default credentials.
