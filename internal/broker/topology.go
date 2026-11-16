@@ -6,6 +6,15 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// Queue names, shared by every publisher and consumer (BL-5). Each queue gets "<name>.dlq".
+const (
+	// InboundMessagesQueue carries normalized user messages from every channel (Telegram, WhatsApp)
+	// from the gateway to the orchestrator. Was "telegram.inbound" before it also carried WhatsApp.
+	InboundMessagesQueue = "inbound.messages"
+	// AuditEventsQueue carries audit telemetry from the orchestrator to the audit-worker.
+	AuditEventsQueue = "audit.events"
+)
+
 const (
 	// DefaultDLX is the centralized direct exchange for dead-lettered messages
 	DefaultDLX = "mypa.dlx"

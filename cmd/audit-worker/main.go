@@ -52,7 +52,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	consumer, err := broker.NewConsumer(cfg.RabbitMQ.URL, "audit.events")
+	consumer, err := broker.NewConsumer(cfg.RabbitMQ.URL, broker.AuditEventsQueue)
 	if err != nil {
 		slog.Error("failed to initialize rabbitmq consumer", "error", err)
 		os.Exit(1)

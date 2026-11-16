@@ -101,6 +101,10 @@ The broker now runs `rabbitmq:4.3.7` with a fixed `hostname: rabbitmq`. Previous
 2. Let the orchestrator drain `telegram.inbound`; check `telegram.inbound.dlq` / `audit.events.dlq` at `http://localhost:15672` and export anything you want to keep.
 3. `docker compose up -d` — the new broker starts; from now on its data survives container recreation.
 
+### Upgrade note: inbound queue renamed (BL-5)
+
+The inbound queue is now `inbound.messages` (it was `telegram.inbound`, but it also carries WhatsApp). Before upgrading a running stack: `docker compose stop gateway`, wait until `telegram.inbound` shows 0 messages at `http://localhost:15672`, then `docker compose up -d`. Afterwards the empty `telegram.inbound` and `telegram.inbound.dlq` can be deleted in the management UI.
+
 ---
 
 ## Testing & Quality Verification

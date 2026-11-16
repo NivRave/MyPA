@@ -102,7 +102,7 @@ func main() {
 	var consumer *broker.Consumer
 	for i := 0; i < 5; i++ {
 		// Parallel across users, ordered per user; RABBITMQ_PREFETCH bounds concurrent turns (P2-8).
-		consumer, err = broker.NewConsumerWithOptions(cfg.RabbitMQ.URL, "telegram.inbound", broker.WithPrefetch(cfg.RabbitMQ.Prefetch))
+		consumer, err = broker.NewConsumerWithOptions(cfg.RabbitMQ.URL, broker.InboundMessagesQueue, broker.WithPrefetch(cfg.RabbitMQ.Prefetch))
 		if err == nil {
 			break
 		}
@@ -170,7 +170,7 @@ func main() {
 	tavilyClient := tavily.NewClient(cfg.Tavily.APIKey)
 
 	// 8.5 Initialize Telemetry Publisher
-	telemetryPublisher, err := broker.NewSafePublisher(cfg.RabbitMQ.URL, "audit.events")
+	telemetryPublisher, err := broker.NewSafePublisher(cfg.RabbitMQ.URL, broker.AuditEventsQueue)
 	if err != nil {
 		slog.Error("failed to initialize telemetry publisher", "error", err)
 		os.Exit(1)

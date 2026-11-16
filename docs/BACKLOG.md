@@ -15,7 +15,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-2 | Medium | GORM default logger: raw SQL with personal data, non-JSON, "record not found" as error | done 2026-11-16 (`fix/bl-2`, DP-5) |
 | BL-3 | Low | `.gitignore` only ignores `.env`, not `.env.*` copies | done 2026-11-16 (`fix/bl-3`, DP-6) |
 | BL-4 | Low | `migrate`/`audit-worker` inherit unused `localhost` URLs from `env_file` | done 2026-11-16 (`fix/bl-4`, DP-11) |
-| BL-5 | Low | Queue `telegram.inbound` also carries WhatsApp traffic | open |
+| BL-5 | Low | Queue `telegram.inbound` also carries WhatsApp traffic | done 2026-11-16 (`fix/bl-5`, DP-12); deploy = drain-and-switch |
 | BL-6 | Low | Proxy logs a WARN for every browser `/favicon.ico` | done 2026-11-16 (`fix/bl-6`, DP-8) |
 | BL-7 | Low | Go base images, `redis`, `pgvector` not digest-pinned | done 2026-11-16 (`fix/bl-7`, DP-9) |
 | BL-8 | Medium | WhatsApp delivery failures are invisible (no Twilio status callback) | done 2026-11-16 (`fix/bl-8`, DP-4) |
