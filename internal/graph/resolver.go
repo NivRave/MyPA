@@ -166,34 +166,50 @@ func (r *Resolver) resolveTenantAndActor(ctx context.Context, requestedFamilyGro
 		actorID = "user"
 	}
 
+	// DE-2: a caller without a family group is its own tenant (its user ID) — the same fallback as
+	// the orchestrator's CallContext.TenantFamilyGroup, so the dashboard sees what the bot wrote.
+	// There is no shared "default" tenant; a caller with neither ID nor group has no tenant at all.
+	own := strings.TrimSpace(claims.FamilyGroup)
+	if own == "" {
+		own = strings.TrimSpace(claims.UserID)
+	}
+	if own == "" {
+		return "", "", fmt.Errorf("permission denied: caller has neither a family group nor a user id")
+	}
+
+	var reqFG string
+	if requestedFamilyGroup != nil {
+		reqFG = strings.TrimSpace(*requestedFamilyGroup)
+	}
+	if reqFG == "*" {
+		// "*" is a read scope (wantsAllTenants), never a tenant to read from or write into.
+		return "", "", fmt.Errorf("permission denied: %q is not a family group", reqFG)
+	}
+
 	// Only global admins may pick another family group; tenant-bound admins (the dashboard
 	// secret, P3-2) fall through to the same positive check as members.
 	if claims.IsGlobalAdmin() {
-		if requestedFamilyGroup != nil && strings.TrimSpace(*requestedFamilyGroup) != "" {
-			familyGroup = strings.TrimSpace(*requestedFamilyGroup)
-		} else if claims.FamilyGroup != "" {
-			familyGroup = claims.FamilyGroup
-		} else {
-			familyGroup = "default"
+		if reqFG != "" {
+			return actorID, reqFG, nil
 		}
-		return actorID, familyGroup, nil
+		return actorID, own, nil
 	}
 
 	// Non-admin positive authorization check
-	if requestedFamilyGroup != nil && strings.TrimSpace(*requestedFamilyGroup) != "" {
-		reqFG := strings.TrimSpace(*requestedFamilyGroup)
-		if claims.FamilyGroup != "" && !strings.EqualFold(reqFG, claims.FamilyGroup) {
-			return "", "", fmt.Errorf("permission denied: unauthorized access to family group %q", reqFG)
-		}
+	if reqFG != "" && !strings.EqualFold(reqFG, own) {
+		return "", "", fmt.Errorf("permission denied: unauthorized access to family group %q", reqFG)
 	}
+	return actorID, own, nil
+}
 
-	if claims.FamilyGroup != "" {
-		familyGroup = claims.FamilyGroup
-	} else {
-		familyGroup = "default"
+// wantsAllTenants reports an explicit cross-tenant read: only a global admin, and only when it
+// names no family group or asks for "*". Resolvers must use this — never a magic tenant name such
+// as the former "default" — to drop the family filter (DE-2).
+func wantsAllTenants(claims *AuthClaims, familyGroup *string) bool {
+	if !claims.IsGlobalAdmin() {
+		return false
 	}
-
-	return actorID, familyGroup, nil
+	return familyGroup == nil || strings.TrimSpace(*familyGroup) == "" || strings.TrimSpace(*familyGroup) == "*"
 }
 
 // familyOfUser returns a user's family group (for tenant-bound admin checks, P3-2).

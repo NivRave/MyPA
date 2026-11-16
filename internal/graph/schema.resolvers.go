@@ -1259,7 +1259,7 @@ func (r *mutationResolver) DeleteAutomationRule(ctx context.Context, id string) 
 
 // SaveUserPreference is the resolver for the saveUserPreference field.
 func (r *mutationResolver) SaveUserPreference(ctx context.Context, userID string, preferredLanguage *string, tonePersona *string, defaultCurrency *string, quietHoursStart *string, quietHoursEnd *string, standingInstructions *string) (*model.UserPreference, error) {
-	actorID, _, err := r.resolveTenantAndActor(ctx, nil)
+	actorID, callerFG, err := r.resolveTenantAndActor(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1315,7 +1315,7 @@ func (r *mutationResolver) SaveUserPreference(ctx context.Context, userID string
 		EntityType:  "user_preference",
 		EntityID:    targetUserID,
 		ActorUserID: actorID,
-		FamilyGroup: "default",
+		FamilyGroup: callerFG,
 		BeforeJSON:  beforeJSON,
 		AfterJSON:   toJSON(pref),
 		Summary:     fmt.Sprintf("Updated preferences for user: %s", targetUserID),
@@ -1428,14 +1428,19 @@ func (r *queryResolver) Users(ctx context.Context) ([]*model.User, error) {
 
 // ActivePairingCodes is the resolver for the activePairingCodes field.
 func (r *queryResolver) ActivePairingCodes(ctx context.Context, familyGroup *string) ([]*model.PairingCode, error) {
-	_, fg, err := r.resolveTenantAndActor(ctx, familyGroup)
-	if err != nil {
-		return nil, err
+	// DE-2: only an explicit global-admin request reads across tenants.
+	allTenants := wantsAllTenants(GetAuthClaims(ctx), familyGroup)
+	var fg string
+	if !allTenants {
+		var err error
+		if _, fg, err = r.resolveTenantAndActor(ctx, familyGroup); err != nil {
+			return nil, err
+		}
 	}
 
 	var dbCodes []dbmodels.PairingCode
 	q := r.DB.DB.Where("is_used = ? AND expires_at > now()", false)
-	if fg != "" && fg != "default" {
+	if !allTenants {
 		q = q.Where("family_group = ?", fg)
 	}
 	if err := q.Find(&dbCodes).Error; err != nil {
@@ -1898,15 +1903,20 @@ func (r *queryResolver) PersonalCrmContacts(ctx context.Context, familyGroup str
 
 // MutationLogs is the resolver for the mutationLogs field.
 func (r *queryResolver) MutationLogs(ctx context.Context, familyGroup *string, topic *string, limit *int) ([]*model.MutationLog, error) {
-	_, fg, err := r.resolveTenantAndActor(ctx, familyGroup)
-	if err != nil {
-		return nil, err
+	// DE-2: only an explicit global-admin request reads across tenants.
+	allTenants := wantsAllTenants(GetAuthClaims(ctx), familyGroup)
+	var fg string
+	if !allTenants {
+		var err error
+		if _, fg, err = r.resolveTenantAndActor(ctx, familyGroup); err != nil {
+			return nil, err
+		}
 	}
 
 	var dbLogs []dbmodels.MutationLog
 	query := r.DB.DB.Model(&dbmodels.MutationLog{})
 
-	if fg != "" && fg != "default" {
+	if !allTenants {
 		query = query.Where("family_group = ?", fg)
 	}
 	if topic != nil && *topic != "" {
@@ -1938,7 +1948,7 @@ func (r *queryResolver) AuditSessions(ctx context.Context, familyGroup *string, 
 	claims := GetAuthClaims(ctx)
 	var fg string
 	var err error
-	if claims.IsGlobalAdmin() && (familyGroup == nil || *familyGroup == "" || *familyGroup == "*") { // P3-2
+	if wantsAllTenants(claims, familyGroup) { // P3-2, DE-2
 		// Admin requesting system-wide or default unscoped view
 		fg = ""
 	} else {
@@ -1985,7 +1995,7 @@ func (r *queryResolver) UserSessions(ctx context.Context, familyGroup *string) (
 	claims := GetAuthClaims(ctx)
 	var fg string
 	var err error
-	if claims.IsGlobalAdmin() && (familyGroup == nil || *familyGroup == "" || *familyGroup == "*") { // P3-2
+	if wantsAllTenants(claims, familyGroup) { // P3-2, DE-2
 		// Admin requesting system-wide view
 		fg = ""
 	} else {

@@ -22,6 +22,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-9 | Low | Replies recap earlier turns' actions as if done in this turn | done 2026-11-16 (`fix/bl-9`, DP-10) — confirm in live use |
 | BL-10 | Low | WhatsApp formatter nests `*` when a heading contains bold | done 2026-11-16 (`fix/bl-10`, DP-7) |
 | BL-11 | Medium | Integration tests ran against the live compose database | done 2026-11-16 (`fix/bl-11`, DP-13); leftover fixtures → OP-9 |
+| BL-12 | Low | `testutil` Redis test container uses the floating `redis:7-alpine` tag | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -127,6 +128,12 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   the only DB source; `testutil.NewTestDB` and `internal/db` tests use it. Guard
   `TestNoTestReachesTheLiveDatabase` rejects the compose DSN and `os.Getenv("DATABASE_URL")` in any test.
 
+### BL-12 — Redis test container not pinned (Low)
+- **Found:** 2026-11-16, during BL-11: `internal/testutil/containers.go` starts `redis:7-alpine`, while
+  compose runs `redis:7.4.11-alpine@sha256:d943…` (BL-7). Postgres tests now use the prod pin (DP-13).
+- **Fix:** same pattern as `pgtest.Image` — a constant equal to the compose image plus a test that keeps
+  the two in sync.
+
 ## Operations (owner)
 
 | ID | Task | Status |
@@ -146,4 +153,4 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | ID | Decision | Where |
 | :--- | :--- | :--- |
 | DE-1 | Accept/reject the service-topology ADR | `docs/adr/0001-service-topology.md` |
-| DE-2 | Users with an empty family group: GraphQL resolves them to a shared tenant `"default"` (two such users would see each other's data), while the orchestrator falls back to the user's own ID. Align on per-user isolation, or refuse users without a group? Changes visibility of existing rows. | `docs/DECISIONS_LOG.md` (P3-2 notes) |
+| DE-2 | Users with an empty family group: GraphQL resolves them to a shared tenant `"default"` (two such users would see each other's data), while the orchestrator falls back to the user's own ID. Align on per-user isolation, or refuse users without a group? Changes visibility of existing rows. | **decided 2026-11-16** (`fix/de-2`, DP-14): per-user isolation. Worse than logged — `ActivePairingCodes`/`MutationLogs` treated `"default"` as *no filter*, so such a caller saw every family's codes and logs. Live data: 0 users without a group, 0 rows in `"default"` → no visible change |
