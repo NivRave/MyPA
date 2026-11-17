@@ -23,7 +23,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-10 | Low | WhatsApp formatter nests `*` when a heading contains bold | done 2026-11-16 (`fix/bl-10`, DP-7) |
 | BL-11 | Medium | Integration tests ran against the live compose database | done 2026-11-16 (`fix/bl-11`, DP-13); leftover fixtures → OP-9 |
 | BL-12 | Low | `testutil` Redis test container uses the floating `redis:7-alpine` tag | done 2026-11-17 (`fix/bl-12`, DP-15) — also the RabbitMQ test images (broker, e2e) |
-| BL-13 | Low | `.env.example` `ALLOWED_USERS` example comment uses a real-format `+972 50…` number (not the owner's); switch to the reserved fictional `+1555010xxxx` range like the SQL-logging test | open |
+| BL-13 | Low | `.env.example` `ALLOWED_USERS` example comment uses a real-format `+972 50…` number (not the owner's); switch to the reserved fictional `+1555010xxxx` range like the SQL-logging test | done 2026-11-17 (`fix/bl-13`, DP-16) — now `+1 202 555 01xx` (the real fictional range; `+1555010xxxx` is not it), plus a tree-wide guard |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -136,6 +136,14 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   the two in sync.
 - **Done:** a general guard instead of one constant per image (DP-15); it also found
   `rabbitmq:4.3.7-management-alpine` without digest in `internal/broker` and `tests/e2e_test.go`.
+
+### BL-13 — Real-format phone number in `.env.example` (Low)
+- **Found:** 2026-11-17, during the pre-push secret scan: the `ALLOWED_USERS` example comment carries two
+  dialable `+972` numbers (not the owner's). Already in pushed history, including `master`; no rewrite
+  (not personal data of the owner, and a rewrite of shared history costs more than it protects).
+- **Done:** the example uses `+12025550101` / `+12025550102` (NANP 555-0100–0199, reserved for fiction).
+  Guard `TestNoRealPhoneNumbersCommitted` (`internal/config`) scans every git-tracked file and fails on
+  any number that could reach a person, printing it masked (DP-16).
 
 ## Operations (owner)
 

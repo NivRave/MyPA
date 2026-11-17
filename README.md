@@ -128,7 +128,9 @@ docker-compose build
 go test -v ./tests/...
 ```
 
-Database tests need a running Docker daemon: each one gets its own empty database in a throwaway testcontainers Postgres (`internal/testutil/pgtest`, same image as production). They never connect to the compose database, and a test that tries to (compose DSN or `DATABASE_URL`) fails `TestNoTestReachesTheLiveDatabase`.
+Database tests need a running Docker daemon: each one gets its own empty database in a throwaway testcontainers Postgres (`internal/testutil/pgtest`, same image as production). They never connect to the compose database, and a test that tries to (compose DSN or `DATABASE_URL`) fails `TestNoTestReachesTheLiveDatabase`. Test containers must use the exact `docker-compose.yml` images (`TestTestContainerImagesMatchCompose`).
+
+Phone numbers in committed files (examples, docs, fixtures) must be fictional: use `+1 NXX 555 0100–0199`, e.g. `+12025550123`. `TestNoRealPhoneNumbersCommitted` fails on any tracked number that could reach a person, and prints it masked.
 
 **Continuous integration** (`.github/workflows/ci.yml`, on push/PR to `dev` and `master`): Go build + vet + `go test -race -p 1 ./...`, golangci-lint v2.15.0 (config in `.golangci.yml`), `govulncheck`, the dashboard (`npm ci`, lint, test, build, `npm audit --omit=dev --audit-level=high`), and `docker compose build` (with `.env.example` copied to `.env`). Run the linter locally with `docker run --rm -v "$PWD:/app" -w /app golangci/golangci-lint:v2.15.0 golangci-lint run ./...`.
 
