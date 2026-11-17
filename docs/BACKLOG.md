@@ -23,6 +23,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-10 | Low | WhatsApp formatter nests `*` when a heading contains bold | done 2026-11-16 (`fix/bl-10`, DP-7) |
 | BL-11 | Medium | Integration tests ran against the live compose database | done 2026-11-16 (`fix/bl-11`, DP-13); leftover fixtures → OP-9 |
 | BL-12 | Low | `testutil` Redis test container uses the floating `redis:7-alpine` tag | open |
+| BL-13 | Low | `.env.example` `ALLOWED_USERS` example comment uses a real-format `+972 50…` number (not the owner's); switch to the reserved fictional `+1555010xxxx` range like the SQL-logging test | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
