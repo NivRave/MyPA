@@ -34,7 +34,7 @@ func getSingletonRedis(ctx context.Context) (string, error) {
 	for attempt := 1; attempt <= 3; attempt++ {
 		req := testcontainers.GenericContainerRequest{
 			ContainerRequest: testcontainers.ContainerRequest{
-				Image:        "redis:7-alpine",
+				Image:        "redis:7.4.11-alpine@sha256:d9436322172a5b482c187bf1f363d3c4fea086fcca6b9c8a94de8f0f39ed3193",
 				ExposedPorts: []string{"6379/tcp"},
 				WaitingFor:   wait.ForListeningPort("6379/tcp").WithStartupTimeout(60 * time.Second),
 			},

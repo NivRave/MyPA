@@ -17,7 +17,7 @@ func TestE2E_RabbitMQIntegration(t *testing.T) {
 
 	// 1. Start RabbitMQ Testcontainer
 	rabbitContainer, err := rabbitmq.Run(ctx,
-		"rabbitmq:4.3.7-management-alpine",
+		"rabbitmq:4.3.7-management-alpine@sha256:eb338b3fc8f5c251028c0022ac0de3fe1db2d599d1c6a08b45898f756f248881",
 		rabbitmq.WithAdminPassword("guest"),
 	)
 	require.NoError(t, err)

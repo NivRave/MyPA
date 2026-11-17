@@ -22,7 +22,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-9 | Low | Replies recap earlier turns' actions as if done in this turn | done 2026-11-16 (`fix/bl-9`, DP-10) — confirm in live use |
 | BL-10 | Low | WhatsApp formatter nests `*` when a heading contains bold | done 2026-11-16 (`fix/bl-10`, DP-7) |
 | BL-11 | Medium | Integration tests ran against the live compose database | done 2026-11-16 (`fix/bl-11`, DP-13); leftover fixtures → OP-9 |
-| BL-12 | Low | `testutil` Redis test container uses the floating `redis:7-alpine` tag | open |
+| BL-12 | Low | `testutil` Redis test container uses the floating `redis:7-alpine` tag | done 2026-11-17 (`fix/bl-12`, DP-15) — also the RabbitMQ test images (broker, e2e) |
 | BL-13 | Low | `.env.example` `ALLOWED_USERS` example comment uses a real-format `+972 50…` number (not the owner's); switch to the reserved fictional `+1555010xxxx` range like the SQL-logging test | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
@@ -134,6 +134,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   compose runs `redis:7.4.11-alpine@sha256:d943…` (BL-7). Postgres tests now use the prod pin (DP-13).
 - **Fix:** same pattern as `pgtest.Image` — a constant equal to the compose image plus a test that keeps
   the two in sync.
+- **Done:** a general guard instead of one constant per image (DP-15); it also found
+  `rabbitmq:4.3.7-management-alpine` without digest in `internal/broker` and `tests/e2e_test.go`.
 
 ## Operations (owner)
 

@@ -1,8 +1,14 @@
 package config
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -156,6 +162,61 @@ func TestAllExternalImagesArePinnedByDigest(t *testing.T) {
 			assert.Contains(t, ref, "@sha256:", "%s: FROM %s", df, ref)
 		}
 	}
+}
+
+// infraImageRef matches a string literal naming one of the infrastructure images compose runs
+// — an image reference, not a "redis://…" URL (a tag never contains "/") nor a "redis:6379"
+// host:port (a port is all digits; a tag always has some non-digit).
+var infraImageRef = regexp.MustCompile(`^(redis|rabbitmq|postgres|pgvector/pgvector)(@sha256:|:[0-9]*[^0-9/][^/]*$)`)
+
+// BL-12: containers the Go tests start (testcontainers) must run exactly the images production runs,
+// so a floating tag can neither drift the tested version nor change between two CI runs.
+func TestTestContainerImagesMatchCompose(t *testing.T) {
+	_, services := loadCompose(t)
+	composeImages := map[string]bool{}
+	for _, svc := range services {
+		if svc.Image != "" {
+			composeImages[svc.Image] = true
+		}
+	}
+
+	root := filepath.Join("..", "..")
+	found := 0
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "vendor", "dashboard":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			lit, ok := n.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			s, err := strconv.Unquote(lit.Value)
+			if err != nil || !infraImageRef.MatchString(s) {
+				return true
+			}
+			found++
+			assert.True(t, composeImages[s], "%s: test image %q must equal a docker-compose.yml image (tag@digest)", path, s)
+			return true
+		})
+		return nil
+	})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, found, 3, "postgres (pgtest), redis (testutil) and rabbitmq (broker) test images")
 }
 
 // BL-4: env_file injects the host .env into the container, including host-side *_URL values that
