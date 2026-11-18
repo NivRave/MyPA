@@ -175,7 +175,7 @@ services:
 
   postgres:
     logging: *default-logging
-    image: pgvector/pgvector:0.8.6-pg15@sha256:a947c45cdc5906a1bc951f20a8709e321256343ee0f251e4ae00b5e7def4e6da
+    image: pgvector/pgvector:0.8.7-pg15@sha256:e0b617fffc06dd37323ee99873c7a8683f19f1dce34633670262b0113ce32638
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mypa}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mypa_password}
