@@ -1,7 +1,7 @@
 # MyPA Roadmap
 
 > **The single source of truth for where MyPA is going.**
-> Last reviewed: 2026-11-18 (verified against the code) · Current release: v3.3.2, with `dev` ahead of it (OP-10) · Next milestone: V4.0
+> Last reviewed: 2026-11-18 (verified against the code) · Current release: v3.4.0 (the pre-V4 baseline) · Next milestone: V4.0
 
 ---
 
@@ -52,7 +52,7 @@ V4.0 comes first because its building blocks (one binary, the channel layer, hou
 
 **Before V4.0 starts**
 
-- Cut a baseline release from `dev` (OP-10). It is the rollback point and the baseline that V4-43 restores from.
+- **Done 2026-11-18:** baseline release cut from `dev` (OP-10) as tag `v3.4.0`, with backup `backup_2026-11-18_21-52-46.dump.age` taken on it. It is the rollback point and the baseline that V4-43 restores from.
 - Stage 1 needs no ADR and can start as soon as the baseline exists. Write the identity ADR and the channel ADR (§7) before stage 2.
 - Owner tasks that gate later items: OP-7 (V4-07) and OP-8 (V4-41). Neither blocks stage 1. OP-1 is done.
 
