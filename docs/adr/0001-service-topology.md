@@ -1,6 +1,6 @@
 # ADR 0001 — Service topology: consolidate binaries? replace RabbitMQ?
 
-- **Status:** Proposed — **owner decides** (remediation plan item P4-4: write the ADR, do not implement)
+- **Status:** Accepted by the owner on 2026-11-18. Decision 1: option 1c (one binary with `--role`). Decision 2: option 2b (River, Postgres-backed) for every install, in the staged order recommended below, by V4.2; this goes further than the short-term recommendation to keep RabbitMQ. Tracked as V4-01 and V4-23 in [`ROADMAP.md`](../ROADMAP.md). Not yet implemented.
 - **Date:** 2026-11-16
 - **Context owner:** MyPA maintainers
 

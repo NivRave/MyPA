@@ -163,5 +163,5 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 
 | ID | Decision | Where |
 | :--- | :--- | :--- |
-| DE-1 | Accept/reject the service-topology ADR | `docs/adr/0001-service-topology.md` |
+| DE-1 | Accept/reject the service-topology ADR | **decided 2026-11-18** (accepted: option 1c, and the queue moves to Postgres by V4.2; see `docs/adr/0001-service-topology.md` and `docs/ROADMAP.md` §7) |
 | DE-2 | Users with an empty family group: GraphQL resolves them to a shared tenant `"default"` (two such users would see each other's data), while the orchestrator falls back to the user's own ID. Align on per-user isolation, or refuse users without a group? Changes visibility of existing rows. | **decided 2026-11-16** (`fix/de-2`, DP-14): per-user isolation. Worse than logged — `ActivePairingCodes`/`MutationLogs` treated `"default"` as *no filter*, so such a caller saw every family's codes and logs. Live data: 0 users without a group, 0 rows in `"default"` → no visible change |
