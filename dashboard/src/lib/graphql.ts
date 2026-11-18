@@ -55,6 +55,17 @@ export function getGraphQLEndpoint(): string {
 }
 
 /**
+ * The family group this dashboard manages. The dashboard's API secret is an admin bound to
+ * exactly this family group on the server (P3-2), so every query/mutation must use the same
+ * value: DASHBOARD_FAMILY_GROUP (server-side env, shared with the orchestrator).
+ * Falls back to the demo family when unset (the server rejects any mismatch).
+ */
+export function getDashboardFamilyGroup(): string {
+  const fg = process.env.DASHBOARD_FAMILY_GROUP?.trim();
+  return fg ? fg : "Smith Family";
+}
+
+/**
  * Executes a typed GraphQL query or mutation through the API Proxy.
  */
 export async function graphqlFetch<TData = unknown, TVariables = Record<string, unknown>>(

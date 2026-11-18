@@ -27,15 +27,20 @@ func (m *mockPublisher) Publish(ctx context.Context, v any) error {
 
 func TestHandleWebhook_PostMethod(t *testing.T) {
 	pub := &mockPublisher{}
-	handler := NewHandler(pub)
+	authToken := "post-method-token"
+	handler := NewHandler(pub, authToken)
 
 	data := url.Values{}
 	data.Set("From", "whatsapp:+123456789")
 	data.Set("Body", "Test message")
 	data.Set("MessageSid", "msg-123")
 
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(data.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/", strings.NewReader(data.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	sigPayload := "http://example.com/" + "BodyTest message" + "Fromwhatsapp:+123456789" + "MessageSidmsg-123"
+	mac := hmac.New(sha1.New, []byte(authToken))
+	mac.Write([]byte(sigPayload))
+	req.Header.Set("X-Twilio-Signature", base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 	rr := httptest.NewRecorder()
 
 	handler.HandleWebhook(rr, req)
@@ -61,6 +66,35 @@ func TestHandleWebhook_WrongMethod(t *testing.T) {
 	handler.HandleWebhook(rr, req)
 
 	assert.Equal(t, http.StatusMethodNotAllowed, rr.Code)
+	assert.Len(t, pub.Published, 0)
+}
+
+func TestHandleWebhook_NoAuthTokenConfigured_FailsClosed(t *testing.T) {
+	pub := &mockPublisher{}
+	handler := NewHandler(pub) // no auth token
+
+	data := url.Values{}
+	data.Set("Body", "forged")
+	data.Set("From", "whatsapp:+1987654321")
+	data.Set("MessageSid", "msg-forged")
+
+	// Signature computed with an EMPTY key — trivially forgeable if the handler accepted it.
+	sigPayload := "https://example.com/webhook/twilio" + "Bodyforged" + "Fromwhatsapp:+1987654321" + "MessageSidmsg-forged"
+	mac := hmac.New(sha1.New, []byte(""))
+	mac.Write([]byte(sigPayload))
+
+	for _, sig := range []string{"", base64.StdEncoding.EncodeToString(mac.Sum(nil))} {
+		req := httptest.NewRequest(http.MethodPost, "https://example.com/webhook/twilio", strings.NewReader(data.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-Forwarded-Proto", "https")
+		req.Header.Set("X-Forwarded-Host", "example.com")
+		if sig != "" {
+			req.Header.Set("X-Twilio-Signature", sig)
+		}
+		rr := httptest.NewRecorder()
+		handler.HandleWebhook(rr, req)
+		assert.Equal(t, http.StatusForbidden, rr.Code)
+	}
 	assert.Len(t, pub.Published, 0)
 }
 

@@ -96,10 +96,7 @@ func (m *Module) HandleMutationEvent(ctx context.Context, ev events.MutationEven
 		return nil
 	}
 
-	isUndone := false
-	if strings.EqualFold(ev.Action, "undo") {
-		isUndone = true
-	}
+	isUndone := strings.EqualFold(ev.Action, "undo")
 
 	log := models.MutationLog{
 		ID:          ev.ID,

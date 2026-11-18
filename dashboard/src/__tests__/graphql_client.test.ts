@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   graphqlFetch,
   getGraphQLEndpoint,
+  getDashboardFamilyGroup,
   GraphQLClientError,
 } from '@/lib/graphql';
 
@@ -18,6 +19,20 @@ describe('graphql client', () => {
     process.env = originalEnv;
     global.fetch = originalFetch;
     vi.restoreAllMocks();
+  });
+
+  describe('getDashboardFamilyGroup', () => {
+    it('uses DASHBOARD_FAMILY_GROUP (the server scopes the dashboard secret to it)', () => {
+      process.env.DASHBOARD_FAMILY_GROUP = '  Levi Family ';
+      expect(getDashboardFamilyGroup()).toBe('Levi Family');
+    });
+
+    it('falls back to the demo family when unset or blank', () => {
+      delete process.env.DASHBOARD_FAMILY_GROUP;
+      expect(getDashboardFamilyGroup()).toBe('Smith Family');
+      process.env.DASHBOARD_FAMILY_GROUP = '   ';
+      expect(getDashboardFamilyGroup()).toBe('Smith Family');
+    });
   });
 
   describe('getGraphQLEndpoint', () => {

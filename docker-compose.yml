@@ -1,5 +1,13 @@
+# P3-3: bounded container logs for every service (json-file, 5 x 10 MB)
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   gateway:
+    logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,9 +17,9 @@ services:
     env_file:
       - .env
     environment:
-      - RABBITMQ_URL=${RABBITMQ_URL:-amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - DATABASE_URL=${DATABASE_URL:-postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable}
+      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -20,6 +28,7 @@ services:
     restart: unless-stopped
 
   orchestrator:
+    logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
@@ -29,9 +38,9 @@ services:
     env_file:
       - .env
     environment:
-      - RABBITMQ_URL=${RABBITMQ_URL:-amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - DATABASE_URL=${DATABASE_URL:-postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable}
+      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -39,19 +48,43 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./backups:/backups
     restart: unless-stopped
 
+  # P4-3: one-shot schema migration job. The orchestrator and audit-worker start only after it
+  # completes successfully, and themselves refuse to run with pending migrations.
+  migrate:
+    logging: *default-logging
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: orchestrator
+    command: ["-migrate-only"]
+    env_file:
+      - .env
+    environment:
+      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   audit-worker:
+    logging: *default-logging
     build:
       context: .
       target: audit-worker
     env_file:
       - .env
     environment:
-      - RABBITMQ_URL=${RABBITMQ_URL:-amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/}
-      - DATABASE_URL=${DATABASE_URL:-postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable}
+      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable
       - AUDIT_ARCHIVE_DIR=/app/archives
     volumes:
       - audit_archives:/app/archives
@@ -60,9 +93,12 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   proxy:
+    logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
@@ -80,12 +116,16 @@ services:
     restart: unless-stopped
 
   ngrok:
-    image: ngrok/ngrok:latest
+    logging: *default-logging
+    # Pinned by digest (ngrok agent 3.39.8) — P3-5. Bump deliberately (Dependabot, P5-4).
+    image: ngrok/ngrok:3.39.8@sha256:14d80d083e5b53145f416bbbd36238336c9de4016c43fd950eb2eb845670583b
     restart: unless-stopped
     command:
       - "http"
       - "proxy:8000"
-      - "--url=${NGROK_DOMAIN:-colt-angled-strive.ngrok-free.dev}"
+      # P3-5: no committed default domain. Without NGROK_DOMAIN ngrok fails loudly at start
+      # (a ${VAR:?} guard would break every compose command, incl. CI builds without a .env).
+      - "--url=${NGROK_DOMAIN:-}"
     environment:
       - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
     ports:
@@ -96,7 +136,11 @@ services:
 
 
   rabbitmq:
-    image: rabbitmq:3.13-management-alpine
+    logging: *default-logging
+    image: rabbitmq:4.3.7-management-alpine@sha256:eb338b3fc8f5c251028c0022ac0de3fe1db2d599d1c6a08b45898f756f248881
+    # Fixed hostname = stable node name (rabbit@rabbitmq). Without it the node name is the
+    # container ID, so every recreate started an empty node and stranded queued/DLQ messages.
+    hostname: rabbitmq
     ports:
       - "127.0.0.1:5672:5672"
       - "127.0.0.1:15672:15672"
@@ -114,7 +158,8 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    logging: *default-logging
+    image: redis:7.4.11-alpine@sha256:d9436322172a5b482c187bf1f363d3c4fea086fcca6b9c8a94de8f0f39ed3193
     ports:
       - "127.0.0.1:6379:6379"
     command: redis-server --appendonly yes
@@ -129,7 +174,8 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: pgvector/pgvector:pg15
+    logging: *default-logging
+    image: pgvector/pgvector:0.8.6-pg15@sha256:a947c45cdc5906a1bc951f20a8709e321256343ee0f251e4ae00b5e7def4e6da
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mypa}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mypa_password}
@@ -147,10 +193,15 @@ services:
     restart: unless-stopped
 
   pgadmin:
-    image: dpage/pgadmin4
+    logging: *default-logging
+    # P3-5: opt-in only — `docker compose --profile tools up -d pgadmin`.
+    profiles: ["tools"]
+    # Pinned by digest (pgAdmin 9.17).
+    image: dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@mypa.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      # No default password: pgAdmin refuses to start without one.
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-}
     ports:
       - "127.0.0.1:5050:80"
     depends_on:
@@ -159,6 +210,7 @@ services:
     restart: unless-stopped
 
   dashboard:
+    logging: *default-logging
     build:
       context: ./dashboard
       dockerfile: Dockerfile
@@ -168,6 +220,8 @@ services:
       - NEXT_PUBLIC_PROXY_URL=http://localhost:8000
       - GRAPHQL_ENDPOINT=http://proxy:8000/graphql
       - DASHBOARD_API_SECRET=${DASHBOARD_API_SECRET:-}
+      # Must match the orchestrator's: the dashboard secret is scoped to this family group (P3-2)
+      - DASHBOARD_FAMILY_GROUP=${DASHBOARD_FAMILY_GROUP:-}
     depends_on:
       proxy:
         condition: service_started

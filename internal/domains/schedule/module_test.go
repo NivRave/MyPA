@@ -86,7 +86,7 @@ func (r *fakeScheduleRepo) ListScheduleEvents(userID, familyGroup, topic string,
 	for _, e := range r.events {
 		// User & Family filter
 		if userID != "" && familyGroup != "" {
-			if e.UserID != userID && !(e.FamilyGroup == familyGroup && e.IsShared) {
+			if e.UserID != userID && (e.FamilyGroup != familyGroup || !e.IsShared) {
 				continue
 			}
 		} else if userID != "" && e.UserID != userID {

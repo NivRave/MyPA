@@ -121,7 +121,8 @@ func TestEngine_HandleToolCall_GmailSearch(t *testing.T) {
 	// When length is 0, it doesn't call LLM again
 	res, err := engine.handleToolCall(context.Background(), msg, nil, "system", toolCall)
 	require.NoError(t, err)
-	assert.Equal(t, "You have no unread emails.", res)
+	assert.Contains(t, res, "You have no unread emails.")
+	assert.Contains(t, res, "<untrusted_external_content", "email search output is wrapped (P3-1)")
 }
 
 func TestEngine_HandleToolCall_ScheduleReminder(t *testing.T) {

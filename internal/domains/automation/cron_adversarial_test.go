@@ -3,12 +3,12 @@ package automation_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/testutil"
 	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
@@ -17,16 +17,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getLiveDB(t *testing.T) *db.Client {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable"
-	}
-	client, err := db.NewClient(dsn)
-	if err != nil {
-		t.Skipf("skipping live postgres test: %v", err)
-		return nil
-	}
+func newTestDBClient(t *testing.T) *db.Client {
+	t.Helper()
+	client, cleanup := testutil.NewTestDB(t)
+	t.Cleanup(cleanup)
 	return client
 }
 
@@ -96,10 +90,7 @@ func TestAdversarial_ExtractCronSchedule_EdgeCases(t *testing.T) {
 // TestAdversarial_CronAutomationRule_SchedulerExecution verifies that active cron automation
 // rules stored in the database are scheduled and execute actions upon scheduler ticks.
 func TestAdversarial_CronAutomationRule_SchedulerExecution(t *testing.T) {
-	client := getLiveDB(t)
-	if client == nil {
-		return
-	}
+	client := newTestDBClient(t)
 
 	testUser := "adv_cron_user"
 	testFam := "adv_cron_fam"

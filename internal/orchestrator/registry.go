@@ -220,17 +220,21 @@ func (r *Registry) CombinedSystemPrompt(ctx context.Context, callCtx CallContext
 	}
 
 	familyGroup := callCtx.TenantFamilyGroup()
+	userID := callCtx.ActorID()
+	// Cache only when the caller's identity is known: sections may contain personal data,
+	// so they are keyed per user and must never be stored under a shared/anonymous key.
+	useCache := cache != nil && familyGroup != "" && userID != ""
 	results := make([]string, len(mods))
 	var missingIndices []int
 
-	// 1. Check Redis Cache via MGet if cache is configured and familyGroup is non-empty
-	if cache != nil && familyGroup != "" {
+	// 1. Check Redis Cache via MGet
+	if useCache {
 		modNames := make([]string, len(mods))
 		for i, m := range mods {
 			modNames[i] = m.Name()
 		}
 
-		hits, _, err := cache.GetPromptSections(ctx, familyGroup, modNames)
+		hits, _, err := cache.GetPromptSections(ctx, familyGroup, userID, modNames)
 		if err == nil {
 			for i, m := range mods {
 				if val, ok := hits[m.Name()]; ok {
@@ -303,11 +307,11 @@ func (r *Registry) CombinedSystemPrompt(ctx context.Context, callCtx CallContext
 	_ = g.Wait()
 
 	// 4. Asynchronously persist freshly generated prompt sections to Redis with 10-minute TTL
-	if cache != nil && familyGroup != "" {
+	if useCache {
 		toCache.Range(func(key, value any) bool {
 			modName := key.(string)
 			content := value.(string)
-			if err := cache.SetPromptSection(ctx, familyGroup, modName, content, DefaultPromptCacheTTL); err != nil {
+			if err := cache.SetPromptSection(ctx, familyGroup, userID, modName, content, DefaultPromptCacheTTL); err != nil {
 				slog.Warn("prompt_cache: failed to write prompt section to Redis", "module", modName, "error", err)
 			}
 			return true
@@ -355,6 +359,33 @@ var ModuleDomainMapping = map[string]DomainGroup{
 	"workspace_contacts": DomainContacts,
 	"automation":         DomainAutomation,
 	"shared":             DomainShared,
+	// Core tools of these modules (remember_fact, save_topic_memory, search_topic_memories,
+	// undo_last_action) are always offered; the mapping exposes the remaining ones.
+	"memory":     DomainMemory,
+	"durability": DomainHistory,
+}
+
+// DomainsForTools returns the Tier-2 domains of the modules owning the given tools
+// (core tools and unknown tools contribute nothing). Order follows first appearance.
+func (r *Registry) DomainsForTools(toolNames []string) []DomainGroup {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []DomainGroup
+	seen := map[DomainGroup]bool{}
+	for _, name := range toolNames {
+		if CoreToolNames[name] {
+			continue
+		}
+		mod, ok := r.byTool[name]
+		if !ok {
+			continue
+		}
+		if d, ok := ModuleDomainMapping[mod.Name()]; ok && !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // CoreDeclarations returns only the Tier 1 core function declarations.

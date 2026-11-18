@@ -319,9 +319,10 @@ func GenerateMilestoneSuggestions(age AgeInfo, category string) []MilestoneSugge
 
 		for _, v := range vaccines {
 			urgency := "routine"
-			if months == v.monthTarget {
+			switch months {
+			case v.monthTarget:
 				urgency = "due_now"
-			} else if months == v.monthTarget-1 {
+			case v.monthTarget - 1:
 				urgency = "upcoming"
 			}
 

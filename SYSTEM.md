@@ -29,7 +29,7 @@ flowchart LR
 
     subgraph Core["Orchestrator & Workers"]
         Orch["Orchestrator (:8081)"]
-        Registry["ToolModule Registry (70 Tools / 13 Modules)"]
+        Registry["ToolModule Registry"]
         Bus["Internal MutationEvent Bus"]
         Cron["Cron Scheduler (Asia/Jerusalem)"]
         AuditW["Audit Worker"]
@@ -51,7 +51,7 @@ flowchart LR
     Browser -->|"/graphql"| Proxy
     Proxy -->|"/webhook/telegram, /webhook/twilio"| Gateway
     Proxy -->|"/graphql, /playground, /auth/google/*"| Orch
-    Gateway -->|"Queue: telegram.inbound"| RMQ
+    Gateway -->|"Queue: inbound.messages"| RMQ
     RMQ -->|"Consume models.Message"| Orch
     Orch -->|"Queue: audit.events"| RMQ
     RMQ -->|"Consume models.AuditSession"| AuditW
@@ -73,15 +73,18 @@ flowchart LR
 | Service | Entrypoint | Runtime Base Image | Port(s) | Responsibility |
 | :--- | :--- | :--- | :---: | :--- |
 | **`proxy`** | [`cmd/proxy/main.go`](./cmd/proxy/main.go) | `gcr.io/distroless/static-debian12` | `8000` | Unified reverse proxy routing `/webhook/*` to `gateway:8080` and `/graphql`, `/playground`, `/auth/google/*` to `orchestrator:8081`. |
-| **`gateway`** | [`cmd/gateway/main.go`](./cmd/gateway/main.go) | `gcr.io/distroless/static-debian12` | `8080` | High-throughput HTTP webhook receiver for Telegram (`/webhook/telegram`) and Twilio WhatsApp (`/webhook/twilio`); normalizes payloads into [`models.Message`](./internal/models/models.go#L9-L22) and publishes to RabbitMQ `telegram.inbound`. |
-| **`orchestrator`** | [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go) | `debian:12-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8081` | Core brain: consumes `telegram.inbound`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](./internal/orchestrator/registry.go#L30-L43) registry (70 modular tools across 13 modules), dual-lane [`EventBus`](./internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](./internal/scheduler/scheduler.go). |
+| **`gateway`** | [`cmd/gateway/main.go`](./cmd/gateway/main.go) | `gcr.io/distroless/static-debian12` | `8080` | High-throughput HTTP webhook receiver for Telegram (`/webhook/telegram`) and Twilio WhatsApp (`/webhook/twilio`); normalizes payloads into [`models.Message`](./internal/models/models.go#L9-L22) and publishes to RabbitMQ `inbound.messages`. Also receives Twilio delivery reports on `/webhook/twilio/status` (signature-verified, never published; `failed`/`undelivered` → WARN `whatsapp message not delivered` with `message_sid`, `error_code`, `hint`, *BL-8*). |
+| **`orchestrator`** | [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go) | `debian:12.15-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8081` | Core brain: consumes `inbound.messages`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](./internal/orchestrator/registry.go#L30-L43) registry (<!-- gen:tool-summary -->68 tools across 13 modules<!-- /gen:tool-summary -->), dual-lane [`EventBus`](./internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](./internal/scheduler/scheduler.go). |
 | **`audit-worker`** | [`cmd/audit-worker/main.go`](./cmd/audit-worker/main.go) | `gcr.io/distroless/static-debian12` | — | Consumes `audit.events` from RabbitMQ, persists [`models.AuditSession`](./internal/models/models.go#L80-L92) rows to PostgreSQL, and runs a 24h ticker archiving sessions older than 30 days. |
-| **`dashboard`** | [`dashboard/`](./dashboard/package.json) | `node:20-alpine` (Next.js standalone) | `3030:3000` | Next.js App Router web console for managing family spaces, memories, baby logs, house assets, finances, automations, pairing codes, and mutation rollbacks. |
-| **`postgres`** | `pgvector/pgvector:pg15` | Official Postgres 15 + `pgvector` | `5432` | Primary relational + vector store (29 tables). |
-| **`redis`** | `redis:7-alpine` | Official Redis 7 (`--appendonly yes`) | `6379` | Hot rolling conversation state (`chat:<userID>`) and OAuth token cache (`token:<userID>`). |
-| **`rabbitmq`** | `rabbitmq:3.13-management-alpine` | Official RabbitMQ 3.13 | `5672`, `15672` | Durable AMQP 0-9-1 broker decoupling webhook ingestion and audit telemetry. |
-| **`ngrok`** | `ngrok/ngrok:latest` | Official Ngrok container | `4040` | Tunnels public HTTPS webhook traffic to `proxy:8000`. |
-| **`pgadmin`** | `dpage/pgadmin4` | Official pgAdmin 4 | `5050:80` | Web UI for inspecting PostgreSQL tables. |
+| **`migrate`** | [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go) (`-migrate-only`) | orchestrator image | — | One-shot (*P4-3*): applies goose migrations ([`internal/db/migrations/`](./internal/db/migrations)) and exits. `orchestrator` and `audit-worker` depend on it with `condition: service_completed_successfully`. |
+| **`dashboard`** | [`dashboard/`](./dashboard/package.json) | `node:24.22.3-alpine` (digest-pinned; Next.js 16.4 standalone) | `3030:3000` | Next.js App Router web console for managing family spaces, memories, baby logs, house assets, finances, automations, pairing codes, and mutation rollbacks. |
+| **`postgres`** | `pgvector/pgvector:0.8.6-pg15` (digest-pinned) | Official Postgres 15 + `pgvector` 0.8.6 | `5432` | Primary relational + vector store (29 tables). |
+| **`redis`** | `redis:7.4.11-alpine` (digest-pinned) | Official Redis 7.4 (`--appendonly yes`) | `6379` | Hot rolling conversation state (`chat:<userID>`) and OAuth token cache (`token:<userID>`). |
+| **`rabbitmq`** | `rabbitmq:4.3.7-management-alpine` (digest-pinned) | Official RabbitMQ 4.3 | `5672`, `15672` | Durable AMQP 0-9-1 broker decoupling webhook ingestion and audit telemetry. `hostname: rabbitmq` keeps the node name (`rabbit@rabbitmq`) stable so the `rabbitmq_data` volume survives container recreation (*P5-4*). |
+| **`ngrok`** | `ngrok/ngrok:3.39.8@sha256:14d8…` (digest-pinned, *P3-5*) | Official Ngrok container | `4040` | Tunnels public HTTPS webhook traffic to `proxy:8000`. Requires `NGROK_DOMAIN` (no committed default). |
+| **`pgadmin`** | `dpage/pgadmin4:9.17@sha256:2f4c…` (digest-pinned, *P3-5*) | Official pgAdmin 4 | `5050:80` | Web UI for inspecting PostgreSQL tables. **Opt-in** (`profiles: [tools]`): `docker compose --profile tools up -d pgadmin`; no default password. |
+
+Every external image (compose services and the `FROM` lines of both Dockerfiles) is pinned as `tag@sha256:digest` (*BL-7*), enforced by `TestAllExternalImagesArePinnedByDigest`; Dependabot proposes tag+digest bumps. Base images: `golang:1.26.11-alpine3.24` (build), `gcr.io/distroless/static-debian12` (gateway, proxy, audit-worker), `debian:12.15-slim` (orchestrator).
 
 ---
 
@@ -100,7 +103,13 @@ mypa/
 │   ├── gateway/main.go             # Webhook ingestion HTTP service (:8080)
 │   ├── orchestrator/main.go        # LLM engine, ToolRegistry, EventBus, OAuth & GraphQL server (:8081)
 │   ├── proxy/main.go               # Unified reverse proxy (:8000)
-│   └── audit-worker/main.go        # Async RabbitMQ telemetry consumer & 30-day session archiver
+│   ├── audit-worker/main.go        # Async RabbitMQ telemetry consumer & 30-day session archiver
+│   ├── devtools/listmodels/        # Dev-only utility (lists Gemini models); not in any image
+│   └── devtools/gendocs/           # Regenerates the tool-catalogue sections of SYSTEM.md/README.md (P5-5)
+├── .github/dependabot.yml          # Weekly updates → PRs to dev: gomod, npm, docker, docker-compose, github-actions (P5-4)
+├── .github/workflows/ci.yml       # CI (P5-3): go test -race, golangci-lint (.golangci.yml), govulncheck, dashboard, compose build
+├── scripts/clean.{ps1,sh}          # Remove local build artefacts (bin/, root *.exe/*.test, coverage)
+├── docs/                           # ROADMAP.md, BACKLOG.md, DECISIONS_LOG.md, adr/ (architecture decisions), archive/ (completed plans); reviews/ is gitignored
 ├── internal/
 │   ├── audio/                      # Groq Whisper API client (`whisper-large-v3`) for voice transcription
 │   ├── broker/                     # RabbitMQ AMQP 0-9-1 `Publisher` and `Consumer`
@@ -108,10 +117,10 @@ mypa/
 │   ├── config/                     # Viper + godotenv loader & `ALLOWED_USERS` parser
 │   ├── contacts/                   # Google People API v1 client (search & create contacts)
 │   ├── crypto/                     # AES-256-GCM encryption/decryption at rest (`ENCRYPTION_KEY`)
-│   ├── db/                         # GORM PostgreSQL client, dynamic migration registry, backup/restore & domain repos:
+│   ├── db/                         # GORM PostgreSQL client, goose migrations (migrations/), backup/restore & domain repos:
 │   │   ├── db.go                   # `db.Client` initialization, `vector` extension & core Wave 0 queries
 │   │   ├── migrations.go           # `RegisterModel`, `RegisterWave1Models`, `RegisterWave2Models`
-│   │   ├── backup.go               # `pg_dump` / `pg_restore` backup & rotation helpers
+│   │   ├── backup.go               # `pg_dump` / `pg_restore` streaming backup/restore, age encryption, GFS retention (P3-4)
 │   │   ├── durability_repo.go      # `DurabilityRepository` (EncryptedCredential, MutationLog, IdempotencyRecord)
 │   │   ├── memory_v2_repo.go       # `MemoryV2Repo` (TopicMemory, EntityProfile)
 │   │   ├── shared_repo.go          # `SharedRepository` (SharedSpace, SharedTaskReminder)
@@ -120,7 +129,10 @@ mypa/
 │   │   ├── house_repo.go           # `HouseRepository` (HouseContractRecord, HomeMaintenanceItem, VehicleAsset)
 │   │   ├── finance_repo.go         # `FinanceRepository` (FinancialTransaction, CategoryBudget, RecurringBill)
 │   │   └── automation_repo.go      # `AutomationRepository` (ExternalAPIConnector, AutomationRule, UserPreference, PersonalCRMContact)
-│   ├── domains/                    # Modular `orchestrator.ToolModule` implementations:
+│   ├── domains/                    # Modular `orchestrator.ToolModule` implementations. Large modules (house, automation,
+│   │                               #   schedule, baby, finance — P4-2) are split: module.go (struct, NewModule/options, Name,
+│   │                               #   SystemPromptSection), declarations.go (genai tool schemas), handlers.go (Execute +
+│   │                               #   execute* per tool), service.go (helpers/business logic without genai types):
 │   │   ├── toolutil/               # Shared typed argument extractors & mutation publishing helpers
 │   │   ├── workspace_calendar/     # 4 Calendar tools (create, list, update, delete) emitting schedule mutations
 │   │   ├── workspace_gmail/        # 9 Gmail tools (search, read, reply, archive, delete, labels, unsubscribe)
@@ -153,6 +165,7 @@ mypa/
 │   ├── tasks/                      # Google Tasks v1 client (task lists & tasks CRUD)
 │   ├── tavily/                     # Tavily web search REST client
 │   ├── telegram/                   # Telegram Bot API client & webhook update parser
+│   ├── toolcatalog/                # ProductionModules() list + Markdown rendering of the tool catalogue (drift-guarded)
 │   └── twilio/                     # Twilio WhatsApp REST client, webhook handler & message chunker
 ├── dashboard/                      # Next.js 16 + React 19 + Tailwind CSS v4 Web Control Dashboard
 │   └── src/app/                    # App Router pages (`/`, `/audit`, `/automations`, `/baby`, `/finance`, `/house`, `/logs`, `/memory`, `/oauth`, `/sessions`, `/settings`, `/shared`, `/tools`, `/users`)
@@ -165,24 +178,26 @@ mypa/
 
 ### 3.1 Multi-Turn Agent Execution Lifecycle ([`internal/orchestrator/engine.go`](./internal/orchestrator/engine.go))
 
-1. **Ingress & Queuing:** Telegram or Twilio sends an HTTP POST to `proxy:8000` -> `gateway:8080`, which parses it into a [`models.Message`](./internal/models/models.go#L9-L22) (`ID`, `UserID`, `ChatID`, `Text`, `VoiceFileID`, `PhotoFileID`, `MediaURL`, `MediaContentType`, `Source`) and publishes to RabbitMQ queue `telegram.inbound`.
-2. **Consumption & Pre-Processing:** `orchestrator` consumes `models.Message` with a 5-minute context timeout ([`engine.go:184`](./internal/orchestrator/engine.go#L184)).
-   - Slash commands (`/help`, `/connect`, `/backup`, `/restore`, `/undo`) are handled directly (`/undo` invokes `durability.Module.RollbackLast` or rolls back a specific mutation ID).
+1. **Ingress & Queuing:** Telegram or Twilio sends an HTTP POST to `proxy:8000` -> `gateway:8080`, which parses it into a [`models.Message`](./internal/models/models.go#L9-L22) (`ID`, `UserID`, `ChatID`, `Text`, `VoiceFileID`, `PhotoFileID`, `MediaURL`, `MediaContentType`, `Source`) and publishes to RabbitMQ queue `inbound.messages`.
+2. **Consumption & Pre-Processing:** `orchestrator` consumes `models.Message` with a 5-minute context timeout (`Engine.Start` in [`engine.go`](./internal/orchestrator/engine.go)).
+   - **Code layout (*P4-1*):** `ProcessMessage` (`engine.go`, ~95 lines) only orchestrates: dedup claim → telemetry/retry defers → auth → `handleConfirmation` / `dispatchCommand` ([`commands.go`](./internal/orchestrator/commands.go), a command table for `/help`, `/connect`, `/backup`, `/restore`, `/undo`) → `ingestMedia` ([`media.go`](./internal/orchestrator/media.go), normalized `mediaAttachment`) → `runTurn` ([`turn.go`](./internal/orchestrator/turn.go): history, tool selection, memory, prompt via [`prompt.go`](./internal/orchestrator/prompt.go), LLM loop, reply, persistence).
+   - **Idempotency (*P1-4*):** the first step of `ProcessMessage` claims `inbound:<source>:<chat|user>:<messageID>` (`SET NX`, 24h); duplicates are acked and skipped. A per-turn `turnEffects` flag is set when a tool executes (read-only built-ins such as `get_current_time` excepted), an admin command acts, pairing state changes, or the final reply is delivered; any later error is wrapped in `broker.ErrNonRetryable` (acked, never re-run). Retryable failures release the claim so the redelivery is processed. The user-facing "internal error" notice is sent only on the final attempt or a non-retryable failure (`shouldNotifyUserOfFailure`). On a crash mid-turn the claim survives → the redelivery is skipped (at-most-once by design).
+   - Slash commands (`/help`, `/connect`, `/backup`, `/restore`, `/undo`) are handled directly (`/undo` invokes `durability.Module.RollbackLast` or rolls back a specific mutation ID; `/restore` stages a confirmation — see §Security).
    - Voice messages (`VoiceFileID` or WhatsApp `audio/*`) are downloaded and transcribed via Groq Whisper (`whisper-large-v3`).
    - Images and PDFs (`PhotoFileID` or WhatsApp `image/*`, `application/pdf`) are downloaded into `photoData []byte` for multimodal Gemini input; text attachments (`text/*`, `json`, `csv`, `yaml`) are appended directly to `msg.Text`.
 3. **Authorization & Pairing:** `e.db.GetUser(msg.UserID)` checks if the user's `PlatformID` exists in `users`. If not, `msg.Text` is checked against active 6-digit `pairing_codes` (`RedeemPairingCode`).
 4. **System Prompt Assembly & Dynamic Two-Tier Tool Selection:**
-   - Base persona, user role/family group, current timestamp, timezone, and workspace tool instructions ([`engine.go:515-537`](./internal/orchestrator/engine.go#L515-L537)).
-   - Semantic vector memory retrieval: embeds `msg.Text` via `gemini-embedding-001` (3072 dims) and queries top-5 cosine matches from `TopicMemory` vector embeddings (falling back to legacy `memories`) across the user and their `FamilyGroup`.
-   - Dynamic Domain Sections (SCALE-01): calls [`e.toolRegistry.CombinedSystemPrompt(ctx, callCtx)`](./internal/orchestrator/registry.go), leveraging Redis `MGet` dynamic prompt caching (`ctx_prompt:<familyGroup>:<module>`, 10m TTL) with `EventBus` cache invalidation and concurrent `errgroup.Group` evaluation bounded to an 800ms context timeout on cache misses.
+   - **Assembly order (*P2-6*, [`prompt.go`](./internal/orchestrator/prompt.go) `buildSystemPrompt`), most-stable first for Gemini implicit prefix caching:** `staticInstructions` (package constant, identical for all users) → calendar conventions (`WEEK_START_DAY`/`WEEKEND_DAYS`, per deployment) → user profile (name, role, family group) → tool guidance filtered to the tools selected this turn (`toolGuidance`; nothing about tools the model cannot call) → module sections → retrieved memories → current date/time at minute precision **in the configured timezone** (last). Tool selection therefore runs *before* prompt assembly.
+   - Semantic vector memory retrieval (skipped for trivial acknowledgements — empty/emoji-only or ≤ `maxTrivialTokens` (3) words that are all filler like "thanks", "ok", "תודה", "כן"; `isTrivialMessage`, *P2-5*): embeds `msg.Text` via `gemini-embedding-001` (3072 dims) and queries top-5 cosine matches from `topic_memories` (the single memory store since *P2-4*) via `DBClient.SearchSimilarMemories(ctx, userID, familyGroup, …)`: the user's personal memories plus their family group's shared ones. No legacy `memories` fallback.
+   - Dynamic Domain Sections (SCALE-01): calls [`e.toolRegistry.CombinedSystemPrompt(ctx, callCtx)`](./internal/orchestrator/registry.go), leveraging Redis `MGet` dynamic prompt caching (`ctx_prompt:<familyGroup>:<userID>:<module>`, 10m TTL, **per user** — sections render personal data such as pinned memories and standing instructions) with `EventBus` cache invalidation and concurrent `errgroup.Group` evaluation bounded to an 800ms context timeout on cache misses.
    - Dynamic Two-Tier Tool Scoping (SCALE-01): [`KeywordIntentMatcher`](./internal/orchestrator/intent_matcher.go) inspects query text across English and Hebrew prefixes to classify intent into Domain Groups (`baby`, `finance`, `house`, `calendar`, `gmail`, `tasks`, `contacts`, `automation`, `shared`). [`SelectDeclarations`](./internal/orchestrator/registry.go) injects Tier 1 Core Tools (8 ubiquitous tools) + only matching Tier 2 Domain Groups via `llm.WithActiveTools(ctx, activeTools)`, dropping tool schema overhead from ~9,500 to ~1,680–2,380 tokens per call (75%–82% reduction).
 5. **LLM Chat & Bounded Multi-Turn Execution Loop (SCALE-03):**
-   - Calls `e.llm.Chat(ctx, systemPrompt, history, promptText, photoData, photoMimeType)` (with automatic retry normalizing Hebrew preposition numbers like `ב18` -> `ב-18` via [`NormalizeHebrewPrepositionNumbers`](./internal/orchestrator/engine.go#L58-L60) if flagged by safety filters).
-   - If `resp.ToolCalls` is non-empty, [`handleToolCalls`](./internal/orchestrator/engine.go) delegates to `executeToolsConcurrently` which executes parallel tool calls concurrently via `errgroup.WithContext(ctx)` bounded by `MaxConcurrentTools = 8` with index-based slice assignment preserving strict 1:1 ordering and per-goroutine panic recovery. After checking the SEC-09 interactive confirmation gate for meta-tools, `executeSingleTool` dynamically dispatches the call via `e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)`. All tools receive standardized canonical identity through `callCtx.ActorID()` and `callCtx.TenantFamilyGroup()`.
-   - Tool execution appends `Role: "assistant"` (`ToolCalls`) and `Role: "function"` (`ToolResponses`), and recurses up to a strict limit of 8 iterations (`const MaxToolRecursionDepth = 8`). Upon reaching iteration 8, the engine forces a final summary call via `llm.WithNoTools(ctx)` to guarantee clean conversational termination without further tool loops.
+   - Calls `e.llm.Chat(ctx, systemPrompt, history, promptText, photoData, photoMimeType)` (with automatic retry normalizing Hebrew preposition numbers like `ב18` -> `ב-18` via [`NormalizeHebrewPrepositionNumbers`](./internal/orchestrator/engine.go) if flagged by safety filters).
+   - If `resp.ToolCalls` is non-empty, [`handleToolCalls`](./internal/orchestrator/engine.go) delegates to `executeToolsConcurrently` which executes parallel tool calls concurrently via `errgroup.WithContext(ctx)` bounded by `MaxConcurrentTools = 8` with index-based slice assignment preserving strict 1:1 ordering and per-goroutine panic recovery. After checking the SEC-09 interactive confirmation gate for meta-tools, `executeSingleTool` dynamically dispatches the call via `e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)`, building `callCtx` from the user resolved once at the start of the turn (`withTurnUser`, *P2-7*; a `GetUser` lookup happens only for calls outside a turn). All tools receive standardized canonical identity through `callCtx.ActorID()` and `callCtx.TenantFamilyGroup()`.
+   - Tool execution appends `Role: "assistant"` (`ToolCalls`) and `Role: "function"` (`ToolResponses`), and recurses up to a strict limit of 8 iterations (`const MaxToolRecursionDepth = 8`). Upon reaching iteration 8, the engine forces a final summary call via `llm.WithNoTools(ctx)` to guarantee clean conversational termination without further tool loops. Both summary requests (`continuationPrompt`, `toolLimitSummaryPrompt` in `turn.go`) and `staticInstructions` scope the reply to the user's **latest message**: since *P2-9* the history also holds earlier turns' tool calls, and an unscoped "summarize all your actions" made the model recap those as new (*BL-9*).
 6. **Delivery, State & Telemetry (SCALE-02):**
-   - Formats markdown for WhatsApp (`markdown.ToWhatsApp`) or single-pass Telegram HTML (`markdown.ToTelegramHTML`), safely chunking messages via `markdown.SafeChunkTelegramHTML` (which preserves balanced HTML open-tag stacks across chunks up to 4,000 characters) and sends via `twClient` or `tgClient`.
-   - Appends user and assistant [`models.ChatMessage`](./internal/models/models.go#L58-L66) turns to Redis (`chat:<userID>`). SCALE-02 strips raw `PhotoData` bytes and formats a concise attachment metadata marker (`[Attachment: <mime> (<size>)]`), keeping Redis list size < 10KB while preserving active-turn vision reasoning.
+   - Formats markdown for WhatsApp (`markdown.ToWhatsApp`) or single-pass Telegram HTML (`markdown.ToTelegramHTML`), safely chunking messages via `markdown.SafeChunkTelegramHTML` (which preserves balanced HTML open-tag stacks across chunks up to 4,000 characters) and sends via `twClient` or `tgClient`. WhatsApp replies are split at 1,500 characters per message (`twilio.SplitMessage`).
+   - Appends the user message, then (*P2-9*) the turn's tool activity as a Gemini-native pair — an assistant message with `tool_calls` (string args ≤ 200 chars) followed by a `function` message with `tool_responses` (results ≤ `maxToolResultChars` = 400 runes; read-only built-ins omitted) — then the assistant reply, to Redis (`chat:<userID>`). On load, `sanitizeHistory` drops call/response halves split by `LTRIM` and leading non-user messages (Gemini rejects both). SCALE-02 strips raw `PhotoData` bytes and formats a concise attachment metadata marker (`[Attachment: <mime> (<size>)]`), keeping Redis list size < 10KB while preserving active-turn vision reasoning.
    - Asynchronously publishes [`models.AuditSession`](./internal/models/models.go#L80-L92) to RabbitMQ `audit.events` via `defer`.
 
 ### 3.2 `ToolModule` & `Registry` Contract ([`internal/orchestrator/registry.go`](./internal/orchestrator/registry.go))
@@ -208,28 +223,29 @@ type ToolModule interface {
 }
 ```
 
-**Registered Domain Modules (13 total wired in [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go)):**
-- **5 Workspace Base Modules:** `workspace_calendar` (4 tools), `workspace_gmail` (9 tools), `workspace_tasks` (6 tools), `workspace_contacts` (2 tools), `web_research` (2 tools).
+**Registered Domain Modules (<!-- gen:module-count -->13<!-- /gen:module-count --> wired in [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go)):**
+- **5 Workspace Base Modules:** `workspace_calendar`, `workspace_gmail`, `workspace_tasks`, `workspace_contacts`, `web_research` (per-module tool lists: §6).
 - **8 Life Domain Modules:** `durability` (Topic 1 & `/undo`), `memory` (Topic 2 & `remember_fact`), `shared` (Topic 9 & `schedule_reminder`), `schedule` (Topic 3), `baby` (Topic 4), `house` (Topic 5 & 8.1), `finance` (Topic 6), `automation` (Topics 7, 8.2, 8.3 & workflow management).
 
 **Two-Tier Tool Domain Grouping (SCALE-01):**
-Rather than injecting all 70 registered tool schemas on every call (~9,500 input tokens), the orchestrator dynamically scopes tools into two tiers:
-1. **Tier 1 Core Tools (8 ubiquitous tools, ~1,120 tokens):** Always injected into every user turn.
-   - `remember_fact`, `save_topic_memory`, `search_topic_memories` (`memory`)
-   - `schedule_reminder` (`shared`)
-   - `search_web`, `fetch_webpage` (`web_research`)
-   - `undo_last_action` (`durability`)
-   - `get_current_time` (`registry`)
-2. **Tier 2 Domain Groups (Injected on-demand via `KeywordIntentMatcher`):**
-   - `DomainBaby` (5 tools): `upsert_baby_profile`, `log_baby_care`, `query_baby_logs_and_trends`, `get_baby_milestone_suggestions`, `manage_baby_inventory`.
-   - `DomainFinance` (4 tools): `log_financial_transaction`, `get_financial_summary`, `set_category_budget`, `manage_recurring_bills`.
-   - `DomainHouse` (4 tools): `save_house_contract_or_receipt`, `list_house_contracts`, `manage_home_maintenance`, `manage_vehicle_asset`.
-   - `DomainCalendar` (9 tools): `create_calendar_event`, `list_calendar_events`, `update_calendar_event`, `delete_calendar_event`, `schedule_topic_event`, `list_topic_schedule`, `configure_topic_calendar`, `delete_topic_event`, `update_topic_event`.
-   - `DomainGmail` (9 tools): `search_emails`, `read_email`, `draft_email_reply`, `archive_emails`, `soft_delete_emails`, `list_email_labels`, `apply_email_labels`, `create_email_label`, `unsubscribe_email`.
-   - `DomainTasks` (6 tools): `list_task_lists`, `create_task_list`, `list_tasks`, `create_task`, `complete_task`, `delete_task`.
-   - `DomainContacts` (4 tools): `search_contacts`, `create_contact`, `upsert_personal_crm`, `query_personal_crm`.
-   - `DomainAutomation` (11 tools): `register_external_api`, `list_external_apis`, `call_external_api`, `create_automation_rule`, `list_automation_rules`, `delete_automation_rule`, `update_user_preferences`, `get_user_preferences`, `schedule_workflow`, `list_workflows`, `delete_workflow`.
-   - `DomainShared` (4 tools): `configure_shared_topic`, `create_shared_reminder`, `complete_shared_reminder`, `list_shared_activity`.
+Rather than injecting all <!-- gen:tool-count -->68<!-- /gen:tool-count --> registered tool schemas on every call (~9,500 input tokens), the orchestrator dynamically scopes tools into two tiers:
+<!-- BEGIN GENERATED: tool-tiers -->
+1. **Tier 1 Core Tools (8 tools):** always injected into every user turn: `get_current_time` (`registry`), `search_web` (`web_research`), `fetch_webpage` (`web_research`), `undo_last_action` (`durability`), `save_topic_memory` (`memory`), `search_topic_memories` (`memory`), `remember_fact` (`memory`), `schedule_reminder` (`shared`).
+2. **Tier 2 Domain Groups** (injected on demand via `KeywordIntentMatcher`):
+   - `calendar` (9 tools): `create_calendar_event`, `list_calendar_events`, `update_calendar_event`, `delete_calendar_event`, `schedule_topic_event`, `list_topic_schedule`, `configure_topic_calendar`, `delete_topic_event`, `update_topic_event`.
+   - `gmail` (9 tools): `search_emails`, `read_email`, `draft_email_reply`, `archive_emails`, `soft_delete_emails`, `list_email_labels`, `apply_email_labels`, `create_email_label`, `unsubscribe_email`.
+   - `tasks` (6 tools): `list_task_lists`, `create_task_list`, `list_tasks`, `create_task`, `complete_task`, `delete_task`.
+   - `contacts` (2 tools): `search_contacts`, `create_contact`.
+   - `history` (2 tools): `list_recent_changes`, `export_topic_data`.
+   - `memory` (2 tools): `upsert_entity_profile`, `get_entity_profile`.
+   - `shared` (4 tools): `configure_shared_topic`, `create_shared_reminder`, `complete_shared_reminder`, `list_shared_activity`.
+   - `baby` (5 tools): `upsert_baby_profile`, `log_baby_care`, `query_baby_logs_and_trends`, `get_baby_milestone_suggestions`, `manage_baby_inventory`.
+   - `house` (4 tools): `save_house_contract_or_receipt`, `list_house_contracts`, `manage_home_maintenance`, `manage_vehicle_asset`.
+   - `finance` (4 tools): `log_financial_transaction`, `get_financial_summary`, `set_category_budget`, `manage_recurring_bills`.
+   - `automation` (13 tools): `register_external_api`, `list_external_apis`, `call_external_api`, `create_automation_rule`, `list_automation_rules`, `delete_automation_rule`, `update_user_preferences`, `get_user_preferences`, `upsert_personal_crm`, `query_personal_crm`, `schedule_workflow`, `list_workflows`, `delete_workflow`.
+<!-- END GENERATED: tool-tiers -->
+   - *Sticky follow-ups (*P2-2*):* the selection is `MatchDomains(text) ∪ turn_domains:<userID>`; after the LLM loop the engine stores this turn's matched domains plus `Registry.DomainsForTools(called tools)`, so "yes, delete the second one" keeps the previous turn's Gmail tools.
+   - *Reachability invariant:* `TestEveryRegisteredToolIsReachable` (`internal/orchestrator/tool_reachability_test.go`) builds every production module and fails if any declared tool is neither Tier 1 core nor mapped (`ModuleDomainMapping`) to a domain the matcher can select.
    - *Token Savings:* Average turn consumes ~1,680 to ~2,380 tokens across 12–20 tools, representing a 75% to 82% token reduction per LLM interaction.
 
 **Unified Durability Rollback Engine (`internal/domains/durability`):**
@@ -266,7 +282,7 @@ To prevent slow network I/O, external partner notifications, and automation webh
    - Guarded by panic recovery (`recover()`) logging the stack trace without crashing the server.
    - **Active Subscribers:**
      - [`durability.Module.HandleMutationEvent`](./internal/domains/durability/module.go): Writes immutable audit snapshots to `mutation_logs` before tool completion.
-     - [`orchestrator.RegisterPromptInvalidator`](./internal/orchestrator/prompt_cache.go): Evicts cached Redis system prompt sections (`ctx_prompt:<fg>:<mod>`) synchronously to guarantee cache consistency.
+     - [`orchestrator.RegisterPromptInvalidator`](./internal/orchestrator/prompt_cache.go): Evicts cached Redis system prompt sections for **every user** in the event's family/actor scope (`SCAN MATCH ctx_prompt:<scope>:*` filtered by module, glob-escaped) synchronously to guarantee cache consistency.
 2. **Async Lane (`SubscribeAsync`, `SubscribeAsyncTopic`):**
    - Dispatches jobs to a bounded background worker pool (default: **4 workers**, configurable via `WithWorkerCount`).
    - Buffered job queue with default capacity of **1,024 events** (`WithQueueCapacity`) preserving deterministic FIFO task submission.
@@ -282,20 +298,25 @@ To prevent slow network I/O, external partner notifications, and automation webh
 
 Milestone 1A hardens the entire system across ingress, internal execution, storage, and egress:
 
+- **Request body limits:** `http.MaxBytesReader` caps bodies at 10 MB for webhooks (gateway and proxy `/webhook/*`) and 1 MB for GraphQL (proxy and orchestrator).
+
 1. **Pre-Auth Gate & Admin RBAC (`internal/orchestrator/engine.go`):**
    - At the very top of `ProcessMessage`, `e.db.GetUser(msg.UserID)` verifies caller identity before downloading media, transcribing voice, or running LLM prompts.
    - Unauthenticated senders are routed strictly to `handleUnauthenticatedUser`, which permits only 6-digit pairing code redemption (`RedeemPairingCode`).
    - Pairing attempts are rate-limited via Redis (`rate_limit:pairing:<userID>`): 5 failed attempts within 15 minutes trigger a 1-hour account lockout (`rate_limit:pairing:lockout:<userID>`).
    - `/backup` and `/restore` commands strictly verify `user.Role == "admin"`, rejecting non-admin attempts with an explicit permission denied alert.
+   - **`/restore` is two-step (*P1-5*, [`restore.go`](./internal/orchestrator/restore.go)):** `/restore` only stages a pending action (`pending_meta_tool:<userID>`, `ToolName="restore"`, 5-min TTL) recording the *exact* backup file, and replies with its name and timestamp. Only `CONFIRM RESTORE` executes it — a bare `CONFIRM` is refused for destructive actions (`isDestructiveAction`). On confirmation the admin role is re-checked, the staged path is validated (a `.dump` directly in the backup dir), a **safety backup** of the current DB is taken (restore aborts if it fails), and then the staged file is restored. `restore` is not an LLM tool name, so the model cannot stage or trigger it.
 
 2. **Ingress Webhook Signatures & Proxy Guard (`cmd/gateway`, `internal/twilio`, `cmd/proxy`):**
-   - Telegram webhooks require `X-Telegram-Bot-Api-Secret-Token` matching `cfg.Telegram.SecretToken` using constant-time comparison (`subtle.ConstantTimeCompare`).
-   - Twilio WhatsApp webhooks verify `X-Twilio-Signature` using HMAC-SHA1 over the full request URL and sorted POST parameters with `cfg.Twilio.AuthToken`.
+   - Telegram webhooks require `X-Telegram-Bot-Api-Secret-Token` matching `cfg.Telegram.SecretToken` using constant-time comparison (`subtle.ConstantTimeCompare`). **Fail closed:** `telegramSecretValid` rejects every request when the configured secret is empty, and `validateGatewayConfig` aborts gateway startup if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_URL` is set without a valid `TELEGRAM_SECRET_TOKEN` (1–256 chars `[A-Za-z0-9_-]`).
+   - On startup, when `TELEGRAM_WEBHOOK_URL` is set, the gateway calls `telegram.Client.SetWebhook(url, secret_token)` in the background (`registerWebhookWithRetry`: 8 attempts, exponential backoff from 2 s capped at 2 min; never crashes the gateway; errors are redacted so the bot token is never logged).
+   - Twilio WhatsApp webhooks verify `X-Twilio-Signature` using HMAC-SHA1 over the full request URL and sorted POST parameters with `cfg.Twilio.AuthToken`. **Fail closed:** the handler returns 403 for every request when no auth token is configured (an empty-key HMAC is forgeable), and gateway startup aborts if `TWILIO_ACCOUNT_SID` is set without `TWILIO_AUTH_TOKEN`.
    - `proxy` restricts public ingress to `/webhook/*`, `/graphql`, and `/auth/google/*`. `/playground` returns HTTP 404 in production, and unauthenticated `/graphql` requests are rejected at the edge with HTTP 401.
 
 3. **GraphQL Authentication Middleware (`internal/graph/auth_middleware.go`):**
    - Inspects `Authorization: Bearer <token>` on all requests to `/graphql`.
-   - Supports both constant-time `DASHBOARD_API_SECRET` comparison (granting admin role) and HMAC-SHA256 Bearer JWT claims (`user_id`, `role`, `family_group`, `exp`).
+   - Supports constant-time `DASHBOARD_API_SECRET` comparison and HS256 Bearer JWT claims (`user_id`, `role`, `family_group`, `exp`).
+   - **Hardening (*P3-2*):** JWT header `alg` must be exactly `HS256`; `exp` is mandatory, must be in the future and at most `MaxTokenLifetime` (24 h) ahead. The dashboard secret yields an admin **bound to `DASHBOARD_FAMILY_GROUP`** (`AuthClaims.TenantBound`, server-side only, `json:"-"`); without `DASHBOARD_FAMILY_GROUP` the secret authenticates nothing. Cross-tenant bypasses use `claims.IsGlobalAdmin()` (admin and not tenant-bound) instead of `Role == "admin"`; per-user targets go through `resolveTargetUser`/`canActOnUser` (tenant-bound admins only reach users of their own family). Missing claims are an error in `resolveTenantAndActor` and `RollbackMutation` (no default tenant, no implicit "system" rollback). `JWT_SECRET` no longer falls back to `ENCRYPTION_KEY`.
    - Injects authenticated claims into request context (`ForContext` / `GetAuthClaims`).
 
 4. **Multi-Tenant Isolation & Anti-IDOR (`internal/orchestrator/registry.go`, `internal/db/`, domain modules):**
@@ -330,28 +351,36 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
    - `RollbackMutation` verifies caller tenant permissions, wraps inversions in an ACID database transaction (`tx := r.DB.DB.Begin()`), checks row mutation counts, rolls back on any error, and sets `is_undone = true` only upon commit.
 
 8. **OAuth Hardening & Cryptographic Key Management (`internal/crypto/aes.go`, `internal/state/store.go`):**
-   - `ENCRYPTION_KEY` is validated at startup (`crypto.ValidateKeyConfigured()`); fails fast (panics) if empty in production.
+   - `ENCRYPTION_KEY` is validated at startup by `cfg.Validate("orchestrator")` and `crypto.ValidateKeyConfigured()`; a missing key is a clean startup error (no panic). At runtime `Encrypt`/`Decrypt` return `crypto.ErrKeyNotConfigured` instead of panicking.
+   - The deterministic dev key is used **only** inside `go test` binaries (`flag.Lookup("test.v") != nil`, via the overridable `testBinaryDetector`). `ENV=test`/`GO_ENV=test` no longer unlock it.
    - Key derivation implements HKDF-SHA256 with 16-byte cryptographically random salt (`[16-byte Salt][12-byte Nonce][Ciphertext + 16-byte Tag]`), maintaining backward compatibility with legacy unsalted ciphertexts.
    - OAuth tokens in Redis (`token:<userID>`) are AES-256-GCM encrypted.
    - `/connect` generates 32-byte cryptographically random hex CSRF nonces stored in Redis (`oauth_state:<nonce> -> userID`) with 10-minute TTL.
    - `/auth/google/callback` atomically validates and deletes the nonce before exchanging the code, then persists an encrypted fallback in PostgreSQL (`encrypted_credentials`) via `durabilityModule.SaveCredentialFallback`.
 
-9. **Prompt Injection Boundaries & Meta-Tool Gates (`internal/orchestrator/security.go`, `engine.go`):**
-   - External inputs (`read_email`, `fetch_webpage`, WhatsApp document attachments) are demarcated with semantic XML delimiters: `<untrusted_external_content source="..."> ... </untrusted_external_content>`.
-   - Any ingestion of external content sets `TurnSecurityState.HasUntrustedContent = true`.
-   - If untrusted content was ingested during the turn, meta-tools (`update_user_preferences`, `create_automation_rule`, `schedule_workflow`, `register_external_api`) are blocked from automatic execution, staged in Redis (`pending_meta_tool:<userID>`), and require explicit conversational confirmation: `CONFIRM <TOOL_NAME>`.
+9. **Prompt Injection Boundaries & Sensitive-Tool Gates (`internal/orchestrator/security.go`, `engine.go`; broadened in *P3-1*):**
+   - **Untrusted sources (single list `untrustedOutputTools`):** `read_email`, `search_emails`, `fetch_webpage`, `search_web`, `call_external_api`. After any of them runs, `executeSingleTool` marks the turn untrusted and returns the output wrapped in `<untrusted_external_content …>`. Images and PDFs from any channel (Telegram photos, WhatsApp images/PDFs) and WhatsApp text documents also mark the turn untrusted. (Telegram documents are not ingested at all.) Voice notes are the user's own speech and are not marked.
+   - **Gate (single list `confirmationRequiredWhenUntrusted`):** in an untrusted turn these tools are staged in `pending_meta_tool:<userID>` and require `CONFIRM <TOOL>`: `update_user_preferences`, `create_automation_rule`, `schedule_workflow`, `register_external_api`, `call_external_api`, `soft_delete_emails`, `unsubscribe_email`, `delete_calendar_event`, `delete_task`, `create_shared_reminder`, `remember_fact`, `save_topic_memory`, `upsert_entity_profile`.
+   - **Stored user data is data, not instructions:** standing instructions, pinned memories, entity profiles and retrieved memories are wrapped with `WrapUserProvidedData` (`<user_provided_data kind=…>`): honoured as preferences/context, but cannot override rules, grant permissions or justify actions on their own. Nothing is labelled "STRICT REQUIREMENT" any more.
+   - **Breakout protection:** both wrappers neutralize their own closing tag inside the wrapped content (`neutralizeTag` inserts U+200B), so a payload containing `</untrusted_external_content>` cannot end the block early.
+
+10. **Logging hygiene (*P3-3*, [`internal/logging`](./internal/logging/logging.go)):** user message text is never logged at INFO — `logging.LogMessageText` emits `message_id` + `text_len` (no content hash: short messages are dictionary-reversible) and the text only in a separate DEBUG record (`LOG_LEVEL=debug`). Covers the gateway, Twilio webhook, engine (incl. the Hebrew content-block retry), and the broker's unparseable-payload log (`body_bytes` only). Every Telegram client error is passed through `redactURLError` so the bot token (part of the API URL) never reaches logs. All compose services use the `x-logging` anchor: `json-file`, `max-size: 10m`, `max-file: 5`.
+
+11. **Backups (*P3-4*, [`internal/db/backup.go`](./internal/db/backup.go)):** `pg_dump` output is piped through `age` encryption (X25519 recipients from `BACKUP_AGE_RECIPIENTS`) straight into a `0600` temp file, fsynced and renamed — no plaintext dump ever touches disk; without recipients the backup is written unencrypted with a warning (a missing backup is worse). Restores decrypt in-stream into `pg_restore`'s stdin using the private key at `BACKUP_AGE_IDENTITY_FILE` (keep it off the server; mount only to restore). The DB password is passed via `PGPASSWORD` in the child environment, never in argv. Retention: `KeepLatest` 3 (protects a `/restore`'s staged file from its own safety backup) + 7 daily + 4 weekly. Off-machine copies: not yet (owner decision pending).
 
 ### 3.5 Redis Key Inventory Reference
 
 | Key Pattern | Type | TTL | Purpose |
 | :--- | :---: | :---: | :--- |
-| `chat:<userID>` | List | 1 hour / Rolling (last 20) | Rolling conversational history (`models.ChatMessage` JSON, raw `PhotoData` bytes stripped, metadata markers preserved) |
+| `chat:<userID>` | List | 24 hours / Rolling (last 30) | Rolling conversational history (`models.ChatMessage` JSON incl. per-turn tool call/response pairs with truncated results — *P2-9*; raw `PhotoData` bytes stripped, metadata markers preserved) |
 | `token:<userID>` | String | None | AES-256-GCM encrypted Google OAuth2 token JSON |
 | `oauth_state:<nonce>` | String | 10 minutes | CSRF protection nonce mapping to `userID` |
-| `pending_meta_tool:<userID>` | String | 5 minutes | Staged privileged tool action pending `CONFIRM` redemption |
+| `pending_meta_tool:<userID>` | String | 5 minutes | Staged privileged tool action pending `CONFIRM` redemption; also holds a staged `/restore` (`ToolName="restore"`, `Args.backup_path`) redeemable only by `CONFIRM RESTORE` |
+| `turn_domains:<userID>` | String (JSON) | 15 minutes | Tool domains used by the user's last turn (text-matched ∪ domains of called tools), unioned into the next turn's tool selection (*P2-2*) |
 | `rate_limit:pairing:<userID>` | String (Int) | 15 minutes | Failed pairing code attempts counter |
+| `inbound:<source>:<chatID\|userID>:<messageID>` | String | 24 hours | Inbound message dedup claim (`SET NX`); released on retryable failure (*P1-4*) |
 | `rate_limit:pairing:lockout:<userID>` | String | 1 hour | Lockout flag set after 5 failed pairing attempts |
-| `ctx_prompt:<familyGroup>:<module>` | String | 10 minutes | Dynamic system prompt section cached per tenant family group, invalidated on domain `MutationEvent`s |
+| `ctx_prompt:<familyGroup>:<userID>:<module>` | String | 10 minutes | Dynamic system prompt section cached **per user** (segments percent-encode `%`/`:`), invalidated for all family members on domain `MutationEvent`s |
 
 ### 3.6 RabbitMQ Enterprise Broker Topology & Resilience (SCALE-04)
 
@@ -375,6 +404,7 @@ The message broker layer ([`internal/broker/`](./internal/broker/)) provides dec
 3. **Resilient `Consumer` with Supervisor & Backoff Retries ([`consumer.go`](./internal/broker/consumer.go)):**
    - **Supervisor Loop:** Wraps message consumption in an auto-reconnecting loop with exponential backoff (1s up to 30s) on connection loss.
    - **Bounded Retries:** Transient handler failures are retried up to 3 times with exponential delays (1s, 2s, 4s) tracked via AMQP headers (`x-retries`, `x-last-error`). Upon exhausting retries, messages are rejected without requeue (`Reject(false)`), routing them directly to the corresponding DLQ.
+   - **Non-retryable failures (*P1-4*):** a handler error wrapping `broker.ErrNonRetryable` (`broker.NonRetryable(err)`) is **acked** without redelivery — used once a turn has produced side effects (tool executed, admin command acted, reply delivered, pairing state changed), because re-running the turn would duplicate calendar events/emails/ledger rows. Policy lives in `broker/retry_policy.go` (`decideFailure`). Handlers registered via `ConsumeWithInfo` receive `broker.DeliveryInfo{Attempt, MaxAttempts}`.
    - **Poison-Pill Protection:** Malformed JSON payloads that fail deserialization are immediately rejected without requeue (`Reject(false)`), instantly shunting toxic payloads to the DLQ without stalling consumers.
    - **Graceful Shutdown:** `Stop()` cancels the consumption context and closes the AMQP channel cleanly.
 
@@ -383,7 +413,8 @@ The message broker layer ([`internal/broker/`](./internal/broker/)) provides dec
 ## 4. PostgreSQL + `pgvector` Database Schema Reference
 
 ### 4.1 Migration Registration Mechanism ([`internal/db/migrations.go`](./internal/db/migrations.go))
-- On startup, [`db.NewClient(dsn)`](./internal/db/db.go#L23-L53) enables `pgvector` (`CREATE EXTENSION IF NOT EXISTS vector`) and runs `db.AutoMigrate(allModels...)` combining core Wave 0 models with all models registered via `db.RegisterModel(...)`, `db.RegisterWave1Models()`, and `db.RegisterWave2Models()`. Models are automatically deduplicated by `reflect.TypeOf`, guaranteeing idempotent execution.
+- **Schema management (*P4-3*, goose):** production never AutoMigrates. Versioned migrations live in [`internal/db/migrations/`](./internal/db/migrations) (embedded; `00001_baseline.sql` generated from the pre-goose schema) plus Go migrations in [`schema_migrations.go`](./internal/db/schema_migrations.go) (version 2 = P2-4 legacy-memory copy). They run as an **explicit step**: `orchestrator -migrate-only` (the `migrate` compose service, which `orchestrator` and `audit-worker` wait on via `service_completed_successfully`). Both services call `db.EnsureMigrated` at startup and refuse to run with pending migrations. A pre-goose database is **adopted** at version 1 (goose version table created, baseline not executed) the first time `Migrate` runs. A Postgres advisory lock serializes concurrent migrators. `db.NewClientAutoMigrate` (AutoMigrate + `ApplyCustomIndexes` + legacy copy) exists for tests/dev only; `TestMigrations_FreshDatabaseMatchesModels` compares a goose-built and an AutoMigrate-built schema column-by-column and index-by-index, so a model change without a migration fails CI.
+  - **Adding a schema change:** add `internal/db/migrations/000NN_<name>.sql` (`-- +goose Up` / `-- +goose Down`) *and* update the GORM model.
 - **Connection Pool Sizing (SCALE-05 Part B):** Configures production-grade pool limits on `*sql.DB`:
   - `SetMaxOpenConns(25)`: Prevents exhausting PostgreSQL's `max_connections` (100) across services (`orchestrator` 25 + `audit-worker` 10 + headroom 65).
   - `SetMaxIdleConns(10)`: Maintains warm connections for instantaneous tool queries.
@@ -412,10 +443,10 @@ The message broker layer ([`internal/broker/`](./internal/broker/)) provides dec
 | :---: | :--- | :--- | :--- | :--- |
 | 1 | **`User`** (`L111`) | `users` | `ID` (`uuid`, `default:gen_random_uuid()`) | `PlatformID` (`string`, `uniqueIndex`), `Name` (`string`), `Role` (`string`: `"admin"`\|`"family"`), `FamilyGroup` (`string`), `CreatedAt` (`time.Time`) |
 | 2 | **`PairingCode`** (`L121`) | `pairing_codes` | `ID` (`uuid`, `default:gen_random_uuid()`) | `Code` (`string`, `uniqueIndex`, 6-digit), `Role` (`string`), `FamilyGroup` (`string`), `ExpiresAt` (`time.Time`), `IsUsed` (`bool`, `default:false`), `CreatedAt` (`time.Time`) |
-| 3 | **`Memory`** (`L132`) | `memories` | `ID` (`uint`) | `UserID` (`string`, `index`), `Scope` (`string`, `index`, `default:'personal'`), `Fact` (`string`), `Embedding` (`pgvector.Vector`, `type:vector(3072)`), `CreatedAt` (`time.Time`) |
+| 3 | **`Memory`** (`L132`) — **legacy, read-only (*P2-4*)** | `memories` | `ID` (`uint`) | `UserID` (`string`, `index`), `Scope` (`string`, `index`, `default:'personal'`), `Fact` (`string`), `Embedding` (`pgvector.Vector`, `type:vector(3072)`), `CreatedAt` (`time.Time`). No code writes or reads it at runtime; `db.MigrateLegacyMemories` copies rows into `topic_memories` at every startup (idempotent: skips facts already present for the user; `family_group` from `users`; scope `family` → topic `family`). Kept until the migration is verified in production, then drop manually. |
 | 4 | **`ScheduledReminder`** (`L142`) | `scheduled_reminders` | `ID` (`uint`) | `UserID` (`string`, `index`), `Message` (`string`), `DueTime` (`time.Time`, `index`), `IsSent` (`bool`, `index`), `CreatedAt` (`time.Time`) |
 | 5 | **`Workflow`** (`L152`) | `workflows` | `ID` (`uint`) | `UserID` (`string`, `index`), `Name` (`string`), `CronExpression` (`string`), `Instruction` (`string`), `IsActive` (`bool`, `index`), `CreatedAt` (`time.Time`) |
-| 6 | **`AuditSession`** (`L80`) | `audit_sessions` | `ID` (`uuid`) | `UserID` (`string`, `index`), `ChatID` (`string`), `Source` (`string`), `UserPrompt` (`string`), `FinalResponse` (`string`), `StartTime` (`time.Time`), `EndTime` (`time.Time`), `TotalDurationMs` (`int64`), `TotalTokens` (`int`), `Status` (`string`) |
+| 6 | **`AuditSession`** (`L80`) | `audit_sessions` | `ID` (`uuid`) | `UserID` (`string`, `index`), `ChatID` (`string`), `Source` (`string`), `UserPrompt` (`string`), `FinalResponse` (`string`), `StartTime` (`time.Time`), `EndTime` (`time.Time`), `TotalDurationMs` (`int64`), `TotalTokens` (`int`), `Status` (`string`), `ToolSummary` (`text`, *P2-9*: bounded one-line record of the turn's tool calls/results) |
 | 7 | **`AuditEvent`** (`L95`) | `audit_events` | `ID` (`uuid`) | `SessionID` (`string`, `index`), `EventType` (`string`), `ActionName` (`string`), `RequestPayload` (`jsonb`), `ResponsePayload` (`jsonb`), `ErrorMessage` (`string`), `StartTime` (`time.Time`), `EndTime` (`time.Time`), `DurationMs` (`int64`), `PromptTokens` (`int`), `CompletionTokens` (`int`) |
 
 #### B. Topic 1: Durability & Rollback Models ([`internal/models/durability.go`](./internal/models/durability.go)) — Repo: [`internal/db/durability_repo.go`](./internal/db/durability_repo.go)
@@ -489,13 +520,14 @@ The underlying `*sql.DB` connection pool is explicitly tuned on initialization t
 - **`MaxIdleConns = 10`:** Retains a hot pool of idle connections to handle sudden bursts of concurrent LLM tool executions without reconnect overhead.
 - **`ConnMaxLifetime = 30m`:** Recycles long-lived connections periodically to clear server-side resource state and balance across Postgres restarts.
 - **`ConnMaxIdleTime = 5m`:** Closes idle connections after 5 minutes of inactivity to conserve database memory.
-- **Startup Verification & Client Lifecycle:** `NewClient` immediately runs `sqlDB.Ping()` to fail fast if credentials or connectivity are invalid. Clean process shutdown is supported via `Client.Close() error` and `Client.Ping() error`.
+- **Startup Verification & Client Lifecycle:** `db.Open` immediately runs `sqlDB.Ping()` to fail fast if credentials or connectivity are invalid. Clean process shutdown is supported via `Client.Close() error` and `Client.Ping() error`.
 
 #### Vector HNSW & Composite Multi-Tenant Database Indexes ([`internal/db/migrations.go`](./internal/db/migrations.go))
-Applied automatically during migration initialization via `ApplyCustomIndexes`:
+Part of the goose baseline (`00001_baseline.sql`); `ApplyCustomIndexes` creates the same indexes on the AutoMigrate (tests/dev) path:
 1. **`pgvector` HNSW `halfvec(3072)` Indexes:**
-   - `idx_topic_memories_embedding_hnsw` on `topic_memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops) WITH (m = 16, ef_construction = 64)`.
-   - `idx_memories_embedding_hnsw` on `memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops) WITH (m = 16, ef_construction = 64)`.
+   - `idx_topic_memories_embedding` on `topic_memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`.
+   - `idx_memories_embedding` on `memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`.
+   - **Query contract (*P2-3*, [`internal/db/vector.go`](./internal/db/vector.go)):** every similarity search must `ORDER BY embedding::halfvec(3072) <=> ?::halfvec(3072)` (`halfvecCosineDistanceSQL`) — the exact index expression — via `cosineOrder()`, which returns a `clause.OrderBy`. *Never* pass `gorm.Expr` to `Order()`: GORM v1.31 silently drops it (before P2-3 no vector query had an `ORDER BY` at all, so retrieval returned arbitrary rows). Queries run through `withVectorScan`, which on pgvector ≥ 0.8 sets `SET LOCAL hnsw.iterative_scan = strict_order` so tenant-filtered searches keep scanning until `LIMIT` rows pass the filter (plain HNSW + filter returned 0 of a user's rows in tests when other tenants owned the nearest neighbours). On pgvector < 0.8 a warning is logged once.
    - *Impact:* Uses 16-bit float representation to fit high-dimensional 3,072 embeddings within PostgreSQL's 2,000-byte index tuple limit while delivering sub-millisecond approximate nearest neighbor searches without table scans.
 2. **Composite Multi-Tenant B-Tree Indexes:**
    - `idx_mutation_logs_fam_undone_created`: `mutation_logs (family_group, is_undone, created_at DESC)` — Accelerates `/undo` and Dashboard mutation queries.
@@ -513,12 +545,14 @@ Applied automatically during migration initialization via `ApplyCustomIndexes`:
 
 | Key Pattern | Redis Type | Value Schema | Capacity / Retention | TTL | Methods |
 | :--- | :---: | :--- | :--- | :---: | :--- |
-| `chat:<userID>` | `LIST` | JSON [`models.ChatMessage`](./internal/models/models.go#L58-L66) (`role`, `content`, `tool_calls`, `tool_responses`). *SCALE-02:* Raw `PhotoData` bytes are stripped before Redis persistence to avoid memory bloat, replaced with a concise `[Attachment: <mime> (<size>)]` metadata tag. | Last **20** messages (`LTRIM -20 -1`) | `1h` (sliding on write) | `AppendChatHistory`, `GetChatHistory` |
+| `chat:<userID>` | `LIST` | JSON [`models.ChatMessage`](./internal/models/models.go#L58-L66) (`role`, `content`, `tool_calls`, `tool_responses`). *SCALE-02:* Raw `PhotoData` bytes are stripped before Redis persistence to avoid memory bloat, replaced with a concise `[Attachment: <mime> (<size>)]` metadata tag. | Last **30** messages (`LTRIM -30 -1`, `ChatHistoryMaxMessages`) | `24h` (sliding on write, `ChatHistoryTTL`) | `AppendChatHistory`, `GetChatHistory` |
 | `token:<userID>` | `STRING` | Encrypted AES-256-GCM token bytes (`oauth2.Token` JSON) | 1 encrypted payload per user | `0` (no expiry) | `SetOAuthToken`, `GetOAuthToken` |
-| `ctx_prompt:<familyGroup>:<module>` | `STRING` | Dynamic system prompt section text for a tenant life domain (*SCALE-01*) | 1 cached section per domain module | `10m` | `SetPromptSection`, `GetPromptSection`, `GetPromptSections` (`MGET`), `InvalidatePromptSections` (`DEL`) |
+| `ctx_prompt:<familyGroup>:<userID>:<module>` | `STRING` | Dynamic system prompt section text for one user and life domain (*SCALE-01*, per-user since P1-3). Key built by `state.PromptCacheKey`; `familyGroup` falls back to the user ID when the user has no family group; not cached when the caller's ID is unknown | 1 cached section per user per domain module | `10m` | `SetPromptSection`, `GetPromptSection`, `GetPromptSections` (`MGET`), `InvalidateFamilyPromptSections` (`SCAN`+`DEL`), `InvalidatePromptSections` (`DEL`) |
 | `oauth_state:<nonce>` | `STRING` | Hex string mapping to `userID` | 1 nonce per in-flight OAuth exchange | `10m` | `SaveOAuthState`, `ValidateAndDeleteOAuthState` (`GETDEL`) |
 | `pending_meta_tool:<userID>` | `STRING` | JSON `PendingMetaToolAction` interactive confirmation payload (*SEC-09*) | 1 pending action per user | `5m` | `StagePendingMetaTool`, `GetAndClearPendingMetaTool` (`GETDEL`) |
+| `turn_domains:<userID>` | `STRING` | JSON array of `DomainGroup` names used by the last turn: domains matched by its text plus domains of tools it actually executed (inherited sticky domains are not re-saved, so they decay after one unused turn). Empty set deletes the key (*P2-2*) | 1 small array per user | `15m` | `SetTurnDomains`, `GetTurnDomains` |
 | `rate_limit:pairing:<userID>` | `STRING` | Integer counter of failed pairing attempts | 1 integer counter per user | `15m` (rolling from 1st failure) | `RecordFailedPairingAttempt`, `ResetPairingRateLimit` |
+| `inbound:<source>:<chatID\|userID>:<messageID>` | `STRING` | Inbound message idempotency claim (claim timestamp). Telegram `message_id` is per chat → scoped by chat ID; WhatsApp `MessageSid` is global → user ID scope. Messages without an ID skip dedup (warning logged) (*P1-4*) | 1 key per processed inbound message | `24h` | `ClaimInbound` (`SET NX EX`), `ReleaseInbound` (`DEL`, on retryable failure) |
 | `rate_limit:pairing:lockout:<userID>` | `STRING` | String sentinel (`"locked"`) | Set upon 5 consecutive failed attempts | `1h` | `CheckPairingLockout`, `RecordFailedPairingAttempt`, `ResetPairingRateLimit` |
 
 ### 5.2 RabbitMQ Queues, Topology & Reliable Messaging ([`internal/broker/`](./internal/broker/))
@@ -527,12 +561,12 @@ Applied automatically during migration initialization via `ApplyCustomIndexes`:
 Primary queues are declared with dead-letter exchange bindings ensuring zero message loss and complete poison-pill isolation:
 - **Dead-Letter Exchange (DLX):** Direct exchange `mypa.dlx` (`durable: true`, `autoDelete: false`).
 - **Primary Queue Bindings:** Declared with `x-dead-letter-exchange: mypa.dlx` and `x-dead-letter-routing-key: <queue>.dlq`.
-- **Dead-Letter Queues (DLQs):** Dedicated durable queues (`telegram.inbound.dlq`, `audit.events.dlq`) bound to `mypa.dlx` with routing keys matching their primary queue names plus `.dlq`.
-- **Consumer QoS:** Enforces `prefetchCount: 1` on consumers to guarantee fair dispatching across worker replicas.
+- **Dead-Letter Queues (DLQs):** Dedicated durable queues (`inbound.messages.dlq`, `audit.events.dlq`) bound to `mypa.dlx` with routing keys matching their primary queue names plus `.dlq`.
+- **Consumer concurrency (*P2-8*):** `Qos(prefetch)` (`RABBITMQ_PREFETCH`, default 4) bounds deliveries in flight. Each delivery is routed by `consumeLoop` to a `keyedDispatcher` lane keyed by `source:userID` ([`keyed_dispatcher.go`](./internal/broker/keyed_dispatcher.go)): different users are processed in parallel, one user's messages strictly in arrival order. Lanes exist only while they have work. Retry backoff sleeps inside the lane's worker, so it delays only that user. Handler panics are converted to errors (normal retry/DLQ path) so a delivery can never stay unacked and pin a prefetch slot. Before reconnecting, in-flight work is drained so a redelivery never runs alongside its original. `ConsumeRaw` (audit-worker) uses a single lane (serial). amqp091-go `Ack`/`Nack`/`Reject` take the channel mutex, so concurrent settlement is safe. Note: a retried message is republished to the queue tail, so after a *failure* a user's later message can be processed before the retry (pre-existing).
 
 | Queue Name | Dead-Letter Queue | Producer | Consumer | Go Payload Struct | JSON Fields |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`telegram.inbound`** | `telegram.inbound.dlq` | `cmd/gateway` (`/webhook/telegram` & `/webhook/twilio`) | `cmd/orchestrator` (`Engine.Start`) | [`models.Message`](./internal/models/models.go#L9-L22) | `id`, `user_id`, `chat_id`, `text`, `voice_file_id`, `photo_file_id`, `audio_file_id`, `media_url`, `media_content_type`, `source` (`"telegram"`\|`"whatsapp"`), `timestamp` |
+| **`inbound.messages`** (renamed from `telegram.inbound`, *BL-5*; name in `broker.InboundMessagesQueue`) | `inbound.messages.dlq` | `cmd/gateway` (`/webhook/telegram` & `/webhook/twilio`) | `cmd/orchestrator` (`Engine.Start`) | [`models.Message`](./internal/models/models.go#L9-L22) | `id`, `user_id`, `chat_id`, `text`, `voice_file_id`, `photo_file_id`, `audio_file_id`, `media_url`, `media_content_type`, `source` (`"telegram"`\|`"whatsapp"`), `timestamp` |
 | **`audit.events`** | `audit.events.dlq` | `cmd/orchestrator` (`Engine.ProcessMessage` defer) | `cmd/audit-worker` | [`models.AuditSession`](./internal/models/models.go#L80-L92) | `id`, `user_id`, `chat_id`, `source`, `user_prompt`, `final_response`, `start_time`, `end_time`, `total_duration_ms`, `total_tokens`, `status` |
 
 #### SafePublisher: Thread-Safety, Confirms & Auto-Reconnect ([`internal/broker/publisher.go`](./internal/broker/publisher.go))
@@ -545,59 +579,178 @@ All message publishing across the gateway and orchestrator utilizes `SafePublish
 The consumer loop guarantees resilient, bounded message processing:
 - **Auto-Reconnect Supervisor:** Automatically recovers consumer channels upon broker disconnection or unexpected channel closures.
 - **Bounded Retries with Exponential Backoff:** Transient processing errors retry up to **3 attempts** (`DefaultMaxRetries = 3`). Retries publish to the tail of the primary queue with exponential delay (`2^attempt * 500ms`) and increment the AMQP header `x-retries`.
+- **Non-Retryable Acks (*P1-4*):** errors wrapping `broker.ErrNonRetryable` are acked immediately (no retry, no DLQ) — the orchestrator returns these once a turn has side effects.
 - **Poison Pill Isolation:** If processing fails after 3 attempts, the message is rejected with `d.Reject(false)` (requeue disabled), immediately routing the payload to its designated dead-letter queue without broker redelivery loops.
 - **Malformed JSON Handling:** Unparseable payloads fail immediately on the first attempt and are rejected directly to the DLQ (`d.Reject(false)`), protecting consumers from infinite JSON unmarshal loops.
 
 ---
 
-## 6. Complete AI Agent Tool Catalog (All 70 Tools)
+## 6. Complete AI Agent Tool Catalog
 
-### 6.1 Base Workspace & System Tools (28 Base Tools + Built-in System Tools — [`internal/llm/tools.go`](./internal/llm/tools.go) & [`internal/orchestrator/registry.go`](./internal/orchestrator/registry.go))
+> Generated from the live `ToolModule` declarations by `go run ./cmd/devtools/gendocs`; do not edit by hand (`internal/toolcatalog` `TestDocsAreUpToDate` fails on drift).
 
-| Tool Name | Category | Required & Optional Parameters (`*` = required) | Description |
+<!-- BEGIN GENERATED: tool-catalog -->
+68 tools across 13 modules. Tier 1 = always offered to the model; Tier 2 = offered when the intent matcher selects the module's domain (see §3.2).
+
+### 6.1 Registry built-ins (1 tool)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
-| `get_current_time` | System / Time | `timezone` (optional IANA timezone, e.g. `'Asia/Jerusalem'`) | Returns the current ISO8601 date, time, weekday, and unix timestamp in the requested or default timezone. |
-| `create_calendar_event` | Google Calendar | `title`*, `start_time`* (RFC3339), `end_time`* (RFC3339), `timezone`*, `description`, `recurrence` (`[]string`) | Creates an event on the user's primary Google Calendar. |
-| `list_calendar_events` | Google Calendar | `time_min` (RFC3339), `time_max` (RFC3339), `query` | Lists/searches events from primary Google Calendar. |
-| `update_calendar_event` | Google Calendar | `id`*, `title`, `start_time`, `end_time`, `description`, `timezone`, `recurrence` | Updates an existing Google Calendar event. |
-| `delete_calendar_event` | Google Calendar | `id`* | Deletes an event from primary Google Calendar. |
-| `remember_fact` | Memory v1 | `fact`*, `scope` (`"personal"`\|`"family"`) | Embeds and stores a fact in `memories` (`vector(3072)`). |
-| `search_emails` | Gmail | `query`*, `max_results` (default 5) | Searches user's Gmail via Gmail query syntax. |
-| `read_email` | Gmail | `message_id`* | Reads the full body of a Gmail message. |
-| `draft_email_reply` | Gmail | `message_id`*, `reply_text`* | Creates a reply draft in Gmail. |
-| `archive_emails` | Gmail | `message_ids`* (`[]string`) | Removes `INBOX` label from messages. |
-| `soft_delete_emails` | Gmail | `message_ids`* (`[]string`) | Moves Gmail messages to Trash. |
-| `list_email_labels` | Gmail | *(none)* | Lists all Gmail label names and IDs. |
-| `apply_email_labels` | Gmail | `message_ids`* (`[]string`), `label_id`* | Applies a label to a batch of Gmail messages. |
-| `create_email_label` | Gmail | `label_name`* | Creates a new Gmail label. |
-| `unsubscribe_email` | Gmail | `message_id`* | Extracts `List-Unsubscribe` link and triggers unsubscribe. |
-| `list_task_lists` | Google Tasks | *(none)* | Lists all Google Tasks lists. |
-| `create_task_list` | Google Tasks | `title`* | Creates a new Google Tasks list. |
-| `list_tasks` | Google Tasks | `list_id` (default `@default`) | Lists pending tasks in a task list. |
-| `create_task` | Google Tasks | `title`*, `list_id`, `notes`, `due` (RFC3339) | Creates a new task in Google Tasks. |
-| `complete_task` | Google Tasks | `task_id`*, `list_id` | Marks a Google Task as completed. |
-| `delete_task` | Google Tasks | `task_id`*, `list_id` | Deletes a task from Google Tasks. |
-| `search_web` | Web Search | `query`* | Searches the live web via Tavily API (declared in `CalendarEventTool`, handled in `engine.go:1032`). |
-| `fetch_webpage` | Web Scraper | `url`* | Extracts readable markdown from a URL and summarizes/processes it. |
-| `search_contacts` | Google Contacts | `query`* | Searches Google People API contacts. |
-| `create_contact` | Google Contacts | `name`*, `email`, `phone` | Creates a contact in Google Contacts. |
-| `schedule_reminder` | Reminders v1 | `message`*, `due_time`* (RFC3339) | Saves a one-time reminder in `scheduled_reminders` (polled every minute). |
-| `schedule_workflow` | Workflows v1 | `name`*, `cron_expression`*, `instruction`* | Saves a recurring natural-language cron workflow in `workflows`. |
-| `list_workflows` | Workflows v1 | *(none)* | Lists active recurring workflows for the user. |
-| `delete_workflow` | Workflows v1 | `id`* | Deletes a workflow by ID and reloads cron scheduler. |
+| `get_current_time` | 1 (core) | `timezone` (string) | Returns the current date, time, and day of the week in the user's local timezone. |
 
-### 6.2 Modular Domain Tools (42 Tools Across 8 `ToolModule` Packages)
+### 6.2 `workspace_calendar` (4 tools)
 
-| Module (`Name()`) | Package Path | `SystemPromptSection` Injects | Registered Tools (`*` = required param) | Emits `MutationEvent`? |
-| :--- | :--- | :--- | :--- | :---: |
-| **`durability`** | [`internal/domains/durability`](./internal/domains/durability/module.go) | Undo (`undo_last_action`), change history, and JSON/CSV export instructions. | • `undo_last_action` (`reason`, `mutation_id`)<br>• `list_recent_changes` (`topic`, `limit`)<br>• `export_topic_data` (`topic`*, `format`, `limit`) | `undo_last_action`: Yes (`action: "undo"`) |
-| **`memory`** | [`internal/domains/memory`](./internal/domains/memory/module.go) | Active `EntityProfile` cards + pinned `TopicMemory` facts for the user/family. | • `save_topic_memory` (`topic`*, `fact`*, `subtopic`, `tags`, `scope`, `is_pinned`, `supersedes_memory_id`)<br>• `search_topic_memories` (`topic`, `query`, `tags`, `scope`)<br>• `upsert_entity_profile` (`topic`*, `entity_type`*, `entity_name`*, `attributes`*)<br>• `get_entity_profile` (`topic`*, `entity_name`*) | `save_topic_memory`: Yes<br>`upsert_entity_profile`: Yes |
-| **`shared`** | [`internal/domains/shared`](./internal/domains/shared/module.go) | Configured `SharedSpace` topics, permissions, and notify modes for the family. | • `configure_shared_topic` (`topic`*, `can_view`, `can_edit`, `notify_mode`, `shared_with_user_id`)<br>• `create_shared_reminder` (`title`*, `topic`, `due_time`, `assigned_to_user_id`)<br>• `complete_shared_reminder` (`id`*)<br>• `list_shared_activity` (`topic`, `include_completed`) | `configure_shared_topic`: Yes<br>`create_shared_reminder`: Yes<br>`complete_shared_reminder`: Yes |
-| **`schedule`** | [`internal/domains/schedule`](./internal/domains/schedule/module.go) | Configured `TopicCalendarConfig` prefixes/colors + upcoming 7-day `ScheduleEvent` items. | • `schedule_topic_event` (`title`*, `topic`*, `start_time`*, `end_time`, `description`, `tags`, `sync_to_google`, `is_shared`, `recurrence`)<br>• `list_topic_schedule` (`topic`, `tags`, `start_time`, `end_time`, `include_google`)<br>• `configure_topic_calendar` (`topic`*, `prefix_tag`, `color_id`, `target_calendar_id`, `sync_to_google_default`, `include_in_morning_briefing`)<br>• `delete_topic_event` (`event_id`*)<br>• `update_topic_event` (`event_id`*, `title`, `start_time`, `end_time`, `description`, `tags`) | All except `list_topic_schedule`: Yes |
-| **`baby`** | [`internal/domains/baby`](./internal/domains/baby/module.go) | Exact baby age (days/weeks/months + adjusted age), current developmental leap, medication cooldown status, and low inventory alerts. | • `upsert_baby_profile` (`name`*, `date_of_birth`*, `id`, `due_date`, `gender`, `birth_weight_grams`, `current_weight_grams`, `height_cm`, `pediatrician_info`, `allergies_notes`)<br>• `log_baby_care` (`log_type`*, `baby_id`, `baby_name`, `value_numeric`, `unit`, `details`, `timestamp`, `force`)<br>• `query_baby_logs_and_trends` (`baby_id`, `baby_name`, `log_type`, `time_range`, `start_time`, `end_time`, `limit`)<br>• `get_baby_milestone_suggestions` (`baby_id`, `baby_name`, `category`)<br>• `manage_baby_inventory` (`action`*, `item_name`, `quantity`, `delta`, `unit`, `low_threshold`) | `upsert_baby_profile`: Yes<br>`log_baby_care`: Yes<br>`manage_baby_inventory` (`set`/`adjust`): Yes |
-| **`house`** | [`internal/domains/house`](./internal/domains/house/module.go) | Expiring contracts/warranties within notice window, overdue/upcoming maintenance tasks, and vehicle test/insurance/service alerts. | • `save_house_contract_or_receipt` (`record_type`*, `title`*, `contract_id`, `vendor_or_landlord`, `contact_details`, `amount`, `currency`, `start_date`, `expiration_date`, `notice_period_days`, `key_terms`)<br>• `list_house_contracts` (`record_type`, `expiring_within_days`, `search_query`)<br>• `manage_home_maintenance` (`action`*, `item_id`, `task_name`, `category`, `interval_days`, `next_due_at`, `contractor_info`, `notes`, `overdue_only`)<br>• `manage_vehicle_asset` (`action`*, `asset_id`, `name`, `license_plate`, `insurance_expiry`, `annual_test_expiry`, `last_service_date`, `current_mileage_km`, `next_service_mileage_km`, `notes`) | All mutating actions: Yes |
-| **`finance`** | [`internal/domains/finance`](./internal/domains/finance/module.go) | Current month spending vs. `CategoryBudget` thresholds and upcoming `RecurringBill` due dates (next 7 days). | • `log_financial_transaction` (`amount`*, `category`*, `merchant`, `type`, `currency`, `transaction_date`, `notes`, `source`, `is_shared`)<br>• `get_financial_summary` (`start_date`, `end_date`, `category`)<br>• `set_category_budget` (`category`*, `monthly_limit`*, `currency`, `alert_threshold_pct`)<br>• `manage_recurring_bills` (`action`*, `bill_id`, `name`, `category`, `expected_amount`, `currency`, `billing_cycle`, `next_due_day`, `auto_renew`) | All mutating actions: Yes |
-| **`automation`** | [`internal/domains/automation`](./internal/domains/automation/module.go) | User's `PreferredLanguage`, `TonePersona`, `DefaultCurrency`, `QuietHours`, `StandingInstructions`, and upcoming 30-day CRM birthdays/anniversaries. | • `register_external_api` (`name`*, `base_url`*, `default_method`, `auth_headers`, `description`)<br>• `list_external_apis` (`family_group`)<br>• `call_external_api` (`connector_name`, `connector_id`, `url`, `path`, `method`, `query_params`, `body`)<br>• `create_automation_rule` (`name`*, `trigger_type`*, `trigger_topic`*, `action_instruction`*, `condition_json`, `is_active`)<br>• `list_automation_rules` (`trigger_topic`)<br>• `delete_automation_rule` (`rule_id`*)<br>• `update_user_preferences` (`preferred_language`, `tone_persona`, `default_currency`, `quiet_hours_start`, `quiet_hours_end`, `briefing_topics`, `standing_instructions`)<br>• `get_user_preferences` ()<br>• `upsert_personal_crm` (`person_name`*, `id`, `relationship`, `important_dates`, `gift_ideas_and_sizes`, `medical_notes`)<br>• `query_personal_crm` (`query`, `relationship`) | `register_external_api`, `create_automation_rule`, `delete_automation_rule`, `update_user_preferences`, `upsert_personal_crm`: Yes |
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `create_calendar_event` | 2 (`calendar`) | `title`* (string), `start_time`* (string), `end_time`* (string), `timezone`* (string), `description` (string), `recurrence` ([]string) | Creates a new event on the user's Google Calendar. Call this when the user asks to schedule a meeting, block time, or create an event. |
+| `list_calendar_events` | 2 (`calendar`) | `query` (string), `time_max` (string), `time_min` (string) | Retrieves events from the user's Google Calendar. Call this when the user asks what is on their schedule, if they have meetings, or to query their calendar. |
+| `update_calendar_event` | 2 (`calendar`) | `id`* (string), `description` (string), `end_time` (string), `recurrence` ([]string), `start_time` (string), `timezone` (string), `title` (string) | Updates an existing event on the user's Google Calendar. Call this when the user asks to change, reschedule, or modify an event. |
+| `delete_calendar_event` | 2 (`calendar`) | `id`* (string) | Deletes an event from the user's Google Calendar. Call this when the user asks to cancel, remove, or delete an event. |
+
+### 6.3 `workspace_gmail` (9 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `search_emails` | 2 (`gmail`) | `query`* (string), `max_results` (integer) | Searches the user's Gmail using standard Gmail query syntax. Use this to find recent emails or specific threads (e.g., 'newer_than:30d', 'is:unread', 'from:john'). |
+| `read_email` | 2 (`gmail`) | `message_id`* (string) | Reads the contents of a specific email by its ID. |
+| `draft_email_reply` | 2 (`gmail`) | `message_id`* (string), `reply_text`* (string) | Drafts a reply to an email. Does not send it. |
+| `archive_emails` | 2 (`gmail`) | `message_ids`* ([]string) | Archives one or more emails by removing them from the INBOX. |
+| `soft_delete_emails` | 2 (`gmail`) | `message_ids`* ([]string) | Moves one or more emails to the native Gmail Trash bin (soft delete). |
+| `list_email_labels` | 2 (`gmail`) | — | Lists all available Gmail labels and their IDs for the user. |
+| `apply_email_labels` | 2 (`gmail`) | `message_ids`* ([]string), `label_id`* (string) | Applies a specific Gmail label to one or more emails. |
+| `create_email_label` | 2 (`gmail`) | `label_name`* (string) | Creates a new Gmail label and returns its ID. Use this when you want to categorize an email and the appropriate label doesn't exist yet. |
+| `unsubscribe_email` | 2 (`gmail`) | `message_id`* (string) | Attempts to unsubscribe from a newsletter or mailing list by parsing the List-Unsubscribe header of a specific email. Call this when the user asks to unsubscribe from an email. |
+
+### 6.4 `workspace_tasks` (6 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `list_task_lists` | 2 (`tasks`) | — | Lists all of the user's available task lists (like 'Groceries', 'Default', etc.) and their IDs. |
+| `create_task_list` | 2 (`tasks`) | `title`* (string) | Creates a new task list. |
+| `list_tasks` | 2 (`tasks`) | `list_id` (string) | Lists the user's pending Google Tasks from a specific task list. |
+| `create_task` | 2 (`tasks`) | `title`* (string), `due` (string), `list_id` (string), `notes` (string) | Creates a new task on a specific Google Tasks list. |
+| `complete_task` | 2 (`tasks`) | `task_id`* (string), `list_id` (string) | Marks a task as completed in Google Tasks. |
+| `delete_task` | 2 (`tasks`) | `task_id`* (string), `list_id` (string) | Deletes a task entirely from Google Tasks. |
+
+### 6.5 `workspace_contacts` (2 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `search_contacts` | 2 (`contacts`) | `query`* (string) | Searches the user's Google Contacts by name. Call this when the user asks for someone's email or phone number. |
+| `create_contact` | 2 (`contacts`) | `name`* (string), `email` (string), `phone` (string) | Creates a new Google Contact. Call this when the user asks to save a phone number, email, or contact information. |
+
+### 6.6 `web_research` (2 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `search_web` | 1 (core) | `query`* (string) | Searches the live web using Tavily for current news, facts, recent events, or information you don't know. |
+| `fetch_webpage` | 1 (core) | `url`* (string) | Fetches and returns the main article text content of a webpage. Use this when the user sends a link and wants you to read, summarize, or save it. |
+
+### 6.7 `durability` (3 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `undo_last_action` | 1 (core) | `mutation_id` (string), `reason` (string) | Reverts the user's or family's most recent mutation or change (such as an expense, baby feeding log, schedule entry, or task) using the recorded BeforeJSON state and marks it undone. |
+| `list_recent_changes` | 2 (`history`) | `limit` (integer), `topic` (string) | Lists recent data mutations and changes across life domains (baby, house, finance, schedule, memory). Use when user asks 'what did I change recently?', 'show audit log', or 'who updated what?'. |
+| `export_topic_data` | 2 (`history`) | `topic`* (string), `format` (string), `limit` (integer) | Exports structured data and mutation history for a specific topic (baby, house, finance, memory, schedule, or all) as formatted JSON or CSV. |
+
+### 6.8 `memory` (5 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `save_topic_memory` | 1 (core) | `topic`* (string), `fact`* (string), `is_pinned` (boolean), `scope` (string), `subtopic` (string), `supersedes_memory_id` (integer), `tags` ([]string) | Saves a structured fact, habit, or preference into long-term topic memory with tags, scope, and temporal tracking. Automatically links or supersedes older conflicting facts when supersedes_memory_id is provided. |
+| `search_topic_memories` | 1 (core) | `query` (string), `scope` (string), `tags` ([]string), `topic` (string) | Searches active (non-superseded) topic-mapped long-term memories by topic, text query, and tags. |
+| `upsert_entity_profile` | 2 (`memory`) | `topic`* (string), `entity_type`* (string), `entity_name`* (string), `attributes`* (object) | Creates or updates a structured living entity profile card (e.g. BabyProfile, Property, Vehicle, FamilyMember) with key-value attributes stored in JSONB. |
+| `get_entity_profile` | 2 (`memory`) | `topic`* (string), `entity_name`* (string) | Retrieves a structured living entity profile card by topic and entity name or type. |
+| `remember_fact` | 1 (core) | `fact`* (string), `scope` (string) | Saves a semantic memory fact and its vector embedding for long-term recall. |
+
+### 6.9 `shared` (5 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `configure_shared_topic` | 2 (`shared`) | `topic`* (string), `can_edit` (boolean), `can_view` (boolean), `notify_mode` (string), `shared_with_user_id` (string) | Configure family sharing rules, access permissions, and notification modes for a topic (e.g., 'baby', 'house', 'finance', 'schedule', 'work', 'personal'). |
+| `create_shared_reminder` | 2 (`shared`) | `title`* (string), `assigned_to_user_id` (string), `due_time` (string), `topic` (string) | Create a shared family task or reminder under a topic (e.g. 'baby', 'house', 'finance', 'family') that can be claimed and completed by any family member. |
+| `complete_shared_reminder` | 2 (`shared`) | `id`* (integer) | Claim and complete a shared family task or reminder, recording who completed it, updating status, and notifying family members. |
+| `list_shared_activity` | 2 (`shared`) | `include_completed` (boolean), `topic` (string) | Query configured shared spaces and active or completed shared family tasks and reminders. |
+| `schedule_reminder` | 1 (core) | `message`* (string), `due_time`* (string) | Schedules a point-in-time reminder alert for the user at a specified due date and time. |
+
+### 6.10 `schedule` (5 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `schedule_topic_event` | 2 (`calendar`) | `title`* (string), `topic`* (string), `start_time`* (string), `description` (string), `end_time` (string), `is_shared` (boolean), `recurrence` (string), `sync_to_google` (boolean), `tags` ([]string) | Create a topic-tagged schedule event with virtual sub-calendar support. Events can be synchronized with Google Calendar (with topic prefix e.g. [Baby], [House] and custom color coding) or kept internal-only for high-frequency routines (baby feedings, meds, workouts). If shared, also synchronizes to partner's calendar. |
+| `list_topic_schedule` | 2 (`calendar`) | `end_time` (string), `include_google` (boolean), `start_time` (string), `tags` ([]string), `topic` (string) | Query and list schedule events filtered by topic, tags, and time range. Merges database schedule events with Google Calendar events. |
+| `configure_topic_calendar` | 2 (`calendar`) | `topic`* (string), `color_id` (string), `include_in_morning_briefing` (boolean), `prefix_tag` (string), `sync_to_google_default` (boolean), `target_calendar_id` (string) | Customize virtual sub-calendar settings for a topic: custom bracket prefix tag, Google Calendar color ID (1-11), internal-only vs Google sync default, and morning briefing inclusion. |
+| `delete_topic_event` | 2 (`calendar`) | `event_id`* (integer) | Delete a topic-tagged schedule event by ID, removing it from the database and any synced Google Calendars (including partner's calendar). |
+| `update_topic_event` | 2 (`calendar`) | `event_id`* (integer), `description` (string), `end_time` (string), `start_time` (string), `tags` ([]string), `title` (string) | Update an existing schedule event's title, time, notes, tags, or sync status across database and Google Calendars. |
+
+### 6.11 `baby` (5 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `upsert_baby_profile` | 2 (`baby`) | `name`* (string), `date_of_birth`* (string), `allergies_notes` (string), `birth_weight_grams` (integer), `current_weight_grams` (integer), `due_date` (string), `gender` (string), `height_cm` (number), `id` (integer), `pediatrician_info` (string) | Create or update a baby/child profile with name, date of birth, due date, birth weight, current height/weight, pediatrician details, and allergies. |
+| `log_baby_care` | 2 (`baby`) | `log_type`* (string), `baby_id` (integer), `baby_name` (string), `details` (string), `force` (boolean), `timestamp` (string), `unit` (string), `value_numeric` (number) | Log a baby care event: feeding (ml/breast), diaper (wet/dirty/both), sleep duration, temperature, medication (with automatic safety cooldown check), milestone, or growth measurement. |
+| `query_baby_logs_and_trends` | 2 (`baby`) | `baby_id` (integer), `baby_name` (string), `end_time` (string), `limit` (integer), `log_type` (string), `start_time` (string), `time_range` (string) | Query baby care logs and aggregated trend statistics (total feeding volume, sleep totals, diaper count, last medication, fever checks) over a time range (e.g. today, last 24h, 3 days, 7 days). |
+| `get_baby_milestone_suggestions` | 2 (`baby`) | `baby_id` (integer), `baby_name` (string), `category` (string) | Get developmental milestone insights, current Wonder Weeks cognitive leap, upcoming vaccination schedule, recommended pediatric checkups, feeding transitions, and wake windows based on exact age. |
+| `manage_baby_inventory` | 2 (`baby`) | `action`* (string), `delta` (number), `item_name` (string), `low_threshold` (number), `quantity` (number), `unit` (string) | Track and manage baby supplies (formula, diapers, wipes, Vitamin D drops). View stock levels, record consumption or restocks, and check low-threshold alerts. |
+
+### 6.12 `house` (4 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `save_house_contract_or_receipt` | 2 (`house`) | `record_type`* (string), `title`* (string), `amount` (number), `contact_details` (string), `contract_id` (integer), `currency` (string), `expiration_date` (string), `key_terms` (string), `notice_period_days` (integer), `start_date` (string), `vendor_or_landlord` (string) | Store or update house leases, mortgages, utility contracts, appliance warranties, insurance policies, and repair receipts. |
+| `list_house_contracts` | 2 (`house`) | `expiring_within_days` (integer), `record_type` (string), `search_query` (string) | List and search house contracts, leases, warranties, insurance policies, or receipts with optional expiration and category filters. |
+| `manage_home_maintenance` | 2 (`house`) | `action`* (string), `category` (string), `contractor_info` (string), `interval_days` (integer), `item_id` (integer), `next_due_at` (string), `notes` (string), `overdue_only` (boolean), `task_name` (string) | Manage preventive home upkeep schedules (HVAC, plumbing, appliances, pest control), log completions, list overdue tasks, or get seasonal suggestions. |
+| `manage_vehicle_asset` | 2 (`house`) | `action`* (string), `annual_test_expiry` (string), `asset_id` (integer), `current_mileage_km` (integer), `insurance_expiry` (string), `last_service_date` (string), `license_plate` (string), `name` (string), `next_service_mileage_km` (integer), `notes` (string) | Log and track family vehicles, annual licensing/test dates, insurance policy expiry, odometer mileage, and service maintenance history. |
+
+### 6.13 `finance` (4 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `log_financial_transaction` | 2 (`finance`) | `amount`* (number), `category`* (string), `currency` (string), `is_shared` (boolean), `merchant` (string), `notes` (string), `source` (string), `transaction_date` (string), `type` (string) | Record an expense or income transaction with automatic category budget threshold checking and >30% historical average anomaly detection. |
+| `get_financial_summary` | 2 (`finance`) | `category` (string), `end_date` (string), `start_date` (string), `user_id` (string) | Aggregate spending and income summary by category, user, and date range against monthly budgets. |
+| `set_category_budget` | 2 (`finance`) | `category`* (string), `monthly_limit`* (number), `alert_threshold_pct` (number), `currency` (string) | Configure or update monthly budget limits and alert thresholds per category. |
+| `manage_recurring_bills` | 2 (`finance`) | `action`* (string), `auto_renew` (boolean), `bill_id` (integer), `billing_cycle` (string), `category` (string), `currency` (string), `expected_amount` (number), `name` (string), `next_due_day` (integer) | List, add, update, or delete recurring subscriptions and utility bills. |
+
+### 6.14 `automation` (13 tools)
+
+| Tool | Tier | Parameters (`*` = required) | Description |
+| :--- | :--- | :--- | :--- |
+| `register_external_api` | 2 (`automation`) | `name`* (string), `base_url`* (string), `auth_headers` (string), `default_method` (string), `description` (string) | Register an external REST API or Webhook connector with securely encrypted authentication headers (e.g. Bearer token, API Key). |
+| `list_external_apis` | 2 (`automation`) | — | List all registered external API connectors available to the user and family group (with auth headers securely masked). |
+| `call_external_api` | 2 (`automation`) | `body` (string), `connector_id` (integer), `connector_name` (string), `method` (string), `path` (string), `query_params` (string), `url` (string) | Execute an external HTTP request using a registered API connector or direct URL, protected by strict SSRF guardrails against local and private networks. |
+| `create_automation_rule` | 2 (`automation`) | `name`* (string), `trigger_type`* (string), `trigger_topic`* (string), `action_instruction`* (string), `condition_json` (string), `is_active` (boolean) | Create an event-driven automation rule (When -> If -> Then) triggered by data mutations, keywords, or threshold limits. |
+| `list_automation_rules` | 2 (`automation`) | `trigger_topic` (string) | List configured automation rules, optionally filtered by topic. |
+| `delete_automation_rule` | 2 (`automation`) | `rule_id`* (integer) | Delete an existing automation rule by its numeric ID. |
+| `update_user_preferences` | 2 (`automation`) | `briefing_topics` (string), `default_currency` (string), `preferred_language` (string), `quiet_hours_end` (string), `quiet_hours_start` (string), `standing_instructions` (string), `tone_persona` (string) | Update runtime user preferences, persona tone, default currency, quiet hours, briefing topics, and custom standing instructions for the assistant. |
+| `get_user_preferences` | 2 (`automation`) | — | Retrieve current user customization preferences, persona settings, and standing instructions. |
+| `upsert_personal_crm` | 2 (`automation`) | `person_name`* (string), `gift_ideas_and_sizes` (string), `id` (integer), `important_dates` (string), `medical_notes` (string), `relationship` (string) | Save or update a personal/family CRM contact with important dates (birthdays, anniversaries), gift ideas, clothing/shoe sizes, and medical notes. |
+| `query_personal_crm` | 2 (`automation`) | `query` (string), `relationship` (string) | Search personal and family CRM contacts by name, relationship, gift ideas, or medical notes. |
+| `schedule_workflow` | 2 (`automation`) | `name`* (string), `cron_expression`* (string), `instruction`* (string) | Schedules a recurring autonomous prompt/workflow instruction using a cron expression. |
+| `list_workflows` | 2 (`automation`) | — | Lists all scheduled recurring workflows and their cron expressions for the current user. |
+| `delete_workflow` | 2 (`automation`) | `id`* (string) | Deletes a scheduled recurring workflow by its ID. |
+<!-- END GENERATED: tool-catalog -->
+
+### Module behaviour (hand-maintained)
+
+What each module adds to the system prompt and whether its writes emit `MutationEvent`s (rollback/audit/partner sync). Tool lists live in the generated tables above.
+
+| Module (`Name()`) | Package Path | `SystemPromptSection` Injects | Emits `MutationEvent`? |
+| :--- | :--- | :--- | :---: |
+| **`durability`** | [`internal/domains/durability`](./internal/domains/durability/module.go) | Undo (`undo_last_action`), change history, and JSON/CSV export instructions. | `undo_last_action`: Yes (`action: "undo"`) |
+| **`memory`** | [`internal/domains/memory`](./internal/domains/memory/module.go) | Active `EntityProfile` cards + pinned `TopicMemory` facts for the user/family. | `save_topic_memory`: Yes<br>`upsert_entity_profile`: Yes |
+| **`shared`** | [`internal/domains/shared`](./internal/domains/shared/module.go) | Configured `SharedSpace` topics, permissions, and notify modes for the family. | `configure_shared_topic`: Yes<br>`create_shared_reminder`: Yes<br>`complete_shared_reminder`: Yes |
+| **`schedule`** | [`internal/domains/schedule`](./internal/domains/schedule/module.go) | Configured `TopicCalendarConfig` prefixes/colors + upcoming 7-day `ScheduleEvent` items. | All except `list_topic_schedule`: Yes |
+| **`baby`** | [`internal/domains/baby`](./internal/domains/baby/module.go) | Exact baby age (days/weeks/months + adjusted age), current developmental leap, medication cooldown status, and low inventory alerts. | `upsert_baby_profile`: Yes<br>`log_baby_care`: Yes<br>`manage_baby_inventory` (`set`/`adjust`): Yes |
+| **`house`** | [`internal/domains/house`](./internal/domains/house/module.go) | Expiring contracts/warranties within notice window, overdue/upcoming maintenance tasks, and vehicle test/insurance/service alerts. | All mutating actions: Yes |
+| **`finance`** | [`internal/domains/finance`](./internal/domains/finance/module.go) | Current month spending vs. `CategoryBudget` thresholds and upcoming `RecurringBill` due dates (next 7 days). | All mutating actions: Yes |
+| **`automation`** | [`internal/domains/automation`](./internal/domains/automation/module.go) | User's `PreferredLanguage`, `TonePersona`, `DefaultCurrency`, `QuietHours`, `StandingInstructions`, and upcoming 30-day CRM birthdays/anniversaries. | `register_external_api`, `create_automation_rule`, `delete_automation_rule`, `update_user_preferences`, `upsert_personal_crm`: Yes |
+
+**Google Calendar availability (*BL-1*).** One factory, `orchestrator.NewCalendarFactory`, builds every per-user Calendar client (used by `schedule`, `workspace_calendar` and the engine). It returns `orchestrator.ErrCalendarNotConnected` only when the user has no stored token; an unreadable/undecodable token is a wrapped error. Callers distinguish three outcomes and never fail silently:
+- *not connected* — normal: the tool result says so and suggests `/connect`; no warning is logged.
+- *connected but failing* (token unusable or Google API error) — `slog.Warn("google calendar operation failed", op, user_id, error)` (never event content) **and** a line in the tool result: `list_topic_schedule` appends "Google Calendar could not be reached…" (also when no local events were found); `schedule_topic_event` reports `⚠️ Sync failed — saved in MyPA only` (partner: `⚠️ Sync failed — shared in the family space only`); `update_topic_event`/`delete_topic_event` say the Google copy was not updated/removed.
+- *no calendar integration wired* — silent (tests/dev).
+Failed syncs are **not retried**; the event stays in MyPA with an empty `external_google_event_id`.
 
 ---
 
@@ -609,7 +762,7 @@ The consumer loop guarantees resilient, bounded message processing:
 - **Code Generation:** Configured via [`gqlgen.yml`](./gqlgen.yml). Run `go run github.com/99designs/gqlgen generate` after editing `internal/graph/schema.graphqls` (always save files with UTF-8 encoding without BOM).
 - **Resolver Decoupling & Positive Authorization (Milestone 1C):** `graph.Resolver` receives explicit domain repository interfaces (`BabyRepo`, `FinanceRepo`, `HouseRepo`, `ScheduleRepo`, `SharedRepo`, `MemoryRepo`, `AutomationRepo`, `UserRepo`), `durability.RollbackEngine`, and `events.EventBus`. Direct `r.DB.DB` calls are eliminated across domain resolvers.
   - **Safe ID Parsing:** All string entity IDs are strictly validated via [`toolutil.ParseID`](./internal/domains/toolutil/toolutil.go), rejecting empty, non-numeric, or `<= 0` values.
-  - **Positive Multi-Tenant Authorization:** Enforced via `resolveTenantAndActor`. Admin roles can target any `familyGroup`; non-admin callers are strictly bounded to their authenticated JWT/Context `familyGroup`.
+  - **Positive Multi-Tenant Authorization:** Enforced via `resolveTenantAndActor`. Only *global* admins (`IsGlobalAdmin`: JWT role admin) can target any `familyGroup`; tenant-bound admins (the dashboard) and members are strictly bounded to their authenticated `familyGroup`; missing claims are rejected (*P3-2*). A caller **without a family group is its own tenant** (its user ID — the same fallback as the orchestrator's `CallContext.TenantFamilyGroup`); there is no shared `"default"` tenant, and claims with neither user ID nor family group are refused. Dropping the family filter is only ever an explicit global-admin read: `wantsAllTenants(claims, familyGroup)` (no family group or `"*"`), used by `AuditSessions`, `UserSessions`, `ActivePairingCodes` and `MutationLogs`; `"*"` is never accepted as a tenant to read from or write into (*DE-2*).
   - **MutationEvent Emission:** Every state-changing GraphQL mutation captures `BeforeJSON` and `AfterJSON` snapshots and publishes an [`events.MutationEvent`](./internal/events/bus.go) to `r.EventBus`, triggering audit logging, partner sync notifications, and automation rules across the system.
 
 | Domain | GraphQL Object Types | Queries (`type Query`) | Mutations (`type Mutation`) |
@@ -631,7 +784,7 @@ The consumer loop guarantees resilient, bounded message processing:
 - **Centralized Typed Client ([`dashboard/src/lib/graphql.ts`](./dashboard/src/lib/graphql.ts)):** Implements `graphqlFetch<TData, TVariables>` with automatic `Authorization: Bearer <DASHBOARD_API_SECRET>` header injection, endpoint discovery via `GRAPHQL_ENDPOINT` / `NEXT_PUBLIC_PROXY_URL`, and complete TypeScript type declarations for all domain entities.
 - **Clean Empty States & Zero Mock Data:** Hardcoded mock statistics in `dashboard/src/app/baby/page.tsx` and other life domain consoles are completely removed. All pages render clean empty states when database records are absent.
 - **Client Error Boundary ([`dashboard/src/app/error.tsx`](./dashboard/src/app/error.tsx)):** React client error boundary component catching uncaught rendering errors, displaying user-friendly diagnostics, and providing a clean reset/retry action.
-- **Comprehensive Vitest Component Test Suite:** Automated component testing with Vitest and `@testing-library/react` (31 tests across 4 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`), verifying typed GraphQL client queries, error boundaries, empty states, and form interactions.
+- **Comprehensive Vitest Component Test Suite:** Automated component testing with Vitest and `@testing-library/react` (4 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`), verifying typed GraphQL client queries, error boundaries, empty states, and form interactions.
 
 | Route | Source File | Primary GraphQL Operations Used |
 | :--- | :--- | :--- |
@@ -654,39 +807,60 @@ The consumer loop guarantees resilient, bounded message processing:
 
 ### 8.1 Environment Variables ([`internal/config/config.go`](./internal/config/config.go) & [`internal/crypto/aes.go`](./internal/crypto/aes.go))
 
+**Startup validation:** every `cmd/*/main.go` calls `cfg.Validate(<service>)` ([`internal/config/validate.go`](./internal/config/validate.go)) right after `config.Load()` and exits non-zero, listing *all* problems at once (`errors.Join`), if a required key is missing, whitespace-only, or still an `.env.example` placeholder (`your-…` / `<YOUR_…>`).
+
+| Service | Always required | Conditional |
+| :--- | :--- | :--- |
+| `gateway` | `RABBITMQ_URL` | `TELEGRAM_SECRET_TOKEN` (valid format) if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_URL` set; `TELEGRAM_BOT_TOKEN` if `TELEGRAM_WEBHOOK_URL` set; `TWILIO_AUTH_TOKEN` if `TWILIO_ACCOUNT_SID` set |
+| `orchestrator` | `ENCRYPTION_KEY`, `JWT_SECRET` (≠ `ENCRYPTION_KEY`), `DASHBOARD_API_SECRET`, `DASHBOARD_FAMILY_GROUP`, `DATABASE_URL`, `REDIS_URL`, `RABBITMQ_URL`, `GEMINI_API_KEY` | `TWILIO_AUTH_TOKEN` if `TWILIO_ACCOUNT_SID` set |
+| `proxy` | `GATEWAY_URL`, `ORCHESTRATOR_URL` | — |
+| `audit-worker` | `DATABASE_URL`, `RABBITMQ_URL` | — |
+
+`TestEnvExampleListsEveryRequiredKey` enforces that `.env.example` documents every key `Validate` can demand.
+
 | Environment Variable | Viper Config Key | Default | Used By | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `ALLOWED_USERS` | `server.allowed_users` | `""` | `orchestrator` | Comma-separated bootstrap users: `"platform_id:Name:Role:FamilyGroup"` |
+| `LOG_LEVEL` | *(direct `os.Getenv`, `internal/logging`)* | `info` | all Go services | `debug`/`info`/`warn`/`error`. Message content is logged only at `debug` (*P3-3*); at `info` user messages appear as `message_id` + `text_len`. GORM logs through the same JSON handler (`db.newSQLLogger`, *BL-2*): only failed or slow (> 200 ms) statements, as `SQL executed` with `trace.sql` using `$n` placeholders — bound values are never logged — and `record not found` is not logged at all |
 | `DEFAULT_TIMEZONE` | `server.default_timezone` | `"UTC"` | `orchestrator` | Default IANA timezone injected into system prompt |
+| `WEEK_START_DAY` | `server.week_start_day` | `"Sunday"` | `orchestrator` | First day of the household week, stated in the system prompt (*P2-6*); invalid values fall back to the default |
+| `WEEKEND_DAYS` | `server.weekend_days` | `"Friday,Saturday"` | `orchestrator` | Comma-separated weekend days for the system prompt (*P2-6*) |
 | `GATEWAY_URL` | `server.gateway_url` | `http://gateway:8080` | `proxy` | Internal upstream URL for webhook proxy |
 | `ORCHESTRATOR_URL` | `server.orchestrator_url` | `http://orchestrator:8081` | `proxy` | Internal upstream URL for GraphQL/OAuth proxy |
-| `DATABASE_URL` | `database.url` | — | `orchestrator`, `audit-worker` | PostgreSQL connection string (`postgres://...`) |
-| `REDIS_URL` | `redis.url` | — | `orchestrator` | Redis connection string (`redis://redis:6379/0`) |
-| `RABBITMQ_URL` | `rabbitmq.url` | — | `gateway`, `orchestrator`, `audit-worker` | AMQP 0-9-1 URL (`amqp://...`) |
-| `ENCRYPTION_KEY` | `encryption.key` | Required in prod | `orchestrator` (`internal/crypto`) | Primary 32-byte secret for HKDF-SHA256 salted AES-256-GCM encryption at rest; fails fast on boot in production if missing |
-| `TELEGRAM_SECRET_TOKEN` | `telegram.secret_token` | `""` | `gateway` | Shared webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header using constant-time compare |
-| `DASHBOARD_API_SECRET` | `server.dashboard_api_secret` | `""` | `orchestrator`, `proxy`, `dashboard` | Secret token used by web dashboard / proxy to authenticate to `/graphql` |
+| `BACKUP_AGE_RECIPIENTS` | *(direct `os.Getenv`, `db.BackupOptionsFromEnv`)* | `""` | `orchestrator` | Comma-separated age public keys (`age1…`) used to encrypt backups; empty → unencrypted backups with a warning (*P3-4*) |
+| `BACKUP_AGE_IDENTITY_FILE` | *(direct `os.Getenv`, `db.RestoreOptionsFromEnv`)* | `""` | `orchestrator` | Path to the age private key; needed only to `/restore` an encrypted backup (*P3-4*) |
+| `DATABASE_URL` | `database.url` | — | `orchestrator`, `audit-worker` | PostgreSQL connection string (`postgres://...`). **Host runs only** (`localhost`): compose sets the container value itself from `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` + host `postgres` and never reads this one (`TestCompose_ContainerURLsTargetServiceNames`) |
+| `REDIS_URL` | `redis.url` | — | `orchestrator` | Redis connection string. **Host runs only** (`redis://localhost:6379/0`); containers always use `redis://redis:6379/0` |
+| `RABBITMQ_URL` | `rabbitmq.url` | — | `gateway`, `orchestrator`, `audit-worker` | AMQP 0-9-1 URL. **Host runs only** (`localhost`); containers get one built from `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` + host `rabbitmq` |
+| `RABBITMQ_PREFETCH` | `rabbitmq.prefetch` | `4` | `orchestrator` | Max concurrent conversation turns; users run in parallel, each user's messages in order (*P2-8*) |
+| `ENCRYPTION_KEY` | `encryption.key` | **Required** (orchestrator) | `orchestrator` (`internal/crypto`) | Primary secret for HKDF-SHA256 salted AES-256-GCM encryption at rest; orchestrator refuses to start if missing/placeholder. Dev fallback key only inside `go test` binaries |
+| `TELEGRAM_SECRET_TOKEN` | `telegram.secret_token` | Required if Telegram configured | `gateway` | Shared webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header using constant-time compare; also sent as `secret_token` in `setWebhook`. 1–256 chars `[A-Za-z0-9_-]`. Gateway refuses to start if missing while `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_URL` is set |
+| `TELEGRAM_WEBHOOK_URL` | `telegram.webhook_url` | `""` | `gateway` | Public URL of `/webhook/telegram`; when set, the gateway registers it via `setWebhook` on startup (requires `TELEGRAM_BOT_TOKEN`) |
+| `DASHBOARD_API_SECRET` | `server.dashboard_api_secret` | **Required** (orchestrator) | `orchestrator`, `proxy`, `dashboard` | Secret token used by web dashboard / proxy to authenticate to `/graphql` |
+| `DASHBOARD_FAMILY_GROUP` | `server.dashboard_family_group` | **Required** (orchestrator) | `orchestrator`, `dashboard` | Family group the dashboard secret is bound to (tenant-bound admin, *P3-2*); the dashboard sends it on every query (`getDashboardFamilyGroup`) |
 | `GRAPHQL_ENDPOINT` | *(dashboard env)* | `http://proxy:8000/graphql` | `dashboard` | Upstream GraphQL URL used by Next.js server actions and SSR data fetching |
-| `JWT_SECRET` | `server.jwt_secret` | `ENCRYPTION_KEY` | `orchestrator`, `proxy` | Secret key used for signing and verifying HMAC-SHA256 Bearer JWT claims on `/graphql` |
+| `JWT_SECRET` | `server.jwt_secret` | **Required** (orchestrator); must differ from `ENCRYPTION_KEY` | `orchestrator`, `proxy` | Secret key used for signing and verifying HMAC-SHA256 Bearer JWT claims on `/graphql` |
 | `GEMINI_API_KEY` | `gemini.api_key` | — | `orchestrator` | Google AI Studio API key |
 | `GEMINI_MODEL` | `gemini.model` | `"gemini-2.5-flash"` | `orchestrator` | Primary Gemini chat/tool-calling model |
-| `TELEGRAM_BOT_TOKEN` | `telegram.bot_token` | — | `orchestrator` | Telegram Bot token |
-| `TWILIO_ACCOUNT_SID` | `twilio.account_sid` | — | `orchestrator` | Twilio Account SID for WhatsApp |
-| `TWILIO_AUTH_TOKEN` | `twilio.auth_token` | — | `orchestrator` | Twilio Auth Token for WhatsApp |
+| `TELEGRAM_BOT_TOKEN` | `telegram.bot_token` | — | `orchestrator`, `gateway` | Telegram Bot token (gateway uses it only for `setWebhook`) |
+| `TWILIO_ACCOUNT_SID` | `twilio.account_sid` | — | `orchestrator`, `gateway` | Twilio Account SID for WhatsApp; when set, the gateway requires `TWILIO_AUTH_TOKEN` at startup |
+| `TWILIO_AUTH_TOKEN` | `twilio.auth_token` | — | `orchestrator`, `gateway` | Twilio Auth Token for WhatsApp; gateway verifies `X-Twilio-Signature` with it and rejects all WhatsApp webhooks when it is empty |
 | `TWILIO_FROM_NUMBER` | `twilio.from_number` | — | `orchestrator` | Twilio WhatsApp sender (`whatsapp:+14155238886`) |
+| `TWILIO_STATUS_CALLBACK_URL` | `twilio.status_callback_url` | `""` | `orchestrator` | Optional (*BL-8*): sent as `StatusCallback` with every outbound WhatsApp message, so Twilio reports delivery to the gateway's `POST /webhook/twilio/status`. Must be an absolute `https` URL (validated at startup). Empty → no delivery reports (an accepted-then-failed reply is invisible) |
 | `GOOGLE_CLIENT_ID` | `google.client_id` | — | `orchestrator` | Google OAuth2 Client ID |
 | `GOOGLE_CLIENT_SECRET` | `google.client_secret` | — | `orchestrator` | Google OAuth2 Client Secret |
 | `GOOGLE_REDIRECT_URL` | `google.redirect_url` | — | `orchestrator` | OAuth2 callback URL (`.../auth/google/callback`) |
 | `GROQ_API_KEY` | `groq.api_key` | — | `orchestrator` | Groq API key for `whisper-large-v3` audio transcription |
 | `TAVILY_API_KEY` | `tavily.api_key` | — | `orchestrator` | Tavily API key for real-time web search |
-| `AUDIT_ARCHIVE_DIR` | *(direct `os.Getenv`)* | `"/app/archives"` | `audit-worker` | Target directory for writing 30-day session archive JSONL files (mounted to `audit_archives` volume) |
+| `AUDIT_ARCHIVE_DIR` | *(direct `os.Getenv`)* | `"/app/archives"` | `audit-worker` | Target directory for 30-day session archives, written as gzip JSONL `audit_archive_<unix>.jsonl.gz` via the `ArchiveSink` interface (atomic temp+rename; *P2-9*) (mounted to `audit_archives` volume) |
 | `NGROK_AUTHTOKEN` | *(Docker Compose)* | — | `ngrok` | Ngrok authentication token |
-| `NGROK_DOMAIN` | *(Docker Compose)* | — | `ngrok` | Static Ngrok domain tunneling to `proxy:8000` |
+| `NGROK_DOMAIN` | *(Docker Compose)* | — (required; no default since *P3-5*) | `ngrok` | Static Ngrok domain tunneling to `proxy:8000`. Without it ngrok fails at startup |
+| `PGADMIN_DEFAULT_PASSWORD` | *(Docker Compose)* | — (no default since *P3-5*) | `pgadmin` | pgAdmin login password; pgAdmin refuses to start without it (only used with `--profile tools`) |
 
 ### 8.2 Built-In Cron Schedules ([`internal/scheduler/scheduler.go`](./internal/scheduler/scheduler.go))
 
 All cron schedules run in the `Asia/Jerusalem` timezone (`scheduler.go:20`):
-- **`0 2 * * *` (02:00 AM daily):** Runs [`db.BackupDatabase`](./internal/db/backup.go#L15-L43) to `/backups` (retaining last 3 backups).
+- **`0 2 * * *` (02:00 AM daily):** Runs [`db.BackupDatabase`](./internal/db/backup.go#L15-L43) to `/backups`: streamed and age-encrypted when `BACKUP_AGE_RECIPIENTS` is set (`backup_<ts>.dump.age`), retention 3 latest + 7 daily + 4 weekly (*P3-4*).
 - **`0 8 * * *` (08:00 AM daily):** Calls `engine.BroadcastProactiveMessage` to send personalized Morning Briefings to all active users.
 - **`* * * * *` (Every 1 minute):** Calls `engine.CheckAndSendReminders()` to deliver due personal reminders from `scheduled_reminders` and due collaborative reminders from `shared_task_reminders` (updating `is_sent = true` and `reminded_at`).
 - **`*/5 * * * *` (Every 5 minutes) + On-Change Hook:** Calls `ReloadWorkflows(engine, dbClient, runner)` (thread-safe via `workflowMu sync.Mutex`) to rebuild the active cron runner for both legacy workflows (`workflows` table) and active cron automation rules (`automation_rules` table WHERE `trigger_type = 'cron' AND is_active = true`, parsing cron expressions via `automation.ExtractCronSchedule` and executing actions via `automation.Runner.ExecuteAction`).
@@ -750,13 +924,13 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
 
 ### Section 3: Modular LLM Tool Integration & Two-Tier Routing
 1. **Unified `orchestrator.ToolModule` Plugin Contract:**
-   - Implement `orchestrator.ToolModule` across all 70 modular tools (28 migrated base workspace tools + 42 domain tools across 8 life domains):
+   - Every tool is provided by an `orchestrator.ToolModule` (catalogue: §6, generated):
      - `Name() string`: Unique domain identifier (e.g., `"baby"`, `"finance"`, `"durability"`).
      - `Declarations() []*genai.FunctionDeclaration`: Standardized schemas without tool-arg tenant overrides.
      - `Execute(ctx, callCtx, toolName, args) (string, error)`: Resolves tenant identity strictly from `callCtx.ActorID()` and `callCtx.TenantFamilyGroup()`.
      - `SystemPromptSection(ctx, callCtx) string`: Concise domain briefing.
 2. **Two-Tier Intent Routing (`internal/orchestrator/registry.go`):**
-   - **Tier 1 Core Tools (8 tools):** Always injected into every prompt turn (`remember_fact`, `save_topic_memory`, `search_topic_memories`, `schedule_reminder`, `search_web`, `fetch_webpage`, `undo_last_action`, `get_current_time`).
+   - **Tier 1 Core Tools** (`CoreToolNames`): always injected into every prompt turn (current list: §3.2, generated).
    - **Tier 2 Domain Groups:** Injected on-demand via `KeywordIntentMatcher` based on English and Hebrew query intent prefixes, reducing prompt token overhead by ~75% (from ~9,500 to ~1,680–2,380 tokens).
 3. **Bounded Multi-Turn Tool Recursion (`internal/orchestrator/engine.go`):**
    - Enforce a strict ceiling of `MaxToolRecursionDepth = 8` iterations per conversational turn.
@@ -792,16 +966,16 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
 ### Section 6: Redis State, Token Encryption & Session Management
 1. **AES-256-GCM Token Encryption (`internal/crypto/aes.go`):**
    - Encrypt OAuth tokens and API headers using HKDF-SHA256 salted key derivation (`[16-byte Salt][12-byte Nonce][Ciphertext + 16-byte Tag]`).
-   - Validate `ENCRYPTION_KEY` on startup (`crypto.ValidateKeyConfigured()`), failing fast (panicking) in production if missing.
+   - Validate `ENCRYPTION_KEY` on startup (`cfg.Validate(service)` + `crypto.ValidateKeyConfigured()`), exiting cleanly with an error (never panicking) if missing.
 2. **Cryptographic CSRF Nonces (`oauth_state:<nonce>`):**
    - Generate 32-byte cryptographically random hex nonces stored in Redis with 10-minute TTL.
    - Atomically validate and delete nonces via `GETDEL` on OAuth callback.
 3. **PhotoData Stripping (`SCALE-02`):**
    - Strip raw `PhotoData` bytes from `models.ChatMessage` prior to Redis persistence, storing lightweight metadata tags (`[Attachment: <mime> (<size>)]`) to drop chat list memory from >5MB to <10KB per user.
-4. **Dynamic Prompt Caching (`ctx_prompt:<familyGroup>:<module>`):**
-   - Cache domain system prompt sections in Redis with 10-minute TTL.
+4. **Dynamic Prompt Caching (`ctx_prompt:<familyGroup>:<userID>:<module>`):**
+   - Cache domain system prompt sections in Redis with 10-minute TTL, keyed per user (never per family only — sections contain personal data).
    - Check cache with Redis `MGet` (< 1ms); on cache miss, evaluate concurrently via `errgroup.Group` bounded to 800ms.
-   - Synchronously invalidate prompt cache via EventBus subscribers on any state mutation.
+   - Synchronously invalidate prompt cache for all members of the affected family via EventBus subscribers on any state mutation (`SCAN`, never `KEYS`).
 
 ### Section 7: RabbitMQ Broker, SafePublisher & DLQ Topology
 1. **Thread-Safe `SafePublisher` (`internal/broker/publisher.go`):**
@@ -810,7 +984,7 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
    - Provide dual-listener auto-reconnect monitoring `NotifyClose` channels on both connection and channel.
 2. **Declarative Exchange & DLQ Topology (`internal/broker/topology.go`):**
    - Direct primary exchange `mypa.direct` and dead-letter exchange `mypa.dlx`.
-   - Queues declared durable with dead-letter attributes routing failed messages to `telegram.inbound.dlq` and `audit.events.dlq`.
+   - Queues declared durable with dead-letter attributes routing failed messages to `inbound.messages.dlq` and `audit.events.dlq`.
 3. **Resilient Consumer Supervisor (`internal/broker/consumer.go`):**
    - Auto-reconnecting consumer loop with exponential backoff on broker loss.
    - Bounded retries: transient errors retry up to 3 times with exponential backoff tracked via `x-retries` headers.
@@ -826,7 +1000,7 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
 3. **Client Error Boundary (`dashboard/src/app/error.tsx`):**
    - Implement React client error boundaries displaying user-friendly error diagnostics with a recovery button.
 4. **Comprehensive Vitest Component Test Suites:**
-   - Maintain and run Vitest component tests (31 tests across 4 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`).
+   - Maintain and run Vitest component tests (4 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`).
    - Run tests before completion: `npm test --prefix dashboard`.
 5. **Full Container Build Verification:**
    - Always verify the complete multi-stage container build succeeds: `docker-compose build`.

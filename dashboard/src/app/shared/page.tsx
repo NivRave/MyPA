@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { Share2, Users, Bell, CheckCircle2, Clock, Plus, ShieldCheck } from "lucide-react";
 import {
   graphqlFetch,
+  getDashboardFamilyGroup,
   type SharedSpace,
   type SharedTaskReminder,
 } from "@/lib/graphql";
@@ -85,7 +86,7 @@ const CREATE_TASK_MUTATION = `
   }
 `;
 
-async function getSharedData(familyGroup: string = "Smith Family"): Promise<{
+async function getSharedData(familyGroup: string = getDashboardFamilyGroup()): Promise<{
   spaces: SharedSpace[];
   tasks: SharedTaskReminder[];
 }> {
@@ -106,7 +107,7 @@ async function getSharedData(familyGroup: string = "Smith Family"): Promise<{
 }
 
 export default async function SharedSpacesPage() {
-  const familyGroup = "Smith Family";
+  const familyGroup = getDashboardFamilyGroup();
   const { spaces, tasks } = await getSharedData(familyGroup);
 
   async function updatePermission(formData: FormData) {
@@ -119,7 +120,7 @@ export default async function SharedSpacesPage() {
 
     try {
       await graphqlFetch(UPDATE_SHARED_SPACE_MUTATION, {
-        familyGroup: "Smith Family",
+        familyGroup: getDashboardFamilyGroup(),
         topic,
         sharedWithUserId,
         canView,
@@ -154,7 +155,7 @@ export default async function SharedSpacesPage() {
 
     try {
       await graphqlFetch(CREATE_TASK_MUTATION, {
-        familyGroup: "Smith Family",
+        familyGroup: getDashboardFamilyGroup(),
         topic,
         title,
         assignedToUserId: assignedTo,

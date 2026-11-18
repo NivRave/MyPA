@@ -21,22 +21,57 @@ type Consumer struct {
 	channel    *amqp.Channel
 	queue      amqp.Queue
 	maxRetries int
+	prefetch   int
 	isClosed   bool
 	closedChan chan struct{}
 }
 
+// DefaultPrefetch bounds how many deliveries are processed concurrently (P2-8). Messages from
+// the same sender are still processed one at a time, in order.
+const DefaultPrefetch = 4
+
+// ConsumerOption configures a Consumer.
+type ConsumerOption func(*Consumer)
+
+// WithPrefetch sets the AMQP prefetch (QoS) count = max deliveries in flight across all senders.
+func WithPrefetch(n int) ConsumerOption {
+	return func(c *Consumer) {
+		if n > 0 {
+			c.prefetch = n
+		}
+	}
+}
+
+// WithMaxRetries sets the number of delivery attempts before dead-lettering.
+func WithMaxRetries(n int) ConsumerOption {
+	return func(c *Consumer) {
+		if n > 0 {
+			c.maxRetries = n
+		}
+	}
+}
+
 // NewConsumer creates a consumer with DLQ topology setup and bounded retries.
 func NewConsumer(amqpURL, queueName string, maxRetries ...int) (*Consumer, error) {
-	limit := DefaultMaxRetries
-	if len(maxRetries) > 0 && maxRetries[0] > 0 {
-		limit = maxRetries[0]
+	var opts []ConsumerOption
+	if len(maxRetries) > 0 {
+		opts = append(opts, WithMaxRetries(maxRetries[0]))
 	}
+	return NewConsumerWithOptions(amqpURL, queueName, opts...)
+}
 
+// NewConsumerWithOptions creates a consumer with DLQ topology, bounded retries and a prefetch
+// window. Deliveries run in parallel across senders and in order per sender (P2-8).
+func NewConsumerWithOptions(amqpURL, queueName string, opts ...ConsumerOption) (*Consumer, error) {
 	c := &Consumer{
 		amqpURL:    amqpURL,
 		queueName:  queueName,
-		maxRetries: limit,
+		maxRetries: DefaultMaxRetries,
+		prefetch:   DefaultPrefetch,
 		closedChan: make(chan struct{}),
+	}
+	for _, opt := range opts {
+		opt(c)
 	}
 
 	if err := c.connect(); err != nil {
@@ -71,8 +106,9 @@ func (c *Consumer) connect() error {
 		return err
 	}
 
-	// Prefetch count = 1 for fair dispatch
-	if err := ch.Qos(1, 0, false); err != nil {
+	// Prefetch window = max deliveries in flight; per-sender ordering is enforced by the
+	// keyed dispatcher in consumeLoop (P2-8).
+	if err := ch.Qos(c.prefetch, 0, false); err != nil {
 		_ = ch.Close()
 		_ = conn.Close()
 		return fmt.Errorf("failed to set QoS: %w", err)
@@ -93,35 +129,70 @@ func (c *Consumer) connect() error {
 
 // Consume starts consuming models.Message items with supervision and auto-reconnect.
 func (c *Consumer) Consume(handler func(models.Message) error) error {
-	return c.consumeLoop(func(d amqp.Delivery) {
+	return c.ConsumeWithInfo(func(msg models.Message, _ DeliveryInfo) error { return handler(msg) })
+}
+
+// ConsumeWithInfo is like Consume but also tells the handler which delivery attempt it is
+// processing, so it can e.g. stay silent on intermediate retryable failures.
+// Handler errors wrapping ErrNonRetryable are acked (never redelivered).
+func (c *Consumer) ConsumeWithInfo(handler func(models.Message, DeliveryInfo) error) error {
+	return c.consumeLoop(func(d amqp.Delivery) (string, func()) {
 		var msg models.Message
 		if err := json.Unmarshal(d.Body, &msg); err != nil {
-			slog.Error("unparseable message rejected directly to DLQ", "error", err, "body", string(d.Body))
-			// Fatal poison pill: reject without requeue -> routes directly to mypa.dlx
-			_ = d.Reject(false)
-			return
+			return "", func() {
+				// P3-3: never log the payload (it carries user messages); size is enough to debug.
+				slog.Error("unparseable message rejected directly to DLQ", "error", err, "body_bytes", len(d.Body))
+				// Fatal poison pill: reject without requeue -> routes directly to mypa.dlx
+				_ = d.Reject(false)
+			}
 		}
-
-		if err := handler(msg); err != nil {
-			c.handleFailure(d, err)
-		} else {
-			_ = d.Ack(false)
+		// One serial lane per sender: parallel across users, ordered within a user.
+		return deliveryKey(msg.Source, msg.UserID), func() {
+			err := callContained(func() error {
+				return handler(msg, deliveryInfo(getRetryCount(d.Headers), c.maxRetries))
+			})
+			c.settle(d, err)
 		}
 	})
 }
 
-// ConsumeRaw starts consuming raw bytes with supervision and auto-reconnect.
+// ConsumeRaw starts consuming raw bytes with supervision and auto-reconnect. Raw payloads have
+// no sender key, so they are processed serially (one lane) in arrival order.
 func (c *Consumer) ConsumeRaw(handler func([]byte) error) error {
-	return c.consumeLoop(func(d amqp.Delivery) {
-		if err := handler(d.Body); err != nil {
-			c.handleFailure(d, err)
-		} else {
-			_ = d.Ack(false)
+	return c.consumeLoop(func(d amqp.Delivery) (string, func()) {
+		return "", func() {
+			c.settle(d, callContained(func() error { return handler(d.Body) }))
 		}
 	})
 }
 
-func (c *Consumer) consumeLoop(processDelivery func(amqp.Delivery)) error {
+// settle acks a successful delivery or applies the failure policy (retry / DLQ / ack).
+func (c *Consumer) settle(d amqp.Delivery, err error) {
+	if err != nil {
+		c.handleFailure(d, err)
+		return
+	}
+	_ = d.Ack(false)
+}
+
+// callContained turns a handler panic into an error, so the delivery goes through the normal
+// retry/DLQ path instead of staying unacked and permanently occupying a prefetch slot.
+func callContained(fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("handler panic: %v", r)
+		}
+	}()
+	return fn()
+}
+
+// consumeLoop receives deliveries and hands each to a keyed dispatcher: route returns the
+// ordering key and the work for a delivery. Deliveries with different keys run concurrently
+// (bounded by the prefetch window); deliveries with the same key run in arrival order.
+func (c *Consumer) consumeLoop(route func(amqp.Delivery) (key string, task func())) error {
+	dispatcher := newKeyedDispatcher()
+	defer dispatcher.Wait()
+
 	for {
 		c.mu.Lock()
 		if c.isClosed {
@@ -149,10 +220,14 @@ func (c *Consumer) consumeLoop(processDelivery func(amqp.Delivery)) error {
 			continue
 		}
 
-		slog.Info("consumer listening for messages", "queue", qName)
+		slog.Info("consumer listening for messages", "queue", qName, "prefetch", c.prefetch)
 		for d := range msgs {
-			processDelivery(d)
+			key, task := route(d)
+			dispatcher.Submit(key, task)
 		}
+		// Let in-flight work settle before reconnecting so a redelivered message is never
+		// processed concurrently with its still-running original.
+		dispatcher.Wait()
 
 		// Channel closed or connection dropped
 		c.mu.Lock()
@@ -202,7 +277,16 @@ func (c *Consumer) reconnectWithBackoff() error {
 func (c *Consumer) handleFailure(d amqp.Delivery, handlerErr error) {
 	retries := getRetryCount(d.Headers)
 
-	if retries+1 >= c.maxRetries {
+	switch decideFailure(handlerErr, retries, c.maxRetries) {
+	case actionAck:
+		slog.Error("non-retryable handler failure after side effects; acking without redelivery",
+			"queue", c.queue.Name,
+			"attempt", retries+1,
+			"error", handlerErr,
+		)
+		_ = d.Ack(false)
+		return
+	case actionDeadLetter:
 		slog.Error("message delivery failed, max retries reached; rejecting to DLQ",
 			"queue", c.queue.Name,
 			"retries", retries+1,

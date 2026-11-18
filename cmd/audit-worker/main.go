@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/nivik/mypa/internal/logging"
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -18,18 +18,21 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
+	logging.Setup() // JSON on stdout at LOG_LEVEL (default info); P3-3
 
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
+	if err := cfg.Validate(config.ServiceAuditWorker); err != nil {
+		slog.Error("invalid audit-worker configuration — refusing to start", "error", err)
+		os.Exit(1)
+	}
 
 	var dbClient *db.Client
 	for i := 0; i < 5; i++ {
-		dbClient, err = db.NewClient(cfg.Database.URL)
+		dbClient, err = db.Open(cfg.Database.URL)
 		if err == nil {
 			break
 		}
@@ -40,8 +43,16 @@ func main() {
 		slog.Error("failed to connect to db after retries", "error", err)
 		os.Exit(1)
 	}
+	// P4-3: never run against a schema with pending migrations.
+	if sqlDB, sqlErr := dbClient.DB.DB(); sqlErr != nil {
+		slog.Error("failed to access database handle", "error", sqlErr)
+		os.Exit(1)
+	} else if err := db.EnsureMigrated(context.Background(), sqlDB); err != nil {
+		slog.Error("refusing to start", "error", err)
+		os.Exit(1)
+	}
 
-	consumer, err := broker.NewConsumer(cfg.RabbitMQ.URL, "audit.events")
+	consumer, err := broker.NewConsumer(cfg.RabbitMQ.URL, broker.AuditEventsQueue)
 	if err != nil {
 		slog.Error("failed to initialize rabbitmq consumer", "error", err)
 		os.Exit(1)
@@ -126,45 +137,12 @@ func archiveOldSessions(dbClient *db.Client, optionalDir ...string) error {
 		archiveDir = optionalDir[0]
 	}
 
-	if err := os.MkdirAll(archiveDir, 0755); err != nil {
-		slog.Error("failed to create archive directory", "dir", archiveDir, "error", err)
-		return fmt.Errorf("failed to create archive directory: %w", err)
-	}
-
-	filename := fmt.Sprintf("audit_archive_%d.jsonl", time.Now().Unix())
-	filePath := filepath.Join(archiveDir, filename)
-	f, err := os.Create(filePath)
+	// P2-9: gzip JSONL written atomically through an ArchiveSink (local disk today).
+	var sink ArchiveSink = localGzipSink{dir: archiveDir}
+	filePath, err := sink.Write(fmt.Sprintf("audit_archive_%d", time.Now().Unix()), sessions)
 	if err != nil {
-		slog.Error("failed to create archive file", "path", filePath, "error", err)
-		return fmt.Errorf("failed to create archive file: %w", err)
-	}
-
-	encoder := json.NewEncoder(f)
-	var encodeErr error
-	for _, s := range sessions {
-		if err := encoder.Encode(s); err != nil {
-			encodeErr = err
-			break
-		}
-	}
-	if encodeErr != nil {
-		slog.Error("failed to encode session to archive", "path", filePath, "error", encodeErr)
-		_ = f.Close()
-		_ = os.Remove(filePath)
-		return fmt.Errorf("failed to encode session: %w", encodeErr)
-	}
-
-	if err := f.Sync(); err != nil {
-		slog.Error("failed to sync archive file", "path", filePath, "error", err)
-		_ = f.Close()
-		_ = os.Remove(filePath)
-		return fmt.Errorf("failed to sync archive file: %w", err)
-	}
-
-	if err := f.Close(); err != nil {
-		slog.Error("failed to close archive file", "path", filePath, "error", err)
-		_ = os.Remove(filePath)
-		return fmt.Errorf("failed to close archive file: %w", err)
+		slog.Error("failed to write audit archive; sessions kept in the database", "dir", archiveDir, "error", err)
+		return err
 	}
 
 	// Delete only successfully archived sessions from DB
@@ -181,4 +159,3 @@ func archiveOldSessions(dbClient *db.Client, optionalDir ...string) error {
 	slog.Info("archived and deleted old sessions", "count", len(sessions), "file", filePath)
 	return nil
 }
-

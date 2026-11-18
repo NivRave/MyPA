@@ -228,7 +228,7 @@ func Time(args map[string]interface{}, key string, loc ...*time.Location) (*time
 	if val == "" {
 		return nil, nil
 	}
-	var l *time.Location = time.UTC
+	l := time.UTC
 	if len(loc) > 0 && loc[0] != nil {
 		l = loc[0]
 	}

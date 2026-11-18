@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"io"
 	"os"
 	"path/filepath"
@@ -75,12 +76,22 @@ func TestArchiveOldSessions(t *testing.T) {
 	}
 	require.NotEmpty(t, archiveFilePath, "Archive file should be created in tempDir")
 
-	// Verify content of the file
+	// P2-9: archives are gzip-compressed JSONL
+	assert.True(t, strings.HasSuffix(archiveFilePath, ".jsonl.gz"), "archive must be gzip-compressed: %s", archiveFilePath)
 	file, err := os.Open(archiveFilePath)
 	require.NoError(t, err)
 	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	require.NoError(t, err, "archive must be a valid gzip stream")
+	defer gz.Close()
 
-	b, _ := io.ReadAll(file)
+	b, err := io.ReadAll(gz)
+	require.NoError(t, err)
 	assert.Contains(t, string(b), "Old prompt")
 	assert.NotContains(t, string(b), "New prompt")
+
+	// No temp files may be left behind after a successful archive.
+	for _, f := range files {
+		assert.False(t, strings.HasSuffix(f.Name(), ".tmp"), "leftover temp file %s", f.Name())
+	}
 }

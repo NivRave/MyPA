@@ -46,9 +46,9 @@ func (r *recordingTasksClient) DeleteTask(ctx context.Context, userID string, li
 	return nil
 }
 
-// TestChallenge2_WorkspaceTasks_AntiSpoofing verifies that workspace_tasks strictly enforces
+// TestWorkspaceTasks_AntiSpoofing verifies that workspace_tasks strictly enforces
 // canonical identity (callCtx.ActorID() and callCtx.TenantFamilyGroup()) and ignores spoofed args.
-func TestChallenge2_WorkspaceTasks_AntiSpoofing(t *testing.T) {
+func TestWorkspaceTasks_AntiSpoofing(t *testing.T) {
 	client := &recordingTasksClient{}
 	bus := events.NewEventBus()
 	receivedEvents := make(chan events.MutationEvent, 20)

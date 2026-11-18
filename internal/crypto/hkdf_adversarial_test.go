@@ -72,17 +72,21 @@ func TestSEC08_LegacyUnsaltedCiphertext_BackwardCompatibility(t *testing.T) {
 	assert.Equal(t, plaintext, decrypted, "legacy ciphertext must be transparently decrypted")
 }
 
-// TestSEC08_ProductionStartupPanic_WhenMissingKey verifies that in production environments
-// outside unit testing, startup panics if ENCRYPTION_KEY is unset.
-func TestSEC08_ProductionStartupPanic_WhenMissingKey(t *testing.T) {
-	cmd := exec.Command("go", "run", "./cmd/orchestrator")
-	cmd.Dir = "../.." // project root
-	cmd.Env = append(os.Environ(), "ENV=production", "GO_ENV=production", "ENCRYPTION_KEY=")
-	output, runErr := cmd.CombinedOutput()
+// TestSEC08_ProductionStartupFails_WhenMissingKey verifies that outside unit testing the
+// orchestrator refuses to start (clean non-zero exit, no panic) if ENCRYPTION_KEY is unset —
+// including when ENV=test / GO_ENV=test is set, which must no longer unlock the dev key.
+func TestSEC08_ProductionStartupFails_WhenMissingKey(t *testing.T) {
+	for _, envMode := range []string{"production", "test"} {
+		t.Run("ENV="+envMode, func(t *testing.T) {
+			cmd := exec.Command("go", "run", "./cmd/orchestrator")
+			cmd.Dir = "../.." // project root
+			cmd.Env = append(os.Environ(), "ENV="+envMode, "GO_ENV="+envMode, "ENCRYPTION_KEY=")
+			output, runErr := cmd.CombinedOutput()
 
-	// Should exit with non-zero exit code due to panic
-	require.Error(t, runErr, "Orchestrator in production mode must fail/panic when ENCRYPTION_KEY is missing")
-	outStr := string(output)
-	assert.Contains(t, outStr, "ENCRYPTION_KEY must be configured in production", "Output must contain panic message")
-	assert.Contains(t, outStr, "panic:", "Output must indicate a runtime panic")
+			require.Error(t, runErr, "orchestrator must refuse to start when ENCRYPTION_KEY is missing")
+			outStr := string(output)
+			assert.Contains(t, outStr, "ENCRYPTION_KEY", "output must name the missing key")
+			assert.NotContains(t, outStr, "panic:", "missing configuration must be a clean error, not a panic")
+		})
+	}
 }

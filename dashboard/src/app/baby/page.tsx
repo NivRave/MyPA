@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { Baby, Heart, Scale, Ruler, AlertCircle, Plus, Sparkles, Check, Package, Clock } from "lucide-react";
 import {
   graphqlFetch,
+  getDashboardFamilyGroup,
   type BabyProfile,
   type BabyCareLog,
   type BabyInventoryItem,
@@ -111,7 +112,7 @@ const UPDATE_INVENTORY_MUTATION = `
   }
 `;
 
-async function getBabyData(familyGroup: string = "Smith Family"): Promise<{
+async function getBabyData(familyGroup: string = getDashboardFamilyGroup()): Promise<{
   profile: BabyProfile | null;
   logs: BabyCareLog[];
   inventory: BabyInventoryItem[];
@@ -159,7 +160,7 @@ async function getBabyData(familyGroup: string = "Smith Family"): Promise<{
 }
 
 export default async function BabyTrackerPage() {
-  const familyGroup = "Smith Family";
+  const familyGroup = getDashboardFamilyGroup();
   const { profile, logs, inventory, dob, ageString, milestoneSuggestions } = await getBabyData(familyGroup);
 
   async function logCare(formData: FormData) {
@@ -177,7 +178,7 @@ export default async function BabyTrackerPage() {
     try {
       await graphqlFetch(LOG_CARE_MUTATION, {
         babyId,
-        familyGroup: "Smith Family",
+        familyGroup: getDashboardFamilyGroup(),
         logType,
         valueNumeric: value,
         unit,
@@ -198,7 +199,7 @@ export default async function BabyTrackerPage() {
 
     try {
       await graphqlFetch(UPDATE_INVENTORY_MUTATION, {
-        familyGroup: "Smith Family",
+        familyGroup: getDashboardFamilyGroup(),
         itemName,
         quantityRemaining: qty,
         unit,

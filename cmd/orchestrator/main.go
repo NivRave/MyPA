@@ -2,8 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"flag"
 	"fmt"
+	"github.com/nivik/mypa/internal/logging"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/playground"
-	"golang.org/x/oauth2"
 
 	"github.com/nivik/mypa/internal/audio"
 	"github.com/nivik/mypa/internal/broker"
@@ -50,9 +50,11 @@ import (
 )
 
 func main() {
+	migrateOnly := flag.Bool("migrate-only", false, "apply database schema migrations and exit (P4-3)")
+	flag.Parse()
+
 	// Initialize logger
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
+	logging.Setup() // JSON on stdout at LOG_LEVEL (default info); P3-3
 
 	// Load config
 	cfg, err := config.Load()
@@ -60,6 +62,17 @@ func main() {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
+
+	// P4-3: schema changes are an explicit step (the `migrate` compose service runs this).
+	if *migrateOnly {
+		os.Exit(runMigrations(cfg.Database.URL))
+	}
+
+	if err := cfg.Validate(config.ServiceOrchestrator); err != nil {
+		slog.Error("invalid orchestrator configuration — refusing to start", "error", err)
+		os.Exit(1)
+	}
+	authCfg = cfg.Server
 
 	if err := crypto.ValidateKeyConfigured(); err != nil {
 		slog.Error("encryption key validation failed", "error", err)
@@ -88,7 +101,8 @@ func main() {
 	// 5. Initialize RabbitMQ Consumer
 	var consumer *broker.Consumer
 	for i := 0; i < 5; i++ {
-		consumer, err = broker.NewConsumer(cfg.RabbitMQ.URL, "telegram.inbound")
+		// Parallel across users, ordered per user; RABBITMQ_PREFETCH bounds concurrent turns (P2-8).
+		consumer, err = broker.NewConsumerWithOptions(cfg.RabbitMQ.URL, broker.InboundMessagesQueue, broker.WithPrefetch(cfg.RabbitMQ.Prefetch))
 		if err == nil {
 			break
 		}
@@ -127,7 +141,7 @@ func main() {
 	db.RegisterWave2Models()
 	var dbClient *db.Client
 	for i := 0; i < 5; i++ {
-		dbClient, err = db.NewClient(dbURL)
+		dbClient, err = db.Open(dbURL)
 		if err == nil {
 			break
 		}
@@ -136,6 +150,14 @@ func main() {
 	}
 	if err != nil {
 		slog.Error("failed to initialize database after retries", "error", err)
+		os.Exit(1)
+	}
+	// P4-3: never run against a schema with pending migrations.
+	if sqlDB, sqlErr := dbClient.DB.DB(); sqlErr != nil {
+		slog.Error("failed to access database handle", "error", sqlErr)
+		os.Exit(1)
+	} else if err := db.EnsureMigrated(ctx, sqlDB); err != nil {
+		slog.Error("refusing to start", "error", err)
 		os.Exit(1)
 	}
 
@@ -148,7 +170,7 @@ func main() {
 	tavilyClient := tavily.NewClient(cfg.Tavily.APIKey)
 
 	// 8.5 Initialize Telemetry Publisher
-	telemetryPublisher, err := broker.NewSafePublisher(cfg.RabbitMQ.URL, "audit.events")
+	telemetryPublisher, err := broker.NewSafePublisher(cfg.RabbitMQ.URL, broker.AuditEventsQueue)
 	if err != nil {
 		slog.Error("failed to initialize telemetry publisher", "error", err)
 		os.Exit(1)
@@ -202,18 +224,7 @@ func main() {
 	sharedModule := shared.NewModule(dbClient, eventBus, sharedNotifier)
 
 	// Track 1D: Multi-Schedule & Virtual Sub-Calendars
-	calendarFactory := func(calCtx context.Context, userID string) (orchestrator.CalendarClient, error) {
-		tokenBytes, err := store.GetOAuthToken(calCtx, userID)
-		if err != nil || tokenBytes == nil {
-			return nil, fmt.Errorf("unauthorized")
-		}
-		var tok oauth2.Token
-		if err := json.Unmarshal(tokenBytes, &tok); err != nil {
-			return nil, fmt.Errorf("unauthorized")
-		}
-		ts := oauthCfg.TokenSource(calCtx, &tok)
-		return calendar.NewClient(calCtx, ts)
-	}
+	calendarFactory := orchestrator.NewCalendarFactory(store.GetOAuthToken, oauthCfg)
 	scheduleModule := schedule.NewModule(dbClient, schedule.WithCalendarFactory(calendarFactory), schedule.WithEventBus(eventBus))
 
 	// Track 2E: Baby & Family Care Tracker
@@ -257,12 +268,13 @@ func main() {
 	// 9. Initialize Engine with ToolRegistry and EventBus
 	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, contactsClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone).
 		WithToolRegistry(registry).
-		WithEventBus(eventBus)
+		WithEventBus(eventBus).
+		WithCalendarConventions(orchestrator.ParseCalendarConventions(cfg.Server.WeekStartDay, cfg.Server.WeekendDays))
 
 	// Start Cron jobs
 	c := scheduler.StartCronJobs(engine, dbClient, automationRunner, cfg.Server.DefaultTimezone)
 	defer c.Stop()
-	
+
 	engine.SetWorkflowsChangedCallback(func() {
 		scheduler.ReloadWorkflows(engine, dbClient, automationRunner, cfg.Server.DefaultTimezone)
 	})
@@ -344,9 +356,48 @@ func setupAuthRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClien
 	return setupRouter(oauthCfg, store, tgClient, nil, saver)
 }
 
+// runMigrations applies all pending schema migrations and returns the process exit code.
+func runMigrations(databaseURL string) int {
+	if strings.TrimSpace(databaseURL) == "" {
+		slog.Error("DATABASE_URL is required for -migrate-only")
+		return 1
+	}
+	var client *db.Client
+	var err error
+	for i := 0; i < 10; i++ { // the database may still be starting
+		if client, err = db.Open(databaseURL); err == nil {
+			break
+		}
+		slog.Warn("migrate: database not ready, retrying", "attempt", i+1, "error", err)
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		slog.Error("migrate: cannot connect to database", "error", err)
+		return 1
+	}
+	defer client.Close()
+	sqlDB, err := client.DB.DB()
+	if err != nil {
+		slog.Error("migrate: database handle", "error", err)
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	if err := db.Migrate(ctx, sqlDB); err != nil {
+		slog.Error("migrate: failed", "error", err)
+		return 1
+	}
+	slog.Info("migrate: schema is up to date")
+	return 0
+}
+
+// authCfg holds the validated /graphql auth settings (set in main). Zero value = fail closed:
+// no dashboard secret or JWT is accepted (e.g. in tests that build the router directly).
+var authCfg config.ServerConfig
+
 func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient, dbClient *db.Client, fallbackSaver CredentialFallbackSaver, eventBus ...*events.EventBus) *http.ServeMux {
 	mux := http.NewServeMux()
-	
+
 	// GraphQL Server
 	if dbClient != nil {
 		var durEngine durability.RollbackEngine
@@ -371,13 +422,13 @@ func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient Au
 		})
 		srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: resolvers}))
 
-
-		dashboardSecret := os.Getenv("DASHBOARD_API_SECRET")
-		jwtSecret := os.Getenv("JWT_SECRET")
-		if jwtSecret == "" {
-			jwtSecret = os.Getenv("ENCRYPTION_KEY")
-		}
-		authMiddleware := graph.NewAuthMiddleware(dashboardSecret, jwtSecret)
+		// P3-2: secrets come from validated config (cfg.Validate requires JWT_SECRET, distinct from
+		// ENCRYPTION_KEY — no fallback), and the dashboard secret is bound to one family group.
+		authMiddleware := graph.NewAuthMiddleware(graph.AuthConfig{
+			DashboardSecret:      authCfg.DashboardAPISecret,
+			DashboardFamilyGroup: authCfg.DashboardFamilyGroup,
+			JWTSecret:            authCfg.JWTSecret,
+		})
 
 		graphqlHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit for GraphQL

@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -14,19 +13,21 @@ import (
 const DefaultPromptCacheTTL = 10 * time.Minute
 
 // PromptCache defines the Redis operations required by the orchestrator for dynamic prompt caching.
+// Sections are cached PER USER (familyGroup + userID + module): several modules render personal
+// data (pinned memories, persona, standing instructions), so a family-wide key would leak them.
 type PromptCache interface {
 	// GetPromptSection retrieves a single cached module section. Returns (content, found, error).
-	GetPromptSection(ctx context.Context, familyGroup, module string) (string, bool, error)
+	GetPromptSection(ctx context.Context, familyGroup, userID, module string) (string, bool, error)
 
 	// GetPromptSections retrieves multiple module prompt sections in a single roundtrip (e.g. via Redis MGet).
 	// Returns a map of module names to cached content, and a slice of module names that missed cache.
-	GetPromptSections(ctx context.Context, familyGroup string, modules []string) (hits map[string]string, misses []string, err error)
+	GetPromptSections(ctx context.Context, familyGroup, userID string, modules []string) (hits map[string]string, misses []string, err error)
 
 	// SetPromptSection persists a generated prompt section with a specified TTL.
-	SetPromptSection(ctx context.Context, familyGroup, module, content string, ttl time.Duration) error
+	SetPromptSection(ctx context.Context, familyGroup, userID, module, content string, ttl time.Duration) error
 
-	// InvalidatePromptSections deletes cached prompt sections for multiple Redis keys.
-	InvalidatePromptSections(ctx context.Context, keys ...string) error
+	// InvalidateFamilyPromptSections deletes the given modules' sections for every user in a scope.
+	InvalidateFamilyPromptSections(ctx context.Context, scope string, modules []string) (int, error)
 }
 
 // MapEventToModules resolves which ToolModule names are invalidated by a MutationEvent.
@@ -76,28 +77,24 @@ func MapEventToModules(event events.MutationEvent) []string {
 	return mods
 }
 
-// BuildPromptInvalidationKeys creates the Redis keys to delete for a MutationEvent across tenant scopes.
-func BuildPromptInvalidationKeys(event events.MutationEvent) []string {
-	modules := MapEventToModules(event)
+// BuildPromptInvalidationScopes returns the tenant scopes (first key segment) and modules a
+// MutationEvent invalidates. Scopes are the event's family group and its actor: users without a
+// family group are cached under their own ID as scope (CallContext.TenantFamilyGroup fallback).
+// Every user within each scope is invalidated, because a family-shared mutation (e.g. a family
+// pinned memory) changes every member's rendered section.
+func BuildPromptInvalidationScopes(event events.MutationEvent) (scopes []string, modules []string) {
+	modules = MapEventToModules(event)
 	if len(modules) == 0 {
-		return nil
+		return nil, nil
 	}
-
-	scopes := make(map[string]bool)
-	if fg := strings.TrimSpace(event.FamilyGroup); fg != "" {
-		scopes[fg] = true
-	}
-	if actor := strings.TrimSpace(event.ActorUserID); actor != "" {
-		scopes[actor] = true
-	}
-
-	var keys []string
-	for scope := range scopes {
-		for _, mod := range modules {
-			keys = append(keys, fmt.Sprintf("ctx_prompt:%s:%s", scope, mod))
+	seen := make(map[string]bool)
+	for _, s := range []string{event.FamilyGroup, event.ActorUserID} {
+		if s = strings.TrimSpace(s); s != "" && !seen[s] {
+			seen[s] = true
+			scopes = append(scopes, s)
 		}
 	}
-	return keys
+	return scopes, modules
 }
 
 // RegisterPromptInvalidator attaches a subscriber to EventBus that invalidates Redis prompt cache keys
@@ -108,15 +105,15 @@ func RegisterPromptInvalidator(bus *events.EventBus, cache PromptCache) {
 	}
 
 	bus.SubscribeSync(func(ctx context.Context, ev events.MutationEvent) error {
-		keys := BuildPromptInvalidationKeys(ev)
-		if len(keys) == 0 {
-			return nil
+		scopes, modules := BuildPromptInvalidationScopes(ev)
+		for _, scope := range scopes {
+			n, err := cache.InvalidateFamilyPromptSections(ctx, scope, modules)
+			if err != nil {
+				slog.Warn("prompt_cache: failed to invalidate Redis prompt cache keys", "scope", scope, "modules", modules, "error", err)
+				continue // Do not halt mutation pipeline on cache invalidation error
+			}
+			slog.Debug("prompt_cache: invalidated keys on mutation", "scope", scope, "modules", modules, "deleted", n, "topic", ev.Topic, "action", ev.Action)
 		}
-		if err := cache.InvalidatePromptSections(ctx, keys...); err != nil {
-			slog.Warn("prompt_cache: failed to invalidate Redis prompt cache keys", "keys", keys, "error", err)
-			return nil // Do not halt mutation pipeline on cache invalidation error
-		}
-		slog.Debug("prompt_cache: invalidated keys on mutation", "keys", keys, "topic", ev.Topic, "action", ev.Action)
 		return nil
 	})
 }

@@ -1,12 +1,11 @@
 package scheduler
 
 import (
-	"os"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/testutil"
 	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
@@ -42,15 +41,8 @@ func TestReloadWorkflows_ConcurrentSafety(t *testing.T) {
 }
 
 func TestReloadWorkflows_WithPostgres(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://mypa:mypa_password@localhost:5432/mypa?sslmode=disable"
-	}
-
-	client, err := db.NewClient(dsn)
-	if err != nil {
-		t.Skipf("skipping live postgres test: %v", err)
-	}
+	client, cleanup := testutil.NewTestDB(t)
+	defer cleanup()
 
 	// Clean up previous test entries
 	_ = client.DB.Where("user_id = ?", "test-scheduler-user").Delete(&models.Workflow{})
@@ -64,7 +56,7 @@ func TestReloadWorkflows_WithPostgres(t *testing.T) {
 	runner := automation.NewRunner(client, nil)
 
 	// 1. Insert active legacy workflow
-	err = client.SaveWorkflow(models.Workflow{
+	err := client.SaveWorkflow(models.Workflow{
 		UserID:         "test-scheduler-user",
 		Name:           "Test Legacy Workflow",
 		CronExpression: "0 8 * * *",

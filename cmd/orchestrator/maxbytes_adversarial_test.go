@@ -51,7 +51,7 @@ func TestAdversarial_Orchestrator_GraphQL_MaxBytesReader(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"data":{"bytes_read":%d}}`, len(body))))
+		_, _ = fmt.Fprintf(w, `{"data":{"bytes_read":%d}}`, len(body))
 	})
 
 	srv := httptest.NewServer(graphqlHandler)

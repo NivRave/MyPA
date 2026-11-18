@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/nivik/mypa/internal/logging"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -15,8 +16,7 @@ import (
 
 func main() {
 	// Initialize logger
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
+	logging.Setup() // JSON on stdout at LOG_LEVEL (default info); P3-3
 
 	// Load config
 	cfg, err := config.Load()
@@ -25,18 +25,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	gatewayStr := cfg.Server.GatewayURL
-	if gatewayStr == "" {
-		slog.Error("GATEWAY_URL is required")
-		os.Exit(1)
-	}
-	orchestratorStr := cfg.Server.OrchestratorURL
-	if orchestratorStr == "" {
-		slog.Error("ORCHESTRATOR_URL is required")
+	if err := cfg.Validate(config.ServiceProxy); err != nil {
+		slog.Error("invalid proxy configuration — refusing to start", "error", err)
 		os.Exit(1)
 	}
 
-	mux, err := setupProxy(gatewayStr, orchestratorStr)
+	mux, err := setupProxy(cfg.Server.GatewayURL, cfg.Server.OrchestratorURL)
 	if err != nil {
 		slog.Error("failed to setup proxy", "error", err)
 		os.Exit(1)
@@ -45,7 +39,7 @@ func main() {
 	// Start server
 	port := cfg.Server.ProxyPort
 	slog.Info("unified API gateway starting", "port", port)
-	
+
 	addr := fmt.Sprintf(":%d", port)
 	srv := &http.Server{
 		Addr:              addr,
@@ -82,7 +76,6 @@ func setupProxy(gatewayStr, orchestratorStr string) (*http.ServeMux, error) {
 	gatewayProxy.Transport = proxyTransport
 	orchestratorProxy.Transport = proxyTransport
 
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/webhook/telegram") || strings.HasPrefix(r.URL.Path, "/webhook/twilio") {
@@ -112,7 +105,13 @@ func setupProxy(gatewayStr, orchestratorStr string) (*http.ServeMux, error) {
 			return
 		}
 
-		slog.Warn("proxy route not found", "path", r.URL.Path)
+		// BL-6: this is the public endpoint — browsers and scanners hit random paths constantly.
+		// Routine, not an incident: answer quietly so real WARNs stand out.
+		if r.URL.Path == "/favicon.ico" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		slog.Debug("proxy route not found", "path", r.URL.Path)
 		http.Error(w, "Not found", http.StatusNotFound)
 	})
 

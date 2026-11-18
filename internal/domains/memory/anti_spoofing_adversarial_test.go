@@ -22,18 +22,12 @@ func (m *mockLLMForMemory) GenerateEmbedding(ctx context.Context, text string) (
 
 type mockDBForMemory struct {
 	orchestrator.DBClient
-	savedMemory models.Memory
 }
 
-func (m *mockDBForMemory) SaveMemory(mem models.Memory) error {
-	m.savedMemory = mem
-	return nil
-}
-
-// TestChallenge2_Memory_AntiSpoofing verifies that memory tools (remember_fact, save_topic_memory,
+// TestMemory_AntiSpoofing verifies that memory tools (remember_fact, save_topic_memory,
 // search_topic_memories, upsert_entity_profile) strictly use callCtx.ActorID() and callCtx.TenantFamilyGroup(),
 // preventing caller-controlled argument overrides from cross-tenant spoofing.
-func TestChallenge2_Memory_AntiSpoofing(t *testing.T) {
+func TestMemory_AntiSpoofing(t *testing.T) {
 	repo := newInMemoryRepo()
 	bus := events.NewEventBus()
 	receivedEvents := make(chan events.MutationEvent, 20)
@@ -77,10 +71,6 @@ func TestChallenge2_Memory_AntiSpoofing(t *testing.T) {
 		res, err := mod.Execute(context.Background(), callCtx, "remember_fact", adversarialArgs)
 		require.NoError(t, err)
 		assert.Contains(t, res, "saved to family memory successfully")
-
-		// Verify legacy DB save used ActorID
-		assert.Equal(t, "mem_canonical_actor", dbMock.savedMemory.UserID)
-		assert.NotEqual(t, "hacker_attacker_666", dbMock.savedMemory.UserID)
 
 		// Verify V2 repo saved under canonical UserID and FamilyGroup
 		memories, err := repo.SearchTopicMemories(context.Background(), "mem_canonical_actor", "mem_legit_family", "", "", nil)

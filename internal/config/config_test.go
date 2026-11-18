@@ -38,6 +38,9 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 8000, cfg.Server.ProxyPort)
 	assert.Equal(t, "UTC", cfg.Server.DefaultTimezone)
 	assert.Equal(t, "gemini-2.5-flash", cfg.Gemini.Model)
+	assert.Equal(t, "Sunday", cfg.Server.WeekStartDay)
+	assert.Equal(t, "Friday,Saturday", cfg.Server.WeekendDays)
+	assert.Equal(t, 4, cfg.RabbitMQ.Prefetch)
 }
 
 func TestLoad_EnvVars(t *testing.T) {
@@ -67,12 +70,14 @@ func TestLoad_EnvVars(t *testing.T) {
 	t.Setenv("TWILIO_ACCOUNT_SID", "twilio-sid")
 	t.Setenv("TWILIO_AUTH_TOKEN", "twilio-token")
 	t.Setenv("TWILIO_FROM_NUMBER", "whatsapp:+1234567890")
+	t.Setenv("TWILIO_STATUS_CALLBACK_URL", "https://example.com/webhook/twilio/status")
 	t.Setenv("TAVILY_API_KEY", "tavily-key")
 
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
+	assert.Equal(t, "https://example.com/webhook/twilio/status", cfg.Twilio.StatusCallbackURL)
 	assert.Equal(t, "America/New_York", cfg.Server.DefaultTimezone)
 	assert.Equal(t, "http://localhost:8080", cfg.Server.GatewayURL)
 	assert.Equal(t, "http://localhost:8081", cfg.Server.OrchestratorURL)

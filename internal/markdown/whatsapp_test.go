@@ -37,6 +37,28 @@ func TestToWhatsApp(t *testing.T) {
 			input:    "```go\nfmt.Println(\"Hi\")\n```",
 			expected: "```\nfmt.Println(\"Hi\")\n```",
 		},
+		// BL-10: WhatsApp cannot nest identical markers, so "*a *b**" shows literal asterisks.
+		// A heading is already bold; bold inside it (or inside bold) must not add markers.
+		{
+			name:     "Heading containing bold",
+			input:    "### 📅 **Event Details**",
+			expected: "*📅 Event Details*",
+		},
+		{
+			name:     "Bold nested in bold",
+			input:    "**Total: **42** items**",
+			expected: "*Total: 42 items*",
+		},
+		{
+			name:     "Heading keeps italic (bold-italic is valid)",
+			input:    "## Plan for *today*",
+			expected: "*Plan for _today_*",
+		},
+		{
+			name:     "Bold after heading still works",
+			input:    "# Title\n\nSome **bold** text.",
+			expected: "*Title*\n\nSome *bold* text.",
+		},
 	}
 
 	for _, tt := range tests {

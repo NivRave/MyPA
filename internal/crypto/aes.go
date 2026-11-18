@@ -32,9 +32,13 @@ var (
 	defaultDevFallbackKey = "mypa-default-dev-insecure-encryption-key"
 )
 
-func isTestMode() bool {
-	return flag.Lookup("test.v") != nil || os.Getenv("ENV") == "test" || os.Getenv("GO_ENV") == "test"
-}
+// ErrKeyNotConfigured is returned when no ENCRYPTION_KEY is available outside a test binary.
+var ErrKeyNotConfigured = errors.New("ENCRYPTION_KEY is not configured")
+
+// testBinaryDetector reports whether we are running inside a `go test` binary. Only then may the
+// deterministic dev key be used. Environment variables (ENV/GO_ENV) are deliberately NOT honoured:
+// they can be set on a production container by accident. Overridable by tests in this package.
+var testBinaryDetector = func() bool { return flag.Lookup("test.v") != nil }
 
 func getRawSecret(passphrase string) ([]byte, error) {
 	if passphrase != "" {
@@ -44,15 +48,13 @@ func getRawSecret(passphrase string) ([]byte, error) {
 	if envKey != "" {
 		return []byte(envKey), nil
 	}
-	if isTestMode() {
+	if testBinaryDetector() {
 		devFallbackWarningOnce.Do(func() {
-			slog.Warn("TEST MODE: ENCRYPTION_KEY not set; using deterministic dev fallback key")
+			slog.Warn("TEST BINARY: ENCRYPTION_KEY not set; using deterministic dev fallback key")
 		})
 		return []byte(defaultDevFallbackKey), nil
 	}
-
-	slog.Error("FATAL: ENCRYPTION_KEY is required and cannot be empty in production environments")
-	panic("ENCRYPTION_KEY must be configured in production")
+	return nil, ErrKeyNotConfigured
 }
 
 // ValidateKeyConfigured ensures ENCRYPTION_KEY is available during startup.
@@ -71,11 +73,11 @@ func deriveKeyWithSalt(rawSecret, salt []byte) ([]byte, error) {
 }
 
 // DeriveKey derives a 32-byte AES-256 key from a passphrase or environment.
+// It returns nil when no key is configured (never a silent fallback key).
 func DeriveKey(passphrase string) []byte {
 	rawSecret, err := getRawSecret(passphrase)
 	if err != nil {
-		hash := sha256.Sum256([]byte(defaultDevFallbackKey))
-		return hash[:]
+		return nil
 	}
 	hash := sha256.Sum256(rawSecret)
 	return hash[:]

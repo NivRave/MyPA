@@ -34,10 +34,10 @@ func (r *recordingCalClient) DeleteEvent(ctx context.Context, eventID string) er
 	return nil
 }
 
-// TestChallenge2_WorkspaceCalendar_AntiSpoofing verifies that workspace_calendar strictly
+// TestWorkspaceCalendar_AntiSpoofing verifies that workspace_calendar strictly
 // resolves the calendar client via callCtx.ActorID() and publishes events scoped to
 // callCtx.TenantFamilyGroup(), ignoring any spoofed parameters in args.
-func TestChallenge2_WorkspaceCalendar_AntiSpoofing(t *testing.T) {
+func TestWorkspaceCalendar_AntiSpoofing(t *testing.T) {
 	mockClient := &recordingCalClient{}
 	var factoryReceivedUser string
 

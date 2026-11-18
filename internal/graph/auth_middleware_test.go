@@ -32,7 +32,7 @@ func generateTestJWT(claims AuthClaims, secret string) string {
 func TestAuthMiddleware(t *testing.T) {
 	dashboardSecret := "test-dashboard-secret-xyz"
 	jwtSecret := "test-jwt-secret-12345"
-	middleware := NewAuthMiddleware(dashboardSecret, jwtSecret)
+	middleware := NewAuthMiddleware(AuthConfig{DashboardSecret: dashboardSecret, DashboardFamilyGroup: "TestFamily", JWTSecret: jwtSecret})
 
 	var capturedClaims *AuthClaims
 	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { DollarSign, PieChart, RefreshCw, AlertCircle, Plus, ArrowUpRight, ArrowDownLeft } from "lucide-react";
 import {
   graphqlFetch,
+  getDashboardFamilyGroup,
   type FinancialTransaction,
   type CategoryBudget,
   type RecurringBill,
@@ -55,7 +56,7 @@ const SET_BUDGET_MUTATION = `
   }
 `;
 
-async function getFinanceData(familyGroup: string = "Smith Family"): Promise<{
+async function getFinanceData(familyGroup: string = getDashboardFamilyGroup()): Promise<{
   transactions: FinancialTransaction[];
   budgets: CategoryBudget[];
   bills: RecurringBill[];
@@ -79,7 +80,7 @@ async function getFinanceData(familyGroup: string = "Smith Family"): Promise<{
 }
 
 export default async function FinancePage() {
-  const familyGroup = "Smith Family";
+  const familyGroup = getDashboardFamilyGroup();
   const { transactions, budgets, bills } = await getFinanceData(familyGroup);
 
   // Compute spend totals by category
@@ -107,7 +108,7 @@ export default async function FinancePage() {
 
     try {
       await graphqlFetch(LOG_TRANSACTION_MUTATION, {
-        familyGroup: "Smith Family",
+        familyGroup: getDashboardFamilyGroup(),
         type: typeArg,
         category,
         merchant,
@@ -129,7 +130,7 @@ export default async function FinancePage() {
 
     try {
       await graphqlFetch(SET_BUDGET_MUTATION, {
-        familyGroup: "Smith Family",
+        familyGroup: getDashboardFamilyGroup(),
         category,
         monthlyLimit,
         currency,

@@ -2,119 +2,43 @@ package db
 
 import (
 	"context"
-	"fmt"
-	"net/url"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/testutil/pgtest"
 	"github.com/pgvector/pgvector-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
-	postgresDriver "gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
 
-var (
-	testPgOnce      sync.Once
-	testPgContainer *postgres.PostgresContainer
-	testPgAdminDSN  string
-	testPgAdminDB   *gorm.DB
-	testPgErr       error
-)
-
-func getTestSingletonPostgres(ctx context.Context) (string, *gorm.DB, error) {
-	testPgOnce.Do(func() {
-		dbName := "testdb"
-		dbUser := "user"
-		dbPassword := "password"
-
-		container, err := postgres.Run(ctx,
-			"pgvector/pgvector:pg16",
-			postgres.WithDatabase(dbName),
-			postgres.WithUsername(dbUser),
-			postgres.WithPassword(dbPassword),
-			testcontainers.WithWaitStrategy(
-				wait.ForLog("database system is ready to accept connections").
-					WithOccurrence(2).
-					WithStartupTimeout(60*time.Second),
-			),
-		)
-		if err != nil {
-			testPgErr = fmt.Errorf("failed to start postgres container: %w", err)
-			return
-		}
-
-		connStr, err := container.ConnectionString(ctx, "sslmode=disable")
-		if err != nil {
-			testPgErr = fmt.Errorf("failed to get connection string: %w", err)
-			return
-		}
-
-		adminDB, err := gorm.Open(postgresDriver.Open(connStr), &gorm.Config{})
-		if err != nil {
-			testPgErr = fmt.Errorf("failed to connect admin gorm db: %w", err)
-			return
-		}
-
-		testPgContainer = container
-		testPgAdminDSN = connStr
-		testPgAdminDB = adminDB
-	})
-
-	return testPgAdminDSN, testPgAdminDB, testPgErr
+// newEmptyTestDatabase returns the DSN of a fresh, isolated database that is dropped on test
+// cleanup (BL-11: one shared helper for every package, see internal/testutil/pgtest).
+func newEmptyTestDatabase(t *testing.T) string {
+	t.Helper()
+	return pgtest.NewDatabase(t)
 }
 
 func setupTestDB(t *testing.T) (*Client, func()) {
 	t.Helper()
-	ctx := context.Background()
+	testDSN := newEmptyTestDatabase(t)
 
-	adminDSN, adminDB, err := getTestSingletonPostgres(ctx)
+	client, err := NewClientAutoMigrate(testDSN)
 	if err != nil {
-		t.Fatalf("failed to initialize postgres testcontainer: %v", err)
-	}
-
-	uniqueID := strings.ReplaceAll(uuid.New().String(), "-", "")
-	dbName := fmt.Sprintf("testdb_%s", uniqueID)
-
-	if err := adminDB.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName)).Error; err != nil {
-		t.Fatalf("failed to create isolated test database %s: %v", dbName, err)
-	}
-
-	u, err := url.Parse(adminDSN)
-	if err != nil {
-		_ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
-		t.Fatalf("failed to parse admin DSN: %v", err)
-	}
-	u.Path = "/" + dbName
-	testDSN := u.String()
-
-	client, err := NewClient(testDSN)
-	if err != nil {
-		_ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
-		t.Fatalf("failed to create db client for %s: %v", dbName, err)
+		t.Fatalf("failed to create db client: %v", err)
 	}
 
 	cleanup := func() {
 		if client != nil {
 			_ = client.Close()
 		}
-		if adminDB != nil {
-			_ = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
-		}
 	}
-
 	return client, cleanup
 }
 
-func TestNewClient_EmptyDSN(t *testing.T) {
-	_, err := NewClient("")
+func TestOpen_EmptyDSN(t *testing.T) {
+	_, err := Open("")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "database URL is empty")
 }
@@ -179,37 +103,28 @@ func TestAuditEvents(t *testing.T) {
 func TestMemories(t *testing.T) {
 	client, cleanup := setupTestDB(t)
 	defer cleanup()
+	ctx := context.Background()
 
 	userID := "user-456"
 
 	vec1 := make([]float32, 3072)
 	vec1[0] = 1.0
-	
-	mem1 := models.Memory{
-		UserID:    userID,
-		Fact:      "I love apples",
-		Embedding: pgvector.NewVector(vec1),
-		CreatedAt: time.Now(),
-	}
-	err := client.SaveMemory(mem1)
-	require.NoError(t, err)
+	require.NoError(t, client.SaveTopicMemory(ctx, &models.TopicMemory{
+		UserID: userID, Topic: models.TopicPersonal, Subtopic: "fact", Scope: "personal",
+		Fact: "I love apples", Embedding: pgvector.NewVector(vec1),
+	}))
 
 	vec2 := make([]float32, 3072)
 	vec2[1] = 1.0
-
-	mem2 := models.Memory{
-		UserID:    userID,
-		Fact:      "I love bananas",
-		Embedding: pgvector.NewVector(vec2),
-		CreatedAt: time.Now(),
-	}
-	err = client.SaveMemory(mem2)
-	require.NoError(t, err)
+	require.NoError(t, client.SaveTopicMemory(ctx, &models.TopicMemory{
+		UserID: userID, Topic: models.TopicPersonal, Subtopic: "fact", Scope: "personal",
+		Fact: "I love bananas", Embedding: pgvector.NewVector(vec2),
+	}))
 
 	searchVec := make([]float32, 3072)
 	searchVec[0] = 0.9
 
-	results, err := client.SearchMemories([]string{userID}, pgvector.NewVector(searchVec), 1)
+	results, err := client.SearchSimilarMemories(ctx, userID, "", pgvector.NewVector(searchVec), 1)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "I love apples", results[0].Fact)
@@ -298,27 +213,32 @@ func TestTopicMemories_VectorSearchAndFallback(t *testing.T) {
 	assert.Equal(t, "Baby drinks 150ml milk formula", results[0].Fact)
 	assert.Equal(t, "baby", results[0].Topic)
 
-	// 2. Test fallback to legacy memories when 0 topic memories match
+	// 2. A fact that exists only in the legacy table becomes searchable after the P2-4 migration
+	// (there is no runtime fallback to the legacy table any more).
 	legacyUser := "user-legacy-only"
 	legacyVec := make([]float32, 3072)
 	legacyVec[2] = 1.0
-	legacyMem := models.Memory{
+	require.NoError(t, client.DB.Create(&models.Memory{
 		UserID:    legacyUser,
 		Fact:      "Grandma's birthday is on June 12",
 		Scope:     "personal",
 		Embedding: pgvector.NewVector(legacyVec),
 		CreatedAt: time.Now(),
-	}
-	err = client.SaveMemory(legacyMem)
-	require.NoError(t, err)
+	}).Error)
 
 	queryLegacy := make([]float32, 3072)
 	queryLegacy[2] = 0.9
+	before, err := client.SearchSimilarMemories(ctx, legacyUser, "", pgvector.NewVector(queryLegacy), 1)
+	require.NoError(t, err)
+	assert.Empty(t, before, "no runtime read of the legacy table")
+
+	_, err = MigrateLegacyMemories(client.DB)
+	require.NoError(t, err)
 	fbResults, err := client.SearchSimilarMemories(ctx, legacyUser, "", pgvector.NewVector(queryLegacy), 1)
 	require.NoError(t, err)
 	require.Len(t, fbResults, 1)
 	assert.Equal(t, "Grandma's birthday is on June 12", fbResults[0].Fact)
-	assert.Equal(t, "general", fbResults[0].Topic)
+	assert.Equal(t, models.TopicPersonal, fbResults[0].Topic)
 }
 
 func TestSharedReminders_DueAndSent(t *testing.T) {
@@ -413,5 +333,3 @@ func TestDB_PingAndClose(t *testing.T) {
 	err = client.Close()
 	require.NoError(t, err, "Close must succeed on connection pool")
 }
-
-

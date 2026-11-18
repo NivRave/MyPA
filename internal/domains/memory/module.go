@@ -264,7 +264,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 		if sb.Len() > 0 {
 			sb.WriteString("\n")
 		}
-		sb.WriteString("### Pinned Knowledge & Rules\n")
+		sb.WriteString("### Pinned Knowledge\n")
 		for _, mem := range activePinned {
 			sub := ""
 			if mem.Subtopic != "" {
@@ -274,7 +274,9 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 		}
 	}
 
-	return strings.TrimSpace(sb.String())
+	// P3-1: profiles and pinned memories are stored user data (possibly derived from untrusted
+	// input); present them as data, not instructions.
+	return orchestrator.WrapUserProvidedData("memory_profiles_and_pins", strings.TrimSpace(sb.String()))
 }
 
 func (m *Module) executeRememberFact(ctx context.Context, callCtx orchestrator.CallContext, repo db.MemoryV2Repository, userID, familyGroup string, args map[string]interface{}) (string, error) {
@@ -292,8 +294,8 @@ func (m *Module) executeRememberFact(ctx context.Context, callCtx orchestrator.C
 	if callCtx.LLM == nil {
 		return "❌ LLM client not configured for memory embedding.", nil
 	}
-	if callCtx.DB == nil {
-		return "❌ Database client not configured.", nil
+	if repo == nil {
+		return "❌ Memory store not configured.", nil
 	}
 
 	embedding, err := callCtx.LLM.GenerateEmbedding(ctx, fact)
@@ -301,33 +303,26 @@ func (m *Module) executeRememberFact(ctx context.Context, callCtx orchestrator.C
 		return "❌ Failed to save memory (embedding error).", nil
 	}
 
-	vec := pgvector.NewVector(embedding)
-	mem := models.Memory{
-		UserID:    userID,
-		Scope:     scope,
-		Fact:      fact,
-		Embedding: vec,
-		CreatedAt: time.Now(),
+	// P2-4: remember_fact is an alias that writes a TopicMemory (the single memory store).
+	topic := models.TopicPersonal
+	if scope == "family" {
+		topic = models.TopicFamily
 	}
-
-	if err := callCtx.DB.SaveMemory(mem); err != nil {
+	now := time.Now()
+	if err := repo.SaveTopicMemory(ctx, &models.TopicMemory{
+		UserID:          userID,
+		FamilyGroup:     familyGroup,
+		Topic:           topic,
+		Subtopic:        "fact",
+		TagsJSON:        "[]",
+		Fact:            fact,
+		Scope:           scope,
+		CreatedByUserID: userID,
+		ValidFrom:       now,
+		Embedding:       pgvector.NewVector(embedding),
+		CreatedAt:       now,
+	}); err != nil {
 		return "❌ Failed to save memory to database.", nil
-	}
-
-	if repo != nil {
-		_ = repo.SaveTopicMemory(ctx, &models.TopicMemory{
-			UserID:          userID,
-			FamilyGroup:     familyGroup,
-			Topic:           models.TopicPersonal,
-			Subtopic:        "fact",
-			TagsJSON:        "[]",
-			Fact:            fact,
-			Scope:           scope,
-			CreatedByUserID: userID,
-			ValidFrom:       time.Now(),
-			Embedding:       vec,
-			CreatedAt:       time.Now(),
-		})
 	}
 
 	if callCtx.EventBus != nil {

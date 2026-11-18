@@ -1,0 +1,20 @@
+# golangci-lint v2 configuration (P5-3). Version is pinned in .github/workflows/ci.yml.
+version: "2"
+
+linters:
+  # v2 "standard" set: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  settings:
+    staticcheck:
+      # golangci-lint's default set, minus two quick-fix suggestions:
+      # - QF1008 ("remove embedded field from selector"): `db.Dialector.Name()` is clearer
+      #   than the promoted `db.Name()`.
+      # - QF1012 (`b.WriteString(fmt.Sprintf(...))` -> `fmt.Fprintf(&b, ...)`): 107 sites in
+      #   prompt/message builders, none hot; a mass rewrite is churn without benefit.
+      checks: ["all", "-ST1000", "-ST1003", "-ST1016", "-ST1020", "-ST1021", "-ST1022", "-QF1008", "-QF1012"]
+  exclusions:
+    # std-error-handling ignores unchecked errors that are conventionally ignored
+    # (Close on read paths, fmt.Fprint*, os.Setenv in tests, ...). Close on a WRITE path
+    # must still be checked explicitly in code review: the preset cannot tell them apart.
+    presets:
+      - std-error-handling

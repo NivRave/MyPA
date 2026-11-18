@@ -18,6 +18,21 @@ func ToWhatsApp(source string) string {
 
 	var buf bytes.Buffer
 	listDepth := 0
+	// boldDepth counts open bold contexts (headings and **strong**). WhatsApp cannot nest identical
+	// markers, so "*" is written only when entering the outermost one and leaving it (BL-10).
+	boldDepth := 0
+	openBold := func() {
+		if boldDepth == 0 {
+			buf.WriteString("*")
+		}
+		boldDepth++
+	}
+	closeBold := func() {
+		boldDepth--
+		if boldDepth == 0 {
+			buf.WriteString("*")
+		}
+	}
 
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		switch node := n.(type) {
@@ -34,24 +49,20 @@ func ToWhatsApp(source string) string {
 				buf.Write(node.Value)
 			}
 		case *ast.Emphasis:
-			if entering {
-				if node.Level == 2 {
-					buf.WriteString("*")
-				} else {
-					buf.WriteString("_")
-				}
-			} else {
-				if node.Level == 2 {
-					buf.WriteString("*")
-				} else {
-					buf.WriteString("_")
-				}
+			switch {
+			case node.Level == 2 && entering:
+				openBold()
+			case node.Level == 2:
+				closeBold()
+			default:
+				buf.WriteString("_")
 			}
 		case *ast.Heading:
 			if entering {
-				buf.WriteString("*")
+				openBold()
 			} else {
-				buf.WriteString("*\n\n")
+				closeBold()
+				buf.WriteString("\n\n")
 			}
 		case *ast.Paragraph:
 			if !entering {

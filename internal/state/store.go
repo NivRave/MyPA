@@ -58,6 +58,12 @@ func formatAttachmentMarker(mimeType string, dataLen int) string {
 	return fmt.Sprintf("[Attachment: %s (%.1f KB)]", mimeType, sizeKB)
 }
 
+// Chat history bounds (P2-9).
+const (
+	ChatHistoryMaxMessages = 30
+	ChatHistoryTTL         = 24 * time.Hour
+)
+
 // AppendChatHistory adds a message to the user's conversation history.
 // SCALE-02 Defense-in-depth: guarantees raw PhotoData bytes are never persisted to Redis.
 func (s *Store) AppendChatHistory(ctx context.Context, userID string, msg models.ChatMessage) error {
@@ -82,10 +88,11 @@ func (s *Store) AppendChatHistory(ctx context.Context, userID string, msg models
 	pipe := s.client.Pipeline()
 	// Add to list (right push)
 	pipe.RPush(ctx, key, bytes)
-	// Keep only the last 20 messages
-	pipe.LTrim(ctx, key, -20, -1)
-	// Refresh TTL to 1 hour
-	pipe.Expire(ctx, key, 1*time.Hour)
+	// Keep only the last ChatHistoryMaxMessages messages (P2-9; readers must tolerate a cut
+	// between a tool call and its response — see orchestrator.sanitizeHistory)
+	pipe.LTrim(ctx, key, -ChatHistoryMaxMessages, -1)
+	// Refresh TTL (P2-9: 24h — the durable copy of every turn lives in Postgres audit_sessions)
+	pipe.Expire(ctx, key, ChatHistoryTTL)
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {
@@ -277,29 +284,46 @@ const (
 	DefaultPromptCacheTTL = 10 * time.Minute
 )
 
-// SetPromptSection stores a generated system prompt section in Redis with a TTL.
-func (s *Store) SetPromptSection(ctx context.Context, familyGroup, module, content string, ttl time.Duration) error {
-	fg := strings.TrimSpace(familyGroup)
-	mod := strings.TrimSpace(module)
-	if fg == "" || mod == "" {
-		return errors.New("familyGroup and module cannot be empty")
+// promptKeySegment percent-encodes '%' and ':' so that user-controlled identifiers (family group
+// names, platform IDs) can never shift segment boundaries: ("a:b","c") and ("a","b:c") stay distinct.
+var promptKeySegmentEncoder = strings.NewReplacer("%", "%25", ":", "%3A")
+
+func promptKeySegment(s string) string {
+	return promptKeySegmentEncoder.Replace(strings.TrimSpace(s))
+}
+
+// globEscaper escapes Redis glob metacharacters so a segment is matched literally in SCAN MATCH.
+var globEscaper = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`)
+
+// PromptCacheKey builds ctx_prompt:<familyGroup>:<userID>:<module> with encoded segments.
+// Sections are per user because several modules (memory, automation, schedule) render
+// personal data; a family-only key leaked one member's sections to the others.
+func PromptCacheKey(familyGroup, userID, module string) string {
+	return fmt.Sprintf("%s:%s:%s:%s", PromptCachePrefix,
+		promptKeySegment(familyGroup), promptKeySegment(userID), promptKeySegment(module))
+}
+
+func promptScopeValid(familyGroup, userID, module string) bool {
+	return strings.TrimSpace(familyGroup) != "" && strings.TrimSpace(userID) != "" && strings.TrimSpace(module) != ""
+}
+
+// SetPromptSection stores a generated system prompt section for one user in Redis with a TTL.
+func (s *Store) SetPromptSection(ctx context.Context, familyGroup, userID, module, content string, ttl time.Duration) error {
+	if !promptScopeValid(familyGroup, userID, module) {
+		return errors.New("familyGroup, userID and module cannot be empty")
 	}
 	if ttl <= 0 {
 		ttl = DefaultPromptCacheTTL
 	}
-	key := fmt.Sprintf("%s:%s:%s", PromptCachePrefix, fg, mod)
-	return s.client.Set(ctx, key, content, ttl).Err()
+	return s.client.Set(ctx, PromptCacheKey(familyGroup, userID, module), content, ttl).Err()
 }
 
-// GetPromptSection retrieves a cached system prompt section for a familyGroup and module.
-func (s *Store) GetPromptSection(ctx context.Context, familyGroup, module string) (string, bool, error) {
-	fg := strings.TrimSpace(familyGroup)
-	mod := strings.TrimSpace(module)
-	if fg == "" || mod == "" {
+// GetPromptSection retrieves a cached system prompt section for a user and module.
+func (s *Store) GetPromptSection(ctx context.Context, familyGroup, userID, module string) (string, bool, error) {
+	if !promptScopeValid(familyGroup, userID, module) {
 		return "", false, nil
 	}
-	key := fmt.Sprintf("%s:%s:%s", PromptCachePrefix, fg, mod)
-	val, err := s.client.Get(ctx, key).Result()
+	val, err := s.client.Get(ctx, PromptCacheKey(familyGroup, userID, module)).Result()
 	if err == redis.Nil {
 		return "", false, nil
 	} else if err != nil {
@@ -310,19 +334,18 @@ func (s *Store) GetPromptSection(ctx context.Context, familyGroup, module string
 
 // GetPromptSections fetches multiple prompt sections in a single roundtrip via MGet.
 // On Redis error, it degrades gracefully and treats all requested modules as cache misses.
-func (s *Store) GetPromptSections(ctx context.Context, familyGroup string, modules []string) (map[string]string, []string, error) {
+func (s *Store) GetPromptSections(ctx context.Context, familyGroup, userID string, modules []string) (map[string]string, []string, error) {
 	hits := make(map[string]string)
 	if len(modules) == 0 {
 		return hits, nil, nil
 	}
-	fg := strings.TrimSpace(familyGroup)
-	if fg == "" {
+	if strings.TrimSpace(familyGroup) == "" || strings.TrimSpace(userID) == "" {
 		return hits, modules, nil
 	}
 
 	keys := make([]string, len(modules))
 	for i, m := range modules {
-		keys[i] = fmt.Sprintf("%s:%s:%s", PromptCachePrefix, fg, strings.TrimSpace(m))
+		keys[i] = PromptCacheKey(familyGroup, userID, m)
 	}
 
 	vals, err := s.client.MGet(ctx, keys...).Result()
@@ -357,6 +380,101 @@ func (s *Store) InvalidatePromptSections(ctx context.Context, keys ...string) er
 		return nil
 	}
 	return s.client.Del(ctx, validKeys...).Err()
+}
+
+// SetTurnDomains stores the tool domains used by a user's last turn (turn_domains:<userID>) so a
+// follow-up message can keep them. An empty list deletes the key.
+func (s *Store) SetTurnDomains(ctx context.Context, userID string, domains []string, ttl time.Duration) error {
+	key := "turn_domains:" + promptKeySegment(userID)
+	if len(domains) == 0 {
+		return s.client.Del(ctx, key).Err()
+	}
+	b, err := json.Marshal(domains)
+	if err != nil {
+		return err
+	}
+	return s.client.Set(ctx, key, b, ttl).Err()
+}
+
+// GetTurnDomains returns the domains stored by SetTurnDomains (nil if none or expired).
+func (s *Store) GetTurnDomains(ctx context.Context, userID string) ([]string, error) {
+	val, err := s.client.Get(ctx, "turn_domains:"+promptKeySegment(userID)).Bytes()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	if err := json.Unmarshal(val, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// InboundDedupTTL bounds how long a processed inbound message ID is remembered.
+// Telegram retries webhooks for well under a day; RabbitMQ redeliveries are immediate.
+const InboundDedupTTL = 24 * time.Hour
+
+// InboundMessageKey builds inbound:<source>:<scope>:<messageID>. Telegram message_id is unique
+// only per chat, so scope is the chat ID (falling back to the user ID, e.g. WhatsApp, whose
+// MessageSid is globally unique anyway). Segments are encoded like prompt-cache keys.
+func InboundMessageKey(source, chatID, userID, messageID string) string {
+	scope := chatID
+	if strings.TrimSpace(scope) == "" {
+		scope = userID
+	}
+	if strings.TrimSpace(source) == "" {
+		source = "unknown"
+	}
+	return fmt.Sprintf("inbound:%s:%s:%s", promptKeySegment(source), promptKeySegment(scope), promptKeySegment(messageID))
+}
+
+// ClaimInbound atomically marks an inbound message as being processed (SET NX EX).
+// It returns false if the message was already claimed, i.e. it is a duplicate delivery.
+func (s *Store) ClaimInbound(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	if ttl <= 0 {
+		ttl = InboundDedupTTL
+	}
+	return s.client.SetNX(ctx, key, time.Now().UTC().Format(time.RFC3339), ttl).Result()
+}
+
+// ReleaseInbound removes a claim so a retryable failure can be redelivered and processed.
+func (s *Store) ReleaseInbound(ctx context.Context, key string) error {
+	return s.client.Del(ctx, key).Err()
+}
+
+// InvalidateFamilyPromptSections deletes the cached sections of the given modules for EVERY user
+// in a family scope (ctx_prompt:<scope>:*:<module>). It uses SCAN (non-blocking, unlike KEYS)
+// with glob-escaped segments, and returns the number of keys deleted.
+func (s *Store) InvalidateFamilyPromptSections(ctx context.Context, scope string, modules []string) (int, error) {
+	if strings.TrimSpace(scope) == "" || len(modules) == 0 {
+		return 0, nil
+	}
+	suffixes := make(map[string]bool, len(modules))
+	for _, m := range modules {
+		if strings.TrimSpace(m) != "" {
+			suffixes[":"+promptKeySegment(m)] = true
+		}
+	}
+
+	pattern := fmt.Sprintf("%s:%s:*", PromptCachePrefix, globEscaper.Replace(promptKeySegment(scope)))
+	var toDelete []string
+	iter := s.client.Scan(ctx, 0, pattern, 500).Iterator()
+	for iter.Next(ctx) {
+		key := iter.Val()
+		if idx := strings.LastIndex(key, ":"); idx >= 0 && suffixes[key[idx:]] {
+			toDelete = append(toDelete, key)
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return 0, fmt.Errorf("scan prompt cache keys: %w", err)
+	}
+	if len(toDelete) == 0 {
+		return 0, nil
+	}
+	n, err := s.client.Del(ctx, toDelete...).Result()
+	return int(n), err
 }
 
 

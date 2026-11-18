@@ -89,6 +89,9 @@ type AuditSession struct {
 	TotalDurationMs int64     `json:"total_duration_ms"`
 	TotalTokens     int       `json:"total_tokens"`
 	Status          string    `json:"status"` // "success" or "failed"
+	// ToolSummary is a bounded one-line record of the tools the turn executed and their results
+	// (P2-9). It travels with the session into the 30-day cold archive.
+	ToolSummary string `json:"tool_summary,omitempty" gorm:"type:text"`
 }
 
 // AuditEvent represents a single action/span within a session.

@@ -7,11 +7,15 @@
 
 # Go
 /vendor/
+/bin/
+/coverage
 *.test
 *.out
 
-# Environment
+# Environment: every .env variant holds secrets; only the template is tracked (BL-3)
 .env
+.env.*
+!.env.example
 
 # IDE
 .idea/
@@ -38,3 +42,4 @@ node_modules/
 # Internal agent workspaces & audit reports
 .agents/
 REVIEW.md
+docs/reviews/

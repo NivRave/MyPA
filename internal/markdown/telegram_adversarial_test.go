@@ -40,10 +40,10 @@ func verifyHTMLTagBalancing(t *testing.T, chunk string) {
 	assert.Empty(t, stack, "Chunk has unclosed tags at the end: %v in chunk: %s", stack, chunk)
 }
 
-// TestChallenge3_SafeChunkTelegramHTML_DeepNestedTags verifies that deeply nested tags
+// TestSafeChunkTelegramHTML_DeepNestedTags verifies that deeply nested tags
 // (<pre><code><b><i>...</i></b></code></pre>) spanning 4000-char chunk boundaries remain
 // syntactically balanced across all chunks.
-func TestChallenge3_SafeChunkTelegramHTML_DeepNestedTags(t *testing.T) {
+func TestSafeChunkTelegramHTML_DeepNestedTags(t *testing.T) {
 	// Construct 10,000 characters of deeply nested HTML
 	var innerContent strings.Builder
 	for innerContent.Len() < 10000 {
@@ -70,9 +70,9 @@ func TestChallenge3_SafeChunkTelegramHTML_DeepNestedTags(t *testing.T) {
 	}
 }
 
-// TestChallenge3_SafeChunkTelegramHTML_LinksAcrossChunkBoundaries verifies that anchor tags
+// TestSafeChunkTelegramHTML_LinksAcrossChunkBoundaries verifies that anchor tags
 // (<a href="...">) with query params spanning chunk boundaries are properly closed and reopened.
-func TestChallenge3_SafeChunkTelegramHTML_LinksAcrossChunkBoundaries(t *testing.T) {
+func TestSafeChunkTelegramHTML_LinksAcrossChunkBoundaries(t *testing.T) {
 	linkURL := "https://example.com/oauth/callback?client_id=12345&redirect_uri=https%3A%2F%2Fmypa.app&state=secret_token_abcdef"
 	linkOpen := fmt.Sprintf("<a href=\"%s\">", linkURL)
 
@@ -101,9 +101,9 @@ func TestChallenge3_SafeChunkTelegramHTML_LinksAcrossChunkBoundaries(t *testing.
 	}
 }
 
-// TestChallenge3_SafeChunkTelegramHTML_MultibyteUTF8_AdversarialBoundary stresses
+// TestSafeChunkTelegramHTML_MultibyteUTF8_AdversarialBoundary stresses
 // multibyte characters (Hebrew 2-byte, CJK 3-byte, Emoji 4-byte) across chunk boundaries.
-func TestChallenge3_SafeChunkTelegramHTML_MultibyteUTF8_AdversarialBoundary(t *testing.T) {
+func TestSafeChunkTelegramHTML_MultibyteUTF8_AdversarialBoundary(t *testing.T) {
 	testCases := []struct {
 		name     string
 		char     string
@@ -172,9 +172,9 @@ func TestChallenge3_SafeChunkTelegramHTML_MultibyteUTF8_AdversarialBoundary(t *t
 	}
 }
 
-// TestChallenge3_NoDoubleEscaping verifies that text containing < and > is properly escaped once
+// TestNoDoubleEscaping verifies that text containing < and > is properly escaped once
 // and NOT double-escaped into &amp;lt; and &amp;gt;.
-func TestChallenge3_NoDoubleEscaping(t *testing.T) {
+func TestNoDoubleEscaping(t *testing.T) {
 	inputs := []struct {
 		name     string
 		input    string
@@ -207,10 +207,10 @@ func TestChallenge3_NoDoubleEscaping(t *testing.T) {
 	}
 }
 
-// TestChallenge3_SafeChunkTelegramHTML_UnclosedTags verifies that unclosed tags
+// TestSafeChunkTelegramHTML_UnclosedTags verifies that unclosed tags
 // (<b><i><u>... without matching closing tags) are automatically closed before chunk ends
 // and reopened in subsequent chunks, producing valid balanced HTML in each chunk.
-func TestChallenge3_SafeChunkTelegramHTML_UnclosedTags(t *testing.T) {
+func TestSafeChunkTelegramHTML_UnclosedTags(t *testing.T) {
 	unclosedHTML := "<b><i><u>" + strings.Repeat("This text has unclosed formatting tags. ", 200)
 	chunks := SafeChunkTelegramHTML(unclosedHTML, 4000)
 
@@ -221,9 +221,9 @@ func TestChallenge3_SafeChunkTelegramHTML_UnclosedTags(t *testing.T) {
 	}
 }
 
-// TestChallenge3_SafeChunkTelegramHTML_TagsSplitAcrossBoundary places tags directly
+// TestSafeChunkTelegramHTML_TagsSplitAcrossBoundary places tags directly
 // across the 4000-character boundary and verifies that chunking never splits inside a tag.
-func TestChallenge3_SafeChunkTelegramHTML_TagsSplitAcrossBoundary(t *testing.T) {
+func TestSafeChunkTelegramHTML_TagsSplitAcrossBoundary(t *testing.T) {
 	// Pad prefix to exactly 3995 characters
 	prefix := strings.Repeat("A", 3995)
 	tag := "<b>Bold Content Across Boundary</b>"
@@ -241,10 +241,10 @@ func TestChallenge3_SafeChunkTelegramHTML_TagsSplitAcrossBoundary(t *testing.T) 
 	}
 }
 
-// TestChallenge3_SafeChunkTelegramHTML_HTMLEntitiesSplitAcrossBoundary places HTML entities
+// TestSafeChunkTelegramHTML_HTMLEntitiesSplitAcrossBoundary places HTML entities
 // (&amp;, &lt;, &gt;, &#39;) directly across the 4000-character boundary and verifies
 // that chunking never cuts inside an entity.
-func TestChallenge3_SafeChunkTelegramHTML_HTMLEntitiesSplitAcrossBoundary(t *testing.T) {
+func TestSafeChunkTelegramHTML_HTMLEntitiesSplitAcrossBoundary(t *testing.T) {
 	entities := []string{"&amp;", "&lt;", "&gt;", "&#39;"}
 	for _, ent := range entities {
 		t.Run("Entity_"+ent, func(t *testing.T) {
@@ -264,9 +264,9 @@ func TestChallenge3_SafeChunkTelegramHTML_HTMLEntitiesSplitAcrossBoundary(t *tes
 	}
 }
 
-// TestChallenge3_SafeChunkTelegramHTML_TextWithNoTags_Exceeding10000Chars tests
+// TestSafeChunkTelegramHTML_TextWithNoTags_Exceeding10000Chars tests
 // pure plain text with no HTML tags exceeding 10,000 characters.
-func TestChallenge3_SafeChunkTelegramHTML_TextWithNoTags_Exceeding10000Chars(t *testing.T) {
+func TestSafeChunkTelegramHTML_TextWithNoTags_Exceeding10000Chars(t *testing.T) {
 	rawText := strings.Repeat("Plain text sentence without any HTML tags. It contains facts and words. ", 200)
 	require.Greater(t, len(rawText), 10000)
 
