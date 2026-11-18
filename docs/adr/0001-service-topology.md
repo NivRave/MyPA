@@ -67,7 +67,7 @@ The broker carries two flows: `telegram.inbound` (needs durability, retry plus D
 2. **If and when the broker is replaced, prefer River (2b)** with an explicit per-user ordering guard and a test equivalent to `parallel_consume_test.go`. Move `audit.events` first, since it has no ordering need and gains the transactional outbox. Then move the scheduler to River periodic jobs, which removes the single-replica constraint. Move `telegram.inbound` last.
 3. Choose **Redis Streams (2c)** instead only if the owner prefers the smallest change, accepts Redis as durable state, and adds Redis to the backup plan.
 
-## 4. Consequences (if 1c is accepted and 2a kept)
+## 4. Consequences (if 1c is accepted and 2a kept) — the state from V4.0 until V4-23 ships
 - Compose loses `proxy` (and `gateway` as a separate container); the `migrate` one-shot stays.
 - `SYSTEM.md` §1.1, `README.md` (ports, webhooks URL path stays `/webhook/*`), `.env` (`GATEWAY_URL`, `ORCHESTRATOR_URL` become unused), and dashboard `GRAPHQL_ENDPOINT` change.
 - Webhook signature/secret verification (`TELEGRAM_SECRET_TOKEN`, Twilio signature) moves unchanged with the gateway package.
@@ -76,3 +76,18 @@ The broker carries two flows: `telegram.inbound` (needs durability, retry plus D
 ## 5. Not decided here
 - Off-machine backups (P3-4 follow-up) — independent.
 - Whether the dashboard should move into the Go binary (static export) — out of scope; pages such as `dashboard/src/app/audit/page.tsx` use server-side Next.js features that a static export would lose.
+
+## 6. Decision record (2026-11-18)
+
+Sections 1 to 5 are kept as written on 2026-11-16. This section records what the owner decided and what follows from it.
+
+- **Decision 1: option 1c.** One binary with `--role`. Tracked as V4-01 (V4.0). The `audit-worker` stays a separate container until its queue moves (option 1d then applies).
+- **Decision 2: option 2b, for every install, by V4.2.** This goes further than the recommendation in §3, which was to keep RabbitMQ for now. The reason is outside this ADR's original scope: the owner wants one state store, so that a local install and a deployed one are the same system and moving between them is a backup and a restore (roadmap decisions DE-5, DE-9 and DE-10). Tracked as V4-23. RabbitMQ therefore stays through V4.0 and V4.1, and §4 describes that period.
+- **Consequences of 2b that §3 did not spell out** (checked against River's published feature list on 2026-11-18):
+  - Per-key ordering ("sequences") is still a River Pro feature, so the per-user ordering guard described in §3 has to be built, with a test equivalent to `parallel_consume_test.go`.
+  - The dead-letter queue is also a River Pro feature. Today's `mypa.dlx` handling with three attempts needs a replacement design: for example, keep discarded jobs and surface them through `/doctor` (V4-17).
+  - Durable periodic jobs are a River Pro feature too. Open-source periodic jobs do have leader election, which is what the scheduler needs, but their next run time is not persisted.
+  - Workers need a `pgxpool` next to GORM, as §3 already notes.
+  - Follow the staged order in §3: audit events first (the `audit-worker` then merges into the app), the scheduler second, inbound messages last.
+- **Not covered here: removing Redis.** DE-5 also moves the Redis state into Postgres. This ADR does not analyse that, and §1 relies on Redis for duplicate protection (the `SET NX` claim from P1-4). A separate state-store ADR is required before V4-23 starts; see `ROADMAP.md` §7.
+- **Naming.** The inbound queue was renamed `inbound.messages` (BL-5) after this ADR was written; `telegram.inbound` in the text above refers to it. The RabbitMQ 4.x upgrade mentioned in §3 (P5-4) is done.

@@ -24,6 +24,9 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-11 | Medium | Integration tests ran against the live compose database | done 2026-11-16 (`fix/bl-11`, DP-13); leftover fixtures → OP-9 |
 | BL-12 | Low | `testutil` Redis test container uses the floating `redis:7-alpine` tag | done 2026-11-17 (`fix/bl-12`, DP-15) — also the RabbitMQ test images (broker, e2e) |
 | BL-13 | Low | `.env.example` `ALLOWED_USERS` example comment uses a real-format `+972 50…` number (not the owner's); switch to the reserved fictional `+1555010xxxx` range like the SQL-logging test | done 2026-11-17 (`fix/bl-13`, DP-16) — now `+1 202 555 01xx` (the real fictional range; `+1555010xxxx` is not it), plus a tree-wide guard |
+| BL-14 | Medium | Memory consolidation is implemented but never runs: nothing schedules or calls it | open — tracked as V4-14 |
+| BL-15 | Low | Two code comments point to `docs/PLAN.md`, which does not exist | open |
+| BL-16 | Medium | No re-encryption path for old-format (unsalted) ciphertexts, so the legacy decryption fallback cannot be removed safely | open — tracked as V4-07 |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -145,21 +148,56 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   Guard `TestNoRealPhoneNumbersCommitted` (`internal/config`) scans every git-tracked file and fails on
   any number that could reach a person, printing it masked (DP-16).
 
+### BL-14 — Memory consolidation never runs (Medium)
+- **Found:** 2026-11-18, while verifying the V4 roadmap against the code.
+- **Evidence:** `ConsolidateMemories` (`internal/domains/memory/consolidation.go:48`) has no caller outside
+  `module_test.go`. The scheduler registers four jobs (backup 02:00, briefing 08:00, reminders every minute,
+  workflow reload every 5 minutes) and none of them is consolidation. The function also emits no
+  `MutationEvent`, so its changes would not be undoable. The roadmap listed "nightly consolidation" as delivered.
+- **Impact:** duplicates and outdated facts are not merged and entity profiles are not refreshed from
+  memories in the background. No error is shown; memory quality degrades slowly.
+- **Fix:** tracked as V4-14: schedule it nightly, make each applied change an undoable mutation, add a
+  per-run report. Test: a nightly run on fixture data produces a report and one change is reverted with `/undo`.
+
+### BL-15 — Comments point to a missing `docs/PLAN.md` (Low)
+- **Found:** 2026-11-18, during the docs clean-up.
+- **Evidence:** `internal/domains/shared/notifier.go:80` and `internal/models/shared.go:53` cite
+  "docs/PLAN.md" for the default sharing policy. No such file exists in the repository.
+- **Fix:** point the comments at where the policy is actually described (`SYSTEM.md`), or state the rule inline.
+
+### BL-16 — No re-encryption path for old-format ciphertexts (Medium)
+- **Found:** 2026-11-18, while verifying V4-07.
+- **Evidence:** `crypto.Decrypt` (`internal/crypto/aes.go`) falls back to the legacy unsalted format when the
+  salted format fails. Nothing rewrites a value after a successful legacy decrypt, and there is no migration.
+  Values are encrypted in three places: Google tokens in Redis (`internal/state/store.go:140`), the credential
+  fallback table (`internal/domains/durability/module.go:150`) and API connector headers
+  (`internal/domains/automation/runner.go:109`). Any of them written before the salted format was introduced
+  is still in the old format.
+- **Impact:** the fallback cannot be removed without first knowing that no old-format value remains; removing
+  it blind would make those Google sign-ins and API headers unreadable. This is separate from OP-2, which is
+  about tokens encrypted under the old public fallback key.
+- **Fix:** a one-off re-encryption pass over the three stores that rewrites each value in the current format
+  and reports how many old-format values remain; delete the fallback only when the report shows zero (V4-07).
+
 ## Operations (owner)
 
 | ID | Task | Status |
 | :--- | :--- | :--- |
-| OP-1 | Move `C:\Users\nivik\.mypa\backup-age.key` into a password manager, then delete the local copy (needed to restore encrypted backups — set `BACKUP_AGE_IDENTITY_FILE` only while restoring). Delete `C:\Users\nivik\.mypa\env-backup-*` once the new `.env` has proven itself, and `C:\Users\nivik\.mypa\db-backup-pre-op9-*.dump` (unencrypted pre-purge dump, owner-only ACL) once the purge has proven itself. | open |
-| OP-2 | Second Google user (platform id ending `0357`) runs `/connect`; then delete both `legacy-token:*` Redis keys (tokens encrypted under the old public fallback key). The owner's own key can already go. | partly done — owner reconnected, owner's legacy key deleted 2026-11-16; second user pending |
+| OP-1 | Move `C:\Users\nivik\.mypa\backup-age.key` into a password manager, then delete the local copy (needed to restore encrypted backups — set `BACKUP_AGE_IDENTITY_FILE` only while restoring). Delete `C:\Users\nivik\.mypa\env-backup-*` once the new `.env` has proven itself, and `C:\Users\nivik\.mypa\db-backup-pre-op9-*.dump` (unencrypted pre-purge dump, owner-only ACL) once the purge has proven itself. Gates V4-43: the backup key has to travel with a restore. | **done 2026-11-18** — owner: key copied to the password manager and the local copies deleted |
+| OP-2 | Second Google user (platform id ending `0357`) runs `/connect`; then delete both `legacy-token:*` Redis keys (tokens encrypted under the old public fallback key). The owner's own key can already go. Separate from the re-encryption pass in BL-16 and V4-07. | partly done — owner reconnected, owner's legacy key deleted 2026-11-16; second user pending |
 | OP-3 | Old `pgadmin` container (pre-P3-5 image, unpinned, old credentials) is still running; stop/remove it. Start the new one with `docker compose --profile tools up -d pgadmin` when needed. | done 2026-11-16 (stopped and removed) |
 | OP-4 | Push `dev`; watch the first CI run. A `-race` timing flake on runners → apply the `timingSlack` pattern (D5-3). | pushed 2026-11-16; first run: race tests, lint, dashboard, compose build green (no `-race` flakes); govulncheck red (go1.26.4 stdlib advisories) → fixed by DP-3; **done** — run 43824019172 on `9284c49` all 5 jobs green |
-| OP-5 | Log in to the dashboard once (`JWT_SECRET` was rotated, old sessions are invalid). | open |
-| OP-6 | Choose an off-machine backup target (backups are encrypted but stay on this disk). | open |
-| OP-7 | After a few stable weeks: migration to drop the legacy `memories` table. | open |
+| OP-5 | Log in to the dashboard once (`JWT_SECRET` was rotated, old sessions are invalid). Replaced by per-person sign-in when V4-35 ships. | open |
+| OP-6 | Choose an off-machine backup target (backups are encrypted but stay on this disk). | **decided 2026-11-18**: backups stay local for now; nothing in V4.0 needs an off-machine copy. Accepted risk: losing this machine's disk loses the data and its backups together. Follow-up in OP-11 |
+| OP-7 | After a few stable weeks: migration to drop the legacy `memories` table. Carried out as part of V4-07. | open |
 | OP-9 | Purge the test fixtures BL-11 left in the live DB: 154 fixture users plus 722 audit sessions, 167 automation rules, 268 mutation logs, 243 reminders, 176 topic memories, 89 maintenance items, 2 preferences, 1 baby log — each predicate names a fixture identity (`AttackerFamily`/`VictimFamily` users, `*_IDOR`, `DurabilityTestFamily`, `durability_test_*`, `FamilyAlphaSnapshots`, `victim-usr`/`attacker-usr`). Dry run (rolled back) left exactly the MyFamily data. Take a backup first. | **done 2026-11-17** — owner approved; `pg_dump -Fc` backup first (see OP-1), purge in one transaction with the same counts as the dry run; afterwards every tenant table holds only `MyFamily` rows and every audit session belongs to a real user; dashboard GraphQL view unchanged |
-| OP-8 | WhatsApp runs on the Twilio **sandbox**: membership expires and replies then fail with 63015 (hit 2026-11-16). Short term: re-send `join <word>` to the sandbox number. Long term: register a WhatsApp sender in Twilio. | open |
+| OP-8 | WhatsApp runs on the Twilio **sandbox**: membership expires and replies then fail with 63015 (hit 2026-11-16). Short term: re-send `join <word>` to the sandbox number. Long term: register a WhatsApp sender in Twilio. Both modes stay supported (DE-8, V4-41). | open |
+| OP-10 | Cut a baseline release from `dev` before any V4 work starts. `dev` is 57 commits ahead of `master` and of `v3.3.2` (remediation, backlog fixes, docs). Merge, tag it by the rule in `AGENTS.md` §5, and take a backup of the running system on that release. This is the rollback point and the baseline that V4-43 restores from. | open |
+| OP-11 | Off-machine copy of backups (deferred from OP-6). Revisit when the first of these happens: MyPA is deployed to a server (V4-40), the conversation cold tier is built (V4-12), or a household other than the owner's relies on the install. Before anything leaves the machine: delete the three unencrypted dumps from before 2026-11-17 in `backups/`, and encrypt the conversation archives (the `audit_archives` volume), which are stored unencrypted today. Cheap step in the meantime: keep a copy of `backups/` on a second physical disk. | open (deferred) |
 
-## Decisions pending
+## Decisions
+
+None is pending. Decisions for V4 (DE-3 onward) are recorded in [`ROADMAP.md`](./ROADMAP.md) §7; this table keeps the two that were raised here.
 
 | ID | Decision | Where |
 | :--- | :--- | :--- |
