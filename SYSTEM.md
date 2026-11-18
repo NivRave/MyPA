@@ -109,7 +109,7 @@ mypa/
 ├── .github/dependabot.yml          # Weekly updates → PRs to dev: gomod, npm, docker, docker-compose, github-actions (P5-4)
 ├── .github/workflows/ci.yml       # CI (P5-3): go test -race, golangci-lint (.golangci.yml), govulncheck, dashboard, compose build
 ├── scripts/clean.{ps1,sh}          # Remove local build artefacts (bin/, root *.exe/*.test, coverage)
-├── docs/                           # REMEDIATION_PLAN.md, DECISIONS_LOG.md, adr/ (architecture decisions); reviews/ is gitignored
+├── docs/                           # ROADMAP.md, BACKLOG.md, DECISIONS_LOG.md, adr/ (architecture decisions), archive/ (completed plans); reviews/ is gitignored
 ├── internal/
 │   ├── audio/                      # Groq Whisper API client (`whisper-large-v3`) for voice transcription
 │   ├── broker/                     # RabbitMQ AMQP 0-9-1 `Publisher` and `Consumer`

@@ -1,6 +1,6 @@
 # Remediation Decision Log
 
-Design decisions made while executing [`REMEDIATION_PLAN.md`](./REMEDIATION_PLAN.md). Each entry lists the options considered, the choice, why it won (including the counter-arguments it had to survive), and any follow-ups. Owner: please review; anything marked **Revisit?** is a call you may want to overturn.
+Design decisions made while executing [`REMEDIATION_PLAN.md`](./archive/REMEDIATION_PLAN.md). Each entry lists the options considered, the choice, why it won (including the counter-arguments it had to survive), and any follow-ups. Owner: please review; anything marked **Revisit?** is a call you may want to overturn.
 
 Format per decision: **Options** → **Chosen** → **Why / challenge** → **Follow-up**.
 

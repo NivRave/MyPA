@@ -1,5 +1,7 @@
 # MyPA Remediation Plan
 
+> **Completed and archived on 2026-11-18.** Every item in the tracking table at the end is done. This file is kept because code comments and the decision log cite its item numbers (P1-1 to P5-5). The four unticked Phase 0 boxes are the owner's manual checks and were never ticked here. Current planning lives in [`ROADMAP.md`](../ROADMAP.md).
+
 Source: full code review of `dev` @ `9f08725` (2026-11-15). Every item below was traced in code; file/line references are approximate starting points — re-locate before editing.
 
 ## How to work this plan (for Claude Code)
