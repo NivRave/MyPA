@@ -299,7 +299,7 @@ func TestARCH01_28Tools_ModularizationAndDynamicDispatch(t *testing.T) {
 			"fetch_webpage",
 		},
 		"memory": {
-			"remember_fact",
+			"save_topic_memory",
 		},
 		"shared": {
 			"schedule_reminder",
@@ -390,11 +390,11 @@ func TestARCH01_28Tools_ModularizationAndDynamicDispatch(t *testing.T) {
 		assert.True(t, handled)
 		assert.Equal(t, "Search results for: Go 1.26 release date", res)
 
-		// 6. Dispatch memory tool (remember_fact)
-		res, handled, err = reg.Execute(ctx, callCtx, "remember_fact", map[string]interface{}{"fact": "Loves pistachio ice cream", "scope": "personal"})
+		// 6. Dispatch memory tool (save_topic_memory; remember_fact was removed in V4-06)
+		res, handled, err = reg.Execute(ctx, callCtx, "save_topic_memory", map[string]interface{}{"topic": "personal", "fact": "Loves pistachio ice cream", "scope": "personal"})
 		require.NoError(t, err)
 		assert.True(t, handled)
-		assert.Contains(t, res, "Fact saved to personal memory successfully.")
+		assert.Contains(t, res, `"status":"saved"`)
 		require.Len(t, memRepo.saved, 1)
 		assert.Equal(t, "canonical_user_42", memRepo.saved[0].UserID)
 
@@ -544,10 +544,11 @@ func TestARCH04_All28Tools_AntiIDOR_IdentitySpoofingStress(t *testing.T) {
 	assert.Equal(t, "canonical_victim_platform_id", contactsMock.lastCreateUser, "Contacts must use ActorID()")
 	assertLastMutationEvent(t, receivedEvents, "canonical_victim_platform_id", "canonical_victim_family_group")
 
-	// 7. Memory: remember_fact
+	// 7. Memory: save_topic_memory
 	args = copyMap(spoofedPayload)
+	args["topic"] = "personal"
 	args["fact"] = "Secret victim password"
-	_, _, err = reg.Execute(ctx, callCtx, "remember_fact", args)
+	_, _, err = reg.Execute(ctx, callCtx, "save_topic_memory", args)
 	require.NoError(t, err)
 	require.NotEmpty(t, memRepo.saved)
 	lastMem := memRepo.saved[len(memRepo.saved)-1]

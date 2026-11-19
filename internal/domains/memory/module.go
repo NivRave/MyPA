@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/domains/toolutil"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -153,31 +153,13 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 				Required: []string{"topic", "entity_name"},
 			},
 		},
-		{
-			Name:        "remember_fact",
-			Description: "Saves a semantic memory fact and its vector embedding for long-term recall.",
-			Parameters: &genai.Schema{
-				Type: genai.TypeObject,
-				Properties: map[string]*genai.Schema{
-					"fact": {
-						Type:        genai.TypeString,
-						Description: "The fact or information to remember.",
-					},
-					"scope": {
-						Type:        genai.TypeString,
-						Description: "Access scope: 'personal' (default) or 'family'.",
-					},
-				},
-				Required: []string{"fact"},
-			},
-		},
 	}
 }
 
 // Execute handles tool calls for memory management.
 func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, toolName string, args map[string]interface{}) (string, error) {
 	repo, err := m.resolveRepo(callCtx)
-	if err != nil && toolName != "remember_fact" {
+	if err != nil {
 		return "", fmt.Errorf("memory module: %w", err)
 	}
 
@@ -185,8 +167,6 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 	familyGroup := callCtx.TenantFamilyGroup()
 
 	switch toolName {
-	case "remember_fact":
-		return m.executeRememberFact(ctx, callCtx, repo, userID, familyGroup, args)
 	case "save_topic_memory":
 		return m.executeSaveTopicMemory(ctx, callCtx, repo, userID, familyGroup, args)
 	case "search_topic_memories":
@@ -279,71 +259,20 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 	return orchestrator.WrapUserProvidedData("memory_profiles_and_pins", strings.TrimSpace(sb.String()))
 }
 
-func (m *Module) executeRememberFact(ctx context.Context, callCtx orchestrator.CallContext, repo db.MemoryV2Repository, userID, familyGroup string, args map[string]interface{}) (string, error) {
-	fact := toolutil.String(args, "fact")
-	if fact == "" {
-		return "Missing fact parameter", nil
-	}
-	scope := toolutil.String(args, "scope", "personal")
-	if strings.ToLower(scope) == "family" {
-		scope = "family"
-	} else {
-		scope = "personal"
-	}
-
+// embedFact returns the embedding of a fact, or nil when it cannot be computed (no model wired,
+// or the embedding call failed). Per-turn recall finds memories by embedding, so every saved fact
+// should have one; but a fact is still worth saving without it (keyword search and pinned
+// memories do not need it), so a failure here never fails the save. The fact itself is not logged.
+func embedFact(ctx context.Context, callCtx orchestrator.CallContext, fact string) []float32 {
 	if callCtx.LLM == nil {
-		return "❌ LLM client not configured for memory embedding.", nil
+		return nil
 	}
-	if repo == nil {
-		return "❌ Memory store not configured.", nil
-	}
-
 	embedding, err := callCtx.LLM.GenerateEmbedding(ctx, fact)
 	if err != nil {
-		return "❌ Failed to save memory (embedding error).", nil
+		slog.Warn("memory saved without an embedding: it will not be recalled by meaning", "error", err)
+		return nil
 	}
-
-	// P2-4: remember_fact is an alias that writes a TopicMemory (the single memory store).
-	topic := models.TopicPersonal
-	if scope == "family" {
-		topic = models.TopicFamily
-	}
-	now := time.Now()
-	if err := repo.SaveTopicMemory(ctx, &models.TopicMemory{
-		UserID:          userID,
-		FamilyGroup:     familyGroup,
-		Topic:           topic,
-		Subtopic:        "fact",
-		TagsJSON:        "[]",
-		Fact:            fact,
-		Scope:           scope,
-		CreatedByUserID: userID,
-		ValidFrom:       now,
-		Embedding:       pgvector.NewVector(embedding),
-		CreatedAt:       now,
-	}); err != nil {
-		return "❌ Failed to save memory to database.", nil
-	}
-
-	if callCtx.EventBus != nil {
-		afterBytes, _ := json.Marshal(map[string]interface{}{
-			"fact":  fact,
-			"scope": scope,
-		})
-		_ = toolutil.PublishMutation(ctx, callCtx.EventBus, events.MutationEvent{
-			Topic:       "memory",
-			Action:      "create",
-			EntityType:  "Memory",
-			EntityID:    fmt.Sprintf("%s:%d", userID, time.Now().UnixNano()),
-			ActorUserID: userID,
-			FamilyGroup: familyGroup,
-			AfterJSON:   string(afterBytes),
-			Summary:     fmt.Sprintf("Remembered %s fact: %s", scope, fact),
-			Timestamp:   time.Now(),
-		})
-	}
-
-	return fmt.Sprintf("Fact saved to %s memory successfully.", scope), nil
+	return embedding
 }
 
 func (m *Module) executeSaveTopicMemory(ctx context.Context, callCtx orchestrator.CallContext, repo db.MemoryV2Repository, userID, familyGroup string, args map[string]interface{}) (string, error) {
@@ -376,6 +305,11 @@ func (m *Module) executeSaveTopicMemory(ctx context.Context, callCtx orchestrato
 		IsPinned:        isPinned,
 		ValidFrom:       time.Now(),
 		CreatedAt:       time.Now(),
+	}
+	// The embedding is what per-turn recall searches by (V4-06: remember_fact used to be the
+	// only tool that stored one).
+	if embedding := embedFact(ctx, callCtx, fact); len(embedding) > 0 {
+		mem.Embedding = pgvector.NewVector(embedding)
 	}
 	mem.SetTags(tags)
 

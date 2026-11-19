@@ -120,24 +120,6 @@ var CalendarEventTool = &genai.Tool{
 			},
 		},
 		{
-			Name:        "remember_fact",
-			Description: "Saves a personal fact, preference, or important detail about the user into long-term memory so you can recall it in future conversations.",
-			Parameters: &genai.Schema{
-				Type: genai.TypeObject,
-				Properties: map[string]*genai.Schema{
-					"fact": {
-						Type:        genai.TypeString,
-						Description: "The exact fact or preference to remember (e.g. 'The user is vegan', 'The user's wife is named Sarah', 'The user prefers meetings in the afternoon').",
-					},
-					"scope": {
-						Type:        genai.TypeString,
-						Description: "Scope: 'personal' or 'family'",
-					},
-				},
-				Required: []string{"fact"},
-			},
-		},
-		{
 			Name:        "search_emails",
 			Description: "Searches the user's Gmail using standard Gmail query syntax. Use this to find recent emails or specific threads (e.g., 'newer_than:30d', 'is:unread', 'from:john').",
 			Parameters: &genai.Schema{

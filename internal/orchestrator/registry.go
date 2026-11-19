@@ -337,7 +337,6 @@ func joinNonEmptySections(sections []string) string {
 
 // CoreToolNames defines the Tier 1 tools that are ALWAYS injected into every turn.
 var CoreToolNames = map[string]bool{
-	"remember_fact":         true,
 	"save_topic_memory":     true,
 	"search_topic_memories": true,
 	"schedule_reminder":     true,
@@ -359,7 +358,7 @@ var ModuleDomainMapping = map[string]DomainGroup{
 	"workspace_contacts": DomainContacts,
 	"automation":         DomainAutomation,
 	"shared":             DomainShared,
-	// Core tools of these modules (remember_fact, save_topic_memory, search_topic_memories,
+	// Core tools of these modules (save_topic_memory, search_topic_memories,
 	// undo_last_action) are always offered; the mapping exposes the remaining ones.
 	"memory":     DomainMemory,
 	"durability": DomainHistory,

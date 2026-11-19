@@ -17,7 +17,7 @@ func basePromptInputs(t *testing.T) promptInputs {
 		UserName:       "Dana",
 		Role:           "admin",
 		FamilyGroup:    "Levi",
-		ActiveTools:    toolSet("create_calendar_event", "remember_fact", "search_web"),
+		ActiveTools:    toolSet("create_calendar_event", "save_topic_memory", "search_web"),
 		ModuleSections: "### Baby\nLiam is 8 months old.",
 		Memories:       []string{"- Allergic to peanuts"},
 		Now:            time.Date(2026, 11, 15, 10, 30, 45, 0, time.UTC),
@@ -100,7 +100,7 @@ func TestBuildSystemPrompt_ToolGuidanceFollowsActiveTools(t *testing.T) {
 	assert.NotContains(t, p, "list_task_lists", "tasks tools not active")
 	assert.Contains(t, p, "create_calendar_event")
 
-	in.ActiveTools = toolSet("search_emails", "apply_email_labels", "remember_fact")
+	in.ActiveTools = toolSet("search_emails", "apply_email_labels", "save_topic_memory")
 	p = buildSystemPrompt(in)
 	assert.Contains(t, p, "search_emails")
 	assert.NotContains(t, p, "create_calendar_event")
@@ -136,4 +136,23 @@ func TestParseCalendarConventions(t *testing.T) {
 
 	bad := ParseCalendarConventions("funday", "blursday")
 	assert.Equal(t, DefaultCalendarConventions(), bad, "invalid values fall back to defaults")
+}
+
+// V4-06: the standing instruction to save what the user tells about themselves used to name
+// remember_fact. It must survive the removal, naming save_topic_memory, and the removed tool must
+// not be mentioned anywhere in the prompt, whichever tools are active.
+func TestPrompt_SavingPersonalFactsPointsAtSaveTopicMemory(t *testing.T) {
+	in := basePromptInputs(t)
+
+	in.ActiveTools = toolSet("save_topic_memory")
+	p := buildSystemPrompt(in)
+	assert.Contains(t, p, "use the save_topic_memory tool to save it")
+	assert.Contains(t, p, "business card", "the guidance about facts in images is kept")
+	assert.NotContains(t, p, "remember_fact")
+
+	in.ActiveTools = nil // no registry: every guidance line is included
+	assert.NotContains(t, buildSystemPrompt(in), "remember_fact")
+
+	in.ActiveTools = toolSet("search_web")
+	assert.NotContains(t, buildSystemPrompt(in), "save_topic_memory tool to save it", "guidance follows the active tools")
 }

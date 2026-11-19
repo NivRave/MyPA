@@ -1,6 +1,8 @@
 package memory_test
 
 import (
+	"google.golang.org/genai"
+	"errors"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -481,7 +483,7 @@ func TestToolModule_Declarations(t *testing.T) {
 
 	assert.Equal(t, memory.ModuleName, mod.Name())
 	decls := mod.Declarations()
-	require.Len(t, decls, 5)
+	require.Len(t, decls, 4)
 
 	toolNames := make(map[string]bool)
 	for _, d := range decls {
@@ -491,7 +493,7 @@ func TestToolModule_Declarations(t *testing.T) {
 	assert.True(t, toolNames["search_topic_memories"])
 	assert.True(t, toolNames["upsert_entity_profile"])
 	assert.True(t, toolNames["get_entity_profile"])
-	assert.True(t, toolNames["remember_fact"])
+	assert.False(t, toolNames["remember_fact"], "remember_fact was removed (V4-06)")
 }
 
 func TestToolModule_Execute_SaveAndSearch(t *testing.T) {
@@ -828,43 +830,131 @@ type testDBClient struct {
 	orchestrator.DBClient
 }
 
-func TestRememberFact_Execution(t *testing.T) {
+// failingEmbedder is an LLM whose embedding call fails.
+type failingEmbedder struct {
+	orchestrator.LLMClient
+}
+
+func (failingEmbedder) GenerateEmbedding(context.Context, string) ([]float32, error) {
+	return nil, errors.New("embedding service unavailable")
+}
+
+func memoryCallCtx(llm orchestrator.LLMClient) orchestrator.CallContext {
+	return orchestrator.CallContext{
+		User:     &models.User{PlatformID: "tg_123", FamilyGroup: "FamAlpha"},
+		DB:       &testDBClient{},
+		LLM:      llm,
+		EventBus: events.NewEventBus(),
+	}
+}
+
+// V4-06: remember_fact did one thing no other tool did: it stored the fact's embedding, which is
+// what lets a memory be found by meaning at the start of every turn. With the tool gone,
+// save_topic_memory stores it.
+func TestSaveTopicMemory_StoresTheEmbedding(t *testing.T) {
 	ctx := context.Background()
 	repo := newInMemoryRepo()
 	mod := memory.NewModule(repo)
 
-	dbMock := &testDBClient{}
-	llmMock := &testLLMClient{}
-	bus := events.NewEventBus()
-
-	callCtx := orchestrator.CallContext{
-		User: &models.User{
-			PlatformID:  "tg_123",
-			FamilyGroup: "FamAlpha",
-		},
-		DB:       dbMock,
-		LLM:      llmMock,
-		EventBus: bus,
-	}
-
-	res, err := mod.Execute(ctx, callCtx, "remember_fact", map[string]interface{}{
+	res, err := mod.Execute(ctx, memoryCallCtx(&testLLMClient{}), "save_topic_memory", map[string]interface{}{
+		"topic": "family",
 		"fact":  "Likes dark chocolate 85%",
 		"scope": "family",
 	})
 	require.NoError(t, err)
-	assert.Contains(t, res, "Fact saved to family memory successfully")
+	assert.Contains(t, res, `"status":"saved"`)
 
-	// P2-4: remember_fact writes exactly one TopicMemory (the single memory store);
-	// a family-scoped fact is filed under topic "family".
 	mems, err := repo.SearchTopicMemories(ctx, "tg_123", "FamAlpha", models.TopicFamily, "chocolate", nil)
 	require.NoError(t, err)
-	require.Len(t, mems, 1)
+	require.Len(t, mems, 1, "exactly one memory is written")
 	assert.Equal(t, "Likes dark chocolate 85%", mems[0].Fact)
 	assert.Equal(t, "tg_123", mems[0].UserID)
 	assert.Equal(t, "FamAlpha", mems[0].FamilyGroup)
 	assert.Equal(t, "family", mems[0].Scope)
-	all, err := repo.SearchTopicMemories(ctx, "tg_123", "FamAlpha", "", "", nil)
-	require.NoError(t, err)
-	assert.Len(t, all, 1, "no duplicate write")
+	assert.Equal(t, []float32{0.1, 0.2, 0.3}, mems[0].Embedding.Slice(), "the fact's embedding must be stored with it")
 }
 
+// A memory is worth more than its embedding: when the embedding service is down, or no model is
+// wired, the fact is still saved (and still found by keyword search and when pinned).
+func TestSaveTopicMemory_SavesWithoutAnEmbeddingWhenItCannotBeComputed(t *testing.T) {
+	ctx := context.Background()
+	for name, llm := range map[string]orchestrator.LLMClient{"embedding fails": failingEmbedder{}, "no model": nil} {
+		t.Run(name, func(t *testing.T) {
+			repo := newInMemoryRepo()
+			mod := memory.NewModule(repo)
+
+			res, err := mod.Execute(ctx, memoryCallCtx(llm), "save_topic_memory", map[string]interface{}{
+				"topic": "personal",
+				"fact":  "Allergic to penicillin",
+			})
+			require.NoError(t, err)
+			assert.Contains(t, res, `"status":"saved"`)
+			assert.NotContains(t, res, "embedding service unavailable", "the failure is not the user's concern")
+
+			mems, err := repo.SearchTopicMemories(ctx, "tg_123", "FamAlpha", "personal", "penicillin", nil)
+			require.NoError(t, err)
+			require.Len(t, mems, 1)
+			assert.Empty(t, mems[0].Embedding.Slice())
+		})
+	}
+}
+
+// V4-06 "done when": the tool is gone.
+func TestRememberFact_IsNoLongerATool(t *testing.T) {
+	ctx := context.Background()
+	repo := newInMemoryRepo()
+	mod := memory.NewModule(repo)
+
+	for _, d := range mod.Declarations() {
+		assert.NotEqual(t, "remember_fact", d.Name)
+	}
+	_, err := mod.Execute(ctx, memoryCallCtx(&testLLMClient{}), "remember_fact", map[string]interface{}{"fact": "Likes dark chocolate 85%"})
+	require.ErrorContains(t, err, "unsupported memory tool")
+
+	all, err := repo.SearchTopicMemories(ctx, "tg_123", "FamAlpha", "", "", nil)
+	require.NoError(t, err)
+	assert.Empty(t, all, "a call to the removed tool must write nothing")
+}
+
+// The model can only choose between a personal and a family memory if the schema declares
+// "scope" (the original BUG-01 fix, made on remember_fact). With remember_fact removed (V4-06)
+// the guarantee is held by save_topic_memory.
+func TestSaveTopicMemory_SchemaDeclaresFactAndScope(t *testing.T) {
+	mod := memory.NewModule(newInMemoryRepo())
+	var decl *genai.FunctionDeclaration
+	for _, d := range mod.Declarations() {
+		if d.Name == "save_topic_memory" {
+			decl = d
+		}
+	}
+	require.NotNil(t, decl, "the memory module does not declare save_topic_memory")
+
+	// The same checks the static declaration of remember_fact had.
+	assert.NotEmpty(t, decl.Description)
+	require.NotNil(t, decl.Parameters)
+	assert.Equal(t, genai.TypeObject, decl.Parameters.Type)
+	fact, ok := decl.Parameters.Properties["fact"]
+	require.True(t, ok, "save_topic_memory must declare 'fact'")
+	assert.Equal(t, genai.TypeString, fact.Type)
+	assert.NotEmpty(t, fact.Description)
+	assert.Contains(t, decl.Parameters.Required, "fact", "'fact' must be required")
+	scope, ok := decl.Parameters.Properties["scope"]
+	require.True(t, ok, "save_topic_memory must declare 'scope'")
+	assert.Equal(t, genai.TypeString, scope.Type)
+	assert.Contains(t, scope.Description, "family")
+
+	// And in the form the model receives: the serialised declaration carries scope.
+	raw, err := json.Marshal(&genai.Tool{FunctionDeclarations: []*genai.FunctionDeclaration{decl}})
+	require.NoError(t, err)
+	var tool map[string]interface{}
+	require.NoError(t, json.Unmarshal(raw, &tool))
+	funcs, ok := tool["functionDeclarations"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, funcs, 1)
+	params, ok := funcs[0].(map[string]interface{})["parameters"].(map[string]interface{})
+	require.True(t, ok)
+	props, ok := params["properties"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Contains(t, props, "scope", "the serialised schema must contain scope")
+	assert.Contains(t, props, "fact")
+}

@@ -34,6 +34,9 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-21 | Medium | `/restore` in chat restores over the live schema and does not migrate, which breaks once V4 adds a migration | open: decide before the first V4 migration |
 | BL-22 | Low | Restore tool: the rollback test cannot fail yet, and the piped dump check runs only against a fake | open |
 | BL-23 | Low | A failing archive step makes the nightly backup discard its database dump | open |
+| BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: belongs with the re-embedding path of V4-03 |
+| BL-25 | Low | Undo snapshots of saved memories carry the full 3,072-number embedding | open: decide with BL-24 and V4-03 |
+| BL-26 | Medium | `save_topic_memory` stores `scope` as given, so a value such as `Family` is saved but never found | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -270,6 +273,46 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** for live backups, keep the dump when the archive step fails, write the manifest without archives
   and with a note, and log an error. An export should keep failing outright: a set made to travel must be
   complete. Test: a failing bundle step during a live backup leaves a verified database-only set.
+
+### BL-24 — Memories saved with `save_topic_memory` before V4-06 have no embedding (Medium)
+- **Found:** 2026-11-19, while removing `remember_fact` (V4-06).
+- **Evidence:** until V4-06, `executeSaveTopicMemory` (`internal/domains/memory/module.go`) wrote a
+  `TopicMemory` without an embedding, and the model's `BeforeCreate` hook stored a zero vector. Only
+  `remember_fact` called `GenerateEmbedding`. The turn's memory retrieval (`SearchSimilarMemories`,
+  `internal/db/memory_v2_repo.go`) orders by vector distance and takes the nearest five, so a zero-vector
+  memory is only returned when fewer than five embedded ones exist.
+- **Impact:** every fact the assistant saved through `save_topic_memory` (the richer tool, with topic and
+  tags) is invisible to automatic recall unless it is pinned or looked up with `search_topic_memories`. New
+  saves are embedded from V4-06 on; the existing rows are not. How many rows are affected on the live system
+  is not known (it is a count of `topic_memories` whose embedding is all zeros).
+- **Fix:** a one-off backfill that embeds every `topic_memories` row with a zero vector, reporting how many it
+  did. It is the same job as the re-embedding path V4-03 has to build and test, so do it there or reuse its
+  mechanism. Test: a zero-vector memory is found by a similar query after the backfill.
+
+### BL-25 — Undo snapshots of memories carry the full embedding (Low)
+- **Found:** 2026-11-19, in the review of V4-06.
+- **Evidence:** `executeSaveTopicMemory` (`internal/domains/memory/module.go`) publishes a mutation event whose
+  `AfterJSON` is the whole `TopicMemory`, and `pgvector.Vector` serialises to its 3,072 numbers. The same
+  happens to `BeforeJSON` when the memory is undone or superseded. Before V4-06 these were 3,072 zeros; now
+  they are real values, tens of kilobytes of JSON per saved memory in `mutation_logs`.
+- **Impact:** storage growth in `mutation_logs` proportional to the number of saved memories, and a larger
+  payload in the dashboard's mutation list. No functional problem; a restored memory keeps its embedding.
+- **Fix:** keep the embedding out of the snapshot and recompute it on restore, or store it once and reference
+  it. Decide together with BL-24 and V4-03, which settle how embeddings are (re)computed. Test: the snapshot
+  of a saved memory stays small, and an undone-then-restored memory is still found by meaning.
+
+### BL-26 — `save_topic_memory` does not normalise `scope` (Medium)
+- **Found:** 2026-11-19, in the second review of V4-06 (non-blocking, after the item passed).
+- **Evidence:** `executeSaveTopicMemory` (`internal/domains/memory/module.go`) defaults an empty `scope` to
+  `personal` and otherwise stores the value as the model sent it. Every read path matches the two literals
+  exactly (`scope = 'personal'`, `scope = 'family'` in `internal/db/memory_v2_repo.go`). The removed
+  `remember_fact` lower-cased the value and mapped anything that was not `family` to `personal`.
+- **Impact:** a save with `"Family"`, `"FAMILY"` or any other spelling answers `"status":"saved"`, and the
+  memory is then returned by neither search nor recall, and is not visible to the rest of the family. This was
+  already true of `save_topic_memory`; since V4-06 it is the only way to save a fact.
+- **Fix:** normalise in `executeSaveTopicMemory` (trim, lower-case, `family` or else `personal`), as the
+  removed tool did. Test: a save with `"Family"` is stored as `family` and found by a family member's search.
+  Consider a one-off correction of existing rows whose scope is neither literal.
 
 ## Operations (owner)
 

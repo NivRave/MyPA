@@ -29,10 +29,10 @@ import (
 )
 
 // TestFull13Modules_TokenReduction verifies SCALE-01:
-// 1. All 13 production domain modules register >= 67 total tool declarations.
-// 2. CoreDeclarations() strictly returns the 8 Tier 1 core tools.
-// 3. SelectDeclarations for DomainBaby injects exactly 13 tools (8 core + 5 baby).
-// 4. Achieves >= 80% token reduction (13 / 67 tools).
+// 1. All 13 production domain modules register >= 66 total tool declarations.
+// 2. CoreDeclarations() strictly returns the 7 Tier 1 core tools (8 before V4-06 removed remember_fact).
+// 3. SelectDeclarations for DomainBaby injects exactly 12 tools (7 core + 5 baby).
+// 4. Achieves >= 80% token reduction (12 / 66 tools).
 // 5. Ambient default selection (no matched domain) injects only Core + Calendar + Tasks tools.
 func TestFull13Modules_TokenReduction(t *testing.T) {
 	reg := orchestrator.NewRegistry()
@@ -56,14 +56,14 @@ func TestFull13Modules_TokenReduction(t *testing.T) {
 	allDecls := reg.AllDeclarations()
 	totalTools := len(allDecls)
 	t.Logf("Total registered tool declarations across all 13 modules: %d", totalTools)
-	assert.GreaterOrEqual(t, totalTools, 67, "Expected at least 67 total declarations across 13 modules")
+	// 66 since V4-06 removed remember_fact (67 before).
+	assert.GreaterOrEqual(t, totalTools, 66, "Expected at least 66 total declarations across 13 modules")
 
-	// 2. Verify Tier 1 Core Tools: must be exactly 8 tools
+	// 2. Verify Tier 1 Core Tools: must be exactly 7 tools
 	coreDecls := reg.CoreDeclarations()
-	require.Len(t, coreDecls, 8, "CoreDeclarations must contain exactly 8 Tier 1 tools")
+	require.Len(t, coreDecls, 7, "CoreDeclarations must contain exactly 7 Tier 1 tools")
 
 	expectedCoreTools := map[string]bool{
-		"remember_fact":         true,
 		"save_topic_memory":     true,
 		"search_topic_memories": true,
 		"schedule_reminder":     true,
@@ -77,9 +77,9 @@ func TestFull13Modules_TokenReduction(t *testing.T) {
 		assert.True(t, expectedCoreTools[d.Name], "Unexpected tool %s in CoreDeclarations", d.Name)
 	}
 
-	// 3. Verify Two-Tier Selection for DomainBaby: exactly 13 tools (8 core + 5 baby tools)
+	// 3. Verify Two-Tier Selection for DomainBaby: exactly 12 tools (7 core + 5 baby tools)
 	babySelected := reg.SelectDeclarations([]orchestrator.DomainGroup{orchestrator.DomainBaby}, false)
-	require.Len(t, babySelected, 13, "Baby domain selection must contain exactly 13 tools (8 core + 5 baby)")
+	require.Len(t, babySelected, 12, "Baby domain selection must contain exactly 12 tools (7 core + 5 baby)")
 
 	expectedBabyTools := map[string]bool{
 		"upsert_baby_profile":            true,
@@ -100,12 +100,12 @@ func TestFull13Modules_TokenReduction(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 5, babyToolCount, "Must contain all 5 baby domain tools")
-	assert.Equal(t, 8, coreToolCount, "Must contain all 8 core tools")
+	assert.Equal(t, 7, coreToolCount, "Must contain all 7 core tools")
 
 	// 4. Token reduction math:
-	// 13 tools injected instead of >= 67 tools
+	// 12 tools injected instead of >= 66 tools
 	reductionPercent := (1.0 - (float64(len(babySelected)) / float64(totalTools))) * 100.0
-	t.Logf("Empirical token reduction: %.2f%% (13 tools injected out of %d)", reductionPercent, totalTools)
+	t.Logf("Empirical token reduction: %.2f%% (%d tools injected out of %d)", reductionPercent, len(babySelected), totalTools)
 	assert.GreaterOrEqual(t, reductionPercent, 80.0, "Token reduction must be >= 80%%")
 
 	// 5. Verify Ambient Default (unmatched domain): Core + Calendar + Tasks
@@ -116,7 +116,8 @@ func TestFull13Modules_TokenReduction(t *testing.T) {
 	}
 
 	// Must contain core tools
-	assert.True(t, ambientNames["remember_fact"])
+	assert.True(t, ambientNames["save_topic_memory"])
+	assert.False(t, ambientNames["remember_fact"], "remember_fact was removed (V4-06)")
 	assert.True(t, ambientNames["get_current_time"])
 	// Must contain ambient domains (calendar & tasks)
 	assert.True(t, ambientNames["create_calendar_event"])

@@ -692,7 +692,6 @@ func TestRegistry_SelectDeclarations_AdversarialCombinations(t *testing.T) {
 	memMod := &mockToolModule{
 		name: "memory",
 		declarations: []*genai.FunctionDeclaration{
-			{Name: "remember_fact", Description: "Core tool"},
 			{Name: "save_topic_memory", Description: "Core tool"},
 			{Name: "search_topic_memories", Description: "Core tool"},
 			{Name: "custom_memory_tool", Description: "Non-core memory tool"},
@@ -764,7 +763,6 @@ func TestRegistry_SelectDeclarations_AdversarialCombinations(t *testing.T) {
 
 		for _, doms := range domainScenarios {
 			decls := reg.SelectDeclarations(doms, false)
-			assert.True(t, hasTool(decls, "remember_fact"), "remember_fact must be present for %v", doms)
 			assert.True(t, hasTool(decls, "save_topic_memory"), "save_topic_memory must be present for %v", doms)
 			assert.True(t, hasTool(decls, "search_topic_memories"), "search_topic_memories must be present for %v", doms)
 			assert.True(t, hasTool(decls, "get_current_time"), "get_current_time fallback must be present for %v", doms)
@@ -773,7 +771,7 @@ func TestRegistry_SelectDeclarations_AdversarialCombinations(t *testing.T) {
 
 	t.Run("Ambient Default Selection (Empty Domains & fallbackToAll=false)", func(t *testing.T) {
 		decls := reg.SelectDeclarations(nil, false)
-		assert.True(t, hasTool(decls, "remember_fact"))
+		assert.True(t, hasTool(decls, "save_topic_memory"))
 		assert.True(t, hasTool(decls, "create_calendar_event"))
 		assert.True(t, hasTool(decls, "create_task"))
 		assert.False(t, hasTool(decls, "upsert_baby_profile"))
@@ -920,7 +918,7 @@ func TestPhotoData_5MB_10MB_StressPayloads(t *testing.T) {
 		reg.Register(&mockToolModule{
 			name: "memory",
 			declarations: []*genai.FunctionDeclaration{
-				{Name: "remember_fact"},
+				{Name: "save_topic_memory"},
 			},
 			executeFunc: func(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
 				return `{"status":"fact remembered"}`, nil
@@ -944,7 +942,7 @@ func TestPhotoData_5MB_10MB_StressPayloads(t *testing.T) {
 			"image/jpeg",
 		).Return(&llm.Response{
 			ToolCalls: []*genai.FunctionCall{
-				{Name: "remember_fact", Args: map[string]interface{}{"fact": "Invoice total $500"}},
+				{Name: "save_topic_memory", Args: map[string]interface{}{"topic": "finance", "fact": "Invoice total $500"}},
 			},
 		}, nil).Times(1)
 
@@ -987,7 +985,7 @@ func TestPhotoData_5MB_10MB_StressPayloads(t *testing.T) {
 		// 2. Persistent Redis assertion:
 		history, err := engine.store.GetChatHistory(context.Background(), userID)
 		require.NoError(t, err)
-		// Length depends on gating policy (P3-1: remember_fact in an image turn is staged for
+		// Length depends on gating policy (P3-1: save_topic_memory in an image turn is staged for
 		// CONFIRM, so no tool pair is persisted); this test is about byte stripping.
 		require.NotEmpty(t, history)
 		for _, m := range history {

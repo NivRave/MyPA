@@ -24,7 +24,7 @@ type mockDBForMemory struct {
 	orchestrator.DBClient
 }
 
-// TestMemory_AntiSpoofing verifies that memory tools (remember_fact, save_topic_memory,
+// TestMemory_AntiSpoofing verifies that memory tools (save_topic_memory,
 // search_topic_memories, upsert_entity_profile) strictly use callCtx.ActorID() and callCtx.TenantFamilyGroup(),
 // preventing caller-controlled argument overrides from cross-tenant spoofing.
 func TestMemory_AntiSpoofing(t *testing.T) {
@@ -67,19 +67,24 @@ func TestMemory_AntiSpoofing(t *testing.T) {
 		"actor_user_id":       "hacker_attacker_666",
 	}
 
-	t.Run("remember_fact saves under canonical ActorID and TenantFamilyGroup", func(t *testing.T) {
-		res, err := mod.Execute(context.Background(), callCtx, "remember_fact", adversarialArgs)
+	// One sub-test now carries every assertion the remember_fact sub-test made before the tool was
+	// removed (V4-06), on the tool that replaces it.
+	t.Run("save_topic_memory saves under canonical ActorID and TenantFamilyGroup", func(t *testing.T) {
+		res, err := mod.Execute(context.Background(), callCtx, "save_topic_memory", adversarialArgs)
 		require.NoError(t, err)
-		assert.Contains(t, res, "saved to family memory successfully")
+		assert.Contains(t, res, `"status":"saved"`)
 
-		// Verify V2 repo saved under canonical UserID and FamilyGroup
+		// Saved under the canonical user and family, whatever the arguments claimed.
 		memories, err := repo.SearchTopicMemories(context.Background(), "mem_canonical_actor", "mem_legit_family", "", "", nil)
 		require.NoError(t, err)
 		require.Len(t, memories, 1)
 		assert.Equal(t, "mem_canonical_actor", memories[0].UserID)
 		assert.Equal(t, "mem_legit_family", memories[0].FamilyGroup)
+		byTopic, err := repo.SearchTopicMemories(context.Background(), "mem_canonical_actor", "mem_legit_family", "health", "", nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, byTopic)
 
-		// Verify evil family has no memories
+		// The family named in the spoofed arguments has no memories.
 		evilMemories, err := repo.SearchTopicMemories(context.Background(), "hacker_attacker_666", "evil_family_hacker", "", "", nil)
 		require.NoError(t, err)
 		assert.Empty(t, evilMemories)
@@ -89,21 +94,7 @@ func TestMemory_AntiSpoofing(t *testing.T) {
 			assert.Equal(t, "mem_canonical_actor", ev.ActorUserID)
 			assert.Equal(t, "mem_legit_family", ev.FamilyGroup)
 		default:
-			t.Fatal("Expected MutationEvent for remember_fact")
-		}
-	})
-
-	t.Run("save_topic_memory ignores spoofed args", func(t *testing.T) {
-		res, err := mod.Execute(context.Background(), callCtx, "save_topic_memory", adversarialArgs)
-		require.NoError(t, err)
-		assert.Contains(t, res, `"status":"saved"`)
-
-		memories, err := repo.SearchTopicMemories(context.Background(), "mem_canonical_actor", "mem_legit_family", "health", "", nil)
-		require.NoError(t, err)
-		require.NotEmpty(t, memories)
-		for _, m := range memories {
-			assert.Equal(t, "mem_canonical_actor", m.UserID)
-			assert.Equal(t, "mem_legit_family", m.FamilyGroup)
+			t.Fatal("Expected MutationEvent for save_topic_memory")
 		}
 	})
 

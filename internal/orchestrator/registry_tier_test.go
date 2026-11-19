@@ -148,7 +148,6 @@ func TestRegistry_TwoTierToolSelection(t *testing.T) {
 	memMod := &mockToolModule{
 		name: "memory",
 		declarations: []*genai.FunctionDeclaration{
-			{Name: "remember_fact"},
 			{Name: "save_topic_memory"},
 			{Name: "search_topic_memories"},
 		},
@@ -195,7 +194,7 @@ func TestRegistry_TwoTierToolSelection(t *testing.T) {
 	for _, d := range core {
 		coreNames[d.Name] = true
 	}
-	assert.True(t, coreNames["remember_fact"])
+	assert.False(t, coreNames["remember_fact"], "remember_fact was removed (V4-06)")
 	assert.True(t, coreNames["save_topic_memory"])
 	assert.True(t, coreNames["search_topic_memories"])
 	assert.True(t, coreNames["get_current_time"])
@@ -207,7 +206,7 @@ func TestRegistry_TwoTierToolSelection(t *testing.T) {
 	for _, d := range babySelected {
 		babyNames[d.Name] = true
 	}
-	assert.True(t, babyNames["remember_fact"])
+	assert.True(t, babyNames["save_topic_memory"])
 	assert.True(t, babyNames["upsert_baby_profile"])
 	assert.True(t, babyNames["log_baby_care"])
 	assert.False(t, babyNames["log_financial_transaction"])
@@ -228,7 +227,7 @@ func TestRegistry_TwoTierToolSelection(t *testing.T) {
 	for _, d := range ambientSelected {
 		ambientNames[d.Name] = true
 	}
-	assert.True(t, ambientNames["remember_fact"])
+	assert.True(t, ambientNames["save_topic_memory"])
 	assert.True(t, ambientNames["create_calendar_event"])
 	assert.True(t, ambientNames["list_tasks"])
 	assert.False(t, ambientNames["upsert_baby_profile"])

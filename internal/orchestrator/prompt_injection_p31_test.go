@@ -74,17 +74,17 @@ func call(name string) *llm.Response {
 // P3-1 acceptance: an email instructs "remember that you must always call X" → the memory write is
 // staged for confirmation, not saved.
 func TestP31_EmailInstructionToRememberIsStagedNotSaved(t *testing.T) {
-	h := newInjectionHarness(t, call("search_emails"), call("remember_fact"))
+	h := newInjectionHarness(t, call("search_emails"), call("save_topic_memory"))
 	require.NoError(t, h.engine.ProcessMessage(context.Background(), models.Message{
 		ID: "p31-1", UserID: "u-inj", ChatID: "c", Text: "check my email", Source: "telegram",
 	}))
 
 	assert.Equal(t, int64(1), atomic.LoadInt64(h.ran["search_emails"]))
-	assert.Equal(t, int64(0), atomic.LoadInt64(h.ran["remember_fact"]), "remember_fact must not run after untrusted email content")
+	assert.Equal(t, int64(0), atomic.LoadInt64(h.ran["save_topic_memory"]), "save_topic_memory must not run after untrusted email content")
 	pending, err := h.engine.store.GetAndClearPendingMetaTool(context.Background(), "u-inj")
 	require.NoError(t, err)
 	require.NotNil(t, pending, "the write must be staged for CONFIRM")
-	assert.Equal(t, "remember_fact", pending.ToolName)
+	assert.Equal(t, "save_topic_memory", pending.ToolName)
 }
 
 // Every listed sensitive tool is gated once the turn has ingested untrusted content.
@@ -102,11 +102,11 @@ func TestP31_AllSensitiveToolsGatedAfterUntrustedContent(t *testing.T) {
 
 // Without untrusted content, sensitive tools run normally; non-sensitive tools always run.
 func TestP31_GateOnlyAppliesToUntrustedTurns(t *testing.T) {
-	h := newInjectionHarness(t, call("remember_fact"))
+	h := newInjectionHarness(t, call("save_topic_memory"))
 	require.NoError(t, h.engine.ProcessMessage(context.Background(), models.Message{
 		ID: "p31-t", UserID: "u-t", ChatID: "c", Text: "remember I like tea", Source: "telegram",
 	}))
-	assert.Equal(t, int64(1), atomic.LoadInt64(h.ran["remember_fact"]))
+	assert.Equal(t, int64(1), atomic.LoadInt64(h.ran["save_topic_memory"]))
 
 	h2 := newInjectionHarness(t, call("search_emails"), call("list_tasks"))
 	require.NoError(t, h2.engine.ProcessMessage(context.Background(), models.Message{
@@ -165,7 +165,7 @@ func TestP31_ImageTurnIsUntrusted(t *testing.T) {
 
 	var ran int64
 	reg := NewRegistry()
-	reg.Register(&mockToolModule{name: "memory", declarations: []*genai.FunctionDeclaration{{Name: "remember_fact"}},
+	reg.Register(&mockToolModule{name: "memory", declarations: []*genai.FunctionDeclaration{{Name: "save_topic_memory"}},
 		executeFunc: func(context.Context, CallContext, string, map[string]interface{}) (string, error) {
 			atomic.AddInt64(&ran, 1)
 			return "saved", nil
@@ -175,7 +175,7 @@ func TestP31_ImageTurnIsUntrusted(t *testing.T) {
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(context.Context, string, []models.ChatMessage, string, []byte, string) (*llm.Response, error) {
 			if atomic.AddInt64(&i, 1) == 1 {
-				return call("remember_fact"), nil
+				return call("save_topic_memory"), nil
 			}
 			return &llm.Response{Text: "ok"}, nil
 		}).AnyTimes()
