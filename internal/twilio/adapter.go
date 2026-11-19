@@ -73,14 +73,15 @@ func (a *Adapter) Capabilities() channel.Capabilities {
 	}
 }
 
-// Ingress implements channel.Adapter: Twilio calls the webhooks.
+// Ingress implements channel.Adapter: Twilio calls the webhooks, so WhatsApp always needs a public
+// address (V4-40).
 func (a *Adapter) Ingress() channel.Ingress {
 	return channel.Ingress{Webhook: &channel.Webhook{Routes: []channel.Route{
 		{Method: http.MethodPost, Path: WebhookPath, Handler: func(sink channel.Sink) http.Handler {
-			return http.HandlerFunc(NewHandler(sinkPublisher{sink}, a.cfg.AuthToken).HandleWebhook)
+			return http.HandlerFunc(NewHandler(sinkPublisher{sink}, a.cfg.AuthToken).WithPublicURL(a.cfg.PublicURL).HandleWebhook)
 		}},
 		{Method: http.MethodPost, Path: StatusCallbackPath, Handler: func(sink channel.Sink) http.Handler {
-			return http.HandlerFunc(NewHandler(sinkPublisher{sink}, a.cfg.AuthToken).HandleStatusCallback)
+			return http.HandlerFunc(NewHandler(sinkPublisher{sink}, a.cfg.AuthToken).WithPublicURL(a.cfg.PublicURL).HandleStatusCallback)
 		}},
 	}}}
 }
@@ -95,6 +96,9 @@ func (p sinkPublisher) Publish(ctx context.Context, v any) error {
 	}
 	return p.sink(ctx, in)
 }
+
+// Configured implements channel.Configurable: a Twilio account is set.
+func (a *Adapter) Configured() bool { return a.cfg.AccountSID != "" }
 
 // Send implements channel.Adapter. Messages go to the person's number; the client converts the
 // text to WhatsApp markup and splits it at a paragraph, line or space, exactly as before the
@@ -128,13 +132,14 @@ func (a *Adapter) Recognizes(person string) bool {
 // HealthCheck is the adapter's /doctor check.
 func (a *Adapter) HealthCheck() doctor.Check {
 	return WhatsAppCheck{
-		Configured:        a.cfg.AccountSID != "",
+		Configured:        a.Configured(),
 		Sender:            a.cfg.FromNumber,
 		StatusCallbackURL: a.cfg.StatusCallbackURL,
 	}
 }
 
 var (
-	_ channel.Adapter    = (*Adapter)(nil)
-	_ channel.Recognizer = (*Adapter)(nil)
+	_ channel.Adapter      = (*Adapter)(nil)
+	_ channel.Recognizer   = (*Adapter)(nil)
+	_ channel.Configurable = (*Adapter)(nil)
 )

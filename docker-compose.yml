@@ -6,6 +6,13 @@ x-logging: &default-logging
     max-file: "5"
 
 services:
+  # V4-40: the same file runs a home PC or a server; settings in .env choose, never edits here.
+  #   - How the install is reached: INGRESS and PUBLIC_URL. The bundled tunnel or proxy of each
+  #     ingress is the service, and the compose profile, of the same name (ngrok, cloudflare,
+  #     tailscale, caddy), started by COMPOSE_PROFILES. INGRESS=none starts none of them.
+  #   - Managed services: EXTERNAL_DATABASE_URL, EXTERNAL_REDIS_URL and EXTERNAL_RABBITMQ_URL replace
+  #     the bundled containers' addresses. Unset, the containers below are used.
+
   # V4-01: the app is one binary with roles (ADR 0001 option 1c). It runs the default role, `all`:
   # it receives the webhooks, enqueues them on RabbitMQ (the durable hand-off is kept), consumes
   # them, and serves /graphql and the Google sign-in on the same port. `--role=ingress` and
@@ -21,9 +28,9 @@ services:
     env_file:
       - .env
     environment:
-      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable
+      - RABBITMQ_URL=${EXTERNAL_RABBITMQ_URL:-amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/}
+      - REDIS_URL=${EXTERNAL_REDIS_URL:-redis://redis:6379/0}
+      - DATABASE_URL=${EXTERNAL_DATABASE_URL:-postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -55,9 +62,9 @@ services:
     env_file:
       - .env
     environment:
-      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable
+      - RABBITMQ_URL=${EXTERNAL_RABBITMQ_URL:-amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/}
+      - REDIS_URL=${EXTERNAL_REDIS_URL:-redis://redis:6379/0}
+      - DATABASE_URL=${EXTERNAL_DATABASE_URL:-postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable}
       - AUDIT_ARCHIVE_DIR=/app/archives
     volumes:
       - ./backups:/backups
@@ -83,9 +90,9 @@ services:
     env_file:
       - .env
     environment:
-      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable
+      - RABBITMQ_URL=${EXTERNAL_RABBITMQ_URL:-amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/}
+      - REDIS_URL=${EXTERNAL_REDIS_URL:-redis://redis:6379/0}
+      - DATABASE_URL=${EXTERNAL_DATABASE_URL:-postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable}
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,9 +106,9 @@ services:
     env_file:
       - .env
     environment:
-      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable
+      - RABBITMQ_URL=${EXTERNAL_RABBITMQ_URL:-amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/}
+      - REDIS_URL=${EXTERNAL_REDIS_URL:-redis://redis:6379/0}
+      - DATABASE_URL=${EXTERNAL_DATABASE_URL:-postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable}
       - AUDIT_ARCHIVE_DIR=/app/archives
     volumes:
       - audit_archives:/app/archives
@@ -114,21 +121,84 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  # V4-40: INGRESS=ngrok. Opt-in (COMPOSE_PROFILES=ngrok); the tunnel serves PUBLIC_URL.
   ngrok:
     logging: *default-logging
+    profiles: ["ngrok"]
     # Pinned by digest (ngrok agent 3.39.8) — P3-5. Bump deliberately (Dependabot, P5-4).
     image: ngrok/ngrok:3.39.8@sha256:14d80d083e5b53145f416bbbd36238336c9de4016c43fd950eb2eb845670583b
     restart: unless-stopped
     command:
       - "http"
       - "app:8000"
-      # P3-5: no committed default domain. Without NGROK_DOMAIN ngrok fails loudly at start
+      # P3-5: no committed default domain. Without PUBLIC_URL ngrok fails loudly at start
       # (a ${VAR:?} guard would break every compose command, incl. CI builds without a .env).
-      - "--url=${NGROK_DOMAIN:-}"
+      - "--url=${PUBLIC_URL:-}"
     environment:
-      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN:-}
     ports:
       - "127.0.0.1:4040:4040"
+    depends_on:
+      app:
+        condition: service_started
+
+  # V4-40: INGRESS=cloudflare. Opt-in (COMPOSE_PROFILES=cloudflare). The tunnel's public hostname
+  # (PUBLIC_URL) and its target, http://app:8000, are set in the Cloudflare dashboard; the token
+  # connects this container to that tunnel. Outbound only: no port is published.
+  cloudflare:
+    logging: *default-logging
+    profiles: ["cloudflare"]
+    # Pinned by digest (cloudflared 2026.11.1).
+    image: cloudflare/cloudflared:2026.11.1@sha256:e613aadbc2d9511785d2e67a86b0c8ac18dd63a3f9af0d06faf04cbfdcb35f2d
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      app:
+        condition: service_started
+
+  # V4-40: INGRESS=tailscale. Opt-in (COMPOSE_PROFILES=tailscale). Joins the tailnet as
+  # TAILSCALE_HOSTNAME and publishes the app with Funnel (deploy/tailscale-serve.json); PUBLIC_URL is
+  # https://<TAILSCALE_HOSTNAME>.<tailnet>.ts.net. Outbound only: no port is published.
+  tailscale:
+    logging: *default-logging
+    profiles: ["tailscale"]
+    # Pinned by digest (Tailscale 1.104.7).
+    image: tailscale/tailscale:v1.104.7@sha256:72c1e19e0aedca96b8533bbb0b4368564410ff20b17e53b804eb6c1f04a31be4
+    restart: unless-stopped
+    hostname: ${TAILSCALE_HOSTNAME:-mypa}
+    environment:
+      - TS_AUTHKEY=${TAILSCALE_AUTHKEY:-}
+      - TS_HOSTNAME=${TAILSCALE_HOSTNAME:-mypa}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_SERVE_CONFIG=/config/serve.json
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+      - ./deploy/tailscale-serve.json:/config/serve.json:ro
+    depends_on:
+      app:
+        condition: service_started
+
+  # V4-40: INGRESS=caddy, the single-server path (DE-9). Opt-in (COMPOSE_PROFILES=caddy). Caddy
+  # obtains and renews the TLS certificate for PUBLIC_URL's host and forwards to the app's port.
+  # Host networking: it listens on the server's ports 80 and 443 itself and reaches the app on
+  # 127.0.0.1:8000, so compose publishes nothing beyond loopback. For a Linux server; ports 80 and
+  # 443 must reach the machine and the domain's DNS must point at it.
+  caddy:
+    logging: *default-logging
+    profiles: ["caddy"]
+    # Pinned by digest (Caddy 2.11.9).
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - PUBLIC_URL=${PUBLIC_URL:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
     depends_on:
       app:
         condition: service_started
@@ -231,4 +301,8 @@ volumes:
   redis_data:
   postgres_data:
   audit_archives:
+  # V4-40: the bundled ingresses' state (Caddy's certificates, the Tailscale node key).
+  caddy_data:
+  caddy_config:
+  tailscale_state:
 

@@ -83,7 +83,7 @@ func loadCompose(t *testing.T) (string, map[string]composeService) {
 // P3-5: no infrastructure details committed in the compose file.
 func TestCompose_NoCommittedNgrokDomain(t *testing.T) {
 	raw, services := loadCompose(t)
-	assert.NotContains(t, raw, "ngrok-free.dev", "a real ngrok domain must come from NGROK_DOMAIN, not a committed default")
+	assert.NotContains(t, raw, "ngrok-free.dev", "a real ngrok domain must come from PUBLIC_URL, not a committed default")
 	ngrok, ok := services["ngrok"]
 	require.True(t, ok)
 	var urlArg string
@@ -92,13 +92,13 @@ func TestCompose_NoCommittedNgrokDomain(t *testing.T) {
 			urlArg = a
 		}
 	}
-	assert.Equal(t, "--url=${NGROK_DOMAIN:-}", urlArg, "no fallback domain")
+	assert.Equal(t, "--url=${PUBLIC_URL:-}", urlArg, "no fallback domain; the one public address (V4-40)")
 }
 
 // Third-party images are pinned to an immutable digest (no floating :latest).
 func TestCompose_ThirdPartyToolImagesPinned(t *testing.T) {
 	_, services := loadCompose(t)
-	for _, name := range []string{"ngrok", "pgadmin"} {
+	for _, name := range []string{"ngrok", "cloudflare", "tailscale", "caddy", "pgadmin"} {
 		img := services[name].Image
 		assert.Contains(t, img, "@sha256:", "%s must be pinned by digest: %s", name, img)
 		assert.NotContains(t, img, ":latest", "%s must not float on :latest", name)

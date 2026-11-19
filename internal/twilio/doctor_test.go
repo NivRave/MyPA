@@ -45,7 +45,7 @@ func TestWhatsAppCheck(t *testing.T) {
 		results := WhatsAppCheck{Configured: true, Sender: "whatsapp:+12025550199"}.Run(context.Background(), adminScope)
 		require.Len(t, results, 1)
 		requireProblem(t, results[0], doctor.StatusWarn, "Delivery failures")
-		assert.Contains(t, results[0].NextStep, "TWILIO_STATUS_CALLBACK_URL")
+		assert.Contains(t, results[0].NextStep, "PUBLIC_URL")
 	})
 	t.Run("own sender with delivery reports", func(t *testing.T) {
 		r := one(t, WhatsAppCheck{Configured: true, Sender: "whatsapp:+12025550199", StatusCallbackURL: "https://mypa.example/webhook/twilio/status"}, adminScope)

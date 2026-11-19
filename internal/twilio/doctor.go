@@ -18,7 +18,7 @@ const SandboxSender = "whatsapp:+14155238886"
 type WhatsAppCheck struct {
 	Configured        bool   // a Twilio account is set
 	Sender            string // TWILIO_FROM_NUMBER
-	StatusCallbackURL string // TWILIO_STATUS_CALLBACK_URL
+	StatusCallbackURL string // derived from PUBLIC_URL (V4-40)
 }
 
 func (WhatsAppCheck) Name() string { return "WhatsApp" }
@@ -43,7 +43,7 @@ func (c WhatsAppCheck) Run(context.Context, doctor.Scope) []doctor.Result {
 			Check:    "WhatsApp delivery reports",
 			Status:   doctor.StatusWarn,
 			Detail:   "Delivery failures are not reported back, so a message Twilio accepted but could not deliver goes unnoticed.",
-			NextStep: "Set `TWILIO_STATUS_CALLBACK_URL` to the public address of `/webhook/twilio/status` and restart the app.",
+			NextStep: "Set `PUBLIC_URL` to this install's public address and restart the app: delivery reports go to `/webhook/twilio/status` there.",
 		})
 	}
 	if len(results) == 0 {

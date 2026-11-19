@@ -104,7 +104,9 @@ func TestLoad_EnvVars(t *testing.T) {
 	t.Setenv("DEFAULT_TIMEZONE", "America/New_York")
 	t.Setenv("HTTP_PORT", "9001")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "test-token")
-	t.Setenv("TELEGRAM_WEBHOOK_URL", "https://example.com/webhook")
+	t.Setenv("INGRESS", "proxy")
+	t.Setenv("PUBLIC_URL", "https://example.com")
+	t.Setenv("TELEGRAM_SECRET_TOKEN", "s3cret_token")
 	t.Setenv("RABBITMQ_URL", "amqp://user:pass@localhost:5672/")
 	t.Setenv("REDIS_URL", "redis://localhost:6379/0")
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
@@ -112,12 +114,10 @@ func TestLoad_EnvVars(t *testing.T) {
 	t.Setenv("GEMINI_MODEL", "gemini-1.5-pro")
 	t.Setenv("GOOGLE_CLIENT_ID", "google-client-id")
 	t.Setenv("GOOGLE_CLIENT_SECRET", "google-client-secret")
-	t.Setenv("GOOGLE_REDIRECT_URL", "http://localhost/callback")
 	t.Setenv("GROQ_API_KEY", "groq-key")
 	t.Setenv("TWILIO_ACCOUNT_SID", "twilio-sid")
 	t.Setenv("TWILIO_AUTH_TOKEN", "twilio-token")
 	t.Setenv("TWILIO_FROM_NUMBER", "whatsapp:+1234567890")
-	t.Setenv("TWILIO_STATUS_CALLBACK_URL", "https://example.com/webhook/twilio/status")
 	t.Setenv("TAVILY_API_KEY", "tavily-key")
 
 	cfg, err := Load()
@@ -128,7 +128,8 @@ func TestLoad_EnvVars(t *testing.T) {
 	assert.Equal(t, "America/New_York", cfg.Server.DefaultTimezone)
 	assert.Equal(t, 9001, cfg.Server.Port)
 	assert.Equal(t, "test-token", cfg.Channels.Telegram.BotToken)
-	assert.Equal(t, "https://example.com/webhook", cfg.Channels.Telegram.WebhookURL)
+	assert.Equal(t, "https://example.com/webhook/telegram", cfg.Channels.Telegram.WebhookURL)
+	assert.False(t, cfg.Channels.Telegram.Polling)
 	assert.Equal(t, "amqp://user:pass@localhost:5672/", cfg.RabbitMQ.URL)
 	assert.Equal(t, "redis://localhost:6379/0", cfg.Redis.URL)
 	assert.Equal(t, "postgres://user:pass@localhost:5432/db", cfg.Database.URL)
@@ -136,7 +137,9 @@ func TestLoad_EnvVars(t *testing.T) {
 	assert.Equal(t, "gemini-1.5-pro", cfg.Gemini.Model)
 	assert.Equal(t, "google-client-id", cfg.Google.ClientID)
 	assert.Equal(t, "google-client-secret", cfg.Google.ClientSecret)
-	assert.Equal(t, "http://localhost/callback", cfg.Google.RedirectURL)
+	assert.Equal(t, "https://example.com/auth/google/callback", cfg.Google.RedirectURL)
+	assert.Equal(t, "https://example.com", cfg.Deploy.PublicURL)
+	require.NoError(t, cfg.Validate(RoleIngress), "the four public addresses agree because there is one")
 	assert.Equal(t, "groq-key", cfg.Groq.APIKey)
 	assert.Equal(t, "twilio-sid", cfg.Channels.WhatsApp.AccountSID)
 	assert.Equal(t, "twilio-token", cfg.Channels.WhatsApp.AuthToken)
@@ -171,4 +174,79 @@ gemini:
 	assert.Equal(t, 9090, cfg.Server.Port)
 	assert.Equal(t, "Europe/London", cfg.Server.DefaultTimezone)
 	assert.Equal(t, "gemini-test", cfg.Gemini.Model)
+}
+
+// V4-40: one public address setting replaces the four that had to agree (Telegram webhook, Twilio
+// callback, Google redirect, tunnel domain). Each is derived from PUBLIC_URL.
+func TestLoad_EveryPublicAddressComesFromPublicURL(t *testing.T) {
+	clearEnvKeepTemp(t)
+	t.Chdir(t.TempDir())
+	t.Setenv("INGRESS", "caddy")
+	t.Setenv("PUBLIC_URL", "https://mypa.example.com/")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "https://mypa.example.com/webhook/telegram", cfg.Channels.Telegram.WebhookURL)
+	assert.Equal(t, "https://mypa.example.com/webhook/twilio/status", cfg.Channels.WhatsApp.StatusCallbackURL)
+	assert.Equal(t, "https://mypa.example.com", cfg.Channels.WhatsApp.PublicURL)
+	assert.Equal(t, "https://mypa.example.com/auth/google/callback", cfg.Google.RedirectURL)
+	assert.True(t, cfg.Deploy.Reachable())
+}
+
+// Without a public address (the default), Telegram polls and Google returns to the app's local
+// port, which only a browser on the same machine reaches.
+func TestLoad_LocalInstallHasNoPublicAddress(t *testing.T) {
+	clearEnvKeepTemp(t)
+	t.Chdir(t.TempDir())
+	t.Setenv("HTTP_PORT", "8123")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.Deploy.Reachable())
+	assert.True(t, cfg.Channels.Telegram.Polling)
+	assert.Empty(t, cfg.Channels.Telegram.WebhookURL)
+	assert.Empty(t, cfg.Channels.WhatsApp.StatusCallbackURL)
+	assert.Equal(t, "http://localhost:8123/auth/google/callback", cfg.Google.RedirectURL)
+}
+
+// An old address setting still in .env would silently disagree with PUBLIC_URL, so the app
+// refuses to start and names the replacement, for every app role.
+func TestValidate_RefusesTheSettingsPublicURLReplaced(t *testing.T) {
+	for _, key := range []string{"TELEGRAM_WEBHOOK_URL", "TWILIO_STATUS_CALLBACK_URL", "GOOGLE_REDIRECT_URL", "NGROK_DOMAIN"} {
+		clearEnvKeepTemp(t)
+		t.Chdir(t.TempDir())
+		t.Setenv(key, "https://old.example/x")
+		cfg, err := Load()
+		require.NoError(t, err)
+		*cfg = mergeWorkerOK(*cfg)
+		for _, role := range Roles() {
+			err := cfg.Validate(role)
+			require.Error(t, err, "%s with %s", role, key)
+			assert.Contains(t, err.Error(), key+" is no longer read")
+			assert.Contains(t, err.Error(), "PUBLIC_URL")
+		}
+		assert.NoError(t, cfg.Validate(ServiceAuditWorker), "the audit worker receives nothing")
+	}
+}
+
+// The deployment settings are checked for every app role.
+func TestValidate_ChecksTheDeploySettings(t *testing.T) {
+	clearEnvKeepTemp(t)
+	t.Chdir(t.TempDir())
+	t.Setenv("INGRESS", "caddy")
+	cfg, err := Load()
+	require.NoError(t, err)
+	*cfg = mergeWorkerOK(*cfg)
+	for _, role := range Roles() {
+		err := cfg.Validate(role)
+		require.Error(t, err, role)
+		assert.Contains(t, err.Error(), "PUBLIC_URL is required with INGRESS=caddy")
+	}
+}
+
+// mergeWorkerOK fills in the settings every app role requires, keeping what Load derived.
+func mergeWorkerOK(c Config) Config {
+	ok := workerOK()
+	ok.Channels, ok.Deploy, ok.Google, ok.replaced = c.Channels, c.Deploy, c.Google, c.replaced
+	return ok
 }

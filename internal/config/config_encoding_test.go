@@ -64,8 +64,11 @@ func TestConfigYamlAndEnvExample(t *testing.T) {
 	v.SetConfigType("yaml")
 	err = v.ReadConfig(bytes.NewReader(data))
 	require.NoError(t, err, "config/config.yaml must be valid YAML")
-	redirectURL := v.GetString("google.redirect_url")
-	assert.Equal(t, "http://localhost:8000/auth/google/callback", redirectURL, "redirect_url must point to the app port 8000 (V4-01)")
+	// V4-40: the Google redirect is derived (PUBLIC_URL, or the app's port without one), so the
+	// shipped settings must not hold one that nothing reads. The shipped port is 8000 (V4-01), so
+	// the local redirect is http://localhost:8000/auth/google/callback (TestLoad_LocalInstallHasNoPublicAddress).
+	assert.False(t, v.IsSet("google.redirect_url"), "config/config.yaml must not set google.redirect_url: PUBLIC_URL replaced it")
+	assert.Equal(t, 8000, v.GetInt("server.port"), "the app port the local Google redirect uses (V4-01)")
 
 	// Verify .env.example
 	envPath := filepath.Join(repoRoot, ".env.example")
@@ -81,7 +84,8 @@ func TestConfigYamlAndEnvExample(t *testing.T) {
 	}
 
 	assert.Contains(t, envContent, "ENCRYPTION_KEY=", ".env.example must contain ENCRYPTION_KEY definition")
-	assert.Contains(t, envContent, "GOOGLE_REDIRECT_URL=http://localhost:8000/auth/google/callback", ".env.example must point the Google redirect at the app port (V4-01)")
+	assert.Contains(t, envContent, "http://localhost:8000/auth/google/callback", ".env.example must name the local Google redirect at the app port (V4-01)")
+	assert.Contains(t, envContent, "PUBLIC_URL/auth/google/callback", ".env.example must name the public Google redirect, derived from PUBLIC_URL (V4-40)")
 	for _, gone := range []string{"GATEWAY_URL=", "ORCHESTRATOR_URL="} {
 		assert.NotContains(t, envContent, gone, "V4-01 removed the proxy that read %s", gone)
 	}

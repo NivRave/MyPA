@@ -109,8 +109,9 @@ func restoreInstructions(latestPath string) string {
 	sb.WriteString("🛟 **Restoring is done from the terminal**\n\n")
 	sb.WriteString("A restore needs the app stopped, so it cannot run from chat. Newest backup: `" + target + "`\n\n")
 	sb.WriteString("On the machine that runs MyPA:\n\n")
-	sb.WriteString("1. Stop the app: `docker compose stop ngrok` so nothing new comes in, wait a few seconds, then " +
-		"`docker compose stop app audit-worker dashboard`.\n")
+	sb.WriteString("1. Stop the app. First stop what lets messages in, the service your `INGRESS` names: " +
+		"`docker compose stop ngrok` (or `cloudflare`, `tailscale`, `caddy`; nothing to stop for `none` or your own proxy). " +
+		"Wait a few seconds, then `docker compose stop app audit-worker dashboard`.\n")
 	step := 2
 	if keyStep != "" {
 		sb.WriteString(fmt.Sprintf("%d. %s", step, keyStep))

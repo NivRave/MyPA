@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/deploy"
 	"github.com/nivik/mypa/internal/telegram"
 	"github.com/nivik/mypa/internal/twilio"
 )
@@ -20,10 +21,13 @@ type Config struct {
 }
 
 // LoadConfig reads every adapter's settings from the environment (getenv is os.Getenv in the app).
+// Each adapter derives its public addresses, and whether it can receive at all without one, from
+// the deployment settings (V4-40).
 func LoadConfig(getenv func(string) string) Config {
+	site := deploy.Load(getenv)
 	return Config{
-		Telegram: telegram.LoadConfig(getenv),
-		WhatsApp: twilio.LoadConfig(getenv),
+		Telegram: telegram.LoadConfig(getenv, site),
+		WhatsApp: twilio.LoadConfig(getenv, site),
 	}
 }
 
@@ -39,6 +43,12 @@ func (c Config) Validate(servesIngress, runsWorker bool) []error {
 // ConditionalEnvKeys are the settings Validate may demand, so .env.example must list them.
 func ConditionalEnvKeys() []string {
 	return append(telegram.ConditionalEnvKeys(), twilio.ConditionalEnvKeys()...)
+}
+
+// ReplacedEnvKeys are the adapters' settings that PUBLIC_URL replaced (V4-40). The app refuses to
+// start while one is still set, so an old value can never silently disagree with the new one.
+func ReplacedEnvKeys() []string {
+	return append(telegram.ReplacedEnvKeys(), twilio.ReplacedEnvKeys()...)
 }
 
 // options are the test seams of Build.

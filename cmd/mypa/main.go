@@ -23,8 +23,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/config"
+	"github.com/nivik/mypa/internal/deploy"
 	"github.com/nivik/mypa/internal/logging"
 )
 
@@ -59,6 +61,25 @@ func main() {
 		os.Exit(2)
 	}
 	os.Exit(run(cfg, role, waitForSignal))
+}
+
+// channelOptions are passed to adapters.Build by run. Empty in the app; tests put every platform
+// client on a fake transport with it.
+var channelOptions []adapters.Option
+
+// checkReachable stops an install without a public address from running a configured channel
+// that receives through webhooks: it could send, but nothing would ever arrive (ADR 0003 §6,
+// V4-40). A channel that connects outward runs anywhere.
+func checkReachable(site deploy.Settings, channels *channel.Registry) error {
+	if site.Reachable() {
+		return nil
+	}
+	need := channels.NeedPublicAddress()
+	if len(need) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s receives messages through webhooks, which need a public address, but INGRESS is none: "+
+		"set INGRESS and PUBLIC_URL (see .env.example), or remove that channel's settings", strings.Join(need, " and "))
 }
 
 // role is what one process of the app runs.
@@ -137,8 +158,12 @@ func run(cfg *config.Config, r role, wait func(serverErr <-chan error) error) in
 	}
 
 	// Every channel adapter, built once and shared by the ingress and the worker (V4-31).
-	channels, err := adapters.Build(cfg.Channels)
+	channels, err := adapters.Build(cfg.Channels, channelOptions...)
 	if err != nil {
+		slog.Error("refusing to start", "error", err)
+		return 1
+	}
+	if err := checkReachable(cfg.Deploy, channels); err != nil {
 		slog.Error("refusing to start", "error", err)
 		return 1
 	}

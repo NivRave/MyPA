@@ -130,7 +130,7 @@ func (e Exporter) Run(ctx context.Context) (db.Manifest, string, error) {
 		}
 		if !stopped {
 			return db.Manifest{}, "", fmt.Errorf("the install is not stopped and drained: %s. "+
-				"Stop what lets messages in first (ngrok; on a v3.4.x install, proxy and gateway), wait until the queues are empty, "+
+				"Stop what lets messages in first (the tunnel or proxy service your INGRESS names, such as ngrok; with INGRESS=none the app itself fetches them; on a v3.4.x install, proxy and gateway), wait until the queues are empty, "+
 				"then stop the app (on v3.4.x, the orchestrator) and the audit worker, and run the export again",
 				describeBusy(info))
 		}

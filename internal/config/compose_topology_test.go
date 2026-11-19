@@ -80,8 +80,8 @@ func TestCompose_UpRunsOneAppPlusAuditWorkerDashboardAndInfrastructure(t *testin
 		"`docker compose up` must run one app container plus the audit worker and the dashboard")
 	assert.Equal(t, []string{"migrate"}, sortedKeys(oneShot), "the only one-shot job `up` runs is the schema migration")
 	assert.Equal(t, "app", services["migrate"].Build.Target, "the migration runs the app image")
-	assert.Equal(t, []string{"ngrok", "postgres", "rabbitmq", "redis"}, sortedKeys(infrastructure),
-		"everything else `up` starts is infrastructure")
+	assert.Equal(t, []string{"postgres", "rabbitmq", "redis"}, sortedKeys(infrastructure),
+		"everything else `up` starts is infrastructure; a tunnel or proxy starts only with its profile (V4-40)")
 
 	for _, gone := range []string{"proxy", "gateway", "orchestrator"} {
 		_, present := services[gone]

@@ -81,11 +81,12 @@ func TestDockerComposeEnvInterpolation(t *testing.T) {
 	assert.Contains(t, content, "${RABBITMQ_DEFAULT_USER:-mypa}", "RabbitMQ user must interpolate RABBITMQ_DEFAULT_USER")
 	assert.Contains(t, content, "${RABBITMQ_DEFAULT_PASS:-mypa_dev}", "RabbitMQ password must interpolate RABBITMQ_DEFAULT_PASS")
 
-	// 3. Container URLs are built from those credential variables (never hard-coded credentials).
-	// They deliberately do NOT interpolate the host-side ${DATABASE_URL}/${RABBITMQ_URL}, which
-	// point at localhost — see TestCompose_ContainerURLsTargetServiceNames.
-	assert.Contains(t, content, "DATABASE_URL=postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/", "DATABASE_URL must be built from the POSTGRES_* credentials")
-	assert.Contains(t, content, "RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/", "RABBITMQ_URL must be built from the RABBITMQ_DEFAULT_* credentials")
+	// 3. Container URLs are built from those credential variables (never hard-coded credentials),
+	// unless a managed service replaces the bundled one (EXTERNAL_*, V4-40). They deliberately do
+	// NOT interpolate the host-side ${DATABASE_URL}/${RABBITMQ_URL}, which point at localhost — see
+	// TestCompose_ContainerURLsTargetServiceNames.
+	assert.Contains(t, content, "DATABASE_URL=${EXTERNAL_DATABASE_URL:-postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/", "DATABASE_URL must be built from the POSTGRES_* credentials")
+	assert.Contains(t, content, "RABBITMQ_URL=${EXTERNAL_RABBITMQ_URL:-amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/}", "RABBITMQ_URL must be built from the RABBITMQ_DEFAULT_* credentials")
 
 	// 4. Check audit-worker named volume
 	assert.Contains(t, content, "audit_archives:/app/archives", "audit-worker must mount named volume audit_archives")

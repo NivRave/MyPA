@@ -31,7 +31,8 @@ const (
 // it points at the configured address, and Telegram is not reporting delivery errors.
 type WebhookCheck struct {
 	Configured bool   // a bot token is set
-	WantURL    string // TELEGRAM_WEBHOOK_URL; empty skips the address comparison
+	Polling    bool   // no public address: the adapter polls, so no webhook may be set (V4-40)
+	WantURL    string // the derived webhook address (PUBLIC_URL + /webhook/telegram); empty skips the comparison
 	Info       func(ctx context.Context) (WebhookHealth, error)
 	Now        func() time.Time
 }
@@ -52,17 +53,20 @@ func (c WebhookCheck) Run(ctx context.Context, _ doctor.Scope) []doctor.Result {
 		res.NextStep = "Check `TELEGRAM_BOT_TOKEN` and that this machine can reach api.telegram.org."
 		return []doctor.Result{res}
 	}
+	if c.Polling {
+		return []doctor.Result{c.pollingResult(info)}
+	}
 	if info.URL == "" {
 		res.Status = doctor.StatusFail
 		res.Detail = "No webhook is registered, so messages sent on Telegram do not arrive."
-		res.NextStep = "Set `TELEGRAM_WEBHOOK_URL` to the public address of `/webhook/telegram`, " + restart
+		res.NextStep = "Check that `PUBLIC_URL` is this install's public address, " + restart
 		return []doctor.Result{res}
 	}
 	if c.WantURL != "" && info.URL != c.WantURL {
 		res.Status = doctor.StatusFail
 		res.Detail = fmt.Sprintf("Telegram sends updates to a different address (%s) than the configured one (%s).",
 			doctor.HostOf(info.URL), doctor.HostOf(c.WantURL))
-		res.NextStep = "If the public address changed, update `TELEGRAM_WEBHOOK_URL`, " + restart
+		res.NextStep = "If the public address changed, update `PUBLIC_URL`, " + restart
 		return []doctor.Result{res}
 	}
 
@@ -78,16 +82,34 @@ func (c WebhookCheck) Run(ctx context.Context, _ doctor.Scope) []doctor.Result {
 		case failing:
 			res.Status = doctor.StatusFail
 			res.Detail = fmt.Sprintf("Telegram could not deliver updates: %s (%s). %s.", info.LastErrorMsg, doctor.Ago(since), waiting)
-			res.NextStep = "Check that the address in `TELEGRAM_WEBHOOK_URL` is reachable from the internet (is the tunnel up?) and that the app is running."
+			res.NextStep = "Check that `PUBLIC_URL` is reachable from the internet (is the tunnel or proxy up?) and that the app is running."
 			return []doctor.Result{res}
 		case since <= webhookErrorIsRelevant:
 			res.Status = doctor.StatusWarn
 			res.Detail = fmt.Sprintf("Deliveries work now, but Telegram reported an error %s: %s.", doctor.Ago(since), info.LastErrorMsg)
-			res.NextStep = "No action if this was a restart. If it repeats, check the tunnel and the app log around that time."
+			res.NextStep = "No action if this was a restart. If it repeats, check the tunnel or proxy and the app log around that time."
 			return []doctor.Result{res}
 		}
 	}
 	res.Status = doctor.StatusOK
 	res.Detail = fmt.Sprintf("Registered at %s, no recent delivery errors, %s.", doctor.HostOf(info.URL), waiting)
 	return []doctor.Result{res}
+}
+
+// pollingResult judges a polling install: Telegram must have no webhook, or it delivers there and
+// getUpdates is refused.
+func (c WebhookCheck) pollingResult(info WebhookHealth) doctor.Result {
+	res := doctor.Result{Check: c.Name()}
+	waiting := doctor.Plural(info.Pending, "update is", "updates are") + " waiting"
+	if info.URL != "" {
+		res.Status = doctor.StatusFail
+		res.Detail = fmt.Sprintf("This install polls Telegram, but a webhook is registered at %s, so updates go there instead. %s.",
+			doctor.HostOf(info.URL), waiting)
+		res.NextStep = "Another install is probably live on this bot, and only one install may be live per bot: stop it " +
+			"(docs/RESTORE_AND_MIGRATE.md), then restart this app, which removes the webhook when it starts."
+		return res
+	}
+	res.Status = doctor.StatusOK
+	res.Detail = fmt.Sprintf("No public address: the app polls Telegram for updates. %s.", waiting)
+	return res
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/nivik/mypa/internal/channel/adapters"
+	"github.com/nivik/mypa/internal/deploy"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/spf13/viper"
 )
@@ -25,6 +26,21 @@ type Config struct {
 	// Channels holds the channel adapters' own settings (V4-31). Each adapter reads and checks its
 	// settings itself, so this package does not know which channels exist.
 	Channels adapters.Config `mapstructure:"-"`
+	// Deploy is how the install is reached: INGRESS and the one PUBLIC_URL every public address is
+	// derived from (V4-40).
+	Deploy deploy.Settings `mapstructure:"-"`
+
+	// replaced lists the settings PUBLIC_URL replaced that are still set; Validate refuses them.
+	replaced []string
+}
+
+// GoogleCallbackPath is where Google returns after a person signs in (the app's OAuth callback).
+const GoogleCallbackPath = "/auth/google/callback"
+
+// replacedEnvKeys are the settings PUBLIC_URL replaced (V4-40): the adapters' own, the Google
+// redirect, and the ngrok domain the tunnel was started with.
+func replacedEnvKeys() []string {
+	return append(adapters.ReplacedEnvKeys(), "GOOGLE_REDIRECT_URL", "NGROK_DOMAIN")
 }
 
 // EncryptionConfig holds cryptographic encryption settings.
@@ -72,7 +88,10 @@ type GeminiConfig struct {
 type GoogleConfig struct {
 	ClientID     string `mapstructure:"client_id"`
 	ClientSecret string `mapstructure:"client_secret"`
-	RedirectURL  string `mapstructure:"redirect_url"`
+	// RedirectURL is PUBLIC_URL followed by GoogleCallbackPath; without a public address it is the
+	// app's local port, which only a browser on the same machine can reach (V4-40). Derived, never
+	// set on its own.
+	RedirectURL string `mapstructure:"-"`
 }
 
 type TavilyConfig struct {
@@ -138,7 +157,6 @@ func Load() (*Config, error) {
 		"GEMINI_MODEL":           "gemini.model",
 		"GOOGLE_CLIENT_ID":       "google.client_id",
 		"GOOGLE_CLIENT_SECRET":   "google.client_secret",
-		"GOOGLE_REDIRECT_URL":    "google.redirect_url",
 		"GROQ_API_KEY":           "groq.api_key",
 		"TAVILY_API_KEY":         "tavily.api_key",
 		"ENCRYPTION_KEY":         "encryption.key",
@@ -161,6 +179,16 @@ func Load() (*Config, error) {
 	}
 	// The adapters read their own settings from the environment, which now includes .env.
 	cfg.Channels = adapters.LoadConfig(os.Getenv)
+	cfg.Deploy = deploy.Load(os.Getenv)
+	cfg.Google.RedirectURL = cfg.Deploy.URL(GoogleCallbackPath)
+	if cfg.Google.RedirectURL == "" {
+		cfg.Google.RedirectURL = fmt.Sprintf("http://localhost:%d%s", cfg.Server.Port, GoogleCallbackPath)
+	}
+	for _, k := range replacedEnvKeys() {
+		if strings.TrimSpace(os.Getenv(k)) != "" {
+			cfg.replaced = append(cfg.replaced, k)
+		}
+	}
 
 	return &cfg, nil
 }

@@ -1,0 +1,12 @@
+# MyPA behind Caddy (V4-40, INGRESS=caddy). Caddy obtains and renews the TLS certificate for
+# PUBLIC_URL's host and forwards every request to the app, whose own edge decides what is public
+# (the webhooks, the Google sign-in and authenticated /graphql; everything else is 404). The
+# dashboard is not behind it and is never exposed (V4-35).
+{
+	# No admin endpoint: the container is restarted to change anything.
+	admin off
+}
+
+{$PUBLIC_URL} {
+	reverse_proxy 127.0.0.1:8000
+}

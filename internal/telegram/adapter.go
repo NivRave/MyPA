@@ -79,8 +79,17 @@ func (a *Adapter) Capabilities() channel.Capabilities {
 	}
 }
 
-// Ingress implements channel.Adapter: Telegram calls the webhook; polling is V4-40.
+// Ingress implements channel.Adapter. With a public address Telegram calls the webhook; without
+// one (V4-40) the adapter polls, needs no public address and serves no route.
 func (a *Adapter) Ingress() channel.Ingress {
+	if a.cfg.Polling {
+		return channel.Ingress{Outward: &channel.Outward{Run: func(ctx context.Context, sink channel.Sink) error {
+			if !a.Configured() {
+				return nil // nothing to poll for
+			}
+			return newPoller(a.client, sink).run(ctx)
+		}}}
+	}
 	return channel.Ingress{Webhook: &channel.Webhook{
 		Routes: []channel.Route{{
 			Method:  http.MethodPost,
@@ -90,6 +99,9 @@ func (a *Adapter) Ingress() channel.Ingress {
 		Register: func(ctx context.Context) { registerWebhook(ctx, a.client, a.cfg) },
 	}}
 }
+
+// Configured implements channel.Configurable: a bot token is set.
+func (a *Adapter) Configured() bool { return a.cfg.BotToken != "" }
 
 // Send implements channel.Adapter. A reply goes to the chat it came from; a message to a person
 // without a known chat goes to their private chat, whose ID is their user ID. The text is
@@ -143,10 +155,12 @@ func (a *Adapter) Recognizes(person string) bool {
 	return true
 }
 
-// HealthCheck is the adapter's /doctor check: Telegram's own view of the webhook.
+// HealthCheck is the adapter's /doctor check: Telegram's own view of the webhook, which a polling
+// install expects to be absent.
 func (a *Adapter) HealthCheck() doctor.Check {
 	return WebhookCheck{
-		Configured: a.cfg.BotToken != "",
+		Configured: a.Configured(),
+		Polling:    a.cfg.Polling,
 		WantURL:    a.cfg.WebhookURL,
 		Info: func(ctx context.Context) (WebhookHealth, error) {
 			info, err := a.client.GetWebhookInfo(ctx)
@@ -164,6 +178,7 @@ func (a *Adapter) HealthCheck() doctor.Check {
 }
 
 var (
-	_ channel.Adapter    = (*Adapter)(nil)
-	_ channel.Recognizer = (*Adapter)(nil)
+	_ channel.Adapter      = (*Adapter)(nil)
+	_ channel.Recognizer   = (*Adapter)(nil)
+	_ channel.Configurable = (*Adapter)(nil)
 )

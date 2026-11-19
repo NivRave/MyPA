@@ -46,6 +46,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-33 | Low | WhatsApp and Telegram message splitting counts bytes, not characters, so non-Latin text is split at about half the allowed length | open: fix after the channel port (V4-31), not during it |
 | BL-34 | Low | The dashboard home page still shows the label "Orchestrator V3 • Active" | open |
 | BL-35 | Medium | A numbered list loses its numbers on both channels, so the typed fallback for choices cannot be answered "with the number" | open: before buttons (V4-10) rely on the fallback |
+| BL-36 | Low | With managed services (`EXTERNAL_*`), the bundled Postgres, Redis and RabbitMQ containers still start and sit idle | open |
+| BL-37 | Low | `go test ./...` on the Windows host, without `-p 1`, fails the Postgres-backed tests after about 3 s | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -506,6 +508,30 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   (`Start` plus its position) instead of the bullet. Tests: a converter test per channel, and in the
   conformance scenario `fallbacks` assert `1. Book it` … `3. Another day` and regenerate the two transcripts.
   The `plain_reply` transcripts stay as they are (their list is unordered).
+
+### BL-36 — Bundled infrastructure still starts with managed services (Low)
+- **Found:** 2026-11-20, while building local-or-deployed (V4-40).
+- **Evidence:** `EXTERNAL_DATABASE_URL`, `EXTERNAL_REDIS_URL` and `EXTERNAL_RABBITMQ_URL` replace the
+  addresses the containers use (`docker-compose.yml`), but `postgres`, `redis` and `rabbitmq` have no
+  profile and the app, `migrate` and `audit-worker` depend on them with `service_healthy`, so `up` starts
+  them anyway. Compose profiles only add services; making the bundled ones a profile would make the
+  default install's database opt-in.
+- **Impact:** an install on managed services runs three idle containers (memory, and a second database
+  that is never written). Nothing is wrong functionally.
+- **Fix:** options are `depends_on: required: false` with the bundled services in a default-on profile
+  set through `COMPOSE_PROFILES` in `.env.example`, or a documented `--scale <service>=0`. Either needs
+  the compose topology tests (`TestCompose_UpRunsOneAppPlusAuditWorkerDashboardAndInfrastructure`) to say
+  what a default `up` starts, and a run against a real managed Postgres.
+
+### BL-37 — Postgres-backed tests time out in a parallel host run (Low)
+- **Found:** 2026-11-20, while building V4-40 (unrelated packages).
+- **Evidence:** `go test ./... -count=1` on the Windows host fails most tests in `internal/db` and some in
+  `internal/domains/automation` and `internal/domains/memory` after about 3 s each; the same packages pass
+  when run alone, and CI and the documented full run use `-p 1` in the golang container. The failures look
+  like a too-short wait for the throwaway Postgres container when many packages start one at once.
+- **Impact:** a developer who runs the plain command locally sees dozens of failures that are not real.
+- **Fix:** find the 3-second limit in the shared Postgres test helper and raise it, or document `-p 1`
+  next to `go test ./...` in the README's test instructions.
 
 ## Operations (owner)
 
