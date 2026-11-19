@@ -1,0 +1,8 @@
+=== message 1: telegram to=7001 parse_mode=HTML
+Shall I book the <b>plumber</b> for Tuesday?
+
+• Book it (reply yes)
+• Not now (reply no)
+• Another day
+
+(The file &#34;quote.pdf&#34; could not be sent here.)

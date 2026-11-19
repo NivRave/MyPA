@@ -1,7 +1,7 @@
 // Package toolcatalog renders the LLM tool catalogue documentation from the live ToolModule
 // declarations (P5-5), so SYSTEM.md / README.md never carry hand-maintained tool counts.
 //
-// Regenerate with `go run ./cmd/devtools/gendocs`; TestDocsAreUpToDate fails when the
+// Regenerate with `go run ./cmd/devtools/gendocs`; TestDocsAreUpToDate (internal/docgen) fails when the
 // committed docs drift from the code.
 package toolcatalog
 

@@ -65,7 +65,9 @@ func WithAPIs(tg telegram.API, wa twilio.API) Option {
 
 // Build constructs every adapter and registers it. Both are always registered, configured or not:
 // an unconfigured adapter's webhooks reject every request, as the ingress always did, and /doctor
-// reports it as not configured.
+// reports it as not configured. The registry is sealed before it is returned, so this list is the
+// only way an adapter reaches the app, and the channel conformance suite (internal/conformance,
+// V4-34) runs every scenario on every adapter in it: a new adapter cannot ship without passing.
 func Build(cfg Config, opts ...Option) (*channel.Registry, error) {
 	var o options
 	for _, opt := range opts {
@@ -94,5 +96,6 @@ func Build(cfg Config, opts ...Option) (*channel.Registry, error) {
 			return nil, fmt.Errorf("registering channel adapters: %w", err)
 		}
 	}
+	reg.Seal()
 	return reg, nil
 }

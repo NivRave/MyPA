@@ -31,6 +31,7 @@ type Registry struct {
 	adapters []Adapter
 	byName   map[string]Adapter
 	paths    map[string]string // webhook path -> adapter name
+	sealed   bool
 }
 
 // NewRegistry returns an empty registry.
@@ -44,6 +45,9 @@ func (r *Registry) Register(a Adapter) error {
 		return errors.New("channel: nil adapter")
 	}
 	name := a.Name()
+	if r.sealed {
+		return fmt.Errorf("channel: the registry is sealed; adapter %q must be added where the registry is built (internal/channel/adapters)", name)
+	}
 	if !namePattern.MatchString(name) {
 		return fmt.Errorf("channel: invalid adapter name %q (lower case letters, digits and '-')", name)
 	}
@@ -85,6 +89,14 @@ func (r *Registry) Register(a Adapter) error {
 	r.byName[name] = a
 	return nil
 }
+
+// Seal makes the registry refuse every later Register. The app's registry is sealed where it is
+// built (adapters.Build), so the adapters the engine can reach are exactly the ones the channel
+// conformance suite runs (V4-34).
+func (r *Registry) Seal() { r.sealed = true }
+
+// Sealed reports whether Seal was called.
+func (r *Registry) Sealed() bool { return r != nil && r.sealed }
 
 // Get returns the adapter with the given name.
 func (r *Registry) Get(name string) (Adapter, bool) {
