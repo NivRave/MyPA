@@ -115,6 +115,12 @@ func (h *restoreHarness) assertNoPrivateDetail(t *testing.T, reply string) {
 	assert.NotContains(t, reply, filepath.ToSlash(h.dir))
 	assert.NotContains(t, reply, dumpContent, "no file content may be shown")
 	assert.NotContains(t, reply, "postgres://", "no connection string may be shown")
+	// The production backup directory is /backups. The only place it may appear is the fixed key
+	// location of the documented command (RESTORE_AND_MIGRATE.md, section C).
+	rest := strings.ReplaceAll(reply, "/backups/backup-key.txt", "")
+	rest = strings.ReplaceAll(rest, "`backups/backup-key.txt`", "")
+	assert.NotContains(t, rest, "/backups", "no backup path other than the documented key location")
+	assert.NotContains(t, rest, defaultBackupDir)
 }
 
 func TestRestore_NonAdminIsRefused(t *testing.T) {

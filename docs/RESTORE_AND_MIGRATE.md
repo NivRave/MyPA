@@ -245,8 +245,10 @@ RESTORE` no longer does anything special.
 `/restore` (admins only, the same on Telegram and WhatsApp) restores nothing. It names the newest
 backup in `backups/` (the manifest of a set, or a bare dump) and replies with the steps of
 section C for it: stop the app, bring the private backup key if the backup is encrypted, run
-`transfer import <name> --replace`, start the app and send `/doctor`. It shows file names only,
-never where the backups are kept. With no backup it says so; `/backup` takes one.
+`transfer import <name> --replace`, start the app and send `/doctor`. The backup is named by its
+file name only. The one path in the reply is the key location of the command in section C
+(`/backups/backup-key.txt`, for an encrypted backup), and no error text is shown. With no backup it
+says so; `/backup` takes one.
 
 ## Commands
 

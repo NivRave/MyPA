@@ -279,8 +279,9 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Done:** 2026-11-19 (`chore/bl-21-retire-chat-restore`). The line references above describe the code
   before the change. `/restore` is still admin-only; it names the newest backup (the manifest of a set,
   or a bare dump) and replies with the steps of `docs/RESTORE_AND_MIGRATE.md` section C for
-  `transfer import <name> --replace`, showing file names only, never the backup directory or an error
-  text. With no backup it says so. The staging, `executeConfirmedRestore`, `isDestructiveAction`, the
+  `transfer import <name> --replace`. The backup is named by file name only; the one path shown is the
+  fixed key location of the documented command (`/backups/backup-key.txt`, for an encrypted backup), and
+  no error text is shown. With no backup it says so. The staging, `executeConfirmedRestore`, `isDestructiveAction`, the
   restore seam of `backupOps` and the `DATABASE_URL` check of `/restore` are gone, so `CONFIRM RESTORE`
   is an ordinary confirmation. A `restore` action staged before the upgrade is dropped when confirmed and
   answered as if nothing were pending. `db.GetLatestBackup` now wraps `db.ErrNoBackup`, so "no backup" is
