@@ -160,7 +160,8 @@ func TestRetention_GrandfatherFatherSon(t *testing.T) {
 	}
 	sort.Strings(kept)
 	// Latest-3 rule: today 02:00 plus BOTH of yesterday's backups survive (the daily rule alone
-	// would keep only yesterday 14:00 — this is what protects a /restore's staged file, P1-5).
+	// would keep only yesterday 14:00 — this is what protects the file a restore is about to read
+	// next to its same-day safety backup, P1-5).
 	assert.True(t, keep[backupName(time.Date(2026, 11, 16, 2, 0, 0, 0, time.Local), true)])
 	assert.True(t, keep[backupName(time.Date(2026, 11, 15, 14, 0, 0, 0, time.Local), false)])
 	assert.True(t, keep[backupName(time.Date(2026, 11, 15, 2, 0, 0, 0, time.Local), false)])
@@ -206,6 +207,19 @@ func TestGetLatestBackup_ConsidersEncryptedFiles(t *testing.T) {
 	latest, err := GetLatestBackup(dir)
 	require.NoError(t, err)
 	assert.Equal(t, backupName(newer, true), filepath.Base(latest))
+}
+
+// BL-21: /restore tells "no backup" apart from an unreadable directory without showing the error
+// text, which holds the directory path.
+func TestGetLatestBackup_EmptyDirWrapsErrNoBackup(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o600))
+	_, err := GetLatestBackup(dir)
+	require.ErrorIs(t, err, ErrNoBackup)
+
+	_, err = GetLatestBackup(filepath.Join(dir, "missing"))
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrNoBackup, "an unreadable directory is not reported as an empty one")
 }
 
 func TestBackupOptionsFromEnv(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -27,8 +28,9 @@ const (
 
 // RetentionPolicy is grandfather-father-son retention (P3-4): always keep the KeepLatest newest
 // backups, plus the newest backup of each of the last Daily days, plus the newest of each of the
-// last Weekly ISO weeks. KeepLatest matters: a /restore takes a safety backup on the same day as
-// the file it is about to restore, and a per-day rule alone would prune that file.
+// last Weekly ISO weeks. KeepLatest matters: a restore (`transfer import --replace`) takes a safety
+// backup on the same day as the file it is about to restore, and a per-day rule alone would prune
+// that file.
 type RetentionPolicy struct {
 	KeepLatest int
 	Daily      int
@@ -341,7 +343,11 @@ func parseBackupTime(name string) (time.Time, bool) {
 	return ts, err == nil
 }
 
-// GetLatestBackup returns the path to the most recent backup file (encrypted or not).
+// ErrNoBackup is returned by GetLatestBackup when the directory holds no backup file.
+var ErrNoBackup = errors.New("no backup files found")
+
+// GetLatestBackup returns the path to the most recent backup file (encrypted or not). With no
+// backup in the directory the error wraps ErrNoBackup.
 func GetLatestBackup(backupDir string) (string, error) {
 	files, err := os.ReadDir(backupDir)
 	if err != nil {
@@ -358,7 +364,7 @@ func GetLatestBackup(backupDir string) (string, error) {
 		}
 	}
 	if latest == "" {
-		return "", fmt.Errorf("no backup files found in %s", backupDir)
+		return "", fmt.Errorf("%w in %s", ErrNoBackup, backupDir)
 	}
 	return filepath.Join(backupDir, latest), nil
 }

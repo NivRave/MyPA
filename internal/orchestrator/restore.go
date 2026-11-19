@@ -2,39 +2,41 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/models"
-	"github.com/nivik/mypa/internal/state"
 	"github.com/nivik/mypa/internal/transfer"
 )
 
+// BL-21: the chat restore is retired. A restore needs the app stopped, an emptied schema and the
+// migrations afterwards, which only the restore tool (`transfer import`) does. /restore stays as
+// an admin command that names the newest backup and replies with the steps for the tool.
+
 const (
-	// restoreActionName is the pending-action name staged by /restore and redeemed by
-	// "CONFIRM RESTORE". It is not an LLM tool name, so the model can never stage or run it.
-	restoreActionName = "restore"
-	// restoreConfirmTTL bounds how long a staged restore can be confirmed.
-	restoreConfirmTTL = 5 * time.Minute
 	// defaultBackupDir is the backup volume mounted in docker-compose.yml.
 	defaultBackupDir = "/backups"
+	// legacyRestoreActionName is the pending-action name the retired chat restore staged in Redis.
+	// A record with this name left from before the upgrade is dropped on confirmation, never run.
+	legacyRestoreActionName = "restore"
+	// restoreGuide is the procedure the /restore reply points to.
+	restoreGuide = "docs/RESTORE_AND_MIGRATE.md"
 )
 
-// backupOps abstracts pg_dump/pg_restore so the destructive flow can be tested without a DB.
+// backupOps abstracts pg_dump and the backup directory so the commands can be tested without a DB.
 type backupOps struct {
-	dir     string
-	backup  func(databaseURL, dir string) (string, error)
-	restore func(databaseURL, path string) error
-	latest  func(dir string) (string, error)
+	dir    string
+	backup func(databaseURL, dir string) (string, error)
+	latest func(dir string) (string, error)
 }
 
-// defaultBackupOps uses the real pg_dump/pg_restore with encryption keys and retention from the
-// environment (BACKUP_AGE_RECIPIENTS, BACKUP_AGE_IDENTITY_FILE; P3-4).
+// defaultBackupOps uses the real pg_dump with encryption keys and retention from the environment
+// (BACKUP_AGE_RECIPIENTS; P3-4).
 func defaultBackupOps() backupOps {
 	return backupOps{
 		dir: defaultBackupDir,
@@ -45,13 +47,6 @@ func defaultBackupOps() backupOps {
 			}
 			// A backup set (V4-43): the dump plus the archive files and a manifest.
 			return transfer.LiveBackup(databaseURL, dir, opts)
-		},
-		restore: func(databaseURL, path string) error {
-			opts, err := db.RestoreOptionsFromEnv()
-			if err != nil {
-				return err
-			}
-			return db.RestoreDatabase(databaseURL, path, opts)
 		},
 		latest: db.GetLatestBackup,
 	}
@@ -65,104 +60,65 @@ func (b backupOps) withDefaults() backupOps {
 	if b.backup == nil {
 		b.backup = d.backup
 	}
-	if b.restore == nil {
-		b.restore = d.restore
-	}
 	if b.latest == nil {
 		b.latest = d.latest
 	}
 	return b
 }
 
-// handleRestoreCommand stages a restore of the latest backup and asks for explicit
-// confirmation. It never touches the database itself.
+// handleRestoreCommand replies with the steps to restore the newest backup with the restore tool.
+// It changes nothing: no backup is taken, nothing is staged and nothing is restored.
 func (e *Engine) handleRestoreCommand(ctx context.Context, user *models.User, msg models.Message) error {
 	if user.Role != "admin" {
 		slog.Warn("unauthorized restore command attempt", "user_id", user.PlatformID, "role", user.Role)
 		return e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")
 	}
-	if os.Getenv("DATABASE_URL") == "" {
-		return e.sendMessage(ctx, msg, "❌ Restore failed: DATABASE_URL not set.")
-	}
-	if e.store == nil {
-		return e.sendMessage(ctx, msg, "❌ Restore unavailable: confirmation store not configured.")
-	}
 
 	ops := e.backups.withDefaults()
 	latest, err := ops.latest(ops.dir)
-	if err != nil {
-		slog.Error("failed to find latest backup", "error", err)
-		return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Restore failed: %v", err))
+	switch {
+	case errors.Is(err, db.ErrNoBackup):
+		return e.sendMessage(ctx, msg, "📭 No backup found in the backup directory, so there is nothing to restore. "+
+			"`/backup` takes one now. Restoring is described in `"+restoreGuide+"`.")
+	case err != nil:
+		// The error text holds the directory path: log it, do not show it.
+		slog.Error("restore instructions: backup directory could not be read", "error", err)
+		return e.sendMessage(ctx, msg, "❌ The backup directory could not be read. `/doctor` checks the backups; "+
+			"the orchestrator log has the details.")
 	}
-	created := "unknown time"
-	if fi, statErr := os.Stat(latest); statErr == nil {
-		created = fi.ModTime().UTC().Format("2006-01-02 15:04 MST")
-	}
-
-	// Stage the exact file shown to the admin. Confirmation must restore THIS file: by then a
-	// safety backup will exist and would otherwise be picked as "latest".
-	if err := e.store.StagePendingMetaTool(ctx, msg.UserID, state.PendingMetaToolAction{
-		ToolName:  restoreActionName,
-		Args:      map[string]interface{}{"backup_path": latest},
-		UserID:    msg.UserID,
-		CreatedAt: time.Now(),
-	}, restoreConfirmTTL); err != nil {
-		slog.Error("failed to stage restore confirmation", "error", err)
-		return e.sendMessage(ctx, msg, "❌ Could not stage the restore. Please try again.")
-	}
-
-	return e.sendMessage(ctx, msg, fmt.Sprintf(
-		"⚠️ *Database restore requested*\n\n"+
-			"This will REPLACE the entire database with:\n📁 `%s`\n🕒 created %s\n\n"+
-			"Everything changed since then will be lost. A safety backup of the current database is taken first.\n\n"+
-			"👉 Reply `CONFIRM RESTORE` within %d minutes to proceed.",
-		filepath.Base(latest), created, int(restoreConfirmTTL.Minutes())))
+	return e.sendMessage(ctx, msg, restoreInstructions(latest))
 }
 
-// executeConfirmedRestore runs a staged restore after "CONFIRM RESTORE": it re-checks
-// authorization, takes a safety backup, and only then restores the staged file.
-func (e *Engine) executeConfirmedRestore(ctx context.Context, user *models.User, msg models.Message, pending *state.PendingMetaToolAction) error {
-	if user == nil || user.Role != "admin" {
-		slog.Warn("restore confirmation by non-admin rejected", "user_id", msg.UserID)
-		return e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")
+// restoreInstructions is the /restore reply for the newest backup at latestPath. It shows only file
+// names, never the directory, and the fixed commands of the documented procedure.
+func restoreInstructions(latestPath string) string {
+	dumpName := filepath.Base(latestPath)
+	target := dumpName
+	if _, err := os.Stat(db.ManifestPathFor(latestPath)); err == nil {
+		target = filepath.Base(db.ManifestPathFor(latestPath)) // a backup set (V4-43)
 	}
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		return e.sendMessage(ctx, msg, "❌ Restore failed: DATABASE_URL not set.")
-	}
-
-	ops := e.backups.withDefaults()
-	target, _ := pending.Args["backup_path"].(string)
-	// Defense in depth: the staged record lives in Redis; only accept a backup file directly
-	// inside the backup directory.
-	if target == "" || !db.IsBackupFile(filepath.Base(target)) || filepath.Clean(filepath.Dir(target)) != filepath.Clean(ops.dir) {
-		slog.Error("rejecting staged restore with invalid backup path", "path", target)
-		return e.sendMessage(ctx, msg, "❌ Restore aborted: the staged backup path is invalid. Run /restore again.")
-	}
-	if _, err := os.Stat(target); err != nil {
-		return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Restore aborted: backup `%s` no longer exists. Run /restore again.", filepath.Base(target)))
+	keyEnv, keyStep, lastStep := "", "", "Start the app with `docker compose up -d`, then send `/doctor`."
+	if strings.HasSuffix(dumpName, ".age") {
+		keyEnv = "-e BACKUP_AGE_IDENTITY_FILE=/backups/backup-key.txt "
+		keyStep = "Put the private backup key in `backups/backup-key.txt` for the duration of the restore.\n"
+		lastStep = "Delete `backups/backup-key.txt`, start the app with `docker compose up -d`, then send `/doctor`."
 	}
 
-	markSideEffect(ctx)
-	_ = e.sendMessage(ctx, msg, "🔄 Taking a safety backup of the current database before restoring...")
-	// Retention always keeps the 3 newest backups, so the safety copy can never evict the target.
-	safety, err := ops.backup(databaseURL, ops.dir)
-	if err != nil {
-		slog.Error("pre-restore safety backup failed; restore aborted", "error", err)
-		return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Restore aborted: safety backup failed (%v). The database was not changed.", err))
+	var sb strings.Builder
+	sb.WriteString("🛟 **Restoring is done from the terminal**\n\n")
+	sb.WriteString("A restore needs the app stopped, so it cannot run from chat. Newest backup: `" + target + "`\n\n")
+	sb.WriteString("On the machine that runs MyPA:\n\n")
+	sb.WriteString("1. Stop the app: `docker compose stop proxy gateway`, wait a few seconds, then " +
+		"`docker compose stop orchestrator audit-worker dashboard`.\n")
+	step := 2
+	if keyStep != "" {
+		sb.WriteString(fmt.Sprintf("%d. %s", step, keyStep))
+		step++
 	}
-
-	slog.Warn("executing confirmed database restore", "user_id", msg.UserID, "backup", target, "safety_backup", safety)
-	if err := ops.restore(databaseURL, target); err != nil {
-		slog.Error("confirmed restore failed", "error", err, "safety_backup", safety)
-		return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Restore failed: %v\n🛟 Safety backup of the previous state: `%s`", err, filepath.Base(safety)))
-	}
-	return e.sendMessage(ctx, msg, fmt.Sprintf("✅ Restore completed from `%s`.\n🛟 Safety backup of the previous state: `%s`",
-		filepath.Base(target), filepath.Base(safety)))
-}
-
-// isDestructiveAction lists staged actions that require the action name in the confirmation
-// ("CONFIRM RESTORE"); a bare "CONFIRM" is not enough.
-func isDestructiveAction(name string) bool {
-	return strings.EqualFold(name, restoreActionName)
+	sb.WriteString(fmt.Sprintf("%d. Restore it (a safety backup of the current database is taken first):\n"+
+		"`docker compose --profile tools run --rm %stransfer import %s --replace`\n", step, keyEnv, target))
+	step++
+	sb.WriteString(fmt.Sprintf("%d. %s\n\n", step, lastStep))
+	sb.WriteString("Full steps: `" + restoreGuide + "`, section C.")
+	return sb.String()
 }

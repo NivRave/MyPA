@@ -141,7 +141,7 @@ func withTurnEffects(ctx context.Context, fx *turnEffects) context.Context {
 
 // markSideEffect flags the turn in ctx as having produced an external side effect.
 // What counts: a registry tool executed (even if it errored — it may have partially applied),
-// an admin command acted (/backup, /restore, /undo), or the final reply was delivered.
+// an admin command acted (/backup, /undo), or the final reply was delivered.
 // Progress notices ("Transcribed: …") deliberately do NOT count: repeating them is harmless,
 // and treating them as side effects would turn every later failure into a lost message.
 func markSideEffect(ctx context.Context) {

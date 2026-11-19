@@ -31,7 +31,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-18 | Low | A document sent on Telegram gets no answer at all | open — the channel layer (V4-31) is the natural place |
 | BL-19 | Low | Reminder and transcription labels render as italics, probably meant as bold | open |
 | BL-20 | Low | `/doctor` shows the same host twice when the webhook addresses differ only in path | open |
-| BL-21 | Medium | `/restore` in chat restores over the live schema and does not migrate, which breaks once V4 adds a migration | decided 2026-11-19: option A, retire the chat restore; to be built before V4-30 |
+| BL-21 | Medium | `/restore` in chat restores over the live schema and does not migrate, which breaks once V4 adds a migration | done 2026-11-19 (`chore/bl-21-retire-chat-restore`): option A, the chat restore is retired |
 | BL-22 | Low | Restore tool: the rollback test cannot fail yet, and the piped dump check runs only against a fake | open |
 | BL-23 | Low | A failing archive step makes the nightly backup discard its database dump | open |
 | BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: belongs with the re-embedding path of V4-03 |
@@ -43,6 +43,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-30 | Low | Tests in `cmd/orchestrator` and `internal/crypto` change environment variables and do not put them back exactly | open |
 | BL-31 | Medium | The dashboard `users` query returns the users of every family, not only the caller's | open: ADR 0002 removes the pattern; can be fixed earlier on its own |
 | BL-32 | Low | A pairing code can be redeemed by two senders at the same moment | open: ADR 0002 requires a one-statement claim for every code |
+| BL-33 | Low | WhatsApp and Telegram message splitting counts bytes, not characters, so non-Latin text is split at about half the allowed length | open: fix after the channel port (V4-31), not during it |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -274,7 +275,21 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   step. B is worth another look only after V4-23, when the app is one process with one state store and
   could offer a maintenance mode; not before.
 - **Decided 2026-11-19 by the owner: option A.** The chat restore is retired as described in row A. It is
-  to be built before V4-30 ships the first V4 migration; nothing is built yet.
+  to be built before V4-30 ships the first V4 migration.
+- **Done:** 2026-11-19 (`chore/bl-21-retire-chat-restore`). The line references above describe the code
+  before the change. `/restore` is still admin-only; it names the newest backup (the manifest of a set,
+  or a bare dump) and replies with the steps of `docs/RESTORE_AND_MIGRATE.md` section C for
+  `transfer import <name> --replace`. The backup is named by file name only; the one path shown is the
+  fixed key location of the documented command (`/backups/backup-key.txt`, for an encrypted backup), and
+  no error text is shown. With no backup it says so. The staging, `executeConfirmedRestore`, `isDestructiveAction`, the
+  restore seam of `backupOps` and the `DATABASE_URL` check of `/restore` are gone, so `CONFIRM RESTORE`
+  is an ordinary confirmation. A `restore` action staged before the upgrade is dropped when confirmed and
+  answered as if nothing were pending. `db.GetLatestBackup` now wraps `db.ErrNoBackup`, so "no backup" is
+  told apart from an unreadable directory. Tests: `restore_confirm_test.go` (refusal, instructions on
+  both channels, bare dump, no backup, unreadable directory, `CONFIRM RESTORE`, the leftover staged
+  record) and `TestOrchestrator_HasNoRestorePath`, which fails if the orchestrator package calls a
+  restore function of `internal/db` or `internal/transfer` again. No conformance scenario covered
+  `/restore`.
 
 ### BL-22 — Two restore-tool paths are tested less directly than the rest (Low)
 - **Found:** 2026-11-19, in the review of V4-43 (non-blocking, after the item passed).
@@ -446,6 +461,22 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** claim the code in one statement (`UPDATE ... WHERE id = ? AND is_used = false AND expires_at >
   now()`) and create the user only when exactly one row changed. Test: two redemptions of one code started
   together against a real database produce exactly one user.
+
+### BL-33 — Message splitting counts bytes, not characters (Low)
+- **Found:** 2026-11-19, while building BL-21.
+- **Evidence:** both splitters measure with `len()` of a Go string, which counts UTF-8 bytes:
+  `twilio.SplitMessage` (`internal/twilio/client.go:103`, called with 1,500) and
+  `markdown.SafeChunkTelegramHTML` (`internal/markdown/telegram.go:148`, called with 4,000). The platforms
+  limit by characters (WhatsApp through Twilio 1,600, Telegram 4,096). A Hebrew, Arabic or Cyrillic letter
+  is two bytes and most CJK characters three.
+- **Impact:** a reply in Hebrew, or any non-Latin script, is split at about half the length the platform
+  allows (about 750 Hebrew letters on WhatsApp, 2,000 on Telegram), so a long answer arrives as more
+  messages than needed. Nothing is lost. Separate from BL-17, which is about cutting inside a character.
+- **Fix:** after the channel port (V4-31), not during it: ADR 0003 has the port keep today's split functions
+  and their byte counting unchanged (ADR 0003, the `MaxTextLen` row). Then measure in
+  characters (runes, or UTF-16 units for Telegram), keep the margin below the limit, and fix BL-17 in the
+  same change. Test: a Hebrew reply of 1,000 letters goes out on WhatsApp as one message, and every chunk
+  stays within the platform's limit in characters.
 
 ## Operations (owner)
 
