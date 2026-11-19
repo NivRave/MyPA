@@ -31,7 +31,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-18 | Low | A document sent on Telegram gets no answer at all | open — the channel layer (V4-31) is the natural place |
 | BL-19 | Low | Reminder and transcription labels render as italics, probably meant as bold | open |
 | BL-20 | Low | `/doctor` shows the same host twice when the webhook addresses differ only in path | open |
-| BL-21 | Medium | `/restore` in chat restores over the live schema and does not migrate, which breaks once V4 adds a migration | open: decide before the first V4 migration |
+| BL-21 | Medium | `/restore` in chat restores over the live schema and does not migrate, which breaks once V4 adds a migration | decided 2026-11-19: option A, retire the chat restore; to be built before V4-30 |
 | BL-22 | Low | Restore tool: the rollback test cannot fail yet, and the piped dump check runs only against a fake | open |
 | BL-23 | Low | A failing archive step makes the nightly backup discard its database dump | open |
 | BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: belongs with the re-embedding path of V4-03 |
@@ -41,6 +41,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-28 | Low | The one-default-model guard misses a model alias with no version digit (`gemini-flash-latest`) and does not search `.mjs`, `.sh`, `.ps1` or `.sql` files | open |
 | BL-29 | Medium | The LLM client sends `Temperature: 0.2`; Gemini 3.6 Flash ignores sampling parameters and later model generations are to reject them with HTTP 400 | open: resolve before the default moves past 3.6, as part of V4-03 |
 | BL-30 | Low | Tests in `cmd/orchestrator` and `internal/crypto` change environment variables and do not put them back exactly | open |
+| BL-31 | Medium | The dashboard `users` query returns the users of every family, not only the caller's | open: ADR 0002 removes the pattern; can be fixed earlier on its own |
+| BL-32 | Low | A pairing code can be redeemed by two senders at the same moment | open: ADR 0002 requires a one-statement claim for every code |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -247,9 +249,32 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   app then works against a schema it does not expect, and the next start either refuses to run (pending
   migrations) or fails migrating (objects already exist). The new `transfer import` path does not have this
   problem: it restores into an emptied schema and then migrates, with the app stopped.
-- **Fix:** make `/restore` use the same path as `transfer import --replace` (reset, restore, migrate), or, as
-  that cannot be done safely inside the running app, retire `/restore` in favour of the tool and have the
-  command explain how to run it. Decide before the first V4 schema migration ships.
+- **Decision prepared 2026-11-19 (nothing is fixed yet).** Three facts bear on it beyond the evidence above:
+  - `/restore` takes the newest dump in the backup directory (`internal/orchestrator/restore.go:56`,
+    `:91-92`) and restores it into the database the app is using, with no check that anything is stopped.
+    The tool refuses a running install (`internal/transfer/transfer.go:326-346`), takes a safety backup
+    (`:355-368`), empties the schema (`:372`), restores, then migrates (`:387-407`).
+  - Restoring an encrypted backup from chat needs the private backup key readable by the running app
+    (`internal/orchestrator/restore.go:49-54`, `internal/db/backup.go:95-110`). Since OP-1 that key is kept
+    off the machine and mounted only while restoring, so a chat restore already starts at the terminal.
+  - A backup taken since V4-43 has a manifest with its schema version (`internal/db/backup_set.go:88-89`,
+    `internal/transfer/live.go:36`). Older dumps, the v3.4.0 baseline backup among them, have none.
+- **Options:**
+
+  | | Option | What it takes | Cost | Risk |
+  | :--- | :--- | :--- | :---: | :--- |
+  | A | **Retire the chat restore.** `/restore` stays as a command, but it only names the newest backup and replies with the steps for `transfer import --replace`. `CONFIRM RESTORE` goes. | Remove the staging and `executeConfirmedRestore` (`internal/orchestrator/restore.go:77-162`), rewrite `restore_confirm_test.go`, update the `/help` line (`internal/orchestrator/commands.go:100`), `SYSTEM.md` and `docs/RESTORE_AND_MIGRATE.md` | S | Lowest. A restore can no longer be started from the phone. One restore path remains to keep correct at every migration |
+  | B | **Make it call the same mechanism.** | The import needs the app stopped and empties the schema under it, so the app cannot run it on itself. It would have to record the request and exit, and something outside it (an entrypoint wrapper or a small supervisor) would run the import and start the app again. The key must be on the machine for that | L | Highest. A chat message makes the app take down its own database; a failure half-way leaves the install down with nobody at the keyboard; and the process layout this hand-off is built on changes in V4-01 and again in V4-23 |
+  | C | **Refuse when the schema version differs.** | Before staging and again before restoring, read the manifest beside the dump and compare it with the database (`db.SchemaVersion`, `internal/db/doctor_probes.go:19`); refuse on any difference or a missing manifest, pointing to the tool | S | Medium. It closes this bug but keeps the restore under a live app: in-flight turns, the scheduler and the audit worker hold connections while tables are dropped and recreated, and Redis still holds chat windows and approvals for data that is gone. After each migration every older backup is refused, so the command only reaches back to the last migration. Two restore paths stay to test |
+
+- **Recommendation: A, before V4-30 ships the first V4 migration.** The one thing A gives up, restoring from
+  the phone, is already not possible for an encrypted backup without a terminal step. The tool does every
+  safeguard `/restore` has (confirmation by flag, a safety backup first) and the two it lacks (a stopped
+  app, a clean schema, then the migrations). If a restore from chat is still wanted, C is the smallest safe
+  step. B is worth another look only after V4-23, when the app is one process with one state store and
+  could offer a maintenance mode; not before.
+- **Decided 2026-11-19 by the owner: option A.** The chat restore is retired as described in row A. It is
+  to be built before V4-30 ships the first V4 migration; nothing is built yet.
 
 ### BL-22 — Two restore-tool paths are tested less directly than the rest (Low)
 - **Found:** 2026-11-19, in the review of V4-43 (non-blocking, after the item passed).
@@ -392,6 +417,35 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   state (unset stays unset) and refuses to run in a parallel test. For the `os.Unsetenv` step in
   `aes_test.go`, call `t.Setenv` first and then `os.Unsetenv`. Decide whether `TestLLMFunctionCalling`
   should stay a skipped test in the unit suite or move behind a build tag.
+
+### BL-31 — The dashboard `users` query returns every family's users (Medium)
+- **Found:** 2026-11-19, while reading the code for ADR 0002.
+- **Evidence:** `Users` (`internal/graph/schema.resolvers.go:1409-1427`) runs `Find(&dbUsers)` with no
+  filter and never calls `resolveTenantAndActor`. The listing next to it does (`ActivePairingCodes`,
+  `:1430-1448`). The dashboard signs in as an admin bound to one family
+  (`internal/graph/auth_middleware.go:114-125`), which is meant to stop exactly this (P3-2). No test in
+  `internal/graph` calls the query.
+- **Impact:** none visible today: since OP-9 the live database holds one family. With a second family, its
+  dashboard would list the names, platform IDs (phone numbers among them), roles and family labels of
+  everyone on the install.
+- **Fix:** scope the query to the caller's family unless `wantsAllTenants` allows otherwise, as the other
+  listings do. Test: a tenant-bound admin sees only its own family's users. ADR 0002 (Decision 3) removes
+  the pattern altogether; this fix is small enough to make before that.
+
+### BL-32 — A pairing code can be redeemed twice at the same moment (Low)
+- **Found:** 2026-11-19, while reading the code for ADR 0002.
+- **Evidence:** `handleUnauthenticatedUser` reads the code with `GetPairingCode`
+  (`internal/orchestrator/engine.go:283-286`; `internal/db/db.go:232-239`, which requires `is_used = false`)
+  and then calls `RedeemPairingCode` (`internal/db/db.go:242-254`). That sets `is_used` with `WHERE id = ?`
+  only: it does not require the code to be unused still, and does not look at how many rows changed, before
+  creating the user. Messages from two different senders are handled in parallel
+  (`internal/broker/consumer.go:149-150`), so both can pass the read and both become users.
+- **Impact:** low. It needs the same code from two accounts within milliseconds, and someone who knows a
+  code can simply use it first. But "works once" is the property the invite and link codes of ADR 0002
+  depend on, and the `pairing` conformance scenario only proves it for two attempts in sequence.
+- **Fix:** claim the code in one statement (`UPDATE ... WHERE id = ? AND is_used = false AND expires_at >
+  now()`) and create the user only when exactly one row changed. Test: two redemptions of one code started
+  together against a real database produce exactly one user.
 
 ## Operations (owner)
 
