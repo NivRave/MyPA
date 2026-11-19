@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -75,4 +76,38 @@ func TestQueueDepth_UnreachableBrokerIsAnError(t *testing.T) {
 	_, err := QueueDepth(ctx, "amqp://guest:guest@127.0.0.1:1/", InboundMessagesQueue)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "guest:guest", "broker credentials must not appear in the error")
+}
+
+// A broker that accepts the connection and then says nothing must not hang the caller: the
+// context bounds the whole probe, not only the TCP connect.
+func TestQueueDepth_SilentBrokerIsBoundedByTheContext(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	var held []net.Conn
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			held = append(held, conn) // kept open, never answered
+		}
+	}()
+	defer func() {
+		_ = listener.Close()
+		<-acceptDone
+		for _, conn := range held {
+			_ = conn.Close()
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err = QueueDepth(ctx, "amqp://guest:guest@"+listener.Addr().String()+"/", InboundMessagesQueue)
+
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 5*time.Second, "the probe must give up when its context expires")
 }

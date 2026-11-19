@@ -3,6 +3,8 @@ package doctor
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -168,7 +170,7 @@ func TestGoogleAccounts_PerUserHealth(t *testing.T) {
 			"+12025550104": tokenJSON("anon-access", ""),
 			"1005":         []byte("not json"),
 		},
-		refreshErr: map[string]error{"omer-access": errors.New(`oauth2: "invalid_grant" "Token has been expired or revoked."`)},
+		refreshErr: map[string]error{"omer-access": fmt.Errorf("%w: invalid_grant", ErrSignInRefused)},
 	}
 
 	results := g.check().Run(context.Background(), adminScope)
@@ -225,6 +227,73 @@ func TestGoogleAccounts_AdminWithoutFamilyIsCheckedAlone(t *testing.T) {
 	assert.Equal(t, StatusOK, results[0].Status)
 }
 
+// Only Google's refusal means "expired or revoked". When Google cannot be reached, or rejects this
+// install's own credentials, the member must not be sent to /connect: that would not help.
+func TestGoogleAccounts_OnlyARefusalIsCalledExpired(t *testing.T) {
+	g := &googleFixture{
+		members: map[string][]models.User{"Levi": {
+			{PlatformID: "1001", Name: "Dana", FamilyGroup: "Levi"},
+			{PlatformID: "1002", Name: "Omer", FamilyGroup: "Levi"},
+		}},
+		tokens: map[string][]byte{
+			"1001": tokenJSON("dana-access", "dana-refresh"),
+			"1002": tokenJSON("omer-access", "omer-refresh"),
+		},
+		refreshErr: map[string]error{
+			"dana-access": errors.New("Post https://oauth2.googleapis.com/token: dial tcp: i/o timeout"),
+			"omer-access": fmt.Errorf("%w: invalid_client", ErrRenewalRejected),
+		},
+	}
+	got := byCheck(g.check().Run(context.Background(), adminScope))
+
+	unreachable := got["Google account: Dana"]
+	requireProblem(t, unreachable, StatusFail, "Could not reach Google")
+	assert.NotContains(t, unreachable.Detail, "expired")
+	assert.NotContains(t, unreachable.NextStep, "/connect", "signing in again does not fix a network problem")
+
+	rejected := got["Google account: Omer"]
+	requireProblem(t, rejected, StatusFail, "rejected")
+	assert.NotContains(t, rejected.Detail, "expired or was revoked")
+	assert.Contains(t, rejected.NextStep, "GOOGLE_CLIENT_SECRET")
+	assert.NotContains(t, rejected.NextStep, "/connect")
+}
+
+// One member whose check hangs must not turn the others into failures: each member has their own
+// time limit and the members are checked side by side.
+func TestGoogleAccounts_ASlowMemberDoesNotFailTheOthers(t *testing.T) {
+	g := &googleFixture{
+		members: map[string][]models.User{"Levi": {
+			{PlatformID: "1001", Name: "Dana", FamilyGroup: "Levi"},
+			{PlatformID: "1002", Name: "Omer", FamilyGroup: "Levi"},
+			{PlatformID: "1003", Name: "Noa", FamilyGroup: "Levi"},
+		}},
+		tokens: map[string][]byte{
+			"1001": tokenJSON("dana-access", "r"),
+			"1002": tokenJSON("omer-access", "r"),
+			"1003": tokenJSON("noa-access", "r"),
+		},
+	}
+	c := g.check()
+	c.MemberTimeout = 40 * time.Millisecond
+	c.Refresh = func(ctx context.Context, tok *oauth2.Token) error {
+		if tok.AccessToken == "dana-access" {
+			<-ctx.Done() // Google never answers for this one
+			return ctx.Err()
+		}
+		return nil
+	}
+
+	start := time.Now()
+	results := c.Run(context.Background(), adminScope)
+	assert.Less(t, time.Since(start), time.Second)
+
+	require.Len(t, results, 3)
+	assert.Equal(t, "Google account: Dana", results[0].Check, "results keep the member order")
+	requireProblem(t, results[0], StatusFail, "Could not reach Google")
+	assert.Equal(t, StatusOK, results[1].Status, results[1].Detail)
+	assert.Equal(t, StatusOK, results[2].Status, results[2].Detail)
+}
+
 func TestGoogleAccounts_NotConfigured(t *testing.T) {
 	c := GoogleAccounts{Configured: false}
 	assert.Equal(t, StatusInfo, one(t, c, adminScope).Status)
@@ -254,6 +323,7 @@ func TestRefreshWith_DetectsARevokedToken(t *testing.T) {
 
 	err := refresh(context.Background(), &oauth2.Token{AccessToken: "old", RefreshToken: "revoked", Expiry: stillValid})
 	require.Error(t, err, "a revoked refresh token must be detected even while the access token is valid")
+	assert.ErrorIs(t, err, ErrSignInRefused)
 
 	original := &oauth2.Token{AccessToken: "old", RefreshToken: "good", Expiry: stillValid}
 	require.NoError(t, refresh(context.Background(), original))
@@ -382,4 +452,33 @@ func TestSchema(t *testing.T) {
 	requireProblem(t, one(t, schemaCheck(3, 4, nil), adminScope), StatusFail, "version 3")
 	requireProblem(t, one(t, schemaCheck(5, 4, nil), adminScope), StatusWarn, "newer")
 	requireProblem(t, one(t, schemaCheck(0, 0, errors.New("connection refused")), adminScope), StatusFail, "Could not read")
+}
+
+// RefreshWith must tell Google's refusal of the sign-in apart from everything else that can go
+// wrong, because only the first is fixed by signing in again.
+func TestRefreshWith_ClassifiesFailures(t *testing.T) {
+	google := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid_client","error_description":"The OAuth client was not found."}`))
+	}))
+	defer google.Close()
+	cfg := &oauth2.Config{ClientID: "id", ClientSecret: "wrong", Endpoint: oauth2.Endpoint{TokenURL: google.URL, AuthStyle: oauth2.AuthStyleInParams}}
+	token := &oauth2.Token{AccessToken: "old", RefreshToken: "good"}
+
+	err := RefreshWith(cfg.TokenSource)(context.Background(), token)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrRenewalRejected)
+	assert.NotErrorIs(t, err, ErrSignInRefused, "a rejected client is not an expired sign-in")
+
+	// Nothing listens on the token endpoint: a transport failure is neither.
+	listener, lerr := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, lerr)
+	deadEndpoint := "http://" + listener.Addr().String()
+	require.NoError(t, listener.Close())
+	cfg.Endpoint.TokenURL = deadEndpoint
+	err = RefreshWith(cfg.TokenSource)(context.Background(), token)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrSignInRefused)
+	assert.NotErrorIs(t, err, ErrRenewalRejected)
 }

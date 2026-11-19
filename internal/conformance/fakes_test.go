@@ -460,7 +460,7 @@ func scenarioDoctor() *doctor.Doctor {
 			},
 			Refresh: func(_ context.Context, tok *oauth2.Token) error {
 				if tok.RefreshToken != "good" {
-					return errors.New("invalid_grant")
+					return fmt.Errorf("%w (invalid_grant)", doctor.ErrSignInRefused)
 				}
 				return nil
 			},

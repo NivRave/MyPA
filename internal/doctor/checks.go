@@ -3,9 +3,12 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nivik/mypa/internal/models"
@@ -121,7 +124,26 @@ type GoogleAccounts struct {
 	Token func(ctx context.Context, userID string) ([]byte, error)
 	// Refresh asks Google to renew the token and returns an error when it refuses (see RefreshWith).
 	Refresh func(ctx context.Context, token *oauth2.Token) error
+	// MemberTimeout bounds the check of one member; DefaultMemberTimeout when zero.
+	MemberTimeout time.Duration
 }
+
+// Why a renewal failed. Refresh implementations wrap one of these; any other error means the
+// question could not be put to Google at all.
+var (
+	// ErrSignInRefused: Google refused to renew this member's sign-in (expired or revoked).
+	ErrSignInRefused = errors.New("google refused to renew the sign-in")
+	// ErrRenewalRejected: Google rejected the request itself, which points at this install's
+	// OAuth client settings rather than at the member.
+	ErrRenewalRejected = errors.New("google rejected the renewal request")
+)
+
+const (
+	// DefaultMemberTimeout bounds one member's check (one request to Google).
+	DefaultMemberTimeout = 6 * time.Second
+	// googleChecksInParallel limits concurrent requests to Google's token endpoint.
+	googleChecksInParallel = 4
+)
 
 func (GoogleAccounts) Name() string { return "Google accounts" }
 
@@ -149,10 +171,33 @@ func (c GoogleAccounts) Run(ctx context.Context, scope Scope) []Result {
 		members = listed
 	}
 
-	results := make([]Result, 0, len(members))
-	for _, m := range members {
-		results = append(results, c.checkMember(ctx, m))
+	// Members are checked side by side, each with their own time limit, so one sign-in that
+	// Google is slow to answer for cannot use up the time of the others.
+	timeout := c.MemberTimeout
+	if timeout <= 0 {
+		timeout = DefaultMemberTimeout
 	}
+	results := make([]Result, len(members))
+	slots := make(chan struct{}, googleChecksInParallel)
+	var wg sync.WaitGroup
+	for i, m := range members {
+		wg.Add(1)
+		go func(i int, m models.User) {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("doctor google account check panicked", "panic", r)
+					results[i] = Result{Check: "Google account: " + displayName(m), Status: StatusFail, Detail: "The check itself crashed."}
+				}
+			}()
+			memberCtx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+			results[i] = c.checkMember(memberCtx, m)
+		}(i, m)
+	}
+	wg.Wait()
 	return results
 }
 
@@ -188,8 +233,20 @@ func (c GoogleAccounts) checkMember(ctx context.Context, m models.User) Result {
 	}
 	if err := c.Refresh(ctx, &token); err != nil {
 		res.Status = StatusFail
-		res.Detail = "The Google sign-in has expired or was revoked: Google refused to renew it."
-		res.NextStep = reconnect
+		switch {
+		case errors.Is(err, ErrSignInRefused):
+			// Only this case is the member's to fix.
+			res.Detail = "The Google sign-in has expired or was revoked: Google refused to renew it."
+			res.NextStep = reconnect
+		case errors.Is(err, ErrRenewalRejected):
+			slog.Warn("doctor: google rejected the renewal request", "error", err)
+			res.Detail = "Google rejected this install's own credentials when asked to renew the sign-in, so its state is unknown."
+			res.NextStep = "Compare `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` with the OAuth client in the Google Cloud console, then run /doctor again."
+		default:
+			slog.Warn("doctor: could not reach google to check a sign-in", "error", err)
+			res.Detail = "Could not reach Google to check the sign-in, so its state is unknown."
+			res.NextStep = "Check that this machine can reach oauth2.googleapis.com, then run /doctor again."
+		}
 		return res
 	}
 	res.Status = StatusOK
@@ -221,12 +278,33 @@ func maskTail(id string) string {
 // the stored access token still looks valid, because that is the only way to learn that the
 // refresh token itself has expired or been revoked. The renewed token is discarded and the
 // caller's token is left untouched; Google does not invalidate the old one.
+//
+// The error says why the renewal failed: ErrSignInRefused when Google refused this sign-in
+// (invalid_grant), ErrRenewalRejected when it rejected the request for another reason, and the
+// underlying error otherwise (Google unreachable, a timeout, a server error on Google's side).
 func RefreshWith(source func(ctx context.Context, token *oauth2.Token) oauth2.TokenSource) func(ctx context.Context, token *oauth2.Token) error {
 	return func(ctx context.Context, token *oauth2.Token) error {
 		expired := *token
 		expired.Expiry = time.Now().Add(-time.Hour)
 		_, err := source(ctx, &expired).Token()
-		return err
+		if err == nil {
+			return nil
+		}
+		var answered *oauth2.RetrieveError
+		if !errors.As(err, &answered) {
+			return err
+		}
+		if answered.ErrorCode == "invalid_grant" {
+			return fmt.Errorf("%w (invalid_grant)", ErrSignInRefused)
+		}
+		if answered.Response != nil && answered.Response.StatusCode >= 500 {
+			return err // Google's own trouble: neither the sign-in nor our credentials
+		}
+		code := answered.ErrorCode
+		if code == "" && answered.Response != nil {
+			code = answered.Response.Status
+		}
+		return fmt.Errorf("%w (%s)", ErrRenewalRejected, code)
 	}
 }
 

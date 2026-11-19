@@ -118,8 +118,7 @@ mypa/
 │   ├── config/                     # Viper + godotenv loader & `ALLOWED_USERS` parser
 │   ├── contacts/                   # Google People API v1 client (search & create contacts)
 │   ├── crypto/                     # AES-256-GCM encryption/decryption at rest (`ENCRYPTION_KEY`)
-│   ├── db/                         # GORM PostgreSQL client, goose migrations (migrations/), backup/restore
-│   ├── doctor/                     # `/doctor` health checks (V4-17): webhook, Google sign-ins, WhatsApp, queues, backups, schema (§3.8) & domain repos:
+│   ├── db/                         # GORM PostgreSQL client, goose migrations (migrations/), backup/restore & domain repos:
 │   │   ├── db.go                   # `db.Client` initialization, `vector` extension & core Wave 0 queries
 │   │   ├── migrations.go           # `RegisterModel`, `RegisterWave1Models`, `RegisterWave2Models`
 │   │   ├── backup.go               # `pg_dump` / `pg_restore` streaming backup/restore, age encryption, GFS retention (P3-4)
@@ -131,6 +130,7 @@ mypa/
 │   │   ├── house_repo.go           # `HouseRepository` (HouseContractRecord, HomeMaintenanceItem, VehicleAsset)
 │   │   ├── finance_repo.go         # `FinanceRepository` (FinancialTransaction, CategoryBudget, RecurringBill)
 │   │   └── automation_repo.go      # `AutomationRepository` (ExternalAPIConnector, AutomationRule, UserPreference, PersonalCRMContact)
+│   ├── doctor/                     # `/doctor` health checks (V4-17): webhook, Google sign-ins, WhatsApp, queues, backups, schema (§3.8)
 │   ├── domains/                    # Modular `orchestrator.ToolModule` implementations. Large modules (house, automation,
 │   │                               #   schedule, baby, finance — P4-2) are split: module.go (struct, NewModule/options, Name,
 │   │                               #   SystemPromptSection), declarations.go (genai tool schemas), handlers.go (Execute +
@@ -438,7 +438,7 @@ Behaviour the suite pins today:
 
 ### 3.8 `/doctor` Health Check ([`internal/doctor/`](./internal/doctor/), *V4-17*)
 
-`/doctor` is an admin chat command that checks the install and, for every problem, says what to do next. A non-admin is refused before any check runs; without a wired reporter the command says it is unavailable. It only reads: nothing is written, no schema or queue is created, and the report is not copied into the audit log.
+`/doctor` is an admin chat command that checks the install and, for every problem, says what to do next. A non-admin is refused before any check runs; without a wired reporter the command says it is unavailable. It changes no user data and creates no schema or queue, and the report is not copied into the audit log. Its one possible write is to the Redis cache: reading a member's Google token goes through `state.Store.GetOAuthToken`, which, as on any other read, puts the token back into Redis when it had to be fetched from its Postgres copy or was still stored in the old unencrypted form.
 
 - **Shape.** `doctor.Doctor` runs a list of independent `Check`s concurrently (15 s each; a check that panics or hangs becomes a failed line and never blocks the others) and renders one Markdown report: failures and warnings first, each with a `➡️` next step, then what passed, then notes. The engine knows only the `orchestrator.HealthReporter` port (`WithHealthReporter`); [`cmd/orchestrator/doctor.go`](./cmd/orchestrator/doctor.go) binds each check to the real system. Every check takes its inputs as functions, so each failure is reproduced in tests without infrastructure.
 - **Healthy** means no failed check. Warnings and notes do not make an install unhealthy.
@@ -447,9 +447,9 @@ Behaviour the suite pins today:
 | Check | Source | Fails when | Warns when |
 | :--- | :--- | :--- | :--- |
 | Telegram webhook | `telegram.Client.GetWebhookInfo` (Bot API `getWebhookInfo`) | no webhook registered; registered address differs from `TELEGRAM_WEBHOOK_URL`; Telegram reported a delivery error in the last 15 minutes, or in the last 24 hours with updates still waiting; Telegram cannot be asked | a delivery error in the last 24 hours with nothing waiting |
-| Google account, per member | token from `state.Store.GetOAuthToken`, then a forced refresh against Google (`doctor.RefreshWith`; the renewed token is discarded) | the stored token cannot be read; it has no refresh token; Google refuses to renew it (expired or revoked) | — (never connected is a note) |
+| Google account, per member (checked side by side, 6 s each) | token from `state.Store.GetOAuthToken`, then a forced refresh against Google (`doctor.RefreshWith`; the renewed token is discarded) | the stored token cannot be read; it has no refresh token; Google refuses to renew it (`invalid_grant`: expired or revoked, next step `/connect`); Google rejects the install's OAuth client (next step: check `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`); Google cannot be reached (state unknown, next step: check the network) | — (never connected is a note) |
 | WhatsApp | Twilio settings only, until the mode setting of V4-41 | — | the sender is Twilio's shared sandbox number (*OP-8*); `TWILIO_STATUS_CALLBACK_URL` is empty (*BL-8*) |
-| Queue, per work queue | `broker.QueueDepth` (short-lived connection, passive declare) on `inbound.messages`, `audit.events` and each `.dlq` | the dead-letter queue holds messages; the broker cannot be read | 20 or more messages waiting |
+| Queue, per work queue | `broker.QueueDepth` (short-lived connection bounded by the check's context, passive declare) on `inbound.messages`, `audit.events` and each `.dlq` | the dead-letter queue holds messages; the broker cannot be read | 20 or more messages waiting |
 | Backups | `db.LatestBackupInfo` on the backup volume | no backup; the newest is older than 26 hours (nightly at 02:00) | the newest backup is not encrypted |
 | Database schema | `db.SchemaVersion` (database version against the latest embedded migration) | the database is behind the build; the version cannot be read | the database is newer than the build |
 
