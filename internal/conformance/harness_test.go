@@ -252,6 +252,8 @@ type env struct {
 	tools  *scenarioTools
 	undo   *fakeDurability
 	seq    int
+	// compared is set once the scenario has compared its transcript (see golden).
+	compared bool
 }
 
 func newEnv(t *testing.T, ch channel) *env {
@@ -399,9 +401,6 @@ func (e *env) transcript() string {
 	return b.String()
 }
 
-// usedGoldens records which transcripts the run compared, so stale files are detected.
-var usedGoldens sync.Map
-
 func goldenPath(scenario, channelName string) string {
 	return filepath.Join("testdata", "golden", scenario+"."+channelName+".txt")
 }
@@ -410,7 +409,7 @@ func goldenPath(scenario, channelName string) string {
 func (e *env) golden(scenario string) {
 	e.t.Helper()
 	path := goldenPath(scenario, e.ch.name)
-	usedGoldens.Store(filepath.ToSlash(path), true)
+	e.compared = true
 	got := e.transcript()
 
 	if *update {

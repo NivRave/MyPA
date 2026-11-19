@@ -2,7 +2,6 @@ package conformance
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -45,19 +44,44 @@ func TestConformance(t *testing.T) {
 					e := newEnv(t, ch)
 					sc.run(t, e)
 					e.finish()
+					// A scenario with a transcript on disk must compare it, or the file would
+					// look like a pin that nothing checks.
+					assert.Equal(t, hasTranscript(sc.name), e.compared, "scenario %s: transcript compared", sc.name)
 				})
 			}
 		})
 	}
+}
 
-	// Every pinned transcript must belong to a scenario that ran: a file left behind by a renamed
-	// or removed scenario would look like coverage that no longer exists.
+// hasTranscript reports whether a scenario is pinned by a golden transcript. long_reply is the
+// one exception: it is asserted by properties (see longReply).
+func hasTranscript(scenarioName string) bool { return scenarioName != "long_reply" }
+
+// TestTranscriptsMatchScenarios requires the files in testdata/golden to be exactly one per
+// scenario and channel: none missing, and none left behind by a renamed or removed scenario
+// (which would look like coverage that no longer exists). It reads only the file names, so it
+// holds whatever subset of scenarios a -run filter selects.
+func TestTranscriptsMatchScenarios(t *testing.T) {
+	want := map[string]bool{}
+	for _, sc := range scenarios {
+		if !hasTranscript(sc.name) {
+			continue
+		}
+		for _, ch := range channels {
+			want[filepath.ToSlash(goldenPath(sc.name, ch.name))] = true
+		}
+	}
 	files, err := filepath.Glob(filepath.Join("testdata", "golden", "*.txt"))
 	require.NoError(t, err)
-	require.NotEmpty(t, files, "no pinned transcripts found")
+	have := map[string]bool{}
 	for _, f := range files {
-		_, used := usedGoldens.Load(filepath.ToSlash(f))
-		assert.True(t, used, "%s is not compared by any scenario; delete it or restore the scenario", f)
+		have[filepath.ToSlash(f)] = true
+	}
+	for path := range want {
+		assert.True(t, have[path], "%s is missing; create it with: go test ./internal/conformance -update", path)
+	}
+	for path := range have {
+		assert.True(t, want[path], "%s belongs to no scenario; delete it or restore the scenario", path)
 	}
 }
 
@@ -75,15 +99,6 @@ func TestEveryNamedScenarioIsCovered(t *testing.T) {
 			}
 		}
 		assert.True(t, found, "ROADMAP V4-34 names a %q scenario; none is registered", prefix)
-	}
-	for _, sc := range scenarios {
-		if sc.name == "long_reply" {
-			continue // asserted by properties, see longReply
-		}
-		for _, ch := range channels {
-			_, err := os.Stat(goldenPath(sc.name, ch.name))
-			assert.NoError(t, err, "scenario %s has no pinned transcript for %s", sc.name, ch.name)
-		}
 	}
 }
 
