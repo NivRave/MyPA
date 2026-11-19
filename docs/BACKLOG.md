@@ -34,6 +34,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-21 | Medium | `/restore` in chat restores over the live schema and does not migrate, which breaks once V4 adds a migration | open: decide before the first V4 migration |
 | BL-22 | Low | Restore tool: the rollback test cannot fail yet, and the piped dump check runs only against a fake | open |
 | BL-23 | Low | A failing archive step makes the nightly backup discard its database dump | open |
+| BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: belongs with the re-embedding path of V4-03 |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -270,6 +271,21 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** for live backups, keep the dump when the archive step fails, write the manifest without archives
   and with a note, and log an error. An export should keep failing outright: a set made to travel must be
   complete. Test: a failing bundle step during a live backup leaves a verified database-only set.
+
+### BL-24 — Memories saved with `save_topic_memory` before V4-06 have no embedding (Medium)
+- **Found:** 2026-11-19, while removing `remember_fact` (V4-06).
+- **Evidence:** until V4-06, `executeSaveTopicMemory` (`internal/domains/memory/module.go`) wrote a
+  `TopicMemory` without an embedding, and the model's `BeforeCreate` hook stored a zero vector. Only
+  `remember_fact` called `GenerateEmbedding`. The turn's memory retrieval (`SearchSimilarMemories`,
+  `internal/db/memory_v2_repo.go`) orders by vector distance and takes the nearest five, so a zero-vector
+  memory is only returned when fewer than five embedded ones exist.
+- **Impact:** every fact the assistant saved through `save_topic_memory` (the richer tool, with topic and
+  tags) is invisible to automatic recall unless it is pinned or looked up with `search_topic_memories`. New
+  saves are embedded from V4-06 on; the existing rows are not. How many rows are affected on the live system
+  is not known (it is a count of `topic_memories` whose embedding is all zeros).
+- **Fix:** a one-off backfill that embeds every `topic_memories` row with a zero vector, reporting how many it
+  did. It is the same job as the re-embedding path V4-03 has to build and test, so do it there or reuse its
+  mechanism. Test: a zero-vector memory is found by a similar query after the backfill.
 
 ## Operations (owner)
 
