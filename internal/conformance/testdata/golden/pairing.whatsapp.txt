@@ -1,0 +1,10 @@
+=== message 1: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
+🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue. (4 attempts remaining before 1-hour lockout)
+=== message 2: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
+✅ Pairing successful! Welcome to MyPA. You can now use all features.
+=== message 3: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
+Hi! How can I help?
+=== message 4: whatsapp to=whatsapp:+12025550102 from=whatsapp:+12025550199
+✅ Pairing successful! Welcome to MyPA. You can now use all features.
+=== message 5: whatsapp to=whatsapp:+12025550103 from=whatsapp:+12025550199
+🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue. (4 attempts remaining before 1-hour lockout)

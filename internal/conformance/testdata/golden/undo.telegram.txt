@@ -1,0 +1,10 @@
+=== message 1: telegram to=7001 parse_mode=HTML
+↩️ <b>Successfully Undone!</b>
+
+Removed reminder &#34;Call the dentist&#34;.
+=== message 2: telegram to=7001 parse_mode=HTML
+↩️ <b>Successfully Undone!</b>
+
+Reverted change 7f3a9c: removed reminder &#34;Call the dentist&#34;.
+=== message 3: telegram to=7001 parse_mode=HTML
+ℹ️ No recent undoable actions found.

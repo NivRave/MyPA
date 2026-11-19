@@ -1,0 +1,16 @@
+=== message 1: telegram to=7001 parse_mode=HTML
+🔒 <b>Interactive Security Confirmation Required</b>
+
+The assistant tried to perform a sensitive action (<code>delete_task</code>) after reading external data (webpage:fetch_webpage).
+To prevent indirect prompt injection, this modification was NOT applied automatically.
+
+👉 If you intended to make this change, please reply with:
+<code>CONFIRM DELETE_TASK</code>
+=== message 2: telegram to=7001 parse_mode=HTML
+⚠️ Confirmation mismatch. Pending action is &#39;delete_task&#39;, but you confirmed &#39;delete_calendar_event&#39;.
+=== message 3: telegram to=7001 parse_mode=HTML
+✅ <b>Confirmed and Executed:</b> <code>delete_task</code>
+
+Task task-42 deleted.
+=== message 4: telegram to=7001 parse_mode=HTML
+⚠️ No pending confirmation found or it has expired.

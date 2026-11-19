@@ -1,0 +1,4 @@
+=== message 1: telegram to=7001 parse_mode=HTML
+🗣️ <i>Transcribed:</i> Add milk to the shopping list
+=== message 2: telegram to=7001 parse_mode=HTML
+Added milk to your shopping list.
