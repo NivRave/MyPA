@@ -3,24 +3,73 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func clearEnvKeepTemp() {
-	tmp := os.Getenv("TMP")
-	temp := os.Getenv("TEMP")
-	userProfile := os.Getenv("USERPROFILE")
+// clearEnvKeepTemp empties the process environment for one test, so that Load sees only what that
+// test sets, and puts the whole environment back when the test ends. The environment belongs to the
+// process, not to the test: without the restore every later test in the package ran without PATH,
+// and the guards that need git skipped themselves in every full run (BL-27).
+func clearEnvKeepTemp(t *testing.T) {
+	t.Helper()
+	saved := os.Environ()
+	t.Cleanup(func() { restoreEnv(t, saved) }) // registered first, so it runs after t.Setenv's own cleanups
+
+	kept := map[string]string{}
+	for _, key := range []string{"TMP", "TEMP", "USERPROFILE"} {
+		kept[key] = os.Getenv(key)
+	}
 	os.Clearenv()
-	os.Setenv("TMP", tmp)
-	os.Setenv("TEMP", temp)
-	os.Setenv("USERPROFILE", userProfile)
+	for key, value := range kept {
+		t.Setenv(key, value) // t.Setenv also refuses to run in a parallel test
+	}
+}
+
+// restoreEnv makes the process environment equal to saved, a snapshot from os.Environ.
+func restoreEnv(t *testing.T, saved []string) {
+	t.Helper()
+	os.Clearenv()
+	for _, entry := range saved {
+		if entry == "" {
+			continue
+		}
+		// On Windows a name may itself begin with "=" (the per-drive directories, "=C:"), so the
+		// separator is the first "=" after the first byte. os.Clearenv splits the same way.
+		rest, value, ok := strings.Cut(entry[1:], "=")
+		if !ok {
+			continue
+		}
+		if err := os.Setenv(entry[:1]+rest, value); err != nil {
+			t.Errorf("restoring the environment: %s: %v", entry[:1]+rest, err)
+		}
+	}
+}
+
+// BL-27: a test that clears the environment must hand it back complete, PATH included.
+func TestClearEnvKeepTemp_RestoresTheEnvironment(t *testing.T) {
+	t.Setenv("BL27_MARKER", "set before the clear")
+	before := os.Environ()
+	require.NotEmpty(t, os.Getenv("PATH"), "the test process itself must have a PATH")
+
+	t.Run("cleared inside", func(t *testing.T) {
+		clearEnvKeepTemp(t)
+		assert.Empty(t, os.Getenv("PATH"))
+		assert.Empty(t, os.Getenv("BL27_MARKER"))
+		t.Setenv("BL27_SET_INSIDE", "must not leak out")
+	})
+
+	assert.ElementsMatch(t, before, os.Environ(), "the environment after the test differs from the one before it")
+	assert.Equal(t, "set before the clear", os.Getenv("BL27_MARKER"))
+	_, leaked := os.LookupEnv("BL27_SET_INSIDE")
+	assert.False(t, leaked)
 }
 
 func TestLoad_Defaults(t *testing.T) {
-	clearEnvKeepTemp()
+	clearEnvKeepTemp(t)
 
 	tempDir := t.TempDir()
 	origDir, err := os.Getwd()
@@ -44,7 +93,7 @@ func TestLoad_Defaults(t *testing.T) {
 }
 
 func TestLoad_EnvVars(t *testing.T) {
-	clearEnvKeepTemp()
+	clearEnvKeepTemp(t)
 
 	tempDir := t.TempDir()
 	origDir, err := os.Getwd()
@@ -99,7 +148,7 @@ func TestLoad_EnvVars(t *testing.T) {
 }
 
 func TestLoad_ConfigFile(t *testing.T) {
-	clearEnvKeepTemp()
+	clearEnvKeepTemp(t)
 
 	tempDir := t.TempDir()
 	origDir, err := os.Getwd()

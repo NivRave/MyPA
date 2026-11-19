@@ -55,9 +55,9 @@ func maskPhone(p string) string {
 // an example, a doc or a test fixture is published with the repository and stays in its history.
 // Scans what git tracks (never the working tree, which holds the real .env).
 func TestNoRealPhoneNumbersCommitted(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+	// BL-27: without git this guard checks nothing, and a skip reads as a pass. It fails instead.
+	_, err := exec.LookPath("git")
+	require.NoError(t, err, "git must be on PATH: this guard fails, never skips, when it cannot run")
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
 	cmd := exec.Command("git", "ls-files", "-z")

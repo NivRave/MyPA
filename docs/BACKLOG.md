@@ -37,9 +37,10 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: belongs with the re-embedding path of V4-03 |
 | BL-25 | Low | Undo snapshots of saved memories carry the full 3,072-number embedding | open: decide with BL-24 and V4-03 |
 | BL-26 | Medium | `save_topic_memory` stores `scope` as given, so a value such as `Family` is saved but never found | open |
-| BL-27 | High | The real-phone-number guard and the `.gitignore` guard are skipped in every full test run, including CI | open |
+| BL-27 | High | The real-phone-number guard and the `.gitignore` guard are skipped in every full test run, including CI | done 2026-11-19 (`chore/bl-27-guards`) |
 | BL-28 | Low | The one-default-model guard misses a model alias with no version digit (`gemini-flash-latest`) and does not search `.mjs`, `.sh`, `.ps1` or `.sql` files | open |
 | BL-29 | Medium | The LLM client sends `Temperature: 0.2`; Gemini 3.6 Flash ignores sampling parameters and later model generations are to reject them with HTTP 400 | open: resolve before the default moves past 3.6, as part of V4-03 |
+| BL-30 | Low | Tests in `cmd/orchestrator` and `internal/crypto` change environment variables and do not put them back exactly | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -335,6 +336,12 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   guards fail, not skip, when git is missing (CI always has it), or walk the tree as
   `TestDefaultChatModelIsDefinedInOnePlace` now does. Test: a full `go test -v ./internal/config/` shows no
   `SKIP`. Consider a repository-wide check that no guard test reports SKIP in CI.
+- **Done:** 2026-11-19 (`chore/bl-27-guards`). `clearEnvKeepTemp` takes the test, snapshots `os.Environ()`
+  and restores it in `t.Cleanup`; `TestClearEnvKeepTemp_RestoresTheEnvironment` holds it to that. Both
+  guards now fail when git is not on `PATH` instead of skipping. A full `go test -v ./internal/config/`
+  shows no `SKIP`, and both guards pass on the tracked tree: nothing had slipped through while they were
+  off. Not done: the repository-wide check that no guard reports SKIP in CI. The other unrestored
+  environment changes found in the same search are BL-30.
 
 ### BL-28 — The one-default-model guard has two blind spots (Low)
 - **Found:** 2026-11-19, in the independent review of V4-09 (non-blocking).
@@ -366,6 +373,25 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** resolve before the default moves past 3.6, as part of the provider work (V4-03): send no sampling
   parameters, or send them only to models that accept them, decided per provider and model. Test: the
   request built for the default model carries no `Temperature`.
+
+### BL-30 — Other tests change the process environment and do not restore it exactly (Low)
+- **Found:** 2026-11-19, in the search of every `_test.go` file done for BL-27.
+- **Evidence:** `cmd/orchestrator/playground_security_test.go:18-19` and `:44-45` set `ENV` and
+  `DASHBOARD_API_SECRET` with `os.Setenv`. `ENV` is put back with a `defer`, but as an empty value when it
+  was unset before; `DASHBOARD_API_SECRET` is never put back. `internal/crypto/aes_test.go:31-42` and
+  `:105-109` set and unset `ENCRYPTION_KEY` and restore it the same way, so an unset variable comes back
+  set to an empty string. No other `_test.go` file calls `os.Clearenv`, `os.Setenv`, `os.Unsetenv` or
+  `os.Chdir` (the `os.Chdir` calls in `internal/config/config_test.go` are restored with a `defer`).
+  Separately, the only other `t.Skip` in the repository is `internal/llm/llm_test.go:17`
+  (`TestLLMFunctionCalling`, skipped when `GEMINI_API_KEY` is not set). It is a call to the real provider,
+  not a guard, and it is skipped in CI.
+- **Impact:** none known. Each test binary is one process, so the leftover values reach only later tests
+  of the same package, and no test there is known to depend on them. It is the same mechanism as BL-27:
+  a test added later that reads one of these variables would get a value another test left behind.
+- **Fix:** replace the `os.Setenv`/`os.Unsetenv` pairs with `t.Setenv`, which restores the exact earlier
+  state (unset stays unset) and refuses to run in a parallel test. For the `os.Unsetenv` step in
+  `aes_test.go`, call `t.Setenv` first and then `os.Unsetenv`. Decide whether `TestLLMFunctionCalling`
+  should stay a skipped test in the unit suite or move behind a build tag.
 
 ## Operations (owner)
 
