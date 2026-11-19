@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"github.com/nivik/mypa/internal/config"
 	"os"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func TestLLMFunctionCalling(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	client, err := NewClient(ctx, apiKey, "gemini-2.5-flash")
+	client, err := NewClient(ctx, apiKey, config.DefaultGeminiModel)
 	require.NoError(t, err)
 
 	systemPrompt := "You are a helpful personal assistant. Your current time is " + time.Now().Format(time.RFC3339) + ". The user's timezone is America/New_York."
@@ -36,7 +37,7 @@ func TestLLMFunctionCalling(t *testing.T) {
 
 	args := resp.ToolCalls[0].Args
 	require.NotNil(t, args)
-	
+
 	// Check that the required arguments are present
 	require.Contains(t, args, "title")
 	require.Contains(t, args, "start_time")

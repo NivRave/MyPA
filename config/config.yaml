@@ -13,8 +13,8 @@ google:
 tavily:
   api_key: ""
 
-gemini:
-  model: gemini-2.5-flash
+# The chat model is not set here. Its default is defined once, in code
+# (config.DefaultGeminiModel); override it per install with GEMINI_MODEL.
 
 encryption:
   key: "" # Supplied via ENCRYPTION_KEY environment variable

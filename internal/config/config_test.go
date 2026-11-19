@@ -37,7 +37,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 8081, cfg.Server.OrchestratorPort)
 	assert.Equal(t, 8000, cfg.Server.ProxyPort)
 	assert.Equal(t, "UTC", cfg.Server.DefaultTimezone)
-	assert.Equal(t, "gemini-2.5-flash", cfg.Gemini.Model)
+	assert.Equal(t, DefaultGeminiModel, cfg.Gemini.Model)
 	assert.Equal(t, "Sunday", cfg.Server.WeekStartDay)
 	assert.Equal(t, "Friday,Saturday", cfg.Server.WeekendDays)
 	assert.Equal(t, 4, cfg.RabbitMQ.Prefetch)

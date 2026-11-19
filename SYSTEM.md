@@ -904,7 +904,7 @@ Failed syncs are **not retried**; the event stays in MyPA with an empty `externa
 | `GRAPHQL_ENDPOINT` | *(dashboard env)* | `http://proxy:8000/graphql` | `dashboard` | Upstream GraphQL URL used by Next.js server actions and SSR data fetching |
 | `JWT_SECRET` | `server.jwt_secret` | **Required** (orchestrator); must differ from `ENCRYPTION_KEY` | `orchestrator`, `proxy` | Secret key used for signing and verifying HMAC-SHA256 Bearer JWT claims on `/graphql` |
 | `GEMINI_API_KEY` | `gemini.api_key` | — | `orchestrator` | Google AI Studio API key |
-| `GEMINI_MODEL` | `gemini.model` | `"gemini-2.5-flash"` | `orchestrator` | Primary Gemini chat/tool-calling model |
+| `GEMINI_MODEL` | `gemini.model` | `"gemini-3.6-flash"` | `orchestrator` | Primary Gemini chat/tool-calling model. The default is defined in one place, `config.DefaultGeminiModel` (*V4-09*): `config/config.yaml` and `.env.example` do not name a model, and the LLM client falls back to the same constant |
 | `TELEGRAM_BOT_TOKEN` | `telegram.bot_token` | — | `orchestrator`, `gateway` | Telegram Bot token (gateway uses it only for `setWebhook`) |
 | `TWILIO_ACCOUNT_SID` | `twilio.account_sid` | — | `orchestrator`, `gateway` | Twilio Account SID for WhatsApp; when set, the gateway requires `TWILIO_AUTH_TOKEN` at startup |
 | `TWILIO_AUTH_TOKEN` | `twilio.auth_token` | — | `orchestrator`, `gateway` | Twilio Auth Token for WhatsApp; gateway verifies `X-Twilio-Signature` with it and rejects all WhatsApp webhooks when it is empty |
