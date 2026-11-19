@@ -14,9 +14,9 @@ import (
 // committable; only the template .env.example is tracked. Asks git itself (--no-index evaluates the
 // patterns regardless of what is tracked), so the test checks behaviour, not .gitignore's text.
 func TestGitignore_IgnoresEveryEnvCopyButTheExample(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+	// BL-27: without git this guard checks nothing, and a skip reads as a pass. It fails instead.
+	_, err := exec.LookPath("git")
+	require.NoError(t, err, "git must be on PATH: this guard fails, never skips, when it cannot run")
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
 
