@@ -29,7 +29,7 @@ import (
 // written into every manifest and printed after every export and import.
 var NotCarried = []string{
 	"The conversation context of the last 24 hours (the chat window): the assistant remembers saved facts, but starts each conversation without the recent back-and-forth.",
-	"Actions that were waiting for a CONFIRM reply, including a staged /restore: ask again.",
+	"Actions that were waiting for a CONFIRM reply: ask again.",
 	"Google sign-in links that were sent but not finished: send /connect again.",
 	"Pairing lockouts and failed-attempt counters: they start from zero.",
 	"Follow-up tool context and cached prompt sections: rebuilt on the next message.",

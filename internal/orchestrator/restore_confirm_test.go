@@ -3,6 +3,9 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator/mocks"
 	"github.com/nivik/mypa/internal/state"
@@ -19,52 +21,22 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-type fakeBackups struct {
-	mu          sync.Mutex
-	dir         string
-	backupErr   error
-	backups     []string // paths created by backup()
-	restored    []string // paths passed to restore()
-	callOrder   []string
-	backupCalls int
-}
+// BL-21: the chat restore is retired. /restore only names the newest backup and replies with the
+// steps for `transfer import --replace`; CONFIRM RESTORE is an ordinary confirmation again.
 
-func (f *fakeBackups) ops() backupOps {
-	return backupOps{
-		dir: f.dir,
-		backup: func(_ string, dir string) (string, error) {
-			f.mu.Lock()
-			defer f.mu.Unlock()
-			f.backupCalls++
-			f.callOrder = append(f.callOrder, "backup")
-			if f.backupErr != nil {
-				return "", f.backupErr
-			}
-			// Name sorts after any pre-existing backup, so it becomes the "latest" on disk.
-			p := filepath.Join(dir, "backup_2099-12-31_23-59-59.dump")
-			if err := os.WriteFile(p, []byte("safety"), 0o600); err != nil {
-				return "", err
-			}
-			f.backups = append(f.backups, p)
-			return p, nil
-		},
-		restore: func(_ string, path string) error {
-			f.mu.Lock()
-			defer f.mu.Unlock()
-			f.callOrder = append(f.callOrder, "restore")
-			f.restored = append(f.restored, path)
-			return nil
-		},
-	}
-}
+const (
+	newestStamp = "backup_2026-11-14_03-00-00"
+	dumpContent = "nightly-dump-bytes"
+)
 
 type restoreHarness struct {
-	engine *Engine
-	tg     *mocks.MockTelegramClient
-	mr     *miniredis.Miniredis
-	fake   *fakeBackups
-	staged string // the backup file that exists before /restore
-	role   string
+	engine      *Engine
+	store       *state.Store
+	dir         string
+	role        string
+	mu          sync.Mutex
+	replies     []string
+	backupCalls int
 }
 
 func newRestoreHarness(t *testing.T) *restoreHarness {
@@ -72,138 +44,242 @@ func newRestoreHarness(t *testing.T) *restoreHarness {
 	engine, tgMock, dbMock, cleanup := setupUnauthTestEngine(t)
 	t.Cleanup(cleanup)
 
-	mr := miniredis.RunT(t)
-	store, err := state.NewStore("redis://" + mr.Addr())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
-	engine.store = store
-
-	dir := t.TempDir()
-	staged := filepath.Join(dir, "backup_2026-11-14_03-00-00.dump")
-	require.NoError(t, os.WriteFile(staged, []byte("nightly"), 0o600))
-
-	h := &restoreHarness{engine: engine, tg: tgMock, mr: mr, fake: &fakeBackups{dir: dir}, staged: staged, role: "admin"}
-	engine.backups = h.fake.ops()
+	require.NotNil(t, engine.store, "the test engine uses a Redis-backed store")
+	h := &restoreHarness{engine: engine, store: engine.store, dir: t.TempDir(), role: "admin"}
+	engine.backups = backupOps{
+		dir: h.dir,
+		backup: func(string, string) (string, error) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.backupCalls++
+			return "", errors.New("no backup may be taken by /restore")
+		},
+	}
 	t.Setenv("DATABASE_URL", "postgres://test")
 
 	dbMock.EXPECT().GetUser("admin-1").DoAndReturn(func(string) (*models.User, error) {
 		return &models.User{PlatformID: "admin-1", Role: h.role, FamilyGroup: "fam"}, nil
 	}).AnyTimes()
+
+	record := func(_ context.Context, _ string, text string) error {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.replies = append(h.replies, text)
+		return nil
+	}
+	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(record).AnyTimes()
+	engine.twClient.(*mocks.MockTwilioClient).EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(record).AnyTimes()
 	return h
 }
 
-// replies captures every message sent to the user.
-func (h *restoreHarness) replies() *[]string {
-	var mu sync.Mutex
-	out := &[]string{}
-	h.tg.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, _ string, text string) error {
-		mu.Lock()
-		defer mu.Unlock()
-		*out = append(*out, text)
-		return nil
-	}).AnyTimes()
-	return out
+// writeSet puts a backup set (encrypted dump, archives and manifest) in the backup directory.
+func (h *restoreHarness) writeSet(t *testing.T, stamp string) {
+	t.Helper()
+	for _, name := range []string{stamp + ".dump.age", stamp + ".archives.tar.age", stamp + ".manifest.json"} {
+		require.NoError(t, os.WriteFile(filepath.Join(h.dir, name), []byte(dumpContent), 0o600))
+	}
 }
 
-func (h *restoreHarness) send(t *testing.T, text string) {
+func (h *restoreHarness) send(t *testing.T, source, text string) {
 	t.Helper()
 	require.NoError(t, h.engine.ProcessMessage(context.Background(), models.Message{
-		UserID: "admin-1", ChatID: "chat-admin", Text: text, Source: "telegram",
+		UserID: "admin-1", ChatID: "chat-admin", Text: text, Source: source,
 	}))
 }
 
-func joined(r *[]string) string { return strings.Join(*r, "\n---\n") }
-
-// Acceptance: /restore alone never restores; it stages and asks for CONFIRM RESTORE.
-func TestRestore_RequiresConfirmation(t *testing.T) {
-	h := newRestoreHarness(t)
-	out := h.replies()
-
-	h.send(t, "/restore")
-
-	assert.Empty(t, h.fake.restored, "/restore alone must never call RestoreDatabase")
-	assert.Zero(t, h.fake.backupCalls, "no safety backup before confirmation")
-	all := joined(out)
-	assert.Contains(t, all, filepath.Base(h.staged), "prompt must name the backup file")
-	assert.Contains(t, all, "CONFIRM RESTORE")
+func (h *restoreHarness) all() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return strings.Join(h.replies, "\n---\n")
 }
 
-// Acceptance: CONFIRM RESTORE within TTL restores — the file shown at staging time, after a
-// safety backup (which must not be mistaken for the "latest" backup to restore).
-func TestRestore_ConfirmWithinTTL_BacksUpThenRestoresStagedFile(t *testing.T) {
-	h := newRestoreHarness(t)
-	out := h.replies()
-
-	h.send(t, "/restore")
-	h.send(t, "CONFIRM RESTORE")
-
-	require.Equal(t, []string{h.staged}, h.fake.restored, "must restore the staged file, not the safety backup")
-	assert.Equal(t, []string{"backup", "restore"}, h.fake.callOrder, "safety backup must precede restore")
-	assert.Contains(t, joined(out), filepath.Base(h.fake.backups[0]), "user must be told where the safety backup is")
+func (h *restoreHarness) reset() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.replies = nil
 }
 
-// Acceptance: expired confirmation → no-op message, no restore.
-func TestRestore_ExpiredConfirmation_NoOp(t *testing.T) {
-	h := newRestoreHarness(t)
-	out := h.replies()
-
-	h.send(t, "/restore")
-	h.mr.FastForward(6 * time.Minute)
-	h.send(t, "CONFIRM RESTORE")
-
-	assert.Empty(t, h.fake.restored)
-	assert.Contains(t, joined(out), "expired")
+// assertNothingRestored checks that no backup was taken and nothing is waiting for a confirmation.
+func (h *restoreHarness) assertNothingRestored(t *testing.T) {
+	t.Helper()
+	assert.Zero(t, h.backupCalls, "a safety backup means a restore was under way")
+	pending, err := h.store.GetAndClearPendingMetaTool(context.Background(), "admin-1")
+	require.NoError(t, err)
+	assert.Nil(t, pending, "/restore must not stage anything for CONFIRM")
 }
 
-// A bare CONFIRM (meant for some other action) must not trigger a destructive restore.
-func TestRestore_BareConfirmDoesNotRestore(t *testing.T) {
-	h := newRestoreHarness(t)
-	out := h.replies()
-
-	h.send(t, "/restore")
-	h.send(t, "CONFIRM")
-	assert.Empty(t, h.fake.restored)
-	assert.Contains(t, joined(out), "CONFIRM RESTORE")
-
-	// The staged action survives the mismatch and can still be confirmed explicitly.
-	h.send(t, "CONFIRM RESTORE")
-	assert.Equal(t, []string{h.staged}, h.fake.restored)
+// assertNoPrivateDetail checks that a reply shows neither where backups live nor what they contain.
+func (h *restoreHarness) assertNoPrivateDetail(t *testing.T, reply string) {
+	t.Helper()
+	assert.NotContains(t, reply, h.dir, "the backup directory path must not be shown")
+	assert.NotContains(t, reply, filepath.ToSlash(h.dir))
+	assert.NotContains(t, reply, dumpContent, "no file content may be shown")
+	assert.NotContains(t, reply, "postgres://", "no connection string may be shown")
 }
 
-func TestRestore_SafetyBackupFails_AbortsRestore(t *testing.T) {
-	h := newRestoreHarness(t)
-	out := h.replies()
-	h.fake.backupErr = errors.New("pg_dump: disk full")
+func TestRestore_NonAdminIsRefused(t *testing.T) {
+	for _, source := range []string{"telegram", "whatsapp"} {
+		t.Run(source, func(t *testing.T) {
+			h := newRestoreHarness(t)
+			h.writeSet(t, newestStamp)
+			h.role = "family"
 
-	h.send(t, "/restore")
-	h.send(t, "CONFIRM RESTORE")
+			h.send(t, source, "/restore")
 
-	assert.Empty(t, h.fake.restored, "no restore without a safety backup")
-	assert.Contains(t, joined(out), "aborted")
+			reply := h.all()
+			assert.Contains(t, reply, "Permission denied")
+			assert.NotContains(t, reply, newestStamp, "a non-admin must not learn which backups exist")
+			assert.NotContains(t, reply, "transfer import")
+			h.assertNothingRestored(t)
+		})
+	}
 }
 
-// Authorization is re-checked at confirmation time.
-func TestRestore_RoleRevokedBeforeConfirm_Denied(t *testing.T) {
-	h := newRestoreHarness(t)
-	out := h.replies()
+// An admin gets the newest set named and the steps for the restore tool, identically on both
+// channels, and nothing is restored, backed up or staged.
+func TestRestore_AdminGetsInstructionsAndNothingIsRestored(t *testing.T) {
+	for _, source := range []string{"telegram", "whatsapp"} {
+		t.Run(source, func(t *testing.T) {
+			h := newRestoreHarness(t)
+			h.writeSet(t, "backup_2026-11-13_03-00-00")
+			h.writeSet(t, newestStamp)
 
-	h.send(t, "/restore")
-	h.role = "family"
-	h.send(t, "CONFIRM RESTORE")
+			h.send(t, source, "/restore")
 
-	assert.Empty(t, h.fake.restored)
-	assert.Contains(t, joined(out), "Permission denied")
+			reply := h.all()
+			require.Len(t, h.replies, 1, "one reply: %s", reply)
+			assert.Contains(t, reply, newestStamp+".manifest.json", "names the newest set by its manifest")
+			assert.NotContains(t, reply, "2026-11-13", "only the newest backup is named")
+			assert.Contains(t, reply, "transfer import "+newestStamp+".manifest.json --replace")
+			assert.Contains(t, reply, "BACKUP_AGE_IDENTITY_FILE", "an encrypted backup needs the private key")
+			assert.Contains(t, reply, "docs/RESTORE_AND_MIGRATE.md")
+			assert.NotContains(t, reply, "CONFIRM RESTORE", "there is nothing to confirm any more")
+			h.assertNoPrivateDetail(t, reply)
+			h.assertNothingRestored(t)
+		})
+	}
 }
 
-// P3-4: encrypted backups (.dump.age) must pass the staged-path validation.
-func TestRestore_EncryptedBackupIsAccepted(t *testing.T) {
+// A dump from before backup sets existed has no manifest: the dump itself is named, and an
+// unencrypted one does not ask for the private key.
+func TestRestore_BareDumpIsNamedWhenThereIsNoManifest(t *testing.T) {
 	h := newRestoreHarness(t)
-	out := h.replies()
-	enc := filepath.Join(h.fake.dir, "backup_2026-11-15_03-00-00.dump.age")
-	require.NoError(t, os.WriteFile(enc, []byte("age-encrypted"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(h.dir, newestStamp+".dump"), []byte(dumpContent), 0o600))
 
-	h.send(t, "/restore")
-	h.send(t, "CONFIRM RESTORE")
+	h.send(t, "telegram", "/restore")
 
-	require.Equal(t, []string{enc}, h.fake.restored, "the newest (encrypted) backup is staged and restored; out: %s", joined(out))
+	reply := h.all()
+	assert.Contains(t, reply, "transfer import "+newestStamp+".dump --replace")
+	assert.NotContains(t, reply, "BACKUP_AGE_IDENTITY_FILE")
+	h.assertNoPrivateDetail(t, reply)
+	h.assertNothingRestored(t)
+}
+
+func TestRestore_NoBackupPresent_SaysSo(t *testing.T) {
+	for _, source := range []string{"telegram", "whatsapp"} {
+		t.Run(source, func(t *testing.T) {
+			h := newRestoreHarness(t)
+			require.NoError(t, os.WriteFile(filepath.Join(h.dir, "notes.txt"), []byte(dumpContent), 0o600))
+
+			h.send(t, source, "/restore")
+
+			reply := h.all()
+			assert.Contains(t, reply, "No backup found")
+			assert.NotContains(t, reply, "transfer import", "no command to run without a backup")
+			h.assertNoPrivateDetail(t, reply)
+			h.assertNothingRestored(t)
+		})
+	}
+}
+
+// An unreadable backup directory is reported as such, not as "no backup", and without the
+// error text (which holds the path).
+func TestRestore_UnreadableBackupDir_SaysSoWithoutThePath(t *testing.T) {
+	h := newRestoreHarness(t)
+	h.engine.backups.dir = filepath.Join(h.dir, "missing")
+
+	h.send(t, "telegram", "/restore")
+
+	reply := h.all()
+	assert.Contains(t, reply, "could not be read")
+	assert.NotContains(t, reply, "No backup found")
+	assert.NotContains(t, reply, "missing")
+	h.assertNoPrivateDetail(t, reply)
+	h.assertNothingRestored(t)
+}
+
+// CONFIRM RESTORE after /restore is an ordinary confirmation with nothing pending.
+func TestRestore_ConfirmRestoreRestoresNothing(t *testing.T) {
+	for _, text := range []string{"CONFIRM RESTORE", "confirm restore", "CONFIRM"} {
+		t.Run(text, func(t *testing.T) {
+			h := newRestoreHarness(t)
+			h.writeSet(t, newestStamp)
+
+			h.send(t, "telegram", "/restore")
+			h.reset()
+			h.send(t, "telegram", text)
+
+			reply := h.all()
+			assert.Contains(t, reply, "No pending confirmation found")
+			assert.NotContains(t, reply, "Confirmed and Executed")
+			assert.NotContains(t, reply, newestStamp)
+			h.assertNothingRestored(t)
+		})
+	}
+}
+
+// A restore staged by the retired command before the upgrade can still sit in Redis for up to its
+// TTL. Confirming it must not run anything: the record is dropped and treated as absent.
+func TestRestore_LegacyStagedRestoreCannotFire(t *testing.T) {
+	for _, text := range []string{"CONFIRM RESTORE", "CONFIRM"} {
+		t.Run(text, func(t *testing.T) {
+			h := newRestoreHarness(t)
+			h.writeSet(t, newestStamp)
+			require.NoError(t, h.store.StagePendingMetaTool(context.Background(), "admin-1", state.PendingMetaToolAction{
+				ToolName:  "restore",
+				Args:      map[string]interface{}{"backup_path": filepath.Join(h.dir, newestStamp+".dump.age")},
+				UserID:    "admin-1",
+				CreatedAt: time.Now(),
+			}, 5*time.Minute))
+
+			h.send(t, "telegram", text)
+
+			reply := h.all()
+			assert.Contains(t, reply, "No pending confirmation found")
+			assert.NotContains(t, reply, "Confirmed and Executed")
+			assert.NotContains(t, reply, "mismatch")
+			h.assertNoPrivateDetail(t, reply)
+			h.assertNothingRestored(t) // also proves the record was removed, not re-staged
+		})
+	}
+}
+
+// The orchestrator no longer holds any way to restore a database: no non-test file in the
+// package calls the restore functions of internal/db or internal/transfer.
+func TestOrchestrator_HasNoRestorePath(t *testing.T) {
+	forbidden := map[string]map[string]bool{
+		"db":       {"RestoreDatabase": true, "RestoreOptionsFromEnv": true, "ResetPublicSchema": true, "ExtractArchives": true},
+		"transfer": {"Importer": true},
+	}
+	files, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	require.NotEmpty(t, files)
+	fset := token.NewFileSet()
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		require.NoError(t, err)
+		ast.Inspect(f, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if pkg, ok := sel.X.(*ast.Ident); ok && forbidden[pkg.Name][sel.Sel.Name] {
+				t.Errorf("%s uses %s.%s: the chat restore is retired (BL-21)", fset.Position(sel.Pos()), pkg.Name, sel.Sel.Name)
+			}
+			return true
+		})
+	}
 }

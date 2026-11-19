@@ -25,7 +25,7 @@ import (
 type Engine struct {
 	consumer           *broker.Consumer
 	store              *state.Store
-	backups            backupOps // pg_dump/pg_restore seam; zero value = real db functions
+	backups            backupOps // pg_dump and backup-directory seam; zero value = real db functions
 	db                 DBClient
 	llm                LLMClient
 	tgClient           TelegramClient

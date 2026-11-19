@@ -46,7 +46,7 @@ func (e *Engine) dispatchCommand(ctx context.Context, user *models.User, msg mod
 
 // handleConfirmation redeems a staged action ("CONFIRM [TOOL]"). handled=false means msg is not
 // a confirmation.
-func (e *Engine) handleConfirmation(ctx context.Context, user *models.User, msg models.Message) (response string, handled bool, err error) {
+func (e *Engine) handleConfirmation(ctx context.Context, _ *models.User, msg models.Message) (response string, handled bool, err error) {
 	trimmedText := strings.TrimSpace(msg.Text)
 	if !strings.HasPrefix(strings.ToUpper(trimmedText), "CONFIRM") || e.store == nil {
 		return "", false, nil
@@ -62,6 +62,12 @@ func (e *Engine) handleConfirmation(ctx context.Context, user *models.User, msg 
 		slog.Error("failed to retrieve pending meta tool action", "error", err)
 		return "", true, e.sendMessage(ctx, msg, "❌ Error retrieving pending confirmation. Please try again.")
 	}
+	if pending != nil && strings.EqualFold(pending.ToolName, legacyRestoreActionName) {
+		// BL-21: a restore staged by the retired chat restore before the upgrade. It is removed
+		// (GetAndClear above) and treated as if nothing were pending; it never runs.
+		slog.Info("dropped a restore staged before the chat restore was retired", "user_id", msg.UserID)
+		pending = nil
+	}
 	if pending == nil {
 		return "", true, e.sendMessage(ctx, msg, "⚠️ No pending confirmation found or it has expired.")
 	}
@@ -69,18 +75,6 @@ func (e *Engine) handleConfirmation(ctx context.Context, user *models.User, msg 
 		_ = e.store.StagePendingMetaTool(ctx, msg.UserID, *pending, 5*time.Minute)
 		return "", true, e.sendMessage(ctx, msg, fmt.Sprintf("⚠️ Confirmation mismatch. Pending action is '%s', but you confirmed '%s'.", pending.ToolName, expectedTool))
 	}
-	if isDestructiveAction(pending.ToolName) {
-		if expectedTool == "" {
-			// Destructive actions require the action name; keep the pending action alive.
-			remaining := restoreConfirmTTL - time.Since(pending.CreatedAt)
-			if remaining > 0 {
-				_ = e.store.StagePendingMetaTool(ctx, msg.UserID, *pending, remaining)
-			}
-			return "", true, e.sendMessage(ctx, msg, fmt.Sprintf("⚠️ This is a destructive action. Reply `CONFIRM %s` to proceed.", strings.ToUpper(pending.ToolName)))
-		}
-		return "", true, e.executeConfirmedRestore(ctx, user, msg, pending)
-	}
-
 	slog.Info("executing confirmed meta tool action", "user_id", msg.UserID, "tool", pending.ToolName)
 	call := &genai.FunctionCall{
 		Name: pending.ToolName,
@@ -97,7 +91,7 @@ func (e *Engine) cmdHelp(ctx context.Context, _ *models.User, msg models.Message
 	sb.WriteString("*System Commands:*\n")
 	sb.WriteString("• `/connect` - Connect Google Account (Calendar, Tasks, Gmail, Contacts)\n")
 	sb.WriteString("• `/backup` - Create a manual database backup\n")
-	sb.WriteString("• `/restore` - Restore the database from the latest backup (asks for `CONFIRM RESTORE`; takes a safety backup first)\n")
+	sb.WriteString("• `/restore` - Show how to restore the newest backup from the terminal; restores nothing itself (admins only)\n")
 	sb.WriteString("• `/undo` - Revert your most recent action or specify mutation ID\n")
 	sb.WriteString("• `/doctor` - Check the health of this install: webhook, Google sign-ins, WhatsApp, queues, backups, database (admins only)\n")
 	sb.WriteString("• `/help` - Show this help message\n\n")
@@ -174,6 +168,6 @@ func (e *Engine) cmdBackup(ctx context.Context, user *models.User, msg models.Me
 }
 
 func (e *Engine) cmdRestore(ctx context.Context, user *models.User, msg models.Message) (string, error) {
-	// P1-5: never restore immediately — stage it and require "CONFIRM RESTORE".
+	// BL-21: replies with the steps for `transfer import --replace`; never restores from chat.
 	return "", e.handleRestoreCommand(ctx, user, msg)
 }

@@ -80,7 +80,7 @@ Until Postgres is the only state store (V4-23), some short-lived state lives in 
 and is not in a backup. Every export and import prints this list:
 
 - The conversation context of the last 24 hours (the chat window). Saved facts are kept.
-- Actions that were waiting for a `CONFIRM` reply, including a staged `/restore`.
+- Actions that were waiting for a `CONFIRM` reply.
 - Google sign-in links that were sent but not finished (`/connect` again).
 - Pairing lockouts and failed-attempt counters.
 - Follow-up tool context and cached prompt sections (rebuilt on the next message).
@@ -236,9 +236,17 @@ Steps 1 to 5 change nothing. If any of them fails, the install is exactly as it 
 11. Prints what was not carried and what to do next. Any line starting with `!` means the restore
     is not finished, and the command exits with an error.
 
-The older chat command `/restore` is unchanged: it restores the newest dump into the running
-install without resetting the schema or migrating. Use it only to undo recent damage on the same
-release, not for an upgrade or a move (BL-21).
+## `/restore` in chat
+
+A restore is never started from chat. A restore into the running app would keep newer tables next
+to older data and skip the migrations, so the chat restore was retired (BL-21), and `CONFIRM
+RESTORE` no longer does anything special.
+
+`/restore` (admins only, the same on Telegram and WhatsApp) restores nothing. It names the newest
+backup in `backups/` (the manifest of a set, or a bare dump) and replies with the steps of
+section C for it: stop the app, bring the private backup key if the backup is encrypted, run
+`transfer import <name> --replace`, start the app and send `/doctor`. It shows file names only,
+never where the backups are kept. With no backup it says so; `/backup` takes one.
 
 ## Commands
 
