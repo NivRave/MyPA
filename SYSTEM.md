@@ -847,7 +847,7 @@ Failed syncs are **not retried**; the event stays in MyPA with an empty `externa
 - **Centralized Typed Client ([`dashboard/src/lib/graphql.ts`](./dashboard/src/lib/graphql.ts)):** Implements `graphqlFetch<TData, TVariables>` with automatic `Authorization: Bearer <DASHBOARD_API_SECRET>` header injection, endpoint discovery via `GRAPHQL_ENDPOINT` / `NEXT_PUBLIC_PROXY_URL`, and complete TypeScript type declarations for all domain entities.
 - **Clean Empty States & Zero Mock Data:** Hardcoded mock statistics in `dashboard/src/app/baby/page.tsx` and other life domain consoles are completely removed. All pages render clean empty states when database records are absent.
 - **Client Error Boundary ([`dashboard/src/app/error.tsx`](./dashboard/src/app/error.tsx)):** React client error boundary component catching uncaught rendering errors, displaying user-friendly diagnostics, and providing a clean reset/retry action.
-- **Comprehensive Vitest Component Test Suite:** Automated component testing with Vitest and `@testing-library/react` (4 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`), verifying typed GraphQL client queries, error boundaries, empty states, and form interactions.
+- **Comprehensive Vitest Component Test Suite:** Automated component testing with Vitest and `@testing-library/react` (5 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`, `settings_page.test.tsx`), verifying typed GraphQL client queries, error boundaries, empty states, and form interactions.
 
 | Route | Source File | Primary GraphQL Operations Used |
 | :--- | :--- | :--- |
@@ -904,7 +904,7 @@ Failed syncs are **not retried**; the event stays in MyPA with an empty `externa
 | `GRAPHQL_ENDPOINT` | *(dashboard env)* | `http://proxy:8000/graphql` | `dashboard` | Upstream GraphQL URL used by Next.js server actions and SSR data fetching |
 | `JWT_SECRET` | `server.jwt_secret` | **Required** (orchestrator); must differ from `ENCRYPTION_KEY` | `orchestrator`, `proxy` | Secret key used for signing and verifying HMAC-SHA256 Bearer JWT claims on `/graphql` |
 | `GEMINI_API_KEY` | `gemini.api_key` | — | `orchestrator` | Google AI Studio API key |
-| `GEMINI_MODEL` | `gemini.model` | `"gemini-2.5-flash"` | `orchestrator` | Primary Gemini chat/tool-calling model |
+| `GEMINI_MODEL` | `gemini.model` | `"gemini-3.6-flash"` | `orchestrator` | Primary Gemini chat/tool-calling model. The default is defined in one place, `config.DefaultGeminiModel` (*V4-09*): `config/config.yaml` and `.env.example` do not name a model, and the LLM client falls back to the same constant |
 | `TELEGRAM_BOT_TOKEN` | `telegram.bot_token` | — | `orchestrator`, `gateway` | Telegram Bot token (gateway uses it only for `setWebhook`) |
 | `TWILIO_ACCOUNT_SID` | `twilio.account_sid` | — | `orchestrator`, `gateway` | Twilio Account SID for WhatsApp; when set, the gateway requires `TWILIO_AUTH_TOKEN` at startup |
 | `TWILIO_AUTH_TOKEN` | `twilio.auth_token` | — | `orchestrator`, `gateway` | Twilio Auth Token for WhatsApp; gateway verifies `X-Twilio-Signature` with it and rejects all WhatsApp webhooks when it is empty |
@@ -1063,7 +1063,7 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
 3. **Client Error Boundary (`dashboard/src/app/error.tsx`):**
    - Implement React client error boundaries displaying user-friendly error diagnostics with a recovery button.
 4. **Comprehensive Vitest Component Test Suites:**
-   - Maintain and run Vitest component tests (4 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`).
+   - Maintain and run Vitest component tests (5 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`, `settings_page.test.tsx`).
    - Run tests before completion: `npm test --prefix dashboard`.
 5. **Full Container Build Verification:**
    - Always verify the complete multi-stage container build succeeds: `docker-compose build`.

@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"github.com/nivik/mypa/internal/config"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,7 +16,7 @@ import (
 func TestClient_Chat(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Contains(t, r.URL.Path, "generateContent")
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"candidates": [
@@ -95,7 +96,7 @@ func TestClient_Chat_ToolCall(t *testing.T) {
 func TestClient_GenerateEmbedding(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Contains(t, r.URL.Path, "EmbedContent")
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"embeddings": [
@@ -225,7 +226,6 @@ func TestNoTools_Context(t *testing.T) {
 	assert.True(t, isNoTools(ctxNoTools))
 }
 
-
 type rewriteTransport struct {
 	URL string
 }
@@ -236,4 +236,31 @@ func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	req.URL.Scheme = "http"
 	req.URL.Host = t.URL[7:] // strip "http://"
 	return http.DefaultTransport.RoundTrip(req)
+}
+
+// V4-09: a client created without a model uses the one default, config.DefaultGeminiModel, and
+// asks the API for exactly that model.
+func TestNewClient_WithoutAModelUsesTheConfiguredDefault(t *testing.T) {
+	var requested string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"hello"}]}}]}`))
+	}))
+	defer ts.Close()
+	withHTTPClient := func(cfg *genai.ClientConfig) {
+		cfg.HTTPClient = &http.Client{Transport: &rewriteTransport{URL: ts.URL}}
+	}
+
+	client, err := NewClient(context.Background(), "mock-key", "", withHTTPClient)
+	require.NoError(t, err)
+	assert.Equal(t, config.DefaultGeminiModel, client.model)
+
+	_, err = client.Chat(context.Background(), "system", nil, "hi", nil, "")
+	require.NoError(t, err)
+	assert.Contains(t, requested, "models/"+config.DefaultGeminiModel+":", "the request must name the default model")
+
+	explicit, err := NewClient(context.Background(), "mock-key", "another-model", withHTTPClient)
+	require.NoError(t, err)
+	assert.Equal(t, "another-model", explicit.model, "an explicit model is used as given")
 }

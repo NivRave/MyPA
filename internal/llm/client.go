@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/models"
 	"google.golang.org/genai"
 )
@@ -26,7 +27,7 @@ func NewClient(ctx context.Context, apiKey, model string, opts ...func(*genai.Cl
 		return nil, fmt.Errorf("gemini api key is required")
 	}
 	if model == "" {
-		model = "gemini-2.5-flash"
+		model = config.DefaultGeminiModel // the one definition of the default (V4-09)
 	}
 
 	cfg := &genai.ClientConfig{

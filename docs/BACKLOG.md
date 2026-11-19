@@ -37,6 +37,9 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: belongs with the re-embedding path of V4-03 |
 | BL-25 | Low | Undo snapshots of saved memories carry the full 3,072-number embedding | open: decide with BL-24 and V4-03 |
 | BL-26 | Medium | `save_topic_memory` stores `scope` as given, so a value such as `Family` is saved but never found | open |
+| BL-27 | High | The real-phone-number guard and the `.gitignore` guard are skipped in every full test run, including CI | open |
+| BL-28 | Low | The one-default-model guard misses a model alias with no version digit (`gemini-flash-latest`) and does not search `.mjs`, `.sh`, `.ps1` or `.sql` files | open |
+| BL-29 | Medium | The LLM client sends `Temperature: 0.2`; Gemini 3.6 Flash ignores sampling parameters and later model generations are to reject them with HTTP 400 | open: resolve before the default moves past 3.6, as part of V4-03 |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -313,6 +316,56 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** normalise in `executeSaveTopicMemory` (trim, lower-case, `family` or else `personal`), as the
   removed tool did. Test: a save with `"Family"` is stored as `family` and found by a family member's search.
   Consider a one-off correction of existing rows whose scope is neither literal.
+
+### BL-27 — Two repository guards are skipped in every full test run, including CI (High)
+- **Found:** 2026-11-19, in the review of V4-09.
+- **Evidence:** `clearEnvKeepTemp` in `internal/config/config_test.go` calls `os.Clearenv()` and restores only
+  `TMP`, `TEMP` and `USERPROFILE`. It runs in tests that come first in the package (file-name order), and
+  `PATH` is never restored. `TestNoRealPhoneNumbersCommitted` (`phone_numbers_test.go`) and
+  `TestGitignore_IgnoresEveryEnvCopyButTheExample` (`gitignore_env_test.go`) then call
+  `exec.LookPath("git")`, do not find it, and `t.Skip("git not available")`. The package still prints `ok`.
+  Reproduce: `go test -v ./internal/config/` shows both as `--- SKIP`; each passes when run alone with `-run`.
+  CI runs the whole package (`go test -race -count=1 -p 1 ./...`), so both have been skipped there.
+- **Impact:** the guard against committing a real person's phone number (BL-13) and the guard that `.env`
+  copies are ignored by git (BL-3) have not been enforcing anything in CI. Nothing is known to have slipped
+  through: both pass today when run alone. But a skip looks exactly like a pass, which is the failure this
+  project already decided not to accept for database tests (DP-13).
+- **Fix:** (1) make `clearEnvKeepTemp` restore the whole environment when the test ends (snapshot
+  `os.Environ()`, restore in `t.Cleanup`), or use `t.Setenv` for the keys it means to clear; (2) make both
+  guards fail, not skip, when git is missing (CI always has it), or walk the tree as
+  `TestDefaultChatModelIsDefinedInOnePlace` now does. Test: a full `go test -v ./internal/config/` shows no
+  `SKIP`. Consider a repository-wide check that no guard test reports SKIP in CI.
+
+### BL-28 — The one-default-model guard has two blind spots (Low)
+- **Found:** 2026-11-19, in the independent review of V4-09 (non-blocking).
+- **Evidence:** `chatModelName` in `internal/config/default_model_test.go` is
+  `(?i)\bgemini[- ]?[0-9][0-9A-Za-z.\-]*`: a digit must follow `gemini`. That is deliberate, so that
+  `GEMINI_MODEL`, `DefaultGeminiModel` and `gemini-embedding-001` do not match, but it also lets through an
+  alias with no version digit, such as `gemini-flash-latest`. Separately, `decidesTheDefault` searches only
+  `.env.example`, `Dockerfile*`, `.go`, `.yaml`, `.yml`, `.ts`, `.tsx` and `.json`. The tree also holds `.mjs`
+  (`tests/dashboard_graphql_test.mjs`, the dashboard config files), `.sh` and `.ps1` (`scripts/`) and `.sql`
+  (`internal/db/migrations/`), and none of them is searched.
+- **Impact:** `TestDefaultChatModelIsDefinedInOnePlace` would still pass if `docker-compose.yml` or a
+  Dockerfile `ENV` set `GEMINI_MODEL=gemini-flash-latest`, or if a script or a migration named a model. That
+  is a second place deciding the model, which is what V4-09 removed. None exists today.
+- **Fix:** match the known alias forms as well (`gemini-<family>-latest`, with `<family>` one of `flash`,
+  `flash-lite`, `pro`), keeping the embedding models excluded, and add the four file types to
+  `decidesTheDefault`. Test: add `gemini-flash-latest` to the cases of `TestChatModelNamePattern`, and a
+  compose line, a Dockerfile `ENV` and one file of each new type to `TestDecidesTheDefault`.
+
+### BL-29 — The LLM client sends a sampling parameter that newer Gemini models do not accept (Medium)
+- **Found:** 2026-11-19, in the independent review of V4-09 (non-blocking).
+- **Evidence:** `internal/llm/client.go` builds every chat request with
+  `Temperature: genai.Ptr[float32](0.2)` ("Low temp for more deterministic tool calling"). It is the only
+  sampling parameter the client sets. As reported in the review: Gemini 3.6 Flash, the default since V4-09,
+  ignores sampling parameters, and Google says later model generations will reject them with HTTP 400. The
+  provider's behaviour was not re-checked when this entry was written.
+- **Impact:** none on replies today, but the setting no longer does what its comment says, so tool calling
+  is not made more deterministic by it. Once `DefaultGeminiModel` (or an install's `GEMINI_MODEL`) names a
+  later generation, every chat request would fail with HTTP 400, which means no replies at all.
+- **Fix:** resolve before the default moves past 3.6, as part of the provider work (V4-03): send no sampling
+  parameters, or send them only to models that accept them, decided per provider and model. Test: the
+  request built for the default model carries no `Temperature`.
 
 ## Operations (owner)
 
