@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,9 +20,17 @@ func TestQueueNames(t *testing.T) {
 }
 
 // Every service must take queue names from the constants above, never from string literals.
+// V4-01: the app wires the broker outside main.go (ingress.go, worker.go), so every non-test Go
+// file of every command is searched, not only its main.go.
 func TestServicesUseQueueConstants(t *testing.T) {
-	mains, err := filepath.Glob(filepath.Join("..", "..", "cmd", "*", "main.go"))
+	files, err := filepath.Glob(filepath.Join("..", "..", "cmd", "*", "*.go"))
 	require.NoError(t, err)
+	var mains []string
+	for _, f := range files {
+		if !strings.HasSuffix(f, "_test.go") {
+			mains = append(mains, f)
+		}
+	}
 	require.NotEmpty(t, mains)
 
 	brokerCtors := map[string]bool{"NewSafePublisher": true, "NewConsumer": true, "NewConsumerWithOptions": true}
@@ -47,5 +56,5 @@ func TestServicesUseQueueConstants(t *testing.T) {
 			return true
 		})
 	}
-	assert.GreaterOrEqual(t, calls, 4, "gateway, orchestrator (x2) and audit-worker create publishers/consumers")
+	assert.GreaterOrEqual(t, calls, 4, "the app's ingress, its worker (x2) and the audit-worker create publishers/consumers")
 }
