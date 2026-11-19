@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nivik/mypa/internal/llm"
+	"github.com/nivik/mypa/internal/orchestrator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -119,5 +121,39 @@ func TestDocsAreUpToDate(t *testing.T) {
 	require.NoError(t, err)
 	for _, region := range []string{"tool-catalog", "tool-tiers"} {
 		assert.True(t, strings.Contains(string(system), "<!-- BEGIN GENERATED: "+region+" -->"), "SYSTEM.md lost its %s region", region)
+	}
+}
+
+// V4-06 "done when": remember_fact is gone. No production module declares it, the static tool
+// list does not, it is not a core tool and not in the confirmation gate, and the generated
+// catalogue does not list it. save_topic_memory, which replaces it, keeps both protections the
+// removed tool had: it is always offered, and it needs confirmation in an untrusted turn.
+func TestRememberFactIsGone(t *testing.T) {
+	const gone, kept = "remember_fact", "save_topic_memory"
+
+	declaredKept := false
+	for _, m := range ProductionModules() {
+		for _, d := range m.Declarations() {
+			assert.NotEqual(t, gone, d.Name, "module %s still declares %s", m.Name(), gone)
+			if d.Name == kept {
+				declaredKept = true
+			}
+		}
+	}
+	assert.True(t, declaredKept, "%s must be declared by a production module", kept)
+	for _, d := range llm.CalendarEventTool.FunctionDeclarations {
+		assert.NotEqual(t, gone, d.Name, "the static tool list still declares %s", gone)
+	}
+
+	assert.False(t, orchestrator.CoreToolNames[gone])
+	assert.False(t, orchestrator.RequiresConfirmationWhenUntrusted(gone))
+	assert.True(t, orchestrator.CoreToolNames[kept], "%s must always be offered", kept)
+	assert.True(t, orchestrator.RequiresConfirmationWhenUntrusted(kept), "%s must stay gated in an untrusted turn", kept)
+
+	c := Build()
+	assert.NotContains(t, c.RenderCatalog(), gone)
+	assert.NotContains(t, c.RenderTiers(), gone)
+	for _, tool := range c.CoreTools() {
+		assert.NotEqual(t, gone, tool[0])
 	}
 }

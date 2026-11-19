@@ -71,7 +71,6 @@ var confirmationRequiredWhenUntrusted = map[string]bool{
 	// messages other people
 	"create_shared_reminder": true,
 	// long-term memory (poisoning)
-	"remember_fact":         true,
 	"save_topic_memory":     true,
 	"upsert_entity_profile": true,
 }

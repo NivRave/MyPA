@@ -33,7 +33,7 @@ func (m *testToolModule) Execute(ctx context.Context, callCtx CallContext, toolN
 }
 func (m *testToolModule) SystemPromptSection(ctx context.Context, callCtx CallContext) string { return "" }
 
-func TestEngine_HandleToolCall_RememberFact(t *testing.T) {
+func TestEngine_HandleToolCall_SaveTopicMemory(t *testing.T) {
 	engine, _, llmMock, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
@@ -41,7 +41,7 @@ func TestEngine_HandleToolCall_RememberFact(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(&testToolModule{
 		name:  "memory",
-		decls: []*genai.FunctionDeclaration{{Name: "remember_fact"}},
+		decls: []*genai.FunctionDeclaration{{Name: "save_topic_memory"}},
 		exec: func(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
 			fact, _ := args["fact"].(string)
 			emb, _ := callCtx.LLM.GenerateEmbedding(ctx, fact)
@@ -53,7 +53,7 @@ func TestEngine_HandleToolCall_RememberFact(t *testing.T) {
 
 	msg := models.Message{UserID: "user1", Text: "remember this"}
 	toolCall := &genai.FunctionCall{
-		Name: "remember_fact",
+		Name: "save_topic_memory",
 		Args: map[string]any{"fact": "I like cats"},
 	}
 

@@ -14,15 +14,14 @@ func TestToolsSchemas(t *testing.T) {
 	require.NotEmpty(t, CalendarEventTool.FunctionDeclarations, "FunctionDeclarations must not be empty")
 
 	var searchWebDecl *genai.FunctionDeclaration
-	var rememberFactDecl *genai.FunctionDeclaration
 
 	for _, decl := range CalendarEventTool.FunctionDeclarations {
 		if decl.Name == "search_web" {
 			searchWebDecl = decl
 		}
-		if decl.Name == "remember_fact" {
-			rememberFactDecl = decl
-		}
+		// V4-06: remember_fact was removed; save_topic_memory (declared by the memory module, where
+		// its schema is tested) is the one tool that saves a fact.
+		assert.NotEqual(t, "remember_fact", decl.Name, "remember_fact must not be declared")
 	}
 
 	// 1. Verify search_web
@@ -38,22 +37,6 @@ func TestToolsSchemas(t *testing.T) {
 	assert.NotEmpty(t, queryProp.Description, "'query' parameter must have description")
 	assert.Contains(t, searchWebDecl.Parameters.Required, "query", "'query' must be in Required list")
 
-	// 2. Verify remember_fact and its scope parameter
-	require.NotNil(t, rememberFactDecl, "remember_fact function declaration must be present in CalendarEventTool")
-	assert.NotEmpty(t, rememberFactDecl.Description, "remember_fact must have a description")
-	require.NotNil(t, rememberFactDecl.Parameters, "remember_fact must have Parameters defined")
-	assert.Equal(t, genai.TypeObject, rememberFactDecl.Parameters.Type, "remember_fact parameters must be TypeObject")
-	
-	factProp, ok := rememberFactDecl.Parameters.Properties["fact"]
-	require.True(t, ok, "remember_fact must have 'fact' property")
-	assert.Equal(t, genai.TypeString, factProp.Type, "'fact' must be TypeString")
-	assert.Contains(t, rememberFactDecl.Parameters.Required, "fact", "'fact' must be required")
-
-	scopeProp, ok := rememberFactDecl.Parameters.Properties["scope"]
-	require.True(t, ok, "remember_fact must have 'scope' property in its schema")
-	assert.Equal(t, genai.TypeString, scopeProp.Type, "'scope' must be TypeString")
-	assert.NotEmpty(t, scopeProp.Description, "'scope' must have description")
-
 	// 3. Empirically verify JSON serialization adhering to Google GenAI schema
 	jsonBytes, err := json.Marshal(CalendarEventTool)
 	require.NoError(t, err, "CalendarEventTool must serialize to JSON without error")
@@ -68,7 +51,6 @@ func TestToolsSchemas(t *testing.T) {
 	require.True(t, ok, "functionDeclarations must be present in serialized JSON")
 
 	foundSearchWeb := false
-	foundRememberFactWithScope := false
 	for _, f := range funcs {
 		fMap, ok := f.(map[string]interface{})
 		if !ok {
@@ -83,17 +65,7 @@ func TestToolsSchemas(t *testing.T) {
 			_, hasQuery := props["query"]
 			assert.True(t, hasQuery, "serialized search_web must have 'query' in properties")
 		}
-		if fMap["name"] == "remember_fact" {
-			params, ok := fMap["parameters"].(map[string]interface{})
-			require.True(t, ok)
-			props, ok := params["properties"].(map[string]interface{})
-			require.True(t, ok)
-			_, hasScope := props["scope"]
-			if hasScope {
-				foundRememberFactWithScope = true
-			}
-		}
+		assert.NotEqual(t, "remember_fact", fMap["name"], "serialized JSON must not contain remember_fact")
 	}
 	assert.True(t, foundSearchWeb, "serialized JSON must contain search_web")
-	assert.True(t, foundRememberFactWithScope, "serialized JSON must contain remember_fact with scope")
 }
