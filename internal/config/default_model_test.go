@@ -1,10 +1,8 @@
 package config
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -18,59 +16,75 @@ import (
 // (gemini-embedding-001) do not match: they are a separate setting (V4-03).
 var chatModelName = regexp.MustCompile(`gemini-[0-9][A-Za-z0-9.\-]*`)
 
-// decidesTheDefault reports whether a tracked file is one that can decide which model a running
-// install uses: production Go code, configuration and deployment files. Tests, documentation and
-// tooling notes are excluded; they may mention any model.
+// skippedDirs are never searched: version control, dependencies, build output, agent notes,
+// local data and documentation. None of them can decide which model an install uses.
+var skippedDirs = map[string]bool{
+	".git": true, ".agents": true, ".claude": true, ".github": true, ".idea": true, ".vscode": true,
+	"node_modules": true, ".next": true, "bin": true, "backups": true, "docs": true, "coverage": true,
+}
+
+// decidesTheDefault reports whether a file (path relative to the repository root, with forward
+// slashes) is one that can decide which model a running install uses: production Go code,
+// configuration and deployment files. Tests and Markdown are excluded; they may mention any model.
 func decidesTheDefault(name string) bool {
+	base := name[strings.LastIndex(name, "/")+1:]
 	switch {
-	case strings.HasPrefix(name, "docs/"), strings.HasPrefix(name, ".agents/"), strings.HasPrefix(name, ".claude/"),
-		strings.HasPrefix(name, ".github/"), strings.HasPrefix(name, "dashboard/node_modules/"):
-		return false
 	case strings.HasSuffix(name, "_test.go"), strings.HasSuffix(name, ".md"):
 		return false
-	case strings.HasSuffix(name, ".go"), strings.HasSuffix(name, ".yaml"), strings.HasSuffix(name, ".yml"),
-		strings.HasSuffix(name, ".example"), strings.HasSuffix(name, ".json"),
-		strings.HasSuffix(name, ".ts"), strings.HasSuffix(name, ".tsx"),
-		strings.HasPrefix(filepath.Base(name), "Dockerfile"):
+	case base == ".env.example", strings.HasPrefix(base, "Dockerfile"),
+		strings.HasSuffix(name, ".go"), strings.HasSuffix(name, ".yaml"), strings.HasSuffix(name, ".yml"),
+		strings.HasSuffix(name, ".ts"), strings.HasSuffix(name, ".tsx"):
 		return true
+	case strings.HasSuffix(name, ".json"):
+		return base != "package-lock.json"
 	}
 	return false
 }
 
-func trackedFiles(t *testing.T) (root string, names []string) {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	require.NoError(t, err)
-	cmd := exec.Command("git", "ls-files", "-z")
-	cmd.Dir = root
-	out, err := cmd.Output()
-	require.NoError(t, err)
-	return root, strings.Split(strings.TrimRight(string(out), "\x00"), "\x00")
-}
-
 // V4-09 "done when": one current default is defined in one place. Among the files that can
 // decide which chat model an install runs, a model name appears exactly once: the constant.
+//
+// The test walks the source tree itself. It must not depend on git or on the environment: other
+// tests in this package clear the environment, and a guard that skips looks exactly like a guard
+// that passes.
 func TestDefaultChatModelIsDefinedInOnePlace(t *testing.T) {
-	root, names := trackedFiles(t)
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	require.NoError(t, err)
 
 	var found []string
-	for _, name := range names {
+	searched := 0
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			if path != root && skippedDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		name := filepath.ToSlash(rel)
 		if !decidesTheDefault(name) {
-			continue
+			return nil
 		}
-		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
-		if err != nil || bytes.IndexByte(data, 0) >= 0 {
-			continue // deleted in the working tree, or binary
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
 		}
+		searched++
 		for i, line := range strings.Split(string(data), "\n") {
 			for _, model := range chatModelName.FindAllString(line, -1) {
 				found = append(found, fmt.Sprintf("%s:%d %s", name, i+1, model))
 			}
 		}
-	}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Greater(t, searched, 100, "the search must have covered the source tree, not an empty directory")
 
 	require.Len(t, found, 1, "a chat model must be named in exactly one place (DefaultGeminiModel in internal/config/config.go); found:\n  %s", strings.Join(found, "\n  "))
 	assert.True(t, strings.HasPrefix(found[0], "internal/config/config.go:"), "the one definition must be DefaultGeminiModel, found %s", found[0])
@@ -78,8 +92,25 @@ func TestDefaultChatModelIsDefinedInOnePlace(t *testing.T) {
 	assert.Regexp(t, "^"+chatModelName.String()+"$", DefaultGeminiModel)
 }
 
-// An install that sets no model gets the default: neither the settings file shipped in the image
-// nor the settings template names another one.
+// The files the guard has to cover are covered, and the ones it must leave alone are left alone.
+func TestDecidesTheDefault(t *testing.T) {
+	for _, name := range []string{
+		"internal/config/config.go", "internal/llm/client.go", "cmd/orchestrator/main.go",
+		"config/config.yaml", "docker-compose.yml", ".env.example", "Dockerfile", "dashboard/Dockerfile",
+		"dashboard/src/app/page.tsx", "dashboard/package.json",
+	} {
+		assert.True(t, decidesTheDefault(name), "%s can decide the default and must be searched", name)
+	}
+	for _, name := range []string{
+		"internal/config/config_test.go", "internal/llm/llm_test.go", "README.md", "SYSTEM.md",
+		".env", "dashboard/package-lock.json", "go.sum",
+	} {
+		assert.False(t, decidesTheDefault(name), "%s must not be searched", name)
+	}
+}
+
+// An install that sets no model gets the default: the settings file shipped in the image does
+// not name another one.
 func TestDefaultChatModel_IsWhatAnInstallGetsWithoutSettingOne(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
@@ -88,19 +119,22 @@ func TestDefaultChatModel_IsWhatAnInstallGetsWithoutSettingOne(t *testing.T) {
 
 	// A scratch directory laid out like the image: ./config/config.yaml and nothing else. No .env
 	// is in reach, so a developer's own settings cannot leak into the test (or into this process).
+	// One value of the copy is changed to something no default has, to prove below that the file
+	// is really what Load reads here; everything else, including what it says or does not say
+	// about the model, is the shipped file.
+	const portInFile, marker = "gateway_port: 8080", "gateway_port: 18080"
+	require.Equal(t, 1, strings.Count(string(shipped), portInFile), "expected the shipped settings file to set the gateway port once")
+	copyOfShipped := strings.Replace(string(shipped), portInFile, marker, 1)
 	dir := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "config"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "config", "config.yaml"), shipped, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config", "config.yaml"), []byte(copyOfShipped), 0o644))
 	t.Chdir(dir)
 	t.Setenv("GEMINI_MODEL", "")
 
 	cfg, err := Load()
 	require.NoError(t, err)
+	require.Equal(t, 18080, cfg.Server.GatewayPort, "Load did not read ./config/config.yaml, so this test would prove nothing about it")
 	assert.Equal(t, DefaultGeminiModel, cfg.Gemini.Model, "the shipped settings file must not name a different model")
-
-	// The shipped file really was read: a value it does set is in effect.
-	require.Contains(t, string(shipped), "gateway_port", "expected the shipped settings file to set the gateway port")
-	assert.NotZero(t, cfg.Server.GatewayPort)
 }
 
 // An explicit setting still wins over the default.

@@ -101,7 +101,6 @@ type TwilioConfig struct {
 	StatusCallbackURL string `mapstructure:"status_callback_url"`
 }
 
-// Load reads configuration from config file and environment variables.
 // DefaultGeminiModel is the chat model an install uses when GEMINI_MODEL is not set. It is the
 // one place the default is defined (V4-09): the settings file shipped in the image, the settings
 // template and the LLM client's own fallback all defer to it. Change the default here and nowhere
@@ -109,6 +108,7 @@ type TwilioConfig struct {
 // code or configuration.
 const DefaultGeminiModel = "gemini-3.6-flash"
 
+// Load reads configuration from config file and environment variables.
 func Load() (*Config, error) {
 	// Load .env file if it exists so Viper can read the env vars
 	_ = godotenv.Load()

@@ -37,6 +37,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: belongs with the re-embedding path of V4-03 |
 | BL-25 | Low | Undo snapshots of saved memories carry the full 3,072-number embedding | open: decide with BL-24 and V4-03 |
 | BL-26 | Medium | `save_topic_memory` stores `scope` as given, so a value such as `Family` is saved but never found | open |
+| BL-27 | High | The real-phone-number guard and the `.gitignore` guard are skipped in every full test run, including CI | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -313,6 +314,25 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** normalise in `executeSaveTopicMemory` (trim, lower-case, `family` or else `personal`), as the
   removed tool did. Test: a save with `"Family"` is stored as `family` and found by a family member's search.
   Consider a one-off correction of existing rows whose scope is neither literal.
+
+### BL-27 — Two repository guards are skipped in every full test run, including CI (High)
+- **Found:** 2026-11-19, in the review of V4-09.
+- **Evidence:** `clearEnvKeepTemp` in `internal/config/config_test.go` calls `os.Clearenv()` and restores only
+  `TMP`, `TEMP` and `USERPROFILE`. It runs in tests that come first in the package (file-name order), and
+  `PATH` is never restored. `TestNoRealPhoneNumbersCommitted` (`phone_numbers_test.go`) and
+  `TestGitignore_IgnoresEveryEnvCopyButTheExample` (`gitignore_env_test.go`) then call
+  `exec.LookPath("git")`, do not find it, and `t.Skip("git not available")`. The package still prints `ok`.
+  Reproduce: `go test -v ./internal/config/` shows both as `--- SKIP`; each passes when run alone with `-run`.
+  CI runs the whole package (`go test -race -count=1 -p 1 ./...`), so both have been skipped there.
+- **Impact:** the guard against committing a real person's phone number (BL-13) and the guard that `.env`
+  copies are ignored by git (BL-3) have not been enforcing anything in CI. Nothing is known to have slipped
+  through: both pass today when run alone. But a skip looks exactly like a pass, which is the failure this
+  project already decided not to accept for database tests (DP-13).
+- **Fix:** (1) make `clearEnvKeepTemp` restore the whole environment when the test ends (snapshot
+  `os.Environ()`, restore in `t.Cleanup`), or use `t.Setenv` for the keys it means to clear; (2) make both
+  guards fail, not skip, when git is missing (CI always has it), or walk the tree as
+  `TestDefaultChatModelIsDefinedInOnePlace` now does. Test: a full `go test -v ./internal/config/` shows no
+  `SKIP`. Consider a repository-wide check that no guard test reports SKIP in CI.
 
 ## Operations (owner)
 
