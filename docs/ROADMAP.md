@@ -15,6 +15,7 @@
 - **When an item ships:** set it to `Done` with the release tag. At the release, move its row to §10 Delivered.
 - **Done on every channel.** An item is `Done` only when it works on every supported channel, or degrades in a documented way, proven by the conformance suite (V4-34).
 - **Adding an item:** it needs a one-line "why" and a "done when". Anything that adds a new way to execute code, or a new unauthenticated surface, needs an ADR first. The ADRs already known to be needed are listed in §7.
+- **Changing the plan while it is being built.** The plan is read again before every item, so a change takes effect at the next item. A new idea becomes a new item with an ID, a why and a "done when". A changed decision is recorded in §7 as a new decision that replaces the old one; the old line stays. A finished item is never edited: rework is a new item. The row of the item being built is not edited. Findings outside the current item go to [`BACKLOG.md`](./BACKLOG.md). A fix for the live system follows the hotfix rule in [`AGENTS.md`](../AGENTS.md) §5.
 - **Review** this file at every minor release.
 
 ---
@@ -43,12 +44,17 @@ These are the areas where MyPA is ahead of comparable open-source assistants (§
 | **V4.2** | Reach | More integrations without hand-written modules, RabbitMQ and Redis removed, care templates |
 | **Later** | Under evaluation | Decided after V4.2, each with a stated trigger |
 
-V4.0 comes first because its building blocks (one binary, the channel layer, households, sign-in, packs and the provider layer) make every later item cheaper to build. It is the largest milestone and changes configuration and the data model, so it is built in stages, each of which leaves the app working. V4.2 changes topology once more (V4-23). Both upgrades go through V4-43.
+V4.0 comes first because its building blocks (one binary, the channel layer, households, sign-in, packs and the provider layer) make every later item cheaper to build. It is the largest milestone and changes configuration and the data model, so it is built in stages, each of which leaves the app working. Items are listed in build order. V4.2 changes topology once more (V4-23). Both upgrades go through V4-43.
 
-1. **Safety net and cleanup:** V4-43 (so every later stage can be rolled back), V4-17, V4-34 (pinning down today's behaviour first), V4-06, V4-09.
-2. **Structure:** V4-01, V4-40, V4-31, V4-30, V4-32.
-3. **Access and scope:** V4-35, V4-27, V4-08, V4-05, V4-33, V4-41.
+1. **Safety net and cleanup:** V4-34 (pinning down today's behaviour first), V4-17, V4-43 (so every later stage can be rolled back), V4-06, V4-09.
+2. **Structure:** V4-01, V4-31, V4-40, V4-30, V4-32.
+3. **Access and scope:** V4-35, V4-27, V4-05, V4-08, V4-41, V4-33.
 4. **Models, cost and legacy:** V4-03, V4-02, V4-04, V4-07 (last, because it waits on OP-7 and on the re-encryption pass).
+
+**Build order after V4.0**
+
+- **V4.1:** V4-39, V4-10, V4-11, V4-24, V4-36, V4-37, V4-38, then the state-store ADR, then V4-12, V4-13, V4-14, V4-15, V4-16, V4-18, V4-28.
+- **V4.2:** V4-23, V4-26, V4-29, then the MCP ADR, then V4-19, V4-20, V4-25, V4-21, V4-22.
 
 **Before V4.0 starts**
 

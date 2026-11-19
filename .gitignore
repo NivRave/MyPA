@@ -43,3 +43,6 @@ node_modules/
 .agents/
 REVIEW.md
 docs/reviews/
+
+# Scratch files of the V4 runner (review diffs)
+.claude/tmp/
