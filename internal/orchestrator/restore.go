@@ -12,6 +12,7 @@ import (
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
+	"github.com/nivik/mypa/internal/transfer"
 )
 
 const (
@@ -42,7 +43,8 @@ func defaultBackupOps() backupOps {
 			if err != nil {
 				return "", err
 			}
-			return db.BackupDatabase(databaseURL, dir, opts)
+			// A backup set (V4-43): the dump plus the archive files and a manifest.
+			return transfer.LiveBackup(databaseURL, dir, opts)
 		},
 		restore: func(databaseURL, path string) error {
 			opts, err := db.RestoreOptionsFromEnv()

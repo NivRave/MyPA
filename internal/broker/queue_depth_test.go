@@ -68,6 +68,7 @@ func TestQueueDepth_MissingQueueIsAnErrorAndIsNotCreated(t *testing.T) {
 
 	_, err = QueueDepth(ctx, amqpURL, "test.depth.never-declared")
 	require.Error(t, err, "the first call must not have created the queue")
+	assert.True(t, IsQueueMissing(err), "a missing queue must be told apart from an unreachable broker")
 }
 
 func TestQueueDepth_UnreachableBrokerIsAnError(t *testing.T) {
@@ -76,6 +77,7 @@ func TestQueueDepth_UnreachableBrokerIsAnError(t *testing.T) {
 	_, err := QueueDepth(ctx, "amqp://guest:guest@127.0.0.1:1/", InboundMessagesQueue)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "guest:guest", "broker credentials must not appear in the error")
+	assert.False(t, IsQueueMissing(err))
 }
 
 // A broker that accepts the connection and then says nothing must not hang the caller: the
@@ -110,4 +112,39 @@ func TestQueueDepth_SilentBrokerIsBoundedByTheContext(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Less(t, time.Since(start), 5*time.Second, "the probe must give up when its context expires")
+}
+
+// InspectQueue also reports attached consumers: that is how the restore-and-migrate tool (V4-43)
+// tells a stopped install from a running one.
+func TestInspectQueue_ReportsConsumers(t *testing.T) {
+	amqpURL, cleanup := setupTestRabbitMQ(t)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const queue = "test.inspect.consumers"
+	conn, err := amqp.Dial(amqpURL)
+	require.NoError(t, err)
+	defer conn.Close()
+	ch, err := conn.Channel()
+	require.NoError(t, err)
+	_, err = DeclareDLQTopology(ch, queue)
+	require.NoError(t, err)
+
+	state, err := InspectQueue(ctx, amqpURL, queue)
+	require.NoError(t, err)
+	assert.Equal(t, QueueState{Ready: 0, Consumers: 0}, state, "nothing consumes a freshly declared queue")
+
+	_, err = ch.Consume(queue, "test-consumer", false, false, false, false, nil)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		state, err := InspectQueue(ctx, amqpURL, queue)
+		return err == nil && state.Consumers == 1
+	}, 10*time.Second, 100*time.Millisecond, "an attached consumer must be visible")
+
+	require.NoError(t, ch.Close())
+	require.Eventually(t, func() bool {
+		state, err := InspectQueue(ctx, amqpURL, queue)
+		return err == nil && state.Consumers == 0
+	}, 10*time.Second, 100*time.Millisecond, "a consumer that went away must no longer be counted")
 }

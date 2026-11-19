@@ -52,7 +52,41 @@ services:
         condition: service_completed_successfully
     volumes:
       - ./backups:/backups
+      # V4-43: a backup is the database dump plus the archive files. Read-only: the audit worker
+      # is the only writer.
+      - audit_archives:/app/archives:ro
     restart: unless-stopped
+
+  # V4-43: the restore-and-migrate tool (docs/RESTORE_AND_MIGRATE.md). Never started by `up`.
+  # Run it next to a STOPPED app, with the infrastructure running:
+  #   docker compose --profile tools run --rm transfer export
+  #   docker compose --profile tools run --rm transfer import backup_<time>.manifest.json
+  transfer:
+    logging: *default-logging
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: orchestrator
+    entrypoint: ["/usr/local/bin/orchestrator", "transfer"]
+    env_file:
+      - .env
+    environment:
+      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable
+      - AUDIT_ARCHIVE_DIR=/app/archives
+    volumes:
+      - ./backups:/backups
+      - audit_archives:/app/archives
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   # P4-3: one-shot schema migration job. The orchestrator and audit-worker start only after it
   # completes successfully, and themselves refuse to run with pending migrations.

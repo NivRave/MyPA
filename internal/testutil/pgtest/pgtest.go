@@ -37,6 +37,9 @@ var (
 	mu       sync.Mutex
 	adminDSN string
 	adminDB  *gorm.DB
+	// pgContainer is the shared container, kept so tests can run the Postgres client tools that
+	// ship inside it (see ToolRunner).
+	pgContainer *postgres.PostgresContainer
 )
 
 // AdminDSN starts the shared container if needed and returns its admin connection string.
@@ -88,6 +91,7 @@ func run(ctx context.Context) (string, *gorm.DB, error) {
 		_ = container.Terminate(ctx)
 		return "", nil, fmt.Errorf("connect admin db: %w", err)
 	}
+	pgContainer = container
 	return dsn, db, nil
 }
 

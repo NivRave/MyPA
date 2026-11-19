@@ -11,7 +11,7 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 - **Google Workspace:** Calendar, Gmail, Tasks and Contacts; live web search (Tavily).
 - **Life domains:** baby care (with medication-cooldown guardrails), house contracts and maintenance, vehicles, finance and budgets, a personal CRM, topic-scoped memory and entity profiles, shared family spaces with partner notifications.
 - **Automations:** event-driven rules, scheduled natural-language workflows, and runtime-registered external APIs behind SSRF protection.
-- **Durability:** every tool write is snapshotted for `/undo` and dashboard rollback; encrypted, age-protected nightly backups; versioned schema migrations.
+- **Durability:** every tool write is snapshotted for `/undo` and dashboard rollback; encrypted, age-protected nightly backups (database plus archive files); versioned schema migrations; one documented path to upgrade, move or restore an install.
 - **Health check:** an admin sends `/doctor` in chat and gets the state of the Telegram webhook, each family member's Google sign-in, WhatsApp, the queues, the newest backup and the database schema, with a next step for every problem.
 - **Security:** fail-closed webhook verification, tenant isolation, prompt-injection boundaries with confirmation for sensitive tools, AES-256-GCM encryption at rest.
 
@@ -27,6 +27,7 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 | GraphQL API & dashboard routes | [SYSTEM.md §7](./SYSTEM.md#7-graphql-api--nextjs-dashboard-reference) |
 | Environment variables & cron jobs | [SYSTEM.md §8](./SYSTEM.md#8-configuration-environment-variables--cron-schedules) |
 | Adding a feature | [SYSTEM.md §9](./SYSTEM.md#9-step-by-step-feature-development-playbook-8-architectural-sections) and [AGENTS.md](./AGENTS.md) |
+| Upgrading, moving and restoring an install | [docs/RESTORE_AND_MIGRATE.md](./docs/RESTORE_AND_MIGRATE.md) |
 | Roadmap | [docs/ROADMAP.md](./docs/ROADMAP.md) |
 | Design decisions | [docs/DECISIONS_LOG.md](./docs/DECISIONS_LOG.md), [docs/adr/](./docs/adr/) |
 | Known issues & follow-ups | [docs/BACKLOG.md](./docs/BACKLOG.md) |

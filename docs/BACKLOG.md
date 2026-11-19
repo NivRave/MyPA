@@ -31,6 +31,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-18 | Low | A document sent on Telegram gets no answer at all | open — the channel layer (V4-31) is the natural place |
 | BL-19 | Low | Reminder and transcription labels render as italics, probably meant as bold | open |
 | BL-20 | Low | `/doctor` shows the same host twice when the webhook addresses differ only in path | open |
+| BL-21 | Medium | `/restore` in chat restores over the live schema and does not migrate, which breaks once V4 adds a migration | open: decide before the first V4 migration |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -225,6 +226,21 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   show what differs.
 - **Fix:** when the hosts are equal, show host and path. Test: a mismatch in path only prints two different
   strings. The pinned `doctor` transcripts are not affected (their fixture has matching addresses).
+
+### BL-21 — `/restore` in chat does not reset the schema or migrate (Medium)
+- **Found:** 2026-11-19, while building restore and migrate (V4-43).
+- **Evidence:** `executeConfirmedRestore` (`internal/orchestrator/restore.go`) calls `db.RestoreDatabase` with
+  `pg_restore -c --if-exists` into the live database of the running orchestrator, and nothing afterwards runs
+  the migrations. `-c` drops only the objects the dump contains.
+- **Impact:** none today, because the schema on `dev` is still the one every existing backup was taken with.
+  From the first V4 migration on, `/restore` of an older backup leaves the newer tables and columns in place
+  next to restored older data, with goose's version table rolled back to the backup's version. The running
+  app then works against a schema it does not expect, and the next start either refuses to run (pending
+  migrations) or fails migrating (objects already exist). The new `transfer import` path does not have this
+  problem: it restores into an emptied schema and then migrates, with the app stopped.
+- **Fix:** make `/restore` use the same path as `transfer import --replace` (reset, restore, migrate), or, as
+  that cannot be done safely inside the running app, retire `/restore` in favour of the tool and have the
+  command explain how to run it. Decide before the first V4 schema migration ships.
 
 ## Operations (owner)
 
