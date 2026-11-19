@@ -1,0 +1,11 @@
+#!/bin/sh
+# Refuse pushes to master and pushes of tags unless the owner sets MYPA_RELEASE=1.
+[ "$MYPA_RELEASE" = "1" ] && exit 0
+while read local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/master|refs/tags/*)
+      echo "pre-push: $remote_ref is release-only. The owner pushes it with MYPA_RELEASE=1." >&2
+      exit 1 ;;
+  esac
+done
+exit 0

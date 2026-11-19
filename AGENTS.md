@@ -32,6 +32,7 @@ After completing any feature development, bug fix, milestone, or major phase, yo
   - **MAJOR (v1.0.0)**: For massive architectural or breaking changes.
 - **Workflow**: Tags must only be applied to the `master` branch after a successful merge from `dev`. Never tag `dev` directly with production version numbers. The one exception is a hotfix, below.
 - **Hotfixes while a major version is in development**: While `dev` holds unreleased work for the next major version, the live system stays on the latest release of the current one, and `dev` is never deployed to it. A fix for the live system is made on a `hotfix/<name>` branch created from the latest release tag on `master`, never from `dev`. After its tests and a full container build pass, it is merged into `master`, tagged as the next PATCH version, deployed, and then merged into `dev` so the fix is not lost. Start a hotfix only when the owner asks for one.
+- **Release pushes**: `.githooks/pre-push` refuses pushes to `master` and pushes of tags unless `MYPA_RELEASE=1` is set. Only the owner sets it, in their own terminal. Agents never set it and never bypass the hook. A fresh clone needs `git config core.hooksPath .githooks` once.
 
 ## 6. Docker & Container Conventions
 - **Unified Dockerfile**: All Go services are built from a single multi-target `Dockerfile` in the project root. When adding a new service:
