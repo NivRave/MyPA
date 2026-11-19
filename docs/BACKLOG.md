@@ -36,6 +36,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-23 | Low | A failing archive step makes the nightly backup discard its database dump | open |
 | BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: belongs with the re-embedding path of V4-03 |
 | BL-25 | Low | Undo snapshots of saved memories carry the full 3,072-number embedding | open: decide with BL-24 and V4-03 |
+| BL-26 | Medium | `save_topic_memory` stores `scope` as given, so a value such as `Family` is saved but never found | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -299,6 +300,19 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** keep the embedding out of the snapshot and recompute it on restore, or store it once and reference
   it. Decide together with BL-24 and V4-03, which settle how embeddings are (re)computed. Test: the snapshot
   of a saved memory stays small, and an undone-then-restored memory is still found by meaning.
+
+### BL-26 — `save_topic_memory` does not normalise `scope` (Medium)
+- **Found:** 2026-11-19, in the second review of V4-06 (non-blocking, after the item passed).
+- **Evidence:** `executeSaveTopicMemory` (`internal/domains/memory/module.go`) defaults an empty `scope` to
+  `personal` and otherwise stores the value as the model sent it. Every read path matches the two literals
+  exactly (`scope = 'personal'`, `scope = 'family'` in `internal/db/memory_v2_repo.go`). The removed
+  `remember_fact` lower-cased the value and mapped anything that was not `family` to `personal`.
+- **Impact:** a save with `"Family"`, `"FAMILY"` or any other spelling answers `"status":"saved"`, and the
+  memory is then returned by neither search nor recall, and is not visible to the rest of the family. This was
+  already true of `save_topic_memory`; since V4-06 it is the only way to save a fact.
+- **Fix:** normalise in `executeSaveTopicMemory` (trim, lower-case, `family` or else `personal`), as the
+  removed tool did. Test: a save with `"Family"` is stored as `family` and found by a family member's search.
+  Consider a one-off correction of existing rows whose scope is neither literal.
 
 ## Operations (owner)
 
