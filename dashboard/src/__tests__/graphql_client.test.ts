@@ -41,37 +41,38 @@ describe('graphql client', () => {
       expect(getGraphQLEndpoint()).toBe('http://custom-host:9000/graphql');
     });
 
-    it('uses PROXY_URL environment variable if GRAPHQL_ENDPOINT is not set', () => {
+    it('uses APP_URL environment variable if GRAPHQL_ENDPOINT is not set', () => {
       delete process.env.GRAPHQL_ENDPOINT;
-      process.env.PROXY_URL = 'http://proxy-server:8080/';
-      expect(getGraphQLEndpoint()).toBe('http://proxy-server:8080/graphql');
+      process.env.APP_URL = 'http://app-server:8080/';
+      expect(getGraphQLEndpoint()).toBe('http://app-server:8080/graphql');
     });
 
-    it('uses NEXT_PUBLIC_PROXY_URL if higher priority env vars are unset', () => {
+    it('uses NEXT_PUBLIC_APP_URL if higher priority env vars are unset', () => {
       delete process.env.GRAPHQL_ENDPOINT;
-      delete process.env.PROXY_URL;
-      process.env.NEXT_PUBLIC_PROXY_URL = 'http://public-proxy:8000';
-      expect(getGraphQLEndpoint()).toBe('http://public-proxy:8000/graphql');
+      delete process.env.APP_URL;
+      process.env.NEXT_PUBLIC_APP_URL = 'http://public-app:8000';
+      expect(getGraphQLEndpoint()).toBe('http://public-app:8000/graphql');
     });
 
-    it('falls back to container DNS http://proxy:8000/graphql in server environment', () => {
+    // V4-01: the dashboard talks to the app directly.
+    it('falls back to container DNS http://app:8000/graphql in server environment', () => {
       delete process.env.GRAPHQL_ENDPOINT;
-      delete process.env.PROXY_URL;
-      delete process.env.NEXT_PUBLIC_PROXY_URL;
+      delete process.env.APP_URL;
+      delete process.env.NEXT_PUBLIC_APP_URL;
 
       const originalWindow = global.window;
       // @ts-expect-error testing window deletion
       delete global.window;
 
-      expect(getGraphQLEndpoint()).toBe('http://proxy:8000/graphql');
+      expect(getGraphQLEndpoint()).toBe('http://app:8000/graphql');
 
       global.window = originalWindow;
     });
 
     it('falls back to http://localhost:8000/graphql when window is defined in browser', () => {
       delete process.env.GRAPHQL_ENDPOINT;
-      delete process.env.PROXY_URL;
-      delete process.env.NEXT_PUBLIC_PROXY_URL;
+      delete process.env.APP_URL;
+      delete process.env.NEXT_PUBLIC_APP_URL;
 
       // In jsdom environment, window is defined
       expect(getGraphQLEndpoint()).toBe('http://localhost:8000/graphql');

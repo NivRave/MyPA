@@ -23,7 +23,7 @@ func TestAdversarial_SEC03_TelegramWebhookSecretVerification(t *testing.T) {
 			SecretToken: "correct-secret-token-abcdef123456",
 		},
 	}
-	r := setupRouter(pub, cfg)
+	r := setupIngressRouter(pub, cfg)
 
 	validPayload := []byte(`{
 		"update_id": 9999,
@@ -88,7 +88,7 @@ func TestAdversarial_SEC03_TwilioWebhookHMACVerification(t *testing.T) {
 			AuthToken: authToken,
 		},
 	}
-	r := setupRouter(pub, cfg)
+	r := setupIngressRouter(pub, cfg)
 
 	data := url.Values{}
 	data.Set("Body", "Adversarial Twilio Test")

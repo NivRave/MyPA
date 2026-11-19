@@ -73,17 +73,17 @@ func TestSEC08_LegacyUnsaltedCiphertext_BackwardCompatibility(t *testing.T) {
 }
 
 // TestSEC08_ProductionStartupFails_WhenMissingKey verifies that outside unit testing the
-// orchestrator refuses to start (clean non-zero exit, no panic) if ENCRYPTION_KEY is unset —
+// app (V4-01: the orchestrator is its worker) refuses to start (clean non-zero exit, no panic) if ENCRYPTION_KEY is unset —
 // including when ENV=test / GO_ENV=test is set, which must no longer unlock the dev key.
 func TestSEC08_ProductionStartupFails_WhenMissingKey(t *testing.T) {
 	for _, envMode := range []string{"production", "test"} {
 		t.Run("ENV="+envMode, func(t *testing.T) {
-			cmd := exec.Command("go", "run", "./cmd/orchestrator")
+			cmd := exec.Command("go", "run", "./cmd/mypa")
 			cmd.Dir = "../.." // project root
 			cmd.Env = append(os.Environ(), "ENV="+envMode, "GO_ENV="+envMode, "ENCRYPTION_KEY=")
 			output, runErr := cmd.CombinedOutput()
 
-			require.Error(t, runErr, "orchestrator must refuse to start when ENCRYPTION_KEY is missing")
+			require.Error(t, runErr, "the app must refuse to start when ENCRYPTION_KEY is missing")
 			outStr := string(output)
 			assert.Contains(t, outStr, "ENCRYPTION_KEY", "output must name the missing key")
 			assert.NotContains(t, outStr, "panic:", "missing configuration must be a clean error, not a panic")

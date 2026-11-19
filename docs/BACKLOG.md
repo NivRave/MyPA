@@ -40,10 +40,11 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-27 | High | The real-phone-number guard and the `.gitignore` guard are skipped in every full test run, including CI | done 2026-11-19 (`chore/bl-27-guards`) |
 | BL-28 | Low | The one-default-model guard misses a model alias with no version digit (`gemini-flash-latest`) and does not search `.mjs`, `.sh`, `.ps1` or `.sql` files | open |
 | BL-29 | Medium | The LLM client sends `Temperature: 0.2`; Gemini 3.6 Flash ignores sampling parameters and later model generations are to reject them with HTTP 400 | open: resolve before the default moves past 3.6, as part of V4-03 |
-| BL-30 | Low | Tests in `cmd/orchestrator` and `internal/crypto` change environment variables and do not put them back exactly | open |
+| BL-30 | Low | Tests in `cmd/mypa` (formerly `cmd/orchestrator`) and `internal/crypto` change environment variables and do not put them back exactly | open |
 | BL-31 | Medium | The dashboard `users` query returns the users of every family, not only the caller's | open: ADR 0002 removes the pattern; can be fixed earlier on its own |
 | BL-32 | Low | A pairing code can be redeemed by two senders at the same moment | open: ADR 0002 requires a one-statement claim for every code |
 | BL-33 | Low | WhatsApp and Telegram message splitting counts bytes, not characters, so non-Latin text is split at about half the allowed length | open: fix after the channel port (V4-31), not during it |
+| BL-34 | Low | The dashboard home page still shows the label "Orchestrator V3 • Active" | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -293,7 +294,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 
 ### BL-22 — Two restore-tool paths are tested less directly than the rest (Low)
 - **Found:** 2026-11-19, in the review of V4-43 (non-blocking, after the item passed).
-- **Evidence:** (1) `TestTransfer_RollbackRestoresWithoutMigrating` (`cmd/orchestrator/transfer_test.go`)
+- **Evidence:** (1) `TestTransfer_RollbackRestoresWithoutMigrating` (`cmd/mypa/transfer_test.go`, formerly `cmd/orchestrator`)
   restores a set at schema version 2 into a build whose latest version is also 2, so it would pass even if
   `--no-migrate` migrated; today it only proves the printed text. (2) `db.CheckDump` runs `pg_restore -f -`
   reading the archive from a pipe, but `pgtest.ToolRunner` copies the dump into the container and runs
@@ -416,7 +417,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 
 ### BL-30 — Other tests change the process environment and do not restore it exactly (Low)
 - **Found:** 2026-11-19, in the search of every `_test.go` file done for BL-27.
-- **Evidence:** `cmd/orchestrator/playground_security_test.go:18-19` and `:44-45` set `ENV` and
+- **Evidence:** `cmd/mypa/playground_security_test.go:18-19` and `:44-45` (formerly `cmd/orchestrator`) set `ENV` and
   `DASHBOARD_API_SECRET` with `os.Setenv`. `ENV` is put back with a `defer`, but as an empty value when it
   was unset before; `DASHBOARD_API_SECRET` is never put back. `internal/crypto/aes_test.go:31-42` and
   `:105-109` set and unset `ENCRYPTION_KEY` and restore it the same way, so an unset variable comes back
@@ -477,6 +478,16 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   characters (runes, or UTF-16 units for Telegram), keep the margin below the limit, and fix BL-17 in the
   same change. Test: a Hebrew reply of 1,000 letters goes out on WhatsApp as one message, and every chunk
   stays within the platform's limit in characters.
+
+### BL-34 — The dashboard home page still names the orchestrator (Low)
+- **Found:** 2026-11-19, while building V4-01.
+- **Evidence:** `dashboard/src/app/page.tsx:81` renders the status label `Orchestrator V3 • Active`. Since
+  V4-01 there is no orchestrator service (it is the worker of the one `app`), and the label is a fixed
+  string: it reports neither the running version nor whether the app is reachable.
+- **Impact:** cosmetic; the label is wrong on V4 and says "Active" even when the app is down.
+- **Fix:** with the dashboard reorganisation (V4-37), or on its own: show the app and its version, taken
+  from the app instead of hard-coded (for example from `/doctor`'s data once V4-37 gives it a page), or
+  drop the label. Test: the home page does not contain "Orchestrator".
 
 ## Operations (owner)
 

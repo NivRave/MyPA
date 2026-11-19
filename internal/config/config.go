@@ -31,11 +31,8 @@ type EncryptionConfig struct {
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
-	GatewayPort        int    `mapstructure:"gateway_port"`
-	OrchestratorPort   int    `mapstructure:"orchestrator_port"`
-	ProxyPort          int    `mapstructure:"proxy_port"`
-	GatewayURL         string `mapstructure:"gateway_url"`
-	OrchestratorURL    string `mapstructure:"orchestrator_url"`
+	// Port is the one HTTP port of the app (V4-01), whatever its role. HTTP_PORT, default 8000.
+	Port               int    `mapstructure:"port"`
 	DefaultTimezone    string `mapstructure:"default_timezone"`
 	AllowedUsersRaw    string `mapstructure:"allowed_users"`
 	DashboardAPISecret string `mapstructure:"dashboard_api_secret"`
@@ -97,7 +94,7 @@ type TwilioConfig struct {
 	AuthToken  string `mapstructure:"auth_token"`
 	FromNumber string `mapstructure:"from_number"` // e.g., "whatsapp:+14155238886"
 	// StatusCallbackURL (optional, BL-8) is sent with every outbound message so Twilio reports
-	// delivery results to the gateway's /webhook/twilio/status. Empty = no delivery reports.
+	// delivery results to the app's /webhook/twilio/status. Empty = no delivery reports.
 	StatusCallbackURL string `mapstructure:"status_callback_url"`
 }
 
@@ -116,9 +113,7 @@ func Load() (*Config, error) {
 	v := viper.New()
 
 	// Defaults
-	v.SetDefault("server.gateway_port", 8080)
-	v.SetDefault("server.orchestrator_port", 8081)
-	v.SetDefault("server.proxy_port", 8000)
+	v.SetDefault("server.port", 8000)
 	v.SetDefault("server.default_timezone", "UTC")
 	v.SetDefault("server.week_start_day", "Sunday")
 	v.SetDefault("rabbitmq.prefetch", 4)
@@ -148,8 +143,7 @@ func Load() (*Config, error) {
 	envBindings := map[string]string{
 		"DEFAULT_TIMEZONE":           "server.default_timezone",
 		"ALLOWED_USERS":              "server.allowed_users",
-		"GATEWAY_URL":                "server.gateway_url",
-		"ORCHESTRATOR_URL":           "server.orchestrator_url",
+		"HTTP_PORT":                  "server.port",
 		"TELEGRAM_BOT_TOKEN":         "telegram.bot_token",
 		"TELEGRAM_WEBHOOK_URL":       "telegram.webhook_url",
 		"RABBITMQ_URL":               "rabbitmq.url",

@@ -22,11 +22,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// The restore-and-migrate tool (V4-43): `orchestrator transfer <verb>`. It runs as a one-shot
-// process next to a STOPPED app (the `transfer` compose service), never inside the running
-// orchestrator. See docs/RESTORE_AND_MIGRATE.md for the procedure.
+// The restore-and-migrate tool (V4-43): `mypa transfer <verb>`. It runs as a one-shot process
+// next to a STOPPED app (the `transfer` compose service), never inside the running app. See
+// docs/RESTORE_AND_MIGRATE.md for the procedure.
 
-const transferUsage = `Usage: orchestrator transfer <command>
+const transferUsage = `Usage: mypa transfer <command>
 
   export        Take the final backup set of this (stopped) install.
                   --allow-unencrypted   write the set without age encryption

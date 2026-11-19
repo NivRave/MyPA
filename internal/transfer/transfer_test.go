@@ -88,7 +88,8 @@ func TestExport_WritesAVerifiedSetThatRecordsItsSource(t *testing.T) {
 
 	report := out.String()
 	assert.Contains(t, report, "work queues are empty and nothing is consuming them")
-	assert.Contains(t, report, "The gateway only publishes", "the report must not claim to have seen what it cannot see")
+	assert.Contains(t, report, "the queues cannot show whether it still runs", "the report must not claim to have seen what it cannot see")
+	assert.Contains(t, report, "--role=ingress", "on V4 the process that only publishes is an ingress-only app (V4-01)")
 	assert.Contains(t, report, "Not carried by a backup")
 	assert.Contains(t, report, "chat window")
 	assert.Contains(t, report, "transfer import "+filepath.Base(manifestPath))

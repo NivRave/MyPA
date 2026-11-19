@@ -9,20 +9,34 @@ import (
 	"strings"
 )
 
-// Service names accepted by Validate. Each cmd/<service>/main.go validates its own config at startup.
+// Names accepted by Validate. The app is one binary with roles (V4-01, `mypa --role=<role>`), and
+// it validates the configuration of its role at startup; the audit worker validates its own.
 const (
-	ServiceGateway      = "gateway"
-	ServiceOrchestrator = "orchestrator"
-	ServiceProxy        = "proxy"
-	ServiceAuditWorker  = "audit-worker"
+	// RoleAll runs the ingress and the worker in one process. It is the default.
+	RoleAll = "all"
+	// RoleIngress only receives the webhooks: it verifies, normalises and enqueues them.
+	RoleIngress = "ingress"
+	// RoleWorker runs the conversation turns, the tools, the scheduler, GraphQL and Google sign-in.
+	RoleWorker = "worker"
+	// ServiceAuditWorker is the separate audit worker (until V4-23 moves its queue).
+	ServiceAuditWorker = "audit-worker"
 )
 
-// requiredKeys lists the env vars each service cannot start without (conditional rules are in Validate).
+// Roles returns the app roles, in the order `--role` documents them.
+func Roles() []string { return []string{RoleAll, RoleIngress, RoleWorker} }
+
+var (
+	ingressKeys = []string{"RABBITMQ_URL"}
+	workerKeys  = []string{"ENCRYPTION_KEY", "JWT_SECRET", "DASHBOARD_API_SECRET", "DASHBOARD_FAMILY_GROUP", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"}
+)
+
+// requiredKeys lists the env vars each role or service cannot start without (conditional rules are
+// in Validate). RoleAll needs what the worker needs, which already includes everything the ingress needs.
 var requiredKeys = map[string][]string{
-	ServiceGateway:      {"RABBITMQ_URL"},
-	ServiceOrchestrator: {"ENCRYPTION_KEY", "JWT_SECRET", "DASHBOARD_API_SECRET", "DASHBOARD_FAMILY_GROUP", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"},
-	ServiceProxy:        {"GATEWAY_URL", "ORCHESTRATOR_URL"},
-	ServiceAuditWorker:  {"DATABASE_URL", "RABBITMQ_URL"},
+	RoleAll:            workerKeys,
+	RoleIngress:        ingressKeys,
+	RoleWorker:         workerKeys,
+	ServiceAuditWorker: {"DATABASE_URL", "RABBITMQ_URL"},
 }
 
 // conditionalKeys are required only when a related feature is configured.
@@ -76,16 +90,17 @@ func (c *Config) Validate(service string) error {
 		}
 	}
 
-	switch service {
-	case ServiceGateway:
+	if service == RoleAll || service == RoleIngress {
 		errs = append(errs, c.validateTelegramIngress()...)
-		errs = append(errs, c.validateTwilio()...)
-	case ServiceOrchestrator:
+	}
+	if service == RoleAll || service == RoleWorker {
 		if c.Server.JWTSecret != "" && strings.TrimSpace(c.Server.JWTSecret) == strings.TrimSpace(c.Encryption.Key) {
 			errs = append(errs, errors.New("JWT_SECRET must differ from ENCRYPTION_KEY"))
 		}
-		errs = append(errs, c.validateTwilio()...)
 		errs = append(errs, c.validateTwilioStatusCallback()...)
+	}
+	if service != ServiceAuditWorker {
+		errs = append(errs, c.validateTwilio()...)
 	}
 
 	if len(errs) == 0 {
@@ -152,10 +167,6 @@ func (c *Config) valueFor(envKey string) (string, bool) {
 		return c.Server.DashboardFamilyGroup, true
 	case "GEMINI_API_KEY":
 		return c.Gemini.APIKey, true
-	case "GATEWAY_URL":
-		return c.Server.GatewayURL, true
-	case "ORCHESTRATOR_URL":
-		return c.Server.OrchestratorURL, true
 	}
 	return "", false
 }

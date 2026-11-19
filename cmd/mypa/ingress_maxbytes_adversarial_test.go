@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,43 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// repeatingReader generates an endless stream of bytes without allocating a huge slice in memory.
-type repeatingReader struct {
-	data      []byte
-	bytesLeft int64
-}
-
-func newRepeatingReader(pattern string, totalBytes int64) *repeatingReader {
-	return &repeatingReader{
-		data:      []byte(pattern),
-		bytesLeft: totalBytes,
-	}
-}
-
-func (r *repeatingReader) Read(p []byte) (n int, err error) {
-	if r.bytesLeft <= 0 {
-		return 0, io.EOF
-	}
-	toRead := int64(len(p))
-	if toRead > r.bytesLeft {
-		toRead = r.bytesLeft
-	}
-
-	patternLen := int64(len(r.data))
-	for i := int64(0); i < toRead; i++ {
-		p[i] = r.data[i%patternLen]
-	}
-
-	r.bytesLeft -= toRead
-	return int(toRead), nil
-}
-
 // TestAdversarial_MaxBytesReader_TelegramWebhook verifies that sending a 12MB payload
 // (exceeding the 10MB gateway webhook limit) triggers an HTTP error and does NOT crash the server.
 func TestAdversarial_MaxBytesReader_TelegramWebhook(t *testing.T) {
 	pub := new(MockEventPublisher)
 	cfg := &config.Config{Telegram: config.TelegramConfig{SecretToken: testTelegramSecret}}
-	r := setupRouter(pub, cfg)
+	r := setupIngressRouter(pub, cfg)
 
 	// Create an oversized stream: 12MB of data
 	oversizedStream := newRepeatingReader(`{"update_id":1,"message":{"text":"A"}}`, 12<<20)
@@ -89,7 +57,7 @@ func TestAdversarial_MaxBytesReader_TwilioWebhook(t *testing.T) {
 	pub := new(MockEventPublisher)
 	const twilioToken = "maxbytes-twilio-token"
 	cfg := &config.Config{Twilio: config.TwilioConfig{AuthToken: twilioToken}}
-	r := setupRouter(pub, cfg)
+	r := setupIngressRouter(pub, cfg)
 
 	// Generate 11MB form body: "From=%2B1234567890&Body=" followed by 11MB of filler
 	formPrefix := "From=%2B1234567890&Body="

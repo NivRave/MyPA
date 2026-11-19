@@ -10,7 +10,7 @@ import (
 )
 
 // allProductionModules is the single list of production modules (kept in sync with
-// cmd/orchestrator/main.go by toolcatalog.TestProductionModulesMatchOrchestratorMain).
+// cmd/mypa/worker.go by toolcatalog.TestProductionModulesMatchTheWorkerWiring).
 func allProductionModules() []orchestrator.ToolModule { return toolcatalog.ProductionModules() }
 
 // Every registered tool must be offered to the model in at least one turn: either it is a

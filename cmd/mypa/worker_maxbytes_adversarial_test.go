@@ -10,38 +10,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-type repeatingReader struct {
-	data      []byte
-	bytesLeft int64
-}
-
-func newRepeatingReader(pattern string, totalBytes int64) *repeatingReader {
-	return &repeatingReader{
-		data:      []byte(pattern),
-		bytesLeft: totalBytes,
-	}
-}
-
-func (r *repeatingReader) Read(p []byte) (n int, err error) {
-	if r.bytesLeft <= 0 {
-		return 0, io.EOF
-	}
-	toRead := int64(len(p))
-	if toRead > r.bytesLeft {
-		toRead = r.bytesLeft
-	}
-	patternLen := int64(len(r.data))
-	for i := int64(0); i < toRead; i++ {
-		p[i] = r.data[i%patternLen]
-	}
-	r.bytesLeft -= toRead
-	return int(toRead), nil
-}
-
 // TestAdversarial_Orchestrator_GraphQL_MaxBytesReader verifies that sending an oversized
-// payload (> 1MB) to /graphql triggers an error and does NOT crash the orchestrator server.
+// payload (> 1MB) to /graphql triggers an error and does NOT crash the app server.
 func TestAdversarial_Orchestrator_GraphQL_MaxBytesReader(t *testing.T) {
-	// Create handler replicating orchestrator's GraphQL wrapper
+	// Create handler replicating the app router's GraphQL wrapper
 	graphqlHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
 		// Handler attempting to read body

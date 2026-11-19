@@ -8,7 +8,7 @@
 //
 // The package holds the procedure and its safety rules. What it runs against (Postgres, RabbitMQ,
 // Redis, the file system) is passed in, so every rule is tested without them, and the whole
-// procedure is tested end to end against throwaway containers in cmd/orchestrator.
+// procedure is tested end to end against throwaway containers in cmd/mypa.
 package transfer
 
 import (
@@ -130,12 +130,15 @@ func (e Exporter) Run(ctx context.Context) (db.Manifest, string, error) {
 		}
 		if !stopped {
 			return db.Manifest{}, "", fmt.Errorf("the install is not stopped and drained: %s. "+
-				"Stop the gateway first, wait until the queues are empty, then stop the orchestrator and the audit worker, and run the export again",
+				"Stop what lets messages in first (ngrok; on a v3.4.x install, proxy and gateway), wait until the queues are empty, "+
+				"then stop the app (on v3.4.x, the orchestrator) and the audit worker, and run the export again",
 				describeBusy(info))
 		}
 		source.Drained, source.Queues = true, info
-		fmt.Fprintln(out, "✓ The work queues are empty and nothing is consuming them: the orchestrator and the audit worker are stopped.")
-		fmt.Fprintln(out, "  The gateway only publishes, so the queues cannot show whether it still runs. Make sure it is stopped too (docker compose ps): a message it accepts from now on is not in this backup.")
+		fmt.Fprintln(out, "✓ The work queues are empty and nothing is consuming them: the app (on v3.4.x, the orchestrator) and the audit worker are stopped.")
+		fmt.Fprintln(out, "  A process that only accepts messages publishes without consuming, so the queues cannot show whether it still runs: "+
+			"the gateway of a v3.4.x install, or an app started with --role=ingress. Make sure it is stopped too (docker compose ps): "+
+			"a message it accepts from now on is not in this backup.")
 		for _, q := range e.Queues {
 			failed, _, err := e.Probe(ctx, q+".dlq")
 			if err != nil {
@@ -341,7 +344,7 @@ func (i Importer) Run(ctx context.Context, path string) (Result, error) {
 				targetIdle = false
 			}
 			if s.Consumers > 0 {
-				return res, fmt.Errorf("this install is running (%s has %d consumer(s)). Stop the gateway, the orchestrator and the audit worker, then run the import again", q, s.Consumers)
+				return res, fmt.Errorf("this install is running (%s has %d consumer(s)). Stop the app and the audit worker, then run the import again", q, s.Consumers)
 			}
 		}
 		fmt.Fprintln(out, "✓ This install is stopped.")

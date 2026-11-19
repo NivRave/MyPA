@@ -12,7 +12,7 @@ import (
 
 const validTGSecret = "valid_telegram-secret123"
 
-func orchestratorOK() Config {
+func workerOK() Config {
 	return Config{
 		Server: ServerConfig{
 			DashboardAPISecret:   "dash-secret-abc",
@@ -38,79 +38,103 @@ func TestValidate(t *testing.T) {
 		// --- unknown service ---
 		{name: "UnknownService", service: "nope", base: func() Config { return Config{} }, wantErr: []string{"unknown service"}},
 
-		// --- gateway ---
-		{name: "Gateway_MinimalOK", service: ServiceGateway,
+		// --- ingress (the old gateway) ---
+		{name: "Ingress_MinimalOK", service: RoleIngress,
 			base: func() Config { return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}} }},
-		{name: "Gateway_MissingRabbit", service: ServiceGateway,
+		{name: "Ingress_MissingRabbit", service: RoleIngress,
 			base: func() Config { return Config{} }, wantErr: []string{"RABBITMQ_URL"}},
-		{name: "Gateway_TelegramWithoutSecret", service: ServiceGateway,
+		{name: "Ingress_TelegramWithoutSecret", service: RoleIngress,
 			base: func() Config {
 				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Telegram: TelegramConfig{BotToken: "1:a"}}
 			}, wantErr: []string{"TELEGRAM_SECRET_TOKEN"}},
-		{name: "Gateway_TelegramWithSecretOK", service: ServiceGateway,
+		{name: "Ingress_TelegramWithSecretOK", service: RoleIngress,
 			base: func() Config {
 				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Telegram: TelegramConfig{BotToken: "1:a", SecretToken: validTGSecret}}
 			}},
-		{name: "Gateway_TelegramSecretBadChars", service: ServiceGateway,
+		{name: "Ingress_TelegramSecretBadChars", service: RoleIngress,
 			base: func() Config {
 				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Telegram: TelegramConfig{BotToken: "1:a", SecretToken: "has spaces!"}}
 			}, wantErr: []string{"TELEGRAM_SECRET_TOKEN"}},
-		{name: "Gateway_TelegramSecretTooLong", service: ServiceGateway,
+		{name: "Ingress_TelegramSecretTooLong", service: RoleIngress,
 			base: func() Config {
 				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Telegram: TelegramConfig{BotToken: "1:a", SecretToken: strings.Repeat("a", 257)}}
 			}, wantErr: []string{"TELEGRAM_SECRET_TOKEN"}},
-		{name: "Gateway_WebhookURLWithoutBotToken", service: ServiceGateway,
+		{name: "Ingress_WebhookURLWithoutBotToken", service: RoleIngress,
 			base: func() Config {
 				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Telegram: TelegramConfig{WebhookURL: "https://x/webhook/telegram", SecretToken: validTGSecret}}
 			}, wantErr: []string{"TELEGRAM_BOT_TOKEN"}},
-		{name: "Gateway_TwilioSIDWithoutToken", service: ServiceGateway,
+		{name: "Ingress_TwilioSIDWithoutToken", service: RoleIngress,
 			base: func() Config {
 				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Twilio: TwilioConfig{AccountSID: "AC1"}}
 			}, wantErr: []string{"TWILIO_AUTH_TOKEN"}},
-		{name: "Gateway_TwilioOK", service: ServiceGateway,
+		{name: "Ingress_TwilioOK", service: RoleIngress,
 			base: func() Config {
 				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Twilio: TwilioConfig{AccountSID: "AC1", AuthToken: "t"}}
 			}},
 
-		// --- orchestrator ---
-		{name: "Orchestrator_AllSetOK", service: ServiceOrchestrator, base: orchestratorOK},
-		{name: "Orchestrator_NothingSet_ListsEveryKey", service: ServiceOrchestrator,
+		// --- worker (the old orchestrator) ---
+		{name: "Worker_AllSetOK", service: RoleWorker, base: workerOK},
+		{name: "Worker_NothingSet_ListsEveryKey", service: RoleWorker,
 			base:    func() Config { return Config{} },
 			wantErr: []string{"ENCRYPTION_KEY", "JWT_SECRET", "DASHBOARD_API_SECRET", "DASHBOARD_FAMILY_GROUP", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"}},
-		{name: "Orchestrator_WhitespaceKeyIsMissing", service: ServiceOrchestrator, base: orchestratorOK,
+		{name: "Worker_WhitespaceKeyIsMissing", service: RoleWorker, base: workerOK,
 			mutate: func(c *Config) { c.Encryption.Key = "   " }, wantErr: []string{"ENCRYPTION_KEY"}},
-		{name: "Orchestrator_JWTEqualsEncryptionKey", service: ServiceOrchestrator, base: orchestratorOK,
+		{name: "Worker_JWTEqualsEncryptionKey", service: RoleWorker, base: workerOK,
 			mutate: func(c *Config) { c.Server.JWTSecret = c.Encryption.Key }, wantErr: []string{"JWT_SECRET must differ"}},
-		{name: "Orchestrator_PlaceholderEncryptionKey", service: ServiceOrchestrator, base: orchestratorOK,
+		{name: "Worker_PlaceholderEncryptionKey", service: RoleWorker, base: workerOK,
 			mutate: func(c *Config) { c.Encryption.Key = "your-32-byte-encryption-key" }, wantErr: []string{"ENCRYPTION_KEY", "placeholder"}},
-		{name: "Orchestrator_PlaceholderDatabaseURL", service: ServiceOrchestrator, base: orchestratorOK,
+		{name: "Worker_PlaceholderDatabaseURL", service: RoleWorker, base: workerOK,
 			mutate: func(c *Config) {
 				c.Database.URL = "postgres://<YOUR_DB_USER>:<YOUR_DB_PASSWORD>@postgres:5432/<YOUR_DB_NAME>"
 			}, wantErr: []string{"DATABASE_URL", "placeholder"}},
-		{name: "Orchestrator_TwilioSIDWithoutToken", service: ServiceOrchestrator, base: orchestratorOK,
+		{name: "Worker_TwilioSIDWithoutToken", service: RoleWorker, base: workerOK,
 			mutate: func(c *Config) { c.Twilio.AccountSID = "AC1" }, wantErr: []string{"TWILIO_AUTH_TOKEN"}},
 		// BL-8: optional, but if set it must be an absolute https URL Twilio can call back.
-		{name: "Orchestrator_StatusCallbackHTTPSOK", service: ServiceOrchestrator, base: orchestratorOK,
+		{name: "Worker_StatusCallbackHTTPSOK", service: RoleWorker, base: workerOK,
 			mutate: func(c *Config) { c.Twilio.StatusCallbackURL = "https://gw.example/webhook/twilio/status" }},
-		{name: "Orchestrator_StatusCallbackNotHTTPS", service: ServiceOrchestrator, base: orchestratorOK,
+		{name: "Worker_StatusCallbackNotHTTPS", service: RoleWorker, base: workerOK,
 			mutate:  func(c *Config) { c.Twilio.StatusCallbackURL = "http://gw.example/webhook/twilio/status" },
 			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
-		{name: "Orchestrator_StatusCallbackRelative", service: ServiceOrchestrator, base: orchestratorOK,
+		{name: "Worker_StatusCallbackRelative", service: RoleWorker, base: workerOK,
 			mutate:  func(c *Config) { c.Twilio.StatusCallbackURL = "/webhook/twilio/status" },
 			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
-		{name: "Orchestrator_StatusCallbackPlaceholder", service: ServiceOrchestrator, base: orchestratorOK,
+		{name: "Worker_StatusCallbackPlaceholder", service: RoleWorker, base: workerOK,
 			mutate: func(c *Config) {
 				c.Twilio.StatusCallbackURL = "https://your-ngrok-url.ngrok-free.dev/webhook/twilio/status"
 			},
 			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
 
-		// --- proxy ---
-		{name: "Proxy_OK", service: ServiceProxy,
-			base: func() Config {
-				return Config{Server: ServerConfig{GatewayURL: "http://gateway:8080", OrchestratorURL: "http://orchestrator:8081"}}
-			}},
-		{name: "Proxy_Missing", service: ServiceProxy, base: func() Config { return Config{} },
-			wantErr: []string{"GATEWAY_URL", "ORCHESTRATOR_URL"}},
+		// --- all (V4-01: ingress and worker in one process, the default role) ---
+		// It needs everything the worker needs, and the ingress checks run too: one process now
+		// receives the webhooks, so a Telegram bot without its secret token is refused here.
+		{name: "All_AllSetOK", service: RoleAll, base: workerOK},
+		{name: "All_NothingSet_ListsEveryKey", service: RoleAll,
+			base:    func() Config { return Config{} },
+			wantErr: []string{"ENCRYPTION_KEY", "JWT_SECRET", "DASHBOARD_API_SECRET", "DASHBOARD_FAMILY_GROUP", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"}},
+		{name: "All_TelegramWithoutSecret", service: RoleAll, base: workerOK,
+			mutate: func(c *Config) { c.Telegram.BotToken = "1:a" }, wantErr: []string{"TELEGRAM_SECRET_TOKEN"}},
+		{name: "All_TelegramWithSecretOK", service: RoleAll, base: workerOK,
+			mutate: func(c *Config) { c.Telegram.BotToken = "1:a"; c.Telegram.SecretToken = validTGSecret }},
+		{name: "All_TelegramSecretBadChars", service: RoleAll, base: workerOK,
+			mutate:  func(c *Config) { c.Telegram.BotToken = "1:a"; c.Telegram.SecretToken = "has spaces!" },
+			wantErr: []string{"TELEGRAM_SECRET_TOKEN"}},
+		{name: "All_WebhookURLWithoutBotToken", service: RoleAll, base: workerOK,
+			mutate: func(c *Config) {
+				c.Telegram.WebhookURL = "https://x/webhook/telegram"
+				c.Telegram.SecretToken = validTGSecret
+			}, wantErr: []string{"TELEGRAM_BOT_TOKEN"}},
+		{name: "All_JWTEqualsEncryptionKey", service: RoleAll, base: workerOK,
+			mutate: func(c *Config) { c.Server.JWTSecret = c.Encryption.Key }, wantErr: []string{"JWT_SECRET must differ"}},
+		{name: "All_TwilioSIDWithoutToken", service: RoleAll, base: workerOK,
+			mutate: func(c *Config) { c.Twilio.AccountSID = "AC1" }, wantErr: []string{"TWILIO_AUTH_TOKEN"}},
+		{name: "All_StatusCallbackNotHTTPS", service: RoleAll, base: workerOK,
+			mutate:  func(c *Config) { c.Twilio.StatusCallbackURL = "http://gw.example/webhook/twilio/status" },
+			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
+
+		// --- the services V4-01 removed are no longer accepted ---
+		{name: "Removed_Proxy", service: "proxy", base: workerOK, wantErr: []string{"unknown service"}},
+		{name: "Removed_Gateway", service: "gateway", base: workerOK, wantErr: []string{"unknown service"}},
+		{name: "Removed_Orchestrator", service: "orchestrator", base: workerOK, wantErr: []string{"unknown service"}},
 
 		// --- audit-worker ---
 		{name: "AuditWorker_OK", service: ServiceAuditWorker,
@@ -145,6 +169,19 @@ func readRepoFile(t *testing.T, name string) string {
 	data, err := os.ReadFile(filepath.Join("..", "..", name))
 	require.NoError(t, err)
 	return string(data)
+}
+
+// V4-01: the app is one binary with roles, and the proxy that needed the two upstream addresses is
+// gone. No role may demand them, and the order of Roles is the one `--role` documents.
+func TestRoles_AreTheAppRolesAndNeedNoUpstreamAddresses(t *testing.T) {
+	assert.Equal(t, []string{RoleAll, RoleIngress, RoleWorker}, Roles())
+	for _, key := range RequiredEnvKeys() {
+		assert.NotContains(t, []string{"GATEWAY_URL", "ORCHESTRATOR_URL"}, key)
+	}
+	for _, role := range Roles() {
+		assert.NotContains(t, requiredKeys[role], "GATEWAY_URL", role)
+		assert.NotContains(t, requiredKeys[role], "ORCHESTRATOR_URL", role)
+	}
 }
 
 // Every key that Validate can demand must be documented in .env.example.

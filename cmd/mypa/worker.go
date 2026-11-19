@@ -2,15 +2,12 @@ package main
 
 import (
 	"context"
-	"flag"
+	"errors"
 	"fmt"
-	"github.com/nivik/mypa/internal/logging"
 	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/99designs/gqlgen/graphql/handler"
@@ -49,45 +46,38 @@ import (
 	"github.com/nivik/mypa/internal/twilio"
 )
 
-func main() {
-	// `orchestrator transfer <command>`: the restore-and-migrate tool (V4-43). A one-shot process
-	// run next to a stopped app; it never starts the engine.
-	if len(os.Args) > 1 && os.Args[1] == "transfer" {
-		logging.Setup()
-		os.Exit(transferMain(os.Args[2:]))
-	}
+// The worker (formerly the orchestrator's main, V4-01): it consumes inbound.messages, runs the
+// conversation turns with their tools, the event bus and the scheduler, and serves /graphql and the
+// Google sign-in callback. It runs in the roles `all` and `worker`, always as a single replica: the
+// scheduler has no leader election and the per-user ordering is in-process (ADR 0001).
 
-	migrateOnly := flag.Bool("migrate-only", false, "apply database schema migrations and exit (P4-3)")
-	flag.Parse()
+// worker is what the worker side of the app holds while it runs.
+type worker struct {
+	router  http.Handler
+	cancel  context.CancelFunc
+	engine  *orchestrator.Engine
+	bus     *events.EventBus
+	cleanup []func() // run in reverse order by stop
+}
 
-	// Initialize logger
-	logging.Setup() // JSON on stdout at LOG_LEVEL (default info); P3-3
-
-	// Load config
-	cfg, err := config.Load()
-	if err != nil {
-		slog.Error("failed to load config", "error", err)
-		os.Exit(1)
-	}
-
-	// P4-3: schema changes are an explicit step (the `migrate` compose service runs this).
-	if *migrateOnly {
-		os.Exit(runMigrations(cfg.Database.URL))
-	}
-
-	if err := cfg.Validate(config.ServiceOrchestrator); err != nil {
-		slog.Error("invalid orchestrator configuration — refusing to start", "error", err)
-		os.Exit(1)
-	}
+// startWorker connects every dependency, starts the engine and the scheduler, and returns the app
+// router. On an error, whatever was already started is stopped again.
+func startWorker(cfg *config.Config) (w *worker, err error) {
 	authCfg = cfg.Server
 
 	if err := crypto.ValidateKeyConfigured(); err != nil {
-		slog.Error("encryption key validation failed", "error", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("encryption key validation failed: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	w = &worker{cancel: cancel}
+	defer func() {
+		if err != nil {
+			w.runCleanup()
+			cancel()
+			w = nil
+		}
+	}()
 
 	// 4. Initialize Redis
 	var store *state.Store
@@ -100,10 +90,9 @@ func main() {
 		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
-		slog.Error("failed to initialize redis store after retries", "error", err)
-		os.Exit(1)
+		return w, fmt.Errorf("redis store: %w", err)
 	}
-	defer store.Close()
+	w.onStop(func() { _ = store.Close() })
 
 	// 5. Initialize RabbitMQ Consumer
 	var consumer *broker.Consumer
@@ -117,10 +106,9 @@ func main() {
 		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
-		slog.Error("failed to initialize rabbitmq consumer after retries", "error", err)
-		os.Exit(1)
+		return w, fmt.Errorf("rabbitmq consumer: %w", err)
 	}
-	defer consumer.Close()
+	w.onStop(func() { _ = consumer.Close() })
 
 	// 3. Initialize Telegram Client
 	tgClient := telegram.NewClient(cfg.Telegram.BotToken)
@@ -128,8 +116,7 @@ func main() {
 	// 4. Initialize Gemini LLM Client
 	llmClient, err := llm.NewClient(ctx, cfg.Gemini.APIKey, cfg.Gemini.Model)
 	if err != nil {
-		slog.Error("failed to initialize gemini client", "error", err)
-		os.Exit(1)
+		return w, fmt.Errorf("gemini client: %w", err)
 	}
 
 	// 5. Initialize OAuth Config
@@ -141,8 +128,7 @@ func main() {
 	// 7. Initialize Database Client
 	dbURL := cfg.Database.URL
 	if dbURL == "" {
-		slog.Error("DATABASE_URL is required")
-		os.Exit(1)
+		return w, errors.New("DATABASE_URL is required")
 	}
 	db.RegisterWave1Models()
 	db.RegisterWave2Models()
@@ -156,16 +142,20 @@ func main() {
 		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
-		slog.Error("failed to initialize database after retries", "error", err)
-		os.Exit(1)
+		return w, fmt.Errorf("database: %w", err)
 	}
+	w.onStop(func() {
+		if err := dbClient.Close(); err != nil {
+			slog.Error("failed to close db connection pool", "error", err)
+		}
+	})
 	// P4-3: never run against a schema with pending migrations.
-	if sqlDB, sqlErr := dbClient.DB.DB(); sqlErr != nil {
-		slog.Error("failed to access database handle", "error", sqlErr)
-		os.Exit(1)
-	} else if err := db.EnsureMigrated(ctx, sqlDB); err != nil {
-		slog.Error("refusing to start", "error", err)
-		os.Exit(1)
+	sqlDB, err := dbClient.DB.DB()
+	if err != nil {
+		return w, fmt.Errorf("database handle: %w", err)
+	}
+	if err = db.EnsureMigrated(ctx, sqlDB); err != nil {
+		return w, err
 	}
 
 	// 8. Initialize Twilio Client
@@ -179,10 +169,9 @@ func main() {
 	// 8.5 Initialize Telemetry Publisher
 	telemetryPublisher, err := broker.NewSafePublisher(cfg.RabbitMQ.URL, broker.AuditEventsQueue)
 	if err != nil {
-		slog.Error("failed to initialize telemetry publisher", "error", err)
-		os.Exit(1)
+		return w, fmt.Errorf("telemetry publisher: %w", err)
 	}
-	defer telemetryPublisher.Close()
+	w.onStop(func() { _ = telemetryPublisher.Close() })
 
 	// Bootstrap legacy ALLOWED_USERS into Database
 	allowedMap := cfg.ParseAllowedUsers()
@@ -194,6 +183,7 @@ func main() {
 
 	// 8.6 Initialize Wave 1 EventBus with dual-lane worker pool and Domain ToolModules
 	eventBus := events.NewEventBus(events.WithWorkerCount(4), events.WithQueueCapacity(1024))
+	w.bus = eventBus
 	registry := orchestrator.NewRegistry()
 	if store != nil {
 		orchestrator.RegisterPromptInvalidator(eventBus, store)
@@ -281,71 +271,48 @@ func main() {
 
 	// Start Cron jobs
 	c := scheduler.StartCronJobs(engine, dbClient, automationRunner, cfg.Server.DefaultTimezone)
-	defer c.Stop()
+	w.onStop(func() { c.Stop() })
 
 	engine.SetWorkflowsChangedCallback(func() {
 		scheduler.ReloadWorkflows(engine, dbClient, automationRunner, cfg.Server.DefaultTimezone)
 	})
 
 	// Run engine in a goroutine
+	w.engine = engine
 	go func() {
-		slog.Info("orchestrator engine starting...")
+		slog.Info("worker engine starting...")
 		if err := engine.Start(ctx); err != nil {
 			slog.Error("engine stopped with error", "error", err)
 		}
 	}()
 
-	// 7. Start HTTP Server for OAuth callbacks and GraphQL
-	mux := setupRouter(oauthCfg, store, tgClient, dbClient, durabilityModule, eventBus)
+	// HTTP routes for the OAuth callback and GraphQL
+	w.router = setupAppRouter(oauthCfg, store, tgClient, dbClient, durabilityModule, eventBus)
+	return w, nil
+}
 
-	serverAddr := fmt.Sprintf(":%d", cfg.Server.OrchestratorPort)
-	srv := &http.Server{
-		Addr:              serverAddr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       120 * time.Second,
+// onStop registers a cleanup; stop runs them in reverse order of registration.
+func (w *worker) onStop(f func()) { w.cleanup = append(w.cleanup, f) }
+
+func (w *worker) runCleanup() {
+	for i := len(w.cleanup) - 1; i >= 0; i-- {
+		w.cleanup[i]()
 	}
+	w.cleanup = nil
+}
 
-	go func() {
-		slog.Info("orchestrator http server starting", "port", cfg.Server.OrchestratorPort)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("http server failed", "error", err)
-		}
-	}()
-
-	// Graceful shutdown
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	slog.Info("orchestrator shutting down")
-	cancel()
-
-	// 1. Stop HTTP server
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutdownCancel()
-	_ = srv.Shutdown(shutdownCtx)
-
-	// 2. Drain and close EventBus worker pool
-	eventBusShutdownCtx, eventBusCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer eventBusCancel()
-	if err := eventBus.Close(eventBusShutdownCtx); err != nil {
+// stop ends the worker in the orchestrator's order: stop consuming, drain the event bus, wait for
+// the engine's background tasks, then stop the scheduler and close the connections. Call it after
+// the HTTP server has stopped accepting requests.
+func (w *worker) stop() {
+	w.cancel()
+	busCtx, busCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer busCancel()
+	if err := w.bus.Close(busCtx); err != nil {
 		slog.Error("failed to gracefully drain event bus", "error", err)
 	}
-
-	// 3. Wait for engine background tasks
-	engine.Wait()
-
-	// 4. Close database connection pool
-	if dbClient != nil {
-		if err := dbClient.Close(); err != nil {
-			slog.Error("failed to close db connection pool", "error", err)
-		}
-	}
-
-	slog.Info("orchestrator shutdown complete")
+	w.engine.Wait()
+	w.runCleanup()
 }
 
 type AuthTelegramClient interface {
@@ -361,7 +328,7 @@ func setupAuthRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClien
 	if len(fallbackSaver) > 0 {
 		saver = fallbackSaver[0]
 	}
-	return setupRouter(oauthCfg, store, tgClient, nil, saver)
+	return setupAppRouter(oauthCfg, store, tgClient, nil, saver)
 }
 
 // runMigrations applies all pending schema migrations and returns the process exit code.
@@ -403,7 +370,7 @@ func runMigrations(databaseURL string) int {
 // no dashboard secret or JWT is accepted (e.g. in tests that build the router directly).
 var authCfg config.ServerConfig
 
-func setupRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient, dbClient *db.Client, fallbackSaver CredentialFallbackSaver, eventBus ...*events.EventBus) *http.ServeMux {
+func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient, dbClient *db.Client, fallbackSaver CredentialFallbackSaver, eventBus ...*events.EventBus) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// GraphQL Server

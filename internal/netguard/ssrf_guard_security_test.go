@@ -146,7 +146,7 @@ func TestAdversarial_SEC05_ValidateURL(t *testing.T) {
 		{"Container_Postgres", "http://postgres:5432/db"},
 		{"Container_Redis", "http://redis:6379/keys"},
 		{"Container_RabbitMQ", "http://rabbitmq:5672/api"},
-		{"Container_Orchestrator", "http://orchestrator:8081/metrics"},
+		{"Container_App", "http://app:8000/metrics"},
 
 		// Dangerous Schemes
 		{"Scheme_File", "file:///etc/passwd"},

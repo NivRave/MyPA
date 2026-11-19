@@ -101,7 +101,7 @@ func EnsureMigrated(ctx context.Context, sqlDB *sql.DB) error {
 		return fmt.Errorf("check schema version: %w", err)
 	}
 	if pending {
-		return fmt.Errorf("database schema is not up to date: run `orchestrator -migrate-only` " +
+		return fmt.Errorf("database schema is not up to date: run `mypa -migrate-only` " +
 			"(docker compose runs it as the `migrate` service before the app starts)")
 	}
 	return nil

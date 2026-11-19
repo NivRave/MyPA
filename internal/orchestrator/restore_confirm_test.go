@@ -159,6 +159,9 @@ func TestRestore_AdminGetsInstructionsAndNothingIsRestored(t *testing.T) {
 			assert.Contains(t, reply, "transfer import "+newestStamp+".manifest.json --replace")
 			assert.Contains(t, reply, "BACKUP_AGE_IDENTITY_FILE", "an encrypted backup needs the private key")
 			assert.Contains(t, reply, "docs/RESTORE_AND_MIGRATE.md")
+			// V4-01: the app is one container; the tunnel goes first so nothing new comes in.
+			assert.Contains(t, reply, "docker compose stop ngrok")
+			assert.Contains(t, reply, "docker compose stop app audit-worker dashboard")
 			assert.NotContains(t, reply, "CONFIRM RESTORE", "there is nothing to confirm any more")
 			h.assertNoPrivateDetail(t, reply)
 			h.assertNothingRestored(t)
