@@ -94,6 +94,13 @@ and is not in a backup. Every export and import prints this list:
 Google sign-ins **are** carried: each has an encrypted copy in the database. `transfer export`
 first copies any sign-in that exists only in the cache into the database, and reports how many.
 
+That copy step happens only in `transfer export`. A nightly backup, `/backup`, and any bare dump
+taken by `v3.4.x` (including the baseline backup) hold just the sign-ins that already had a
+database copy. A sign-in made before that copy existed lives in Redis alone and is **not** in such
+a backup: after restoring one, that person has to send `/connect` again. To carry every sign-in,
+take the backup with `transfer export` on the stopped old install, which works against a `v3.4.x`
+database too.
+
 Messages in the queues are not carried either, which is why an export requires the queues to be
 empty.
 
@@ -157,8 +164,9 @@ On the old machine:
 1. Stop the app (see above).
 2. `transfer export` (with V4), then `transfer export-keys`. Read what the export prints: it
    reports Google sign-ins it could not carry and failed messages left in the old broker.
-   If the old machine still runs `v3.4.x` and you only have its nightly or baseline backup, skip
-   the export: a bare `backup_<time>.dump.age` restores too, without archive files.
+   If the old machine can no longer run an export and you only have a nightly or baseline
+   backup, a bare `backup_<time>.dump.age` restores too, without archive files and without
+   Google sign-ins that existed only in the old cache (see "What is not carried").
 3. Copy the files of the set, and `mypa-keys.age`, to the new machine's `backups/` folder.
 
 On the new machine, with V4 checked out and a `.env` prepared:

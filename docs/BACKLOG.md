@@ -32,6 +32,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-19 | Low | Reminder and transcription labels render as italics, probably meant as bold | open |
 | BL-20 | Low | `/doctor` shows the same host twice when the webhook addresses differ only in path | open |
 | BL-21 | Medium | `/restore` in chat restores over the live schema and does not migrate, which breaks once V4 adds a migration | open: decide before the first V4 migration |
+| BL-22 | Low | Restore tool: the rollback test cannot fail yet, and the piped dump check runs only against a fake | open |
+| BL-23 | Low | A failing archive step makes the nightly backup discard its database dump | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -241,6 +243,33 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** make `/restore` use the same path as `transfer import --replace` (reset, restore, migrate), or, as
   that cannot be done safely inside the running app, retire `/restore` in favour of the tool and have the
   command explain how to run it. Decide before the first V4 schema migration ships.
+
+### BL-22 — Two restore-tool paths are tested less directly than the rest (Low)
+- **Found:** 2026-11-19, in the review of V4-43 (non-blocking, after the item passed).
+- **Evidence:** (1) `TestTransfer_RollbackRestoresWithoutMigrating` (`cmd/orchestrator/transfer_test.go`)
+  restores a set at schema version 2 into a build whose latest version is also 2, so it would pass even if
+  `--no-migrate` migrated; today it only proves the printed text. (2) `db.CheckDump` runs `pg_restore -f -`
+  reading the archive from a pipe, but `pgtest.ToolRunner` copies the dump into the container and runs
+  `pg_restore -f /dev/null <file>`, so the streamed form that gates every import runs only against the fake
+  runner.
+- **Impact:** low. If (2) misbehaved, the import would refuse before changing anything. (1) starts to matter
+  with the first V4 migration.
+- **Fix:** (1) a unit test in `internal/transfer` with `SkipMigrate` and a `Migrate` function that fails the
+  test when called, and, once a V4 migration exists, an assertion in the end-to-end test that the schema stays
+  at the backup's version. (2) let the test runner feed stdin to `pg_restore` inside the container, so the
+  piped form is exercised with the real tool. Also covered by the owner's first real restore.
+
+### BL-23 — A failing archive step now costs the nightly database backup (Low)
+- **Found:** 2026-11-19, in the review of V4-43 (non-blocking, after the item passed).
+- **Evidence:** the nightly backup and `/backup` go through `db.CreateBackupSet` (`internal/db/backup_set.go`).
+  When listing or bundling the archive files fails, its `fail` path removes the database dump that was already
+  written. Before V4-43 the database backup did not depend on the archive volume.
+- **Impact:** low today (the orchestrator reads the volume through a read-only mount, half-written `.tmp`
+  files are skipped), but a database backup should not be lost because archives could not be read. `/doctor`
+  would report the stale backup the next day.
+- **Fix:** for live backups, keep the dump when the archive step fails, write the manifest without archives
+  and with a note, and log an error. An export should keep failing outright: a set made to travel must be
+  complete. Test: a failing bundle step during a live backup leaves a verified database-only set.
 
 ## Operations (owner)
 
