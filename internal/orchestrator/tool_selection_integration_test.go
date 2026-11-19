@@ -29,10 +29,10 @@ import (
 )
 
 // TestFull13Modules_TokenReduction verifies SCALE-01:
-// 1. All 13 production domain modules register >= 67 total tool declarations.
+// 1. All 13 production domain modules register >= 66 total tool declarations.
 // 2. CoreDeclarations() strictly returns the 7 Tier 1 core tools (8 before V4-06 removed remember_fact).
-// 3. SelectDeclarations for DomainBaby injects exactly 13 tools (8 core + 5 baby).
-// 4. Achieves >= 80% token reduction (13 / 67 tools).
+// 3. SelectDeclarations for DomainBaby injects exactly 12 tools (7 core + 5 baby).
+// 4. Achieves >= 80% token reduction (12 / 66 tools).
 // 5. Ambient default selection (no matched domain) injects only Core + Calendar + Tasks tools.
 func TestFull13Modules_TokenReduction(t *testing.T) {
 	reg := orchestrator.NewRegistry()
@@ -77,7 +77,7 @@ func TestFull13Modules_TokenReduction(t *testing.T) {
 		assert.True(t, expectedCoreTools[d.Name], "Unexpected tool %s in CoreDeclarations", d.Name)
 	}
 
-	// 3. Verify Two-Tier Selection for DomainBaby: exactly 13 tools (8 core + 5 baby tools)
+	// 3. Verify Two-Tier Selection for DomainBaby: exactly 12 tools (7 core + 5 baby tools)
 	babySelected := reg.SelectDeclarations([]orchestrator.DomainGroup{orchestrator.DomainBaby}, false)
 	require.Len(t, babySelected, 12, "Baby domain selection must contain exactly 12 tools (7 core + 5 baby)")
 
@@ -103,9 +103,9 @@ func TestFull13Modules_TokenReduction(t *testing.T) {
 	assert.Equal(t, 7, coreToolCount, "Must contain all 7 core tools")
 
 	// 4. Token reduction math:
-	// 13 tools injected instead of >= 67 tools
+	// 12 tools injected instead of >= 66 tools
 	reductionPercent := (1.0 - (float64(len(babySelected)) / float64(totalTools))) * 100.0
-	t.Logf("Empirical token reduction: %.2f%% (13 tools injected out of %d)", reductionPercent, totalTools)
+	t.Logf("Empirical token reduction: %.2f%% (%d tools injected out of %d)", reductionPercent, len(babySelected), totalTools)
 	assert.GreaterOrEqual(t, reductionPercent, 80.0, "Token reduction must be >= 80%%")
 
 	// 5. Verify Ambient Default (unmatched domain): Core + Calendar + Tasks

@@ -1,6 +1,7 @@
 package memory_test
 
 import (
+	"google.golang.org/genai"
 	"errors"
 	"context"
 	"encoding/json"
@@ -920,20 +921,40 @@ func TestRememberFact_IsNoLongerATool(t *testing.T) {
 // the guarantee is held by save_topic_memory.
 func TestSaveTopicMemory_SchemaDeclaresFactAndScope(t *testing.T) {
 	mod := memory.NewModule(newInMemoryRepo())
+	var decl *genai.FunctionDeclaration
 	for _, d := range mod.Declarations() {
-		if d.Name != "save_topic_memory" {
-			continue
+		if d.Name == "save_topic_memory" {
+			decl = d
 		}
-		require.NotNil(t, d.Parameters)
-		assert.NotEmpty(t, d.Description)
-		fact, ok := d.Parameters.Properties["fact"]
-		require.True(t, ok, "save_topic_memory must declare 'fact'")
-		assert.NotEmpty(t, fact.Description)
-		scope, ok := d.Parameters.Properties["scope"]
-		require.True(t, ok, "save_topic_memory must declare 'scope'")
-		assert.Contains(t, scope.Description, "family")
-		assert.Contains(t, d.Parameters.Required, "fact")
-		return
 	}
-	t.Fatal("the memory module does not declare save_topic_memory")
+	require.NotNil(t, decl, "the memory module does not declare save_topic_memory")
+
+	// The same checks the static declaration of remember_fact had.
+	assert.NotEmpty(t, decl.Description)
+	require.NotNil(t, decl.Parameters)
+	assert.Equal(t, genai.TypeObject, decl.Parameters.Type)
+	fact, ok := decl.Parameters.Properties["fact"]
+	require.True(t, ok, "save_topic_memory must declare 'fact'")
+	assert.Equal(t, genai.TypeString, fact.Type)
+	assert.NotEmpty(t, fact.Description)
+	assert.Contains(t, decl.Parameters.Required, "fact", "'fact' must be required")
+	scope, ok := decl.Parameters.Properties["scope"]
+	require.True(t, ok, "save_topic_memory must declare 'scope'")
+	assert.Equal(t, genai.TypeString, scope.Type)
+	assert.Contains(t, scope.Description, "family")
+
+	// And in the form the model receives: the serialised declaration carries scope.
+	raw, err := json.Marshal(&genai.Tool{FunctionDeclarations: []*genai.FunctionDeclaration{decl}})
+	require.NoError(t, err)
+	var tool map[string]interface{}
+	require.NoError(t, json.Unmarshal(raw, &tool))
+	funcs, ok := tool["functionDeclarations"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, funcs, 1)
+	params, ok := funcs[0].(map[string]interface{})["parameters"].(map[string]interface{})
+	require.True(t, ok)
+	props, ok := params["properties"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Contains(t, props, "scope", "the serialised schema must contain scope")
+	assert.Contains(t, props, "fact")
 }

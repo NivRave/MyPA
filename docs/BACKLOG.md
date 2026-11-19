@@ -35,6 +35,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-22 | Low | Restore tool: the rollback test cannot fail yet, and the piped dump check runs only against a fake | open |
 | BL-23 | Low | A failing archive step makes the nightly backup discard its database dump | open |
 | BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: belongs with the re-embedding path of V4-03 |
+| BL-25 | Low | Undo snapshots of saved memories carry the full 3,072-number embedding | open: decide with BL-24 and V4-03 |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -286,6 +287,18 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** a one-off backfill that embeds every `topic_memories` row with a zero vector, reporting how many it
   did. It is the same job as the re-embedding path V4-03 has to build and test, so do it there or reuse its
   mechanism. Test: a zero-vector memory is found by a similar query after the backfill.
+
+### BL-25 — Undo snapshots of memories carry the full embedding (Low)
+- **Found:** 2026-11-19, in the review of V4-06.
+- **Evidence:** `executeSaveTopicMemory` (`internal/domains/memory/module.go`) publishes a mutation event whose
+  `AfterJSON` is the whole `TopicMemory`, and `pgvector.Vector` serialises to its 3,072 numbers. The same
+  happens to `BeforeJSON` when the memory is undone or superseded. Before V4-06 these were 3,072 zeros; now
+  they are real values, tens of kilobytes of JSON per saved memory in `mutation_logs`.
+- **Impact:** storage growth in `mutation_logs` proportional to the number of saved memories, and a larger
+  payload in the dashboard's mutation list. No functional problem; a restored memory keeps its embedding.
+- **Fix:** keep the embedding out of the snapshot and recompute it on restore, or store it once and reference
+  it. Decide together with BL-24 and V4-03, which settle how embeddings are (re)computed. Test: the snapshot
+  of a saved memory stays small, and an undone-then-restored memory is still found by meaning.
 
 ## Operations (owner)
 
