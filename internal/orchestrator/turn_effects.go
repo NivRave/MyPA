@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"github.com/nivik/mypa/internal/identity"
 	"log/slog"
 	"strings"
 	"sync"
@@ -158,6 +159,7 @@ func (fx *turnEffects) any() bool { return fx != nil && fx.happened.Load() }
 var readOnlyBuiltinTools = map[string]bool{
 	"get_current_time": true,
 }
+
 // turnUserKey carries the user resolved once at the start of a turn (P2-7), so tool calls don't
 // each re-query the database for the same row.
 type turnUserKey struct{}
@@ -169,6 +171,36 @@ func withTurnUser(ctx context.Context, u *models.User) context.Context {
 func turnUser(ctx context.Context) *models.User {
 	u, _ := ctx.Value(turnUserKey{}).(*models.User)
 	return u
+}
+
+// turnScopeKey carries the scope built once from the sender's household at the start of a turn
+// (V4-30); every tool call and command of the turn reuses it.
+type turnScopeKey struct{}
+
+func withTurnScope(ctx context.Context, s identity.Scope) context.Context {
+	return context.WithValue(ctx, turnScopeKey{}, s)
+}
+
+func turnScope(ctx context.Context) (identity.Scope, bool) {
+	s, ok := ctx.Value(turnScopeKey{}).(identity.Scope)
+	return s, ok
+}
+
+// scopeOf returns the turn's scope, or builds it from the user's household for callers outside a
+// turn (direct invocations, tests). A user without a usable household gets the zero scope, which
+// every repository method and every permission check refuses.
+func (e *Engine) scopeOf(ctx context.Context, user *models.User) identity.Scope {
+	if s, ok := turnScope(ctx); ok {
+		return s
+	}
+	if e.db == nil || user == nil {
+		return identity.Scope{}
+	}
+	s, err := identity.ForUser(ctx, e.db, user)
+	if err != nil {
+		return identity.Scope{}
+	}
+	return s
 }
 
 // inboundClaim is the dedup claim for one inbound message (zero value = no claim held).

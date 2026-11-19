@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/nivik/mypa/internal/doctor"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -32,6 +34,9 @@ type memoryDB struct {
 	lastSession map[string]models.AuditSession
 	reminders   []models.ScheduledReminder
 	shared      []models.SharedTaskReminder
+	// households answers the engine's household lookups (V4-30). A label always names the same
+	// household; a member without one gets a household keyed by their platform ID.
+	households *identitytest.Store
 }
 
 var _ orchestrator.DBClient = (*memoryDB)(nil)
@@ -41,10 +46,40 @@ func newMemoryDB() *memoryDB {
 		users:       map[string]models.User{},
 		codes:       map[string]*models.PairingCode{},
 		lastSession: map[string]models.AuditSession{},
+		households:  identitytest.NewStore(),
 	}
 }
 
-func (d *memoryDB) SearchSimilarMemories(context.Context, string, string, pgvector.Vector, int) ([]models.TopicMemory, error) {
+// household returns the ID of the household labelled label (created on first use).
+func (d *memoryDB) household(label string) string { return d.households.Household(label).ID }
+
+// adminOf returns the scope of an admin of the household labelled label, for creating codes.
+func (d *memoryDB) adminOf(t *testing.T, label string) identity.Scope {
+	t.Helper()
+	return d.households.ScopeIn(t, label, "dashboard-service", "admin")
+}
+
+func (d *memoryDB) HouseholdByID(ctx context.Context, id string) (*models.Household, error) {
+	return d.households.HouseholdByID(ctx, id)
+}
+
+func (d *memoryDB) HouseholdsByLabel(ctx context.Context, label string) ([]models.Household, error) {
+	return d.households.HouseholdsByLabel(ctx, label)
+}
+
+func (d *memoryDB) UsersInHousehold(_ context.Context, s identity.Scope) ([]models.User, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []models.User
+	for _, u := range d.users {
+		if u.HouseholdID == s.HouseholdID() {
+			out = append(out, u)
+		}
+	}
+	return out, nil
+}
+
+func (d *memoryDB) SearchSimilarMemories(context.Context, identity.Scope, pgvector.Vector, int) ([]models.TopicMemory, error) {
 	return nil, nil
 }
 
@@ -112,11 +147,11 @@ func (d *memoryDB) GetDueSharedReminders() ([]models.SharedTaskReminder, error) 
 	return due, nil
 }
 
-func (d *memoryDB) MarkSharedReminderSent(id uint) error {
+func (d *memoryDB) MarkSharedReminderSent(s identity.Scope, id uint) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for i := range d.shared {
-		if d.shared[i].ID == id {
+		if d.shared[i].ID == id && d.shared[i].HouseholdID == s.HouseholdID() {
 			d.shared[i].IsSent = true
 		}
 	}
@@ -140,7 +175,12 @@ func (d *memoryDB) UpsertUser(u models.User) error {
 	return nil
 }
 
-func (d *memoryDB) CreatePairingCode(pc models.PairingCode) error {
+// CreatePairingCode stamps the scope's household on the code, as the repository does.
+func (d *memoryDB) CreatePairingCode(s identity.Scope, pc models.PairingCode) error {
+	if !s.Valid() {
+		return identity.ErrNoScope
+	}
+	pc.HouseholdID, pc.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if pc.ID == "" {
@@ -173,18 +213,6 @@ func (d *memoryDB) RedeemPairingCode(codeID string, u models.User) error {
 		}
 	}
 	return errNotFound
-}
-
-func (d *memoryDB) GetUsersByFamilyGroup(familyGroup string) ([]models.User, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	var out []models.User
-	for _, u := range d.users {
-		if u.FamilyGroup == familyGroup {
-			out = append(out, u)
-		}
-	}
-	return out, nil
 }
 
 func (d *memoryDB) SaveWorkflow(models.Workflow) error                 { return nil }
@@ -351,7 +379,7 @@ func (s *scenarioTools) SystemPromptSection(context.Context, orchestrator.CallCo
 
 func (s *scenarioTools) Execute(_ context.Context, callCtx orchestrator.CallContext, tool string, args map[string]interface{}) (string, error) {
 	s.mu.Lock()
-	s.runs = append(s.runs, toolRun{Tool: tool, Args: args, ActorID: callCtx.ActorID(), FamilyGroup: callCtx.TenantFamilyGroup()})
+	s.runs = append(s.runs, toolRun{Tool: tool, Args: args, ActorID: callCtx.ActorID(), FamilyGroup: callCtx.Scope.LegacyLabel()})
 	s.mu.Unlock()
 	switch tool {
 	case "fetch_webpage":
@@ -403,10 +431,10 @@ func (f *fakeDurability) Execute(context.Context, orchestrator.CallContext, stri
 	return "", nil
 }
 
-func (f *fakeDurability) Rollback(_ context.Context, actorID, familyGroup, mutationID string, _ ...string) (*models.RollbackResult, error) {
+func (f *fakeDurability) Rollback(_ context.Context, s identity.Scope, mutationID string, _ ...string) (*models.RollbackResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, rollbackCall{ActorID: actorID, FamilyGroup: familyGroup, MutationID: mutationID})
+	f.calls = append(f.calls, rollbackCall{ActorID: s.PersonKey(), FamilyGroup: s.LegacyLabel(), MutationID: mutationID})
 	if f.nothing {
 		return nil, errors.New("no recent undoable actions found")
 	}
@@ -417,8 +445,8 @@ func (f *fakeDurability) Rollback(_ context.Context, actorID, familyGroup, mutat
 	return &models.RollbackResult{MutationID: mutationID, Detail: detail}, nil
 }
 
-func (f *fakeDurability) RollbackLast(ctx context.Context, actorID, familyGroup string, reason ...string) (*models.RollbackResult, error) {
-	return f.Rollback(ctx, actorID, familyGroup, "", reason...)
+func (f *fakeDurability) RollbackLast(ctx context.Context, s identity.Scope, reason ...string) (*models.RollbackResult, error) {
+	return f.Rollback(ctx, s, "", reason...)
 }
 
 func (f *fakeDurability) requests() []rollbackCall {
@@ -455,7 +483,7 @@ func scenarioDoctor() *doctor.Doctor {
 		},
 		doctor.GoogleAccounts{
 			Configured: true,
-			FamilyMembers: func(string) ([]models.User, error) {
+			HouseholdMembers: func(string) ([]models.User, error) {
 				return []models.User{{PlatformID: "a", Name: "Dana"}, {PlatformID: "b", Name: "Omer"}, {PlatformID: "c", Name: "Noa"}}, nil
 			},
 			Token: func(_ context.Context, userID string) ([]byte, error) {

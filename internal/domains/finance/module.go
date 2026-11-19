@@ -49,8 +49,8 @@ func (m *Module) Name() string {
 // SystemPromptSection injects monthly budget status, category alert overviews,
 // and upcoming recurring bills due into the system prompt.
 func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.CallContext) string {
-	familyGroup := m.resolveFamilyGroup(callCtx)
-	if familyGroup == "" {
+	s := callCtx.Scope
+	if !s.Valid() {
 		return ""
 	}
 
@@ -60,24 +60,24 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 	}
 
 	now := time.Now()
-	budgets, err := repo.ListCategoryBudgets(ctx, familyGroup)
+	budgets, err := repo.ListCategoryBudgets(ctx, s)
 	if err != nil {
 		budgets = nil
 	}
 
-	monthlySpend, err := repo.GetMonthlyTotalsByCategory(ctx, familyGroup, now.Year(), now.Month())
+	monthlySpend, err := repo.GetMonthlyTotalsByCategory(ctx, s, now.Year(), now.Month())
 	if err != nil {
 		monthlySpend = make(map[string]float64)
 	}
 
-	recurringBills, err := repo.ListRecurringBills(ctx, familyGroup)
+	recurringBills, err := repo.ListRecurringBills(ctx, s)
 	if err != nil {
 		recurringBills = nil
 	}
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("### Financial Tracking & Budget Status (%s %d)\n", now.Month().String(), now.Year()))
-	sb.WriteString(fmt.Sprintf("Family Group: %s\n", familyGroup))
+	sb.WriteString(fmt.Sprintf("Family Group: %s\n", s.HouseholdName()))
 
 	if len(budgets) == 0 && len(monthlySpend) == 0 && len(recurringBills) == 0 {
 		sb.WriteString("No budgets or transactions logged yet for this month. Ledger ready for expenses and recurring bills.\n")
@@ -151,11 +151,9 @@ func (m *Module) resolveRepo(callCtx orchestrator.CallContext) (db.FinanceReposi
 	if m.repo != nil {
 		return m.repo, nil
 	}
+	// *db.Client implements db.FinanceRepository, so it is covered by this assertion.
 	if r, ok := callCtx.DB.(db.FinanceRepository); ok {
 		return r, nil
-	}
-	if client, ok := callCtx.DB.(*db.Client); ok && client != nil {
-		return db.NewFinanceRepository(client.DB), nil
 	}
 	if extraRepo, ok := callCtx.Extra["finance_repo"].(db.FinanceRepository); ok {
 		return extraRepo, nil

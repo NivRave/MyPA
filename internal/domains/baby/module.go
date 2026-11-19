@@ -61,8 +61,8 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 		return ""
 	}
 
-	familyGroup, _ := m.resolveContext(callCtx)
-	profiles, err := repo.GetBabyProfilesForFamily(familyGroup)
+	scope, _ := m.resolveContext(callCtx)
+	profiles, err := repo.GetBabyProfilesForFamily(scope)
 	if err != nil || len(profiles) == 0 {
 		return ""
 	}
@@ -86,7 +86,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 		}
 
 		// Medication Cooldown
-		lastMed, _ := repo.GetLastMedicationLog(p.ID, familyGroup, "")
+		lastMed, _ := repo.GetLastMedicationLog(scope, p.ID, "")
 		if lastMed != nil && now.Sub(lastMed.Timestamp) < 24*time.Hour {
 			cd := CheckMedicationCooldown(lastMed, lastMed.Details, now, age.Months)
 			if !cd.IsSafeToAdminister {
@@ -109,7 +109,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 	}
 
 	// Inventory alerts
-	lowItems, _ := repo.GetLowBabyInventoryItems(familyGroup)
+	lowItems, _ := repo.GetLowBabyInventoryItems(scope)
 	if len(lowItems) > 0 {
 		var itemAlerts []string
 		for _, it := range lowItems {

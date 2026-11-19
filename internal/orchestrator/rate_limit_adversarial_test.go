@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
-	"go.uber.org/mock/gomock"
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/channel/adapters/adapterstest"
@@ -17,6 +16,7 @@ import (
 	tgmocks "github.com/nivik/mypa/internal/telegram/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 // TestAdversarial_Engine_LockoutBlocksValidCode verifies that once a user is locked out
@@ -188,6 +188,7 @@ func TestAdversarial_Engine_SuccessfulPairingResetsCounter(t *testing.T) {
 		ID:          "pc-uuid-123",
 		Code:        "999888",
 		Role:        "member",
+		HouseholdID: householdID("family-adv"),
 		FamilyGroup: "family-adv",
 	}
 	dbMock.EXPECT().GetPairingCode("999888").Return(validPC, nil).Times(1)

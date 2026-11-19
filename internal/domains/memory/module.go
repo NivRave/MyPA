@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -164,17 +165,17 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 	}
 
 	userID := callCtx.ActorID()
-	familyGroup := callCtx.TenantFamilyGroup()
+	hs := callCtx.Scope // V4-30: the household every memory call is scoped to
 
 	switch toolName {
 	case "save_topic_memory":
-		return m.executeSaveTopicMemory(ctx, callCtx, repo, userID, familyGroup, args)
+		return m.executeSaveTopicMemory(ctx, callCtx, repo, userID, hs, args)
 	case "search_topic_memories":
-		return m.executeSearchTopicMemories(ctx, repo, userID, familyGroup, args)
+		return m.executeSearchTopicMemories(ctx, repo, hs, args)
 	case "upsert_entity_profile":
-		return m.executeUpsertEntityProfile(ctx, callCtx, repo, userID, familyGroup, args)
+		return m.executeUpsertEntityProfile(ctx, callCtx, repo, userID, hs, args)
 	case "get_entity_profile":
-		return m.executeGetEntityProfile(ctx, repo, familyGroup, args)
+		return m.executeGetEntityProfile(ctx, repo, hs, args)
 	default:
 		return "", fmt.Errorf("unsupported memory tool: %s", toolName)
 	}
@@ -188,23 +189,14 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 		return ""
 	}
 
-	userID := ""
-	familyGroup := ""
-	if callCtx.User != nil {
-		userID = callCtx.User.PlatformID
-		if userID == "" {
-			userID = callCtx.User.ID
-		}
-		familyGroup = callCtx.User.FamilyGroup
-	}
-
-	profiles, err := repo.ListEntityProfiles(ctx, familyGroup, "")
+	hs := callCtx.Scope
+	profiles, err := repo.ListEntityProfiles(ctx, hs, "")
 	if err != nil {
 		profiles = nil
 	}
 
 	// Fetch pinned memories
-	pinnedMemories, err := repo.SearchTopicMemories(ctx, userID, familyGroup, "", "", nil)
+	pinnedMemories, err := repo.SearchTopicMemories(ctx, hs, "", "", nil)
 	var activePinned []models.TopicMemory
 	if err == nil {
 		for _, mem := range pinnedMemories {
@@ -275,7 +267,7 @@ func embedFact(ctx context.Context, callCtx orchestrator.CallContext, fact strin
 	return embedding
 }
 
-func (m *Module) executeSaveTopicMemory(ctx context.Context, callCtx orchestrator.CallContext, repo db.MemoryV2Repository, userID, familyGroup string, args map[string]interface{}) (string, error) {
+func (m *Module) executeSaveTopicMemory(ctx context.Context, callCtx orchestrator.CallContext, repo db.MemoryV2Repository, userID string, hs identity.Scope, args map[string]interface{}) (string, error) {
 	topic := getString(args, "topic")
 	subtopic := getString(args, "subtopic")
 	fact := getString(args, "fact")
@@ -296,7 +288,7 @@ func (m *Module) executeSaveTopicMemory(ctx context.Context, callCtx orchestrato
 
 	mem := models.TopicMemory{
 		UserID:          userID,
-		FamilyGroup:     familyGroup,
+		FamilyGroup:     hs.LegacyLabel(),
 		Topic:           topic,
 		Subtopic:        subtopic,
 		Fact:            fact,
@@ -313,13 +305,13 @@ func (m *Module) executeSaveTopicMemory(ctx context.Context, callCtx orchestrato
 	}
 	mem.SetTags(tags)
 
-	if err := repo.SaveTopicMemory(ctx, &mem); err != nil {
+	if err := repo.SaveTopicMemory(ctx, hs, &mem); err != nil {
 		return "", fmt.Errorf("failed to save topic memory: %w", err)
 	}
 
 	// Link and supersede older memory if requested
 	if supersedesID > 0 {
-		if err := repo.SupersedeMemory(ctx, supersedesID, mem.ID); err != nil {
+		if err := repo.SupersedeMemory(ctx, hs, supersedesID, mem.ID); err != nil {
 			// Log error but keep newly created memory
 			fmt.Printf("warning: failed to supersede memory %d: %v\n", supersedesID, err)
 		}
@@ -338,7 +330,8 @@ func (m *Module) executeSaveTopicMemory(ctx context.Context, callCtx orchestrato
 			EntityType:  "TopicMemory",
 			EntityID:    strconv.FormatUint(uint64(mem.ID), 10),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			HouseholdID: hs.HouseholdID(),
+			FamilyGroup: hs.LegacyLabel(),
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Saved memory [%s] %s: %s", mem.Topic, mem.Subtopic, mem.Fact),
 			Timestamp:   time.Now(),
@@ -346,15 +339,15 @@ func (m *Module) executeSaveTopicMemory(ctx context.Context, callCtx orchestrato
 	}
 
 	resp := map[string]interface{}{
-		"status":      "saved",
-		"id":          mem.ID,
-		"topic":       mem.Topic,
-		"subtopic":    mem.Subtopic,
-		"fact":        mem.Fact,
-		"scope":       mem.Scope,
-		"is_pinned":   mem.IsPinned,
-		"tags":        mem.Tags(),
-		"valid_from":  mem.ValidFrom.Format(time.RFC3339),
+		"status":     "saved",
+		"id":         mem.ID,
+		"topic":      mem.Topic,
+		"subtopic":   mem.Subtopic,
+		"fact":       mem.Fact,
+		"scope":      mem.Scope,
+		"is_pinned":  mem.IsPinned,
+		"tags":       mem.Tags(),
+		"valid_from": mem.ValidFrom.Format(time.RFC3339),
 	}
 	if supersedesID > 0 {
 		resp["superseded_memory_id"] = supersedesID
@@ -364,12 +357,12 @@ func (m *Module) executeSaveTopicMemory(ctx context.Context, callCtx orchestrato
 	return string(out), nil
 }
 
-func (m *Module) executeSearchTopicMemories(ctx context.Context, repo db.MemoryV2Repository, userID, familyGroup string, args map[string]interface{}) (string, error) {
+func (m *Module) executeSearchTopicMemories(ctx context.Context, repo db.MemoryV2Repository, hs identity.Scope, args map[string]interface{}) (string, error) {
 	topic := getString(args, "topic")
 	query := getString(args, "query")
 	tags := getStringSlice(args, "tags")
 
-	memories, err := repo.SearchTopicMemories(ctx, userID, familyGroup, topic, query, tags)
+	memories, err := repo.SearchTopicMemories(ctx, hs, topic, query, tags)
 	if err != nil {
 		return "", fmt.Errorf("failed to search topic memories: %w", err)
 	}
@@ -406,7 +399,7 @@ func (m *Module) executeSearchTopicMemories(ctx context.Context, repo db.MemoryV
 	return string(out), nil
 }
 
-func (m *Module) executeUpsertEntityProfile(ctx context.Context, callCtx orchestrator.CallContext, repo db.MemoryV2Repository, userID, familyGroup string, args map[string]interface{}) (string, error) {
+func (m *Module) executeUpsertEntityProfile(ctx context.Context, callCtx orchestrator.CallContext, repo db.MemoryV2Repository, userID string, hs identity.Scope, args map[string]interface{}) (string, error) {
 	topic := getString(args, "topic")
 	entityType := getString(args, "entity_type")
 	entityName := getString(args, "entity_name")
@@ -418,7 +411,7 @@ func (m *Module) executeUpsertEntityProfile(ctx context.Context, callCtx orchest
 
 	profile := models.EntityProfile{
 		UserID:          userID,
-		FamilyGroup:     familyGroup,
+		FamilyGroup:     hs.LegacyLabel(),
 		Topic:           topic,
 		EntityType:      entityType,
 		EntityName:      entityName,
@@ -427,7 +420,7 @@ func (m *Module) executeUpsertEntityProfile(ctx context.Context, callCtx orchest
 	}
 	profile.SetAttributes(attrs)
 
-	if err := repo.UpsertEntityProfile(ctx, &profile); err != nil {
+	if err := repo.UpsertEntityProfile(ctx, hs, &profile); err != nil {
 		return "", fmt.Errorf("failed to upsert entity profile: %w", err)
 	}
 
@@ -440,7 +433,8 @@ func (m *Module) executeUpsertEntityProfile(ctx context.Context, callCtx orchest
 			EntityType:  "EntityProfile",
 			EntityID:    strconv.FormatUint(uint64(profile.ID), 10),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			HouseholdID: hs.HouseholdID(),
+			FamilyGroup: hs.LegacyLabel(),
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Updated entity profile %s (%s • %s)", profile.EntityName, profile.EntityType, profile.Topic),
 			Timestamp:   time.Now(),
@@ -460,7 +454,7 @@ func (m *Module) executeUpsertEntityProfile(ctx context.Context, callCtx orchest
 	return string(out), nil
 }
 
-func (m *Module) executeGetEntityProfile(ctx context.Context, repo db.MemoryV2Repository, familyGroup string, args map[string]interface{}) (string, error) {
+func (m *Module) executeGetEntityProfile(ctx context.Context, repo db.MemoryV2Repository, hs identity.Scope, args map[string]interface{}) (string, error) {
 	topic := getString(args, "topic")
 	entityName := getString(args, "entity_name")
 
@@ -468,7 +462,7 @@ func (m *Module) executeGetEntityProfile(ctx context.Context, repo db.MemoryV2Re
 		return "", errors.New("parameters 'topic' and 'entity_name' are required")
 	}
 
-	profile, err := repo.GetEntityProfile(ctx, familyGroup, topic, entityName)
+	profile, err := repo.GetEntityProfile(ctx, hs, topic, entityName)
 	if err != nil {
 		return "", fmt.Errorf("failed to get entity profile: %w", err)
 	}

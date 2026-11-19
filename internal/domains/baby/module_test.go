@@ -3,6 +3,8 @@ package baby_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"strings"
 	"sync"
 	"testing"
@@ -19,13 +21,13 @@ import (
 
 // mockBabyRepo is a thread-safe, in-memory implementation of db.BabyRepository.
 type mockBabyRepo struct {
-	mu           sync.RWMutex
-	profiles     map[uint]*models.BabyProfile
-	careLogs     map[uint]*models.BabyCareLog
-	inventory    map[uint]*models.BabyInventoryItem
-	nextProfID   uint
-	nextLogID    uint
-	nextInvID    uint
+	mu         sync.RWMutex
+	profiles   map[uint]*models.BabyProfile
+	careLogs   map[uint]*models.BabyCareLog
+	inventory  map[uint]*models.BabyInventoryItem
+	nextProfID uint
+	nextLogID  uint
+	nextInvID  uint
 }
 
 func newMockBabyRepo() *mockBabyRepo {
@@ -39,18 +41,18 @@ func newMockBabyRepo() *mockBabyRepo {
 	}
 }
 
-func (r *mockBabyRepo) UpsertBabyProfile(p *models.BabyProfile) error {
+func (r *mockBabyRepo) UpsertBabyProfile(s identity.Scope, p *models.BabyProfile) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	p.Name = strings.TrimSpace(p.Name)
-	p.FamilyGroup = strings.TrimSpace(p.FamilyGroup)
+	p.HouseholdID, p.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	p.UpdatedAt = time.Now()
 
 	if p.ID == 0 {
-		// Look up existing by familyGroup + Name
+		// Look up existing by household + Name
 		for _, ex := range r.profiles {
-			if ex.FamilyGroup == p.FamilyGroup && strings.EqualFold(ex.Name, p.Name) {
+			if ex.HouseholdID == p.HouseholdID && strings.EqualFold(ex.Name, p.Name) {
 				p.ID = ex.ID
 				break
 			}
@@ -67,7 +69,7 @@ func (r *mockBabyRepo) UpsertBabyProfile(p *models.BabyProfile) error {
 	return nil
 }
 
-func (r *mockBabyRepo) GetBabyProfile(id uint) (*models.BabyProfile, error) {
+func (r *mockBabyRepo) GetBabyProfile(_ identity.Scope, id uint) (*models.BabyProfile, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -79,12 +81,12 @@ func (r *mockBabyRepo) GetBabyProfile(id uint) (*models.BabyProfile, error) {
 	return &cp, nil
 }
 
-func (r *mockBabyRepo) GetBabyProfileByName(familyGroup, name string) (*models.BabyProfile, error) {
+func (r *mockBabyRepo) GetBabyProfileByName(s identity.Scope, name string) (*models.BabyProfile, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	for _, p := range r.profiles {
-		if p.FamilyGroup == familyGroup && strings.EqualFold(p.Name, name) {
+		if p.HouseholdID == s.HouseholdID() && strings.EqualFold(p.Name, name) {
 			cp := *p
 			return &cp, nil
 		}
@@ -92,20 +94,20 @@ func (r *mockBabyRepo) GetBabyProfileByName(familyGroup, name string) (*models.B
 	return nil, nil
 }
 
-func (r *mockBabyRepo) GetBabyProfilesForFamily(familyGroup string) ([]models.BabyProfile, error) {
+func (r *mockBabyRepo) GetBabyProfilesForFamily(s identity.Scope) ([]models.BabyProfile, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	var list []models.BabyProfile
 	for _, p := range r.profiles {
-		if p.FamilyGroup == familyGroup {
+		if p.HouseholdID == s.HouseholdID() {
 			list = append(list, *p)
 		}
 	}
 	return list, nil
 }
 
-func (r *mockBabyRepo) DeleteBabyProfile(id uint) error {
+func (r *mockBabyRepo) DeleteBabyProfile(_ identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -113,9 +115,10 @@ func (r *mockBabyRepo) DeleteBabyProfile(id uint) error {
 	return nil
 }
 
-func (r *mockBabyRepo) CreateCareLog(log *models.BabyCareLog) error {
+func (r *mockBabyRepo) CreateCareLog(s identity.Scope, log *models.BabyCareLog) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	log.HouseholdID, log.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 
 	if log.ID == 0 {
 		log.ID = r.nextLogID
@@ -130,7 +133,7 @@ func (r *mockBabyRepo) CreateCareLog(log *models.BabyCareLog) error {
 	return nil
 }
 
-func (r *mockBabyRepo) GetCareLogByID(id uint) (*models.BabyCareLog, error) {
+func (r *mockBabyRepo) GetCareLogByID(_ identity.Scope, id uint) (*models.BabyCareLog, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -142,7 +145,7 @@ func (r *mockBabyRepo) GetCareLogByID(id uint) (*models.BabyCareLog, error) {
 	return &cp, nil
 }
 
-func (r *mockBabyRepo) GetCareLogs(babyID uint, familyGroup, logType string, start, end time.Time, limit int) ([]models.BabyCareLog, error) {
+func (r *mockBabyRepo) GetCareLogs(s identity.Scope, babyID uint, logType string, start, end time.Time, limit int) ([]models.BabyCareLog, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -151,7 +154,7 @@ func (r *mockBabyRepo) GetCareLogs(babyID uint, familyGroup, logType string, sta
 		if babyID > 0 && l.BabyID != babyID {
 			continue
 		}
-		if familyGroup != "" && l.FamilyGroup != familyGroup {
+		if l.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		if logType != "" && !strings.EqualFold(logType, "all") && !strings.EqualFold(l.LogType, logType) {
@@ -181,7 +184,7 @@ func (r *mockBabyRepo) GetCareLogs(babyID uint, familyGroup, logType string, sta
 	return matches, nil
 }
 
-func (r *mockBabyRepo) DeleteCareLog(id uint) error {
+func (r *mockBabyRepo) DeleteCareLog(_ identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -189,8 +192,8 @@ func (r *mockBabyRepo) DeleteCareLog(id uint) error {
 	return nil
 }
 
-func (r *mockBabyRepo) GetLastMedicationLog(babyID uint, familyGroup, medName string) (*models.BabyCareLog, error) {
-	logs, err := r.GetCareLogs(babyID, familyGroup, "medication", time.Time{}, time.Time{}, 100)
+func (r *mockBabyRepo) GetLastMedicationLog(s identity.Scope, babyID uint, medName string) (*models.BabyCareLog, error) {
+	logs, err := r.GetCareLogs(s, babyID, "medication", time.Time{}, time.Time{}, 100)
 	if err != nil || len(logs) == 0 {
 		return nil, err
 	}
@@ -205,15 +208,15 @@ func (r *mockBabyRepo) GetLastMedicationLog(babyID uint, familyGroup, medName st
 	return nil, nil
 }
 
-func (r *mockBabyRepo) GetCareStatsSummary(babyID uint, familyGroup string, start, end time.Time) (*models.BabyCareSummary, error) {
-	logs, err := r.GetCareLogs(babyID, familyGroup, "all", start, end, 1000)
+func (r *mockBabyRepo) GetCareStatsSummary(s identity.Scope, babyID uint, start, end time.Time) (*models.BabyCareSummary, error) {
+	logs, err := r.GetCareLogs(s, babyID, "all", start, end, 1000)
 	if err != nil {
 		return nil, err
 	}
 
 	summary := &models.BabyCareSummary{
 		BabyID:         babyID,
-		FamilyGroup:    familyGroup,
+		FamilyGroup:    s.LegacyLabel(),
 		StartTime:      start,
 		EndTime:        end,
 		LogCountByType: make(map[string]int),
@@ -260,17 +263,17 @@ func (r *mockBabyRepo) GetCareStatsSummary(babyID uint, familyGroup string, star
 	return summary, nil
 }
 
-func (r *mockBabyRepo) UpsertBabyInventoryItem(item *models.BabyInventoryItem) error {
+func (r *mockBabyRepo) UpsertBabyInventoryItem(s identity.Scope, item *models.BabyInventoryItem) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	item.ItemName = strings.TrimSpace(item.ItemName)
-	item.FamilyGroup = strings.TrimSpace(item.FamilyGroup)
+	item.HouseholdID, item.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	item.UpdatedAt = time.Now()
 
 	if item.ID == 0 {
 		for _, ex := range r.inventory {
-			if ex.FamilyGroup == item.FamilyGroup && strings.EqualFold(ex.ItemName, item.ItemName) {
+			if ex.HouseholdID == item.HouseholdID && strings.EqualFold(ex.ItemName, item.ItemName) {
 				item.ID = ex.ID
 				break
 			}
@@ -287,7 +290,7 @@ func (r *mockBabyRepo) UpsertBabyInventoryItem(item *models.BabyInventoryItem) e
 	return nil
 }
 
-func (r *mockBabyRepo) GetBabyInventoryItem(id uint) (*models.BabyInventoryItem, error) {
+func (r *mockBabyRepo) GetBabyInventoryItem(_ identity.Scope, id uint) (*models.BabyInventoryItem, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -299,12 +302,12 @@ func (r *mockBabyRepo) GetBabyInventoryItem(id uint) (*models.BabyInventoryItem,
 	return &cp, nil
 }
 
-func (r *mockBabyRepo) GetBabyInventoryItemByName(familyGroup, itemName string) (*models.BabyInventoryItem, error) {
+func (r *mockBabyRepo) GetBabyInventoryItemByName(s identity.Scope, itemName string) (*models.BabyInventoryItem, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	for _, it := range r.inventory {
-		if it.FamilyGroup == familyGroup && strings.EqualFold(it.ItemName, itemName) {
+		if it.HouseholdID == s.HouseholdID() && strings.EqualFold(it.ItemName, itemName) {
 			cp := *it
 			return &cp, nil
 		}
@@ -312,33 +315,33 @@ func (r *mockBabyRepo) GetBabyInventoryItemByName(familyGroup, itemName string) 
 	return nil, nil
 }
 
-func (r *mockBabyRepo) ListBabyInventoryItems(familyGroup string) ([]models.BabyInventoryItem, error) {
+func (r *mockBabyRepo) ListBabyInventoryItems(s identity.Scope) ([]models.BabyInventoryItem, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	var list []models.BabyInventoryItem
 	for _, it := range r.inventory {
-		if it.FamilyGroup == familyGroup {
+		if it.HouseholdID == s.HouseholdID() {
 			list = append(list, *it)
 		}
 	}
 	return list, nil
 }
 
-func (r *mockBabyRepo) GetLowBabyInventoryItems(familyGroup string) ([]models.BabyInventoryItem, error) {
+func (r *mockBabyRepo) GetLowBabyInventoryItems(s identity.Scope) ([]models.BabyInventoryItem, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	var list []models.BabyInventoryItem
 	for _, it := range r.inventory {
-		if it.FamilyGroup == familyGroup && it.QuantityRemaining <= it.LowThreshold {
+		if it.HouseholdID == s.HouseholdID() && it.QuantityRemaining <= it.LowThreshold {
 			list = append(list, *it)
 		}
 	}
 	return list, nil
 }
 
-func (r *mockBabyRepo) DeleteBabyInventoryItem(id uint) error {
+func (r *mockBabyRepo) DeleteBabyInventoryItem(_ identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -353,8 +356,39 @@ func setupTestModule(t *testing.T) (*baby.Module, *mockBabyRepo, *events.EventBu
 	return mod, repo, bus
 }
 
+// testHouseholds holds the households tests create tenants in (V4-30): a family label becomes a
+// household with an ID derived from the label, and scopes are built by the production constructor.
+var testHouseholds = identitytest.NewStore()
+
+// tenantScope returns the scope of personKey in the household labelled label. A user without a
+// label is their own tenant, keyed by their platform ID (DE-2), as the migration maps them.
+func tenantScope(label, personKey string) identity.Scope {
+	if strings.TrimSpace(label) == "" {
+		label = personKey
+	}
+	h := testHouseholds.Household(label)
+	s, err := identity.ForUser(context.Background(), testHouseholds, &models.User{PlatformID: personKey, Role: "family", HouseholdID: h.ID})
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+// withScope gives a call context the scope of its user (built from the user's family label).
+func withScope(cc orchestrator.CallContext) orchestrator.CallContext {
+	label, key := "", cc.Message.Sender
+	if cc.User != nil {
+		label = cc.User.FamilyGroup
+		if cc.User.PlatformID != "" {
+			key = cc.User.PlatformID
+		}
+	}
+	cc.Scope = tenantScope(label, key)
+	return cc
+}
+
 func createTestCallContext(bus *events.EventBus) orchestrator.CallContext {
-	return orchestrator.CallContext{
+	return withScope(orchestrator.CallContext{
 		User: &models.User{
 			ID:          "user-101",
 			FamilyGroup: "family-smith",
@@ -363,7 +397,7 @@ func createTestCallContext(bus *events.EventBus) orchestrator.CallContext {
 			Sender: "user-101",
 		},
 		EventBus: bus,
-	}
+	})
 }
 
 // 1. Declarations & Module Metadata
@@ -428,7 +462,7 @@ func TestModule_UpsertBabyProfile(t *testing.T) {
 	assert.Contains(t, out, "Maya")
 
 	// Verify DB state
-	profile, err := repo.GetBabyProfileByName("family-smith", "Maya")
+	profile, err := repo.GetBabyProfileByName(tenantScope("family-smith", "user-101"), "Maya")
 	require.NoError(t, err)
 	require.NotNil(t, profile)
 	assert.Equal(t, "Maya", profile.Name)
@@ -457,7 +491,7 @@ func TestModule_UpsertBabyProfile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, outUpdate, "success")
 
-	updatedProfile, err := repo.GetBabyProfile(profile.ID)
+	updatedProfile, err := repo.GetBabyProfile(tenantScope("family-smith", "user-101"), profile.ID)
 	require.NoError(t, err)
 	assert.Equal(t, 6100, updatedProfile.CurrentWeightGrams)
 	assert.Equal(t, 61.0, updatedProfile.HeightCm)
@@ -482,7 +516,7 @@ func TestModule_LogBabyCare(t *testing.T) {
 		DateOfBirth:        time.Now().AddDate(0, -3, 0),
 		CurrentWeightGrams: 5000,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(tenantScope("family-smith", "user-101"), &profile))
 
 	var emittedEvents []events.MutationEvent
 	var evMu sync.Mutex
@@ -556,7 +590,7 @@ func TestModule_LogBabyCare(t *testing.T) {
 	assert.Contains(t, out, "Logged growth measurement")
 
 	// Verify profile weight was updated to 5800 grams
-	updatedProf, err := repo.GetBabyProfile(profile.ID)
+	updatedProf, err := repo.GetBabyProfile(tenantScope("family-smith", "user-101"), profile.ID)
 	require.NoError(t, err)
 	assert.Equal(t, 5800, updatedProf.CurrentWeightGrams)
 
@@ -578,7 +612,7 @@ func TestModule_MedicationCooldown(t *testing.T) {
 		Name:        "Noah",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(tenantScope("family-smith", "user-101"), &profile))
 
 	// Dose 1: Paracetamol at 12:00
 	t1 := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
@@ -647,37 +681,37 @@ func TestModule_QueryBabyLogsAndTrends(t *testing.T) {
 		Name:        "Chloe",
 		DateOfBirth: time.Now().AddDate(0, -6, 0),
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(tenantScope("family-smith", "user-101"), &profile))
 
 	now := time.Now()
 
 	// Seed 3 feeding logs (total 400 ml)
-	require.NoError(t, repo.CreateCareLog(&models.BabyCareLog{
+	require.NoError(t, repo.CreateCareLog(tenantScope("family-smith", "user-101"), &models.BabyCareLog{
 		BabyID: profile.ID, FamilyGroup: "family-smith", LogType: "feeding", ValueNumeric: 120, Unit: "ml", Timestamp: now.Add(-6 * time.Hour),
 	}))
-	require.NoError(t, repo.CreateCareLog(&models.BabyCareLog{
+	require.NoError(t, repo.CreateCareLog(tenantScope("family-smith", "user-101"), &models.BabyCareLog{
 		BabyID: profile.ID, FamilyGroup: "family-smith", LogType: "feeding", ValueNumeric: 140, Unit: "ml", Timestamp: now.Add(-3 * time.Hour),
 	}))
-	require.NoError(t, repo.CreateCareLog(&models.BabyCareLog{
+	require.NoError(t, repo.CreateCareLog(tenantScope("family-smith", "user-101"), &models.BabyCareLog{
 		BabyID: profile.ID, FamilyGroup: "family-smith", LogType: "feeding", ValueNumeric: 140, Unit: "ml", Timestamp: now.Add(-30 * time.Minute),
 	}))
 
 	// Seed 2 sleep logs (1.5h and 2.0h)
-	require.NoError(t, repo.CreateCareLog(&models.BabyCareLog{
+	require.NoError(t, repo.CreateCareLog(tenantScope("family-smith", "user-101"), &models.BabyCareLog{
 		BabyID: profile.ID, FamilyGroup: "family-smith", LogType: "sleep", ValueNumeric: 1.5, Unit: "hours", Timestamp: now.Add(-8 * time.Hour),
 	}))
-	require.NoError(t, repo.CreateCareLog(&models.BabyCareLog{
+	require.NoError(t, repo.CreateCareLog(tenantScope("family-smith", "user-101"), &models.BabyCareLog{
 		BabyID: profile.ID, FamilyGroup: "family-smith", LogType: "sleep", ValueNumeric: 2.0, Unit: "hours", Timestamp: now.Add(-4 * time.Hour),
 	}))
 
 	// Seed 3 diaper logs
-	require.NoError(t, repo.CreateCareLog(&models.BabyCareLog{
+	require.NoError(t, repo.CreateCareLog(tenantScope("family-smith", "user-101"), &models.BabyCareLog{
 		BabyID: profile.ID, FamilyGroup: "family-smith", LogType: "diaper", Details: "wet", Timestamp: now.Add(-5 * time.Hour),
 	}))
-	require.NoError(t, repo.CreateCareLog(&models.BabyCareLog{
+	require.NoError(t, repo.CreateCareLog(tenantScope("family-smith", "user-101"), &models.BabyCareLog{
 		BabyID: profile.ID, FamilyGroup: "family-smith", LogType: "diaper", Details: "dirty", Timestamp: now.Add(-2 * time.Hour),
 	}))
-	require.NoError(t, repo.CreateCareLog(&models.BabyCareLog{
+	require.NoError(t, repo.CreateCareLog(tenantScope("family-smith", "user-101"), &models.BabyCareLog{
 		BabyID: profile.ID, FamilyGroup: "family-smith", LogType: "diaper", Details: "wet and dirty (both)", Timestamp: now.Add(-10 * time.Minute),
 	}))
 
@@ -721,7 +755,7 @@ func TestModule_MilestoneSuggestions(t *testing.T) {
 		Name:        "Liam",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(tenantScope("family-smith", "user-101"), &profile))
 
 	out, err := mod.Execute(context.Background(), callCtx, "get_baby_milestone_suggestions", map[string]interface{}{
 		"baby_id": int(profile.ID),
@@ -825,11 +859,11 @@ func TestModule_SystemPromptSection(t *testing.T) {
 		Name:        "Emma",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(tenantScope("family-smith", "user-101"), &profile))
 
 	// Add recent medication log (only 1h ago)
 	medTime := now.Add(-1 * time.Hour)
-	require.NoError(t, repo.CreateCareLog(&models.BabyCareLog{
+	require.NoError(t, repo.CreateCareLog(tenantScope("family-smith", "user-101"), &models.BabyCareLog{
 		BabyID:      profile.ID,
 		FamilyGroup: "family-smith",
 		LogType:     "medication",
@@ -838,7 +872,7 @@ func TestModule_SystemPromptSection(t *testing.T) {
 	}))
 
 	// Add low inventory item
-	require.NoError(t, repo.UpsertBabyInventoryItem(&models.BabyInventoryItem{
+	require.NoError(t, repo.UpsertBabyInventoryItem(tenantScope("family-smith", "user-101"), &models.BabyInventoryItem{
 		FamilyGroup:       "family-smith",
 		ItemName:          "Vitamin D Drops",
 		QuantityRemaining: 1.0,
@@ -892,8 +926,8 @@ func TestModule_ErrorHandling(t *testing.T) {
 	// seed 2 babies, then try logging without specifying which baby
 	p1 := models.BabyProfile{FamilyGroup: "family-smith", Name: "Twin1", DateOfBirth: time.Now()}
 	p2 := models.BabyProfile{FamilyGroup: "family-smith", Name: "Twin2", DateOfBirth: time.Now()}
-	require.NoError(t, repo.UpsertBabyProfile(&p1))
-	require.NoError(t, repo.UpsertBabyProfile(&p2))
+	require.NoError(t, repo.UpsertBabyProfile(tenantScope("family-smith", "user-101"), &p1))
+	require.NoError(t, repo.UpsertBabyProfile(tenantScope("family-smith", "user-101"), &p2))
 
 	_, err = mod.Execute(context.Background(), callCtx, "log_baby_care", map[string]interface{}{
 		"log_type": "feeding",

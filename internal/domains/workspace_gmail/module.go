@@ -281,7 +281,8 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 			EntityType:  "EmailDraft",
 			EntityID:    messageID,
 			ActorUserID: actorID,
-			FamilyGroup: callCtx.TenantFamilyGroup(),
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			Summary:     fmt.Sprintf("Drafted reply to email %s", messageID),
 		})
 
@@ -306,7 +307,8 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 			EntityType:  "EmailMessage",
 			EntityID:    fmt.Sprintf("%d_messages", len(messageIDs)),
 			ActorUserID: actorID,
-			FamilyGroup: callCtx.TenantFamilyGroup(),
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			Summary:     fmt.Sprintf("Archived %d emails", len(messageIDs)),
 		})
 
@@ -331,7 +333,8 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 			EntityType:  "EmailMessage",
 			EntityID:    fmt.Sprintf("%d_messages", len(messageIDs)),
 			ActorUserID: actorID,
-			FamilyGroup: callCtx.TenantFamilyGroup(),
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			Summary:     fmt.Sprintf("Moved %d emails to trash", len(messageIDs)),
 		})
 
@@ -367,7 +370,8 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 			EntityType:  "EmailLabel",
 			EntityID:    labelID,
 			ActorUserID: actorID,
-			FamilyGroup: callCtx.TenantFamilyGroup(),
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			Summary:     fmt.Sprintf("Applied label %s to %d emails", labelID, len(messageIDs)),
 		})
 
@@ -391,7 +395,8 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 			EntityType:  "EmailLabel",
 			EntityID:    labelID,
 			ActorUserID: actorID,
-			FamilyGroup: callCtx.TenantFamilyGroup(),
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			Summary:     fmt.Sprintf("Created email label %s", labelName),
 		})
 
@@ -415,7 +420,8 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 			EntityType:  "EmailSubscription",
 			EntityID:    messageID,
 			ActorUserID: actorID,
-			FamilyGroup: callCtx.TenantFamilyGroup(),
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			Summary:     fmt.Sprintf("Unsubscribed from email %s", messageID),
 		})
 

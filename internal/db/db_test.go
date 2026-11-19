@@ -106,17 +106,18 @@ func TestMemories(t *testing.T) {
 	ctx := context.Background()
 
 	userID := "user-456"
+	s := scopeAs(t, client, userID, userID, "family") // a user without a label: their own household
 
 	vec1 := make([]float32, 3072)
 	vec1[0] = 1.0
-	require.NoError(t, client.SaveTopicMemory(ctx, &models.TopicMemory{
+	require.NoError(t, client.SaveTopicMemory(ctx, s, &models.TopicMemory{
 		UserID: userID, Topic: models.TopicPersonal, Subtopic: "fact", Scope: "personal",
 		Fact: "I love apples", Embedding: pgvector.NewVector(vec1),
 	}))
 
 	vec2 := make([]float32, 3072)
 	vec2[1] = 1.0
-	require.NoError(t, client.SaveTopicMemory(ctx, &models.TopicMemory{
+	require.NoError(t, client.SaveTopicMemory(ctx, s, &models.TopicMemory{
 		UserID: userID, Topic: models.TopicPersonal, Subtopic: "fact", Scope: "personal",
 		Fact: "I love bananas", Embedding: pgvector.NewVector(vec2),
 	}))
@@ -124,7 +125,7 @@ func TestMemories(t *testing.T) {
 	searchVec := make([]float32, 3072)
 	searchVec[0] = 0.9
 
-	results, err := client.SearchSimilarMemories(ctx, userID, "", pgvector.NewVector(searchVec), 1)
+	results, err := client.SearchSimilarMemories(ctx, s, pgvector.NewVector(searchVec), 1)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "I love apples", results[0].Fact)
@@ -172,6 +173,7 @@ func TestTopicMemories_VectorSearchAndFallback(t *testing.T) {
 	ctx := context.Background()
 	user := "user-vec-test"
 	fam := "fam-vec-test"
+	s := scopeAs(t, client, fam, user, "family")
 
 	// 1. Insert TopicMemory with vector
 	v1 := make([]float32, 3072)
@@ -186,7 +188,7 @@ func TestTopicMemories_VectorSearchAndFallback(t *testing.T) {
 		ValidFrom:   time.Now().Add(-1 * time.Hour),
 		Embedding:   pgvector.NewVector(v1),
 	}
-	err := client.SaveTopicMemory(ctx, &tm1)
+	err := client.SaveTopicMemory(ctx, s, &tm1)
 	require.NoError(t, err)
 
 	v2 := make([]float32, 3072)
@@ -201,13 +203,13 @@ func TestTopicMemories_VectorSearchAndFallback(t *testing.T) {
 		ValidFrom:   time.Now().Add(-1 * time.Hour),
 		Embedding:   pgvector.NewVector(v2),
 	}
-	err = client.SaveTopicMemory(ctx, &tm2)
+	err = client.SaveTopicMemory(ctx, s, &tm2)
 	require.NoError(t, err)
 
 	// Search closest to v1
 	queryVec := make([]float32, 3072)
 	queryVec[0] = 0.95
-	results, err := client.SearchSimilarMemories(ctx, user, fam, pgvector.NewVector(queryVec), 1)
+	results, err := client.SearchSimilarMemories(ctx, s, pgvector.NewVector(queryVec), 1)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "Baby drinks 150ml milk formula", results[0].Fact)
@@ -216,6 +218,9 @@ func TestTopicMemories_VectorSearchAndFallback(t *testing.T) {
 	// 2. A fact that exists only in the legacy table becomes searchable after the P2-4 migration
 	// (there is no runtime fallback to the legacy table any more).
 	legacyUser := "user-legacy-only"
+	// A user without a label: their own household, as Migration A gives them (V4-30).
+	require.NoError(t, client.DB.Create(&models.User{PlatformID: legacyUser, Name: "Legacy", HouseholdID: householdFor(t, client, legacyUser).ID}).Error)
+	ls := scopeAs(t, client, legacyUser, legacyUser, "family")
 	legacyVec := make([]float32, 3072)
 	legacyVec[2] = 1.0
 	require.NoError(t, client.DB.Create(&models.Memory{
@@ -228,13 +233,13 @@ func TestTopicMemories_VectorSearchAndFallback(t *testing.T) {
 
 	queryLegacy := make([]float32, 3072)
 	queryLegacy[2] = 0.9
-	before, err := client.SearchSimilarMemories(ctx, legacyUser, "", pgvector.NewVector(queryLegacy), 1)
+	before, err := client.SearchSimilarMemories(ctx, ls, pgvector.NewVector(queryLegacy), 1)
 	require.NoError(t, err)
 	assert.Empty(t, before, "no runtime read of the legacy table")
 
 	_, err = MigrateLegacyMemories(client.DB)
 	require.NoError(t, err)
-	fbResults, err := client.SearchSimilarMemories(ctx, legacyUser, "", pgvector.NewVector(queryLegacy), 1)
+	fbResults, err := client.SearchSimilarMemories(ctx, ls, pgvector.NewVector(queryLegacy), 1)
 	require.NoError(t, err)
 	require.Len(t, fbResults, 1)
 	assert.Equal(t, "Grandma's birthday is on June 12", fbResults[0].Fact)
@@ -247,6 +252,7 @@ func TestSharedReminders_DueAndSent(t *testing.T) {
 
 	pastDue := time.Now().Add(-10 * time.Minute)
 	futureDue := time.Now().Add(10 * time.Minute)
+	s := scopeFor(t, client, "fam-sr-test")
 
 	rem1 := models.SharedTaskReminder{
 		FamilyGroup:     "fam-sr-test",
@@ -258,7 +264,7 @@ func TestSharedReminders_DueAndSent(t *testing.T) {
 		IsSent:          false,
 		CreatedAt:       time.Now(),
 	}
-	err := client.CreateSharedReminder(&rem1)
+	err := client.CreateSharedReminder(s, &rem1)
 	require.NoError(t, err)
 
 	rem2 := models.SharedTaskReminder{
@@ -271,7 +277,7 @@ func TestSharedReminders_DueAndSent(t *testing.T) {
 		IsSent:          false,
 		CreatedAt:       time.Now(),
 	}
-	err = client.CreateSharedReminder(&rem2)
+	err = client.CreateSharedReminder(s, &rem2)
 	require.NoError(t, err)
 
 	due, err := client.GetDueSharedReminders()
@@ -279,7 +285,7 @@ func TestSharedReminders_DueAndSent(t *testing.T) {
 	require.Len(t, due, 1)
 	assert.Equal(t, "Buy diapers", due[0].Title)
 
-	err = client.MarkSharedReminderSent(due[0].ID)
+	err = client.MarkSharedReminderSent(s, due[0].ID)
 	require.NoError(t, err)
 
 	dueAfter, err := client.GetDueSharedReminders()

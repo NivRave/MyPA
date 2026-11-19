@@ -115,10 +115,11 @@ func TestSEC09_ConfirmMismatch_RefusesExecution(t *testing.T) {
 	// assertions below see exactly what the engine wrote.
 	waMock := wamocks.NewMockAPI(ctrl)
 
-	user := &models.User{
+	user := inHousehold(&models.User{
 		PlatformID: "user-victim",
 		Role:       "user",
-	}
+	})
+	expectHouseholds(dbMock)
 	dbMock.EXPECT().GetUser("user-victim").Return(user, nil)
 
 	// Stage a create_automation_rule action

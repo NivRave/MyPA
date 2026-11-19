@@ -48,6 +48,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-35 | Medium | A numbered list loses its numbers on both channels, so the typed fallback for choices cannot be answered "with the number" | open: before buttons (V4-10) rely on the fallback |
 | BL-36 | Low | With managed services (`EXTERNAL_*`), the bundled Postgres, Redis and RabbitMQ containers still start and sit idle | open |
 | BL-37 | Low | `go test ./...` on the Windows host, without `-p 1`, fails the Postgres-backed tests after about 3 s | open |
+| BL-38 | Low | The dashboard's `logBabyCare` does not check that the baby ID belongs to the caller's household | open |
+| BL-39 | Low | Deleting an automation rule that is not in the caller's household reports success | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -532,6 +534,25 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Impact:** a developer who runs the plain command locally sees dozens of failures that are not real.
 - **Fix:** find the 3-second limit in the shared Postgres test helper and raise it, or document `-p 1`
   next to `go test ./...` in the README's test instructions.
+
+### BL-38 — `logBabyCare` accepts another household's baby ID (Low)
+- **Found:** 2026-11-20, while building V4-30 (the GraphQL slice).
+- **Evidence:** the `logBabyCare` mutation (`internal/graph/schema.resolvers.go`) writes the care log into the
+  caller's household without first loading the baby profile through the scope, so a log can name a
+  `baby_id` that belongs to another household. The chat tool resolves the baby through the scope first.
+- **Impact:** no data leaks: the log is in the caller's household and nothing of the other household is read.
+  It is a dangling reference that the baby summaries of the caller's household ignore.
+- **Fix:** load the profile with `GetBabyProfile(scope, id)` first and refuse when it is not found.
+
+### BL-39 — Deleting a foreign automation rule reports success (Low)
+- **Found:** 2026-11-20, while building V4-30 (the finance and automation slice).
+- **Evidence:** `DeleteAutomationRule(scope, id)` filters by household and deletes nothing for a rule of another
+  household, but returns no error when no row matched, because an existing test asserts that deleting a missing
+  rule succeeds. The dashboard path checks the rule's household first; the repository answer is the same
+  "success" for a missing rule and for a rule elsewhere.
+- **Impact:** no data changes; a caller may be told a deletion happened when it did not.
+- **Fix:** return not-found on zero rows, as every other delete by ID does since V4-30, and change that test's
+  expectation deliberately.
 
 ## Operations (owner)
 

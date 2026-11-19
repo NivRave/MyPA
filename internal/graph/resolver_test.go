@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"github.com/nivik/mypa/internal/identity"
 	"testing"
 	"time"
 
@@ -19,7 +20,8 @@ type mockBabyRepo struct {
 	lastCreatedLog      *models.BabyCareLog
 }
 
-func (m *mockBabyRepo) CreateCareLog(log *models.BabyCareLog) error {
+func (m *mockBabyRepo) CreateCareLog(s identity.Scope, log *models.BabyCareLog) error {
+	stampScope(s, &log.HouseholdID, &log.FamilyGroup)
 	m.createCareLogCalled = true
 	log.ID = 101
 	m.lastCreatedLog = log
@@ -28,19 +30,20 @@ func (m *mockBabyRepo) CreateCareLog(log *models.BabyCareLog) error {
 
 type mockMemoryRepo struct {
 	db.MemoryV2Repository
-	savedMemories  []*models.TopicMemory
-	deletedIDs     []uint
-	pinnedIDs      []uint
-	mockMem        *models.TopicMemory
+	savedMemories []*models.TopicMemory
+	deletedIDs    []uint
+	pinnedIDs     []uint
+	mockMem       *models.TopicMemory
 }
 
-func (m *mockMemoryRepo) SaveTopicMemory(ctx context.Context, memory *models.TopicMemory) error {
+func (m *mockMemoryRepo) SaveTopicMemory(ctx context.Context, s identity.Scope, memory *models.TopicMemory) error {
+	stampScope(s, &memory.HouseholdID, &memory.FamilyGroup)
 	memory.ID = 202
 	m.savedMemories = append(m.savedMemories, memory)
 	return nil
 }
 
-func (m *mockMemoryRepo) GetTopicMemory(ctx context.Context, id uint, familyGroup ...string) (*models.TopicMemory, error) {
+func (m *mockMemoryRepo) GetTopicMemory(ctx context.Context, s identity.Scope, id uint) (*models.TopicMemory, error) {
 	if m.mockMem != nil && m.mockMem.ID == id {
 		return m.mockMem, nil
 	}
@@ -53,12 +56,12 @@ func (m *mockMemoryRepo) GetTopicMemory(ctx context.Context, id uint, familyGrou
 	}, nil
 }
 
-func (m *mockMemoryRepo) DeleteTopicMemory(ctx context.Context, id uint, familyGroup ...string) error {
+func (m *mockMemoryRepo) DeleteTopicMemory(ctx context.Context, s identity.Scope, id uint) error {
 	m.deletedIDs = append(m.deletedIDs, id)
 	return nil
 }
 
-func (m *mockMemoryRepo) PinTopicMemory(ctx context.Context, id uint, isPinned bool, familyGroup ...string) (*models.TopicMemory, error) {
+func (m *mockMemoryRepo) PinTopicMemory(ctx context.Context, s identity.Scope, id uint, isPinned bool) (*models.TopicMemory, error) {
 	m.pinnedIDs = append(m.pinnedIDs, id)
 	return &models.TopicMemory{
 		ID:       id,
@@ -68,29 +71,30 @@ func (m *mockMemoryRepo) PinTopicMemory(ctx context.Context, id uint, isPinned b
 	}, nil
 }
 
-func (m *mockMemoryRepo) ListTopicMemories(ctx context.Context, familyGroup, topic string, includeSuperseded bool) ([]models.TopicMemory, error) {
+func (m *mockMemoryRepo) ListTopicMemories(ctx context.Context, s identity.Scope, topic string, includeSuperseded bool) ([]models.TopicMemory, error) {
 	return []models.TopicMemory{
-		{ID: 1, Topic: "health", Fact: "Fact 1", FamilyGroup: familyGroup},
+		{ID: 1, Topic: "health", Fact: "Fact 1", FamilyGroup: s.LegacyLabel(), HouseholdID: s.HouseholdID()},
 	}, nil
 }
 
-func (m *mockMemoryRepo) SearchTopicMemories(ctx context.Context, userID, familyGroup, topic, query string, tags []string) ([]models.TopicMemory, error) {
+func (m *mockMemoryRepo) SearchTopicMemories(ctx context.Context, s identity.Scope, topic, query string, tags []string) ([]models.TopicMemory, error) {
 	return nil, nil
 }
-func (m *mockMemoryRepo) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
+func (m *mockMemoryRepo) SearchSimilarMemories(ctx context.Context, s identity.Scope, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
 	return nil, nil
 }
-func (m *mockMemoryRepo) SupersedeMemory(ctx context.Context, oldID uint, newID uint) error {
+func (m *mockMemoryRepo) SupersedeMemory(ctx context.Context, s identity.Scope, oldID uint, newID uint) error {
 	return nil
 }
-func (m *mockMemoryRepo) UpsertEntityProfile(ctx context.Context, profile *models.EntityProfile) error {
+func (m *mockMemoryRepo) UpsertEntityProfile(ctx context.Context, s identity.Scope, profile *models.EntityProfile) error {
+	stampScope(s, &profile.HouseholdID, &profile.FamilyGroup)
 	profile.ID = 303
 	return nil
 }
-func (m *mockMemoryRepo) GetEntityProfile(ctx context.Context, familyGroup, topic, entityName string) (*models.EntityProfile, error) {
+func (m *mockMemoryRepo) GetEntityProfile(ctx context.Context, s identity.Scope, topic, entityName string) (*models.EntityProfile, error) {
 	return nil, nil
 }
-func (m *mockMemoryRepo) ListEntityProfiles(ctx context.Context, familyGroup, topic string) ([]models.EntityProfile, error) {
+func (m *mockMemoryRepo) ListEntityProfiles(ctx context.Context, s identity.Scope, topic string) ([]models.EntityProfile, error) {
 	return nil, nil
 }
 func (m *mockMemoryRepo) ListActiveMemoriesForConsolidation(ctx context.Context) ([]models.TopicMemory, error) {
@@ -103,13 +107,15 @@ type mockAutoRepo struct {
 	createdRules []*models.AutomationRule
 }
 
-func (m *mockAutoRepo) CreateAPIConnector(connector *models.ExternalAPIConnector) error {
+func (m *mockAutoRepo) CreateAPIConnector(s identity.Scope, connector *models.ExternalAPIConnector) error {
+	stampScope(s, &connector.HouseholdID, &connector.FamilyGroup)
 	connector.ID = 404
 	m.createdAPIs = append(m.createdAPIs, connector)
 	return nil
 }
 
-func (m *mockAutoRepo) CreateAutomationRule(rule *models.AutomationRule) error {
+func (m *mockAutoRepo) CreateAutomationRule(s identity.Scope, rule *models.AutomationRule) error {
+	stampScope(s, &rule.HouseholdID, &rule.FamilyGroup)
 	rule.ID = 505
 	m.createdRules = append(m.createdRules, rule)
 	return nil
@@ -148,6 +154,7 @@ func TestResolver_PositiveAuthorization(t *testing.T) {
 	memRepo := &mockMemoryRepo{}
 	resolver := NewResolver(ResolverConfig{
 		MemoryRepo: memRepo,
+		Households: labelStore("FamilyA", "FamilyB", "default"),
 	})
 
 	// Non-admin user with FamilyA trying to delete from FamilyB
@@ -182,7 +189,6 @@ func TestResolver_Mutations_EmitEvents(t *testing.T) {
 		return nil
 	})
 
-
 	babyRepo := &mockBabyRepo{}
 	memRepo := &mockMemoryRepo{}
 	autoRepo := &mockAutoRepo{}
@@ -192,6 +198,7 @@ func TestResolver_Mutations_EmitEvents(t *testing.T) {
 		BabyRepo:       babyRepo,
 		MemoryRepo:     memRepo,
 		AutomationRepo: autoRepo,
+		Households:     labelStore("fam-test"),
 	})
 
 	ctx := WithClaims(context.Background(), &AuthClaims{

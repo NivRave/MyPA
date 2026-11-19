@@ -88,13 +88,11 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 	sb.WriteString("• Partner Calendar Sync: Topics `baby`, `house`, `finance`, and `family` default to shared (`is_shared: true`). Synced shared events automatically duplicate onto the partner's Google Calendar with attribution.\n")
 
 	userID := ""
-	familyGroup := ""
 	if callCtx.User != nil {
 		userID = callCtx.User.PlatformID
 		if userID == "" {
 			userID = callCtx.User.ID
 		}
-		familyGroup = callCtx.User.FamilyGroup
 	}
 	if userID == "" {
 		userID = callCtx.Message.Sender
@@ -113,7 +111,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 
 		// Upcoming events in next 48 hours
 		now := time.Now()
-		upcoming, _ := repo.ListScheduleEvents(userID, familyGroup, "all", now, now.Add(48*time.Hour))
+		upcoming, _ := repo.ListScheduleEvents(callCtx.Scope, "all", now, now.Add(48*time.Hour))
 		if len(upcoming) > 0 {
 			sb.WriteString("\n• Upcoming Topic Schedule (Next 48h):\n")
 			for _, u := range upcoming {

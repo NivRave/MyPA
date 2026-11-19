@@ -30,6 +30,7 @@ const (
 // insurance policies, and purchase/repair receipts.
 type HouseContractRecord struct {
 	ID                      uint       `json:"id" gorm:"primaryKey"`
+	HouseholdID             string     `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup             string     `json:"family_group" gorm:"index;index:idx_house_contracts_fam_exp,priority:1"`
 	RecordType              string     `json:"record_type" gorm:"index"` // lease, mortgage, utility, warranty, insurance, receipt
 	Title                   string     `json:"title"`
@@ -93,6 +94,7 @@ func (c *HouseContractRecord) IsExpiringSoon(now time.Time, withinDays int) bool
 // contractor info, and last-completed timestamps.
 type HomeMaintenanceItem struct {
 	ID              uint       `json:"id" gorm:"primaryKey"`
+	HouseholdID     string     `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup     string     `json:"family_group" gorm:"index"`
 	TaskName        string     `json:"task_name"`
 	Category        string     `json:"category"` // hvac, plumbing, appliance, pest_control, general
@@ -128,6 +130,7 @@ func (m *HomeMaintenanceItem) MarkCompleted(completedAt time.Time, userID string
 // and maintenance service intervals.
 type VehicleAsset struct {
 	ID                   uint       `json:"id" gorm:"primaryKey"`
+	HouseholdID          string     `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup          string     `json:"family_group" gorm:"index"`
 	Name                 string     `json:"name"`
 	LicensePlate         string     `json:"license_plate"`

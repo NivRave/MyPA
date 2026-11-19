@@ -27,6 +27,7 @@ func (f *fakeHealthReporter) Report(_ context.Context, admin *models.User) strin
 func doctorEngine(t *testing.T, user models.User) (*Engine, *[]string, func()) {
 	t.Helper()
 	engine, tgMock, dbMock, cleanup := setupUnauthTestEngine(t)
+	inHousehold(&user)
 	dbMock.EXPECT().GetUser(user.PlatformID).Return(&user, nil).AnyTimes()
 	sent := &[]string{}
 	tgMock.EXPECT().SendMessage(gomock.Any(), "chat-1", gomock.Any()).DoAndReturn(

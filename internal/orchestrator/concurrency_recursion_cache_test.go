@@ -320,8 +320,9 @@ func TestBoundedRecursion_TerminatesAtDepth8(t *testing.T) {
 	eventPublisherMock := mocks.NewMockEventPublisher(ctrl)
 	eventPublisherMock.EXPECT().Publish(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
+	expectHouseholds(dbMock)
 	dbMock.EXPECT().GetUser(gomock.Any()).DoAndReturn(func(userID string) (*models.User, error) {
-		return &models.User{PlatformID: userID}, nil
+		return inHousehold(&models.User{PlatformID: userID}), nil
 	}).AnyTimes()
 
 	engine := NewEngine(
@@ -486,7 +487,8 @@ func TestPromptCache_ThunderingHerd(t *testing.T) {
 	wg.Add(numCallers)
 
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "fam_herd_99", PlatformID: "u_herd"},
+		User:  &models.User{FamilyGroup: "fam_herd_99", PlatformID: "u_herd"},
+		Scope: idScope("fam_herd_99", "u_herd", "family"),
 	}
 
 	results := make([]string, numCallers)
@@ -553,7 +555,8 @@ func TestPromptCache_SimultaneousMutationsAndReads(t *testing.T) {
 	var readSuccesses int64
 
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "fam_dyn_stress", PlatformID: "u_dyn"},
+		User:  &models.User{FamilyGroup: "fam_dyn_stress", PlatformID: "u_dyn"},
+		Scope: idScope("fam_dyn_stress", "u_dyn", "family"),
 	}
 
 	// 40 concurrent readers
@@ -588,6 +591,7 @@ func TestPromptCache_SimultaneousMutationsAndReads(t *testing.T) {
 				topic := topics[workerID%len(topics)]
 				_ = bus.Publish(ctx, events.MutationEvent{
 					Topic:       topic,
+					HouseholdID: "fam_dyn_stress",
 					FamilyGroup: "fam_dyn_stress",
 					Action:      "update",
 				})
@@ -607,7 +611,8 @@ func TestPromptCache_SimultaneousMutationsAndReads(t *testing.T) {
 // when Redis throws errors or connection failures.
 func TestPromptCache_RedisFailureUnderConcurrency(t *testing.T) {
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "fam_fail_stress", PlatformID: "u_fail"},
+		User:  &models.User{FamilyGroup: "fam_fail_stress", PlatformID: "u_fail"},
+		Scope: idScope("fam_fail_stress", "u_fail", "family"),
 	}
 
 	failingCache := &mockFailingPromptCache{

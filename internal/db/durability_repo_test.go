@@ -50,6 +50,10 @@ func TestDurabilityRepo_MutationLogs_PositiveAndIsolation(t *testing.T) {
 	tenantBUser := "usr-" + uuid.New().String()
 	tenantBFamily := "fam-" + uuid.New().String()
 
+	// V4-30: each tenant is a household.
+	scopeA := scopeAs(t, client, tenantAFamily, tenantAUser, "family")
+	scopeB := scopeAs(t, client, tenantBFamily, tenantBUser, "family")
+
 	// 1. Insert mutation logs for Tenant A
 	logA1 := models.MutationLog{
 		ID:          uuid.New().String(),
@@ -62,7 +66,7 @@ func TestDurabilityRepo_MutationLogs_PositiveAndIsolation(t *testing.T) {
 		Summary:     "Feeding 120ml",
 		CreatedAt:   time.Now().Add(-2 * time.Minute),
 	}
-	require.NoError(t, client.InsertMutationLog(logA1))
+	require.NoError(t, client.InsertMutationLog(scopeA, logA1))
 
 	logA2 := models.MutationLog{
 		ID:          uuid.New().String(),
@@ -75,7 +79,7 @@ func TestDurabilityRepo_MutationLogs_PositiveAndIsolation(t *testing.T) {
 		Summary:     "Lease contract",
 		CreatedAt:   time.Now().Add(-1 * time.Minute),
 	}
-	require.NoError(t, client.InsertMutationLog(logA2))
+	require.NoError(t, client.InsertMutationLog(scopeA, logA2))
 
 	// 2. Insert mutation log for Tenant B
 	logB := models.MutationLog{
@@ -89,10 +93,10 @@ func TestDurabilityRepo_MutationLogs_PositiveAndIsolation(t *testing.T) {
 		Summary:     "Grocery store $50",
 		CreatedAt:   time.Now(),
 	}
-	require.NoError(t, client.InsertMutationLog(logB))
+	require.NoError(t, client.InsertMutationLog(scopeB, logB))
 
 	// 3. Query Tenant A logs -> should return 2 logs, zero Tenant B data
-	logsA, err := client.GetMutationLogsByTopic(tenantAFamily, tenantAUser, "all", 50)
+	logsA, err := client.GetMutationLogsByTopic(scopeA, "all", 50)
 	require.NoError(t, err)
 	require.Len(t, logsA, 2)
 	for _, l := range logsA {
@@ -102,39 +106,39 @@ func TestDurabilityRepo_MutationLogs_PositiveAndIsolation(t *testing.T) {
 	}
 
 	// Filter Tenant A by topic "baby"
-	babyLogsA, err := client.GetMutationLogsByTopic(tenantAFamily, tenantAUser, "baby", 50)
+	babyLogsA, err := client.GetMutationLogsByTopic(scopeA, "baby", 50)
 	require.NoError(t, err)
 	require.Len(t, babyLogsA, 1)
 	assert.Equal(t, logA1.ID, babyLogsA[0].ID)
 
 	// 4. Query Tenant B logs -> should return 1 log, zero Tenant A data
-	logsB, err := client.GetMutationLogsByTopic(tenantBFamily, tenantBUser, "all", 50)
+	logsB, err := client.GetMutationLogsByTopic(scopeB, "all", 50)
 	require.NoError(t, err)
 	require.Len(t, logsB, 1)
 	assert.Equal(t, logB.ID, logsB[0].ID)
 
 	// 5. GetMutationLogByID
-	fetchedA1, err := client.GetMutationLogByID(logA1.ID)
+	fetchedA1, err := client.GetMutationLogByID(scopeA, logA1.ID)
 	require.NoError(t, err)
 	assert.Equal(t, logA1.Summary, fetchedA1.Summary)
 
 	// 6. GetLastMutation & MarkMutationUndone
-	lastMutA, err := client.GetLastMutation(tenantAUser, tenantAFamily)
+	lastMutA, err := client.GetLastMutation(scopeA)
 	require.NoError(t, err)
 	require.NotNil(t, lastMutA)
 	assert.Equal(t, logA2.ID, lastMutA.ID) // Most recent active is logA2
 
 	// Mark logA2 undone
-	err = client.MarkMutationUndone(logA2.ID)
+	err = client.MarkMutationUndone(scopeA, logA2.ID)
 	require.NoError(t, err)
 
 	// Verify logA2 is now marked undone
-	checkUndone, err := client.GetMutationLogByID(logA2.ID)
+	checkUndone, err := client.GetMutationLogByID(scopeA, logA2.ID)
 	require.NoError(t, err)
 	assert.True(t, checkUndone.IsUndone)
 
 	// Now GetLastMutation should return logA1 (since logA2 is undone)
-	newLastMutA, err := client.GetLastMutation(tenantAUser, tenantAFamily)
+	newLastMutA, err := client.GetLastMutation(scopeA)
 	require.NoError(t, err)
 	require.NotNil(t, newLastMutA)
 	assert.Equal(t, logA1.ID, newLastMutA.ID)
@@ -185,16 +189,17 @@ func TestDurabilityRepo_ExportTopicData(t *testing.T) {
 		Summary:     "Child profile created",
 		CreatedAt:   time.Now(),
 	}
-	require.NoError(t, client.InsertMutationLog(log))
+	scope := scopeAs(t, client, family, user, "family") // V4-30: the tenant
+	require.NoError(t, client.InsertMutationLog(scope, log))
 
 	// Export as JSON
-	jsonStr, err := client.ExportTopicData(family, user, "baby", "json", 10)
+	jsonStr, err := client.ExportTopicData(scope, "baby", "json", 10)
 	require.NoError(t, err)
 	assert.Contains(t, jsonStr, "Child profile created")
 	assert.Contains(t, jsonStr, family)
 
 	// Export as CSV
-	csvStr, err := client.ExportTopicData(family, user, "baby", "csv", 10)
+	csvStr, err := client.ExportTopicData(scope, "baby", "csv", 10)
 	require.NoError(t, err)
 	assert.Contains(t, csvStr, "id,timestamp,user_id,family_group,topic,action,entity_type,entity_id,summary,is_undone")
 	assert.Contains(t, csvStr, "Child profile created")
@@ -205,12 +210,14 @@ func TestDurabilityRepo_RollbackSnapshot(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
+	scope := scopeFor(t, client, "rollback-snapshot-family") // V4-30: the tenant
 
 	// 1. Test rollback of "create": table entity should be deleted
 	user := models.User{
-		ID:         uuid.New().String(),
-		PlatformID: "tg-" + uuid.New().String(),
-		Role:       "member",
+		ID:          uuid.New().String(),
+		PlatformID:  "tg-" + uuid.New().String(),
+		Role:        "member",
+		HouseholdID: scope.HouseholdID(),
 	}
 	require.NoError(t, client.DB.Create(&user).Error)
 
@@ -221,9 +228,9 @@ func TestDurabilityRepo_RollbackSnapshot(t *testing.T) {
 		EntityID:   user.ID,
 		CreatedAt:  time.Now(),
 	}
-	require.NoError(t, client.InsertMutationLog(mutCreate))
+	require.NoError(t, client.InsertMutationLog(scope, mutCreate))
 
-	err := client.RollbackSnapshot(ctx, mutCreate, "users")
+	err := client.RollbackSnapshot(ctx, scope, mutCreate, "users")
 	require.NoError(t, err)
 
 	// Verify user deleted
@@ -232,15 +239,16 @@ func TestDurabilityRepo_RollbackSnapshot(t *testing.T) {
 	assert.Error(t, err, "user should have been deleted by rollback")
 
 	// Verify mutation marked undone
-	mutAfter, err := client.GetMutationLogByID(mutCreate.ID)
+	mutAfter, err := client.GetMutationLogByID(scope, mutCreate.ID)
 	require.NoError(t, err)
 	assert.True(t, mutAfter.IsUndone)
 
 	// 2. Test rollback of "update": table entity should revert to BeforeJSON
 	user2 := models.User{
-		ID:         uuid.New().String(),
-		PlatformID: "tg-" + uuid.New().String(),
-		Role:       "admin", // Updated value
+		ID:          uuid.New().String(),
+		PlatformID:  "tg-" + uuid.New().String(),
+		Role:        "admin", // Updated value
+		HouseholdID: scope.HouseholdID(),
 	}
 	require.NoError(t, client.DB.Create(&user2).Error)
 
@@ -257,9 +265,9 @@ func TestDurabilityRepo_RollbackSnapshot(t *testing.T) {
 		BeforeJSON: string(beforeJSON),
 		CreatedAt:  time.Now(),
 	}
-	require.NoError(t, client.InsertMutationLog(mutUpdate))
+	require.NoError(t, client.InsertMutationLog(scope, mutUpdate))
 
-	err = client.RollbackSnapshot(ctx, mutUpdate, "users")
+	err = client.RollbackSnapshot(ctx, scope, mutUpdate, "users")
 	require.NoError(t, err)
 
 	var checkUser2 models.User

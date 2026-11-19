@@ -34,7 +34,7 @@ func TestHouseRepo_Contracts_CRUDAndIsolation(t *testing.T) {
 		NoticePeriodDays:        30,
 		CreatedByUserID:         userA,
 	}
-	require.NoError(t, repo.CreateContract(&contractA))
+	require.NoError(t, repo.CreateContract(scopeFor(t, client, famA), &contractA))
 	require.NotZero(t, contractA.ID)
 
 	// 2. Create contract for Family B
@@ -46,56 +46,56 @@ func TestHouseRepo_Contracts_CRUDAndIsolation(t *testing.T) {
 		Amount:           1200.0,
 		Currency:         "USD",
 	}
-	require.NoError(t, repo.CreateContract(&contractB))
+	require.NoError(t, repo.CreateContract(scopeFor(t, client, famB), &contractB))
 	require.NotZero(t, contractB.ID)
 
 	// 3. Positive lookup and isolation
-	gotA, err := repo.GetContract(contractA.ID, famA)
+	gotA, err := repo.GetContract(scopeFor(t, client, famA), contractA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotA)
 	assert.Equal(t, "Apartment Lease", gotA.Title)
 	assert.Equal(t, famA, gotA.FamilyGroup)
 
 	// Cross-tenant lookup: Family B querying contract A returns nil
-	gotLeak, err := repo.GetContract(contractA.ID, famB)
+	gotLeak, err := repo.GetContract(scopeFor(t, client, famB), contractA.ID)
 	require.NoError(t, err)
 	assert.Nil(t, gotLeak, "Family B must not access Family A's contract")
 
 	// 4. ListContracts isolation
-	listA, err := repo.ListContracts(famA, "all", nil)
+	listA, err := repo.ListContracts(scopeFor(t, client, famA), "all", nil)
 	require.NoError(t, err)
 	require.Len(t, listA, 1)
 	assert.Equal(t, contractA.ID, listA[0].ID)
 
-	listB, err := repo.ListContracts(famB, "all", nil)
+	listB, err := repo.ListContracts(scopeFor(t, client, famB), "all", nil)
 	require.NoError(t, err)
 	require.Len(t, listB, 1)
 	assert.Equal(t, contractB.ID, listB[0].ID)
 
 	// ListExpiringContracts
-	expiringA, err := repo.ListExpiringContracts(famA, 60)
+	expiringA, err := repo.ListExpiringContracts(scopeFor(t, client, famA), 60)
 	require.NoError(t, err)
 	require.Len(t, expiringA, 1)
 	assert.Equal(t, contractA.ID, expiringA[0].ID)
 
-	expiringB, err := repo.ListExpiringContracts(famB, 60)
+	expiringB, err := repo.ListExpiringContracts(scopeFor(t, client, famB), 60)
 	require.NoError(t, err)
 	assert.Empty(t, expiringB)
 
 	// 5. UpdateContract
 	contractA.Amount = 2300.0
 	contractA.Title = "Renewed Apartment Lease"
-	require.NoError(t, repo.UpdateContract(&contractA))
+	require.NoError(t, repo.UpdateContract(scopeFor(t, client, famA), &contractA))
 
-	recheckA, err := repo.GetContract(contractA.ID, famA)
+	recheckA, err := repo.GetContract(scopeFor(t, client, famA), contractA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, recheckA)
 	assert.Equal(t, 2300.0, recheckA.Amount)
 	assert.Equal(t, "Renewed Apartment Lease", recheckA.Title)
 
 	// 6. DeleteContract
-	require.NoError(t, repo.DeleteContract(contractA.ID))
-	deletedA, err := repo.GetContract(contractA.ID, famA)
+	require.NoError(t, repo.DeleteContract(scopeFor(t, client, famA), contractA.ID))
+	deletedA, err := repo.GetContract(scopeFor(t, client, famA), contractA.ID)
 	require.NoError(t, err)
 	assert.Nil(t, deletedA)
 }
@@ -122,7 +122,7 @@ func TestHouseRepo_Maintenance_CRUDAndCompletion(t *testing.T) {
 		NextDueAt:      pastDue,
 		ContractorInfo: "Self or HVAC tech",
 	}
-	require.NoError(t, repo.CreateMaintenanceItem(&itemA))
+	require.NoError(t, repo.CreateMaintenanceItem(scopeFor(t, client, famA), &itemA))
 	require.NotZero(t, itemA.ID)
 
 	// 2. Create maintenance item for Family B
@@ -133,32 +133,32 @@ func TestHouseRepo_Maintenance_CRUDAndCompletion(t *testing.T) {
 		IntervalDays: 365,
 		NextDueAt:    futureDue,
 	}
-	require.NoError(t, repo.CreateMaintenanceItem(&itemB))
+	require.NoError(t, repo.CreateMaintenanceItem(scopeFor(t, client, famB), &itemB))
 	require.NotZero(t, itemB.ID)
 
 	// 3. Positive read and isolation
-	gotA, err := repo.GetMaintenanceItem(itemA.ID, famA)
+	gotA, err := repo.GetMaintenanceItem(scopeFor(t, client, famA), itemA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotA)
 	assert.Equal(t, "Replace Furnace Filter", gotA.TaskName)
 
-	gotLeak, err := repo.GetMaintenanceItem(itemA.ID, famB)
+	gotLeak, err := repo.GetMaintenanceItem(scopeFor(t, client, famB), itemA.ID)
 	require.NoError(t, err)
 	assert.Nil(t, gotLeak, "Family B must not access Family A's maintenance item")
 
 	// 4. Overdue filtering
-	overdueA, err := repo.ListMaintenanceItems(famA, "all", true)
+	overdueA, err := repo.ListMaintenanceItems(scopeFor(t, client, famA), "all", true)
 	require.NoError(t, err)
 	require.Len(t, overdueA, 1)
 	assert.Equal(t, itemA.ID, overdueA[0].ID)
 
-	overdueB, err := repo.ListMaintenanceItems(famB, "all", true)
+	overdueB, err := repo.ListMaintenanceItems(scopeFor(t, client, famB), "all", true)
 	require.NoError(t, err)
 	assert.Empty(t, overdueB, "Family B item is in future, not overdue")
 
 	// 5. Complete maintenance item
 	completedTime := time.Now()
-	completedItem, err := repo.CompleteMaintenanceItem(itemA.ID, completedTime, userA, famA)
+	completedItem, err := repo.CompleteMaintenanceItem(scopeFor(t, client, famA), itemA.ID, completedTime, userA)
 	require.NoError(t, err)
 	require.NotNil(t, completedItem)
 	assert.NotNil(t, completedItem.LastCompletedAt)
@@ -167,13 +167,13 @@ func TestHouseRepo_Maintenance_CRUDAndCompletion(t *testing.T) {
 	assert.True(t, completedItem.NextDueAt.After(completedTime.Add(80*24*time.Hour)))
 
 	// After completion, item is no longer overdue
-	overdueAfter, err := repo.ListMaintenanceItems(famA, "all", true)
+	overdueAfter, err := repo.ListMaintenanceItems(scopeFor(t, client, famA), "all", true)
 	require.NoError(t, err)
 	assert.Empty(t, overdueAfter)
 
 	// 6. Delete maintenance item
-	require.NoError(t, repo.DeleteMaintenanceItem(itemA.ID))
-	deletedA, err := repo.GetMaintenanceItem(itemA.ID, famA)
+	require.NoError(t, repo.DeleteMaintenanceItem(scopeFor(t, client, famA), itemA.ID))
+	deletedA, err := repo.GetMaintenanceItem(scopeFor(t, client, famA), itemA.ID)
 	require.NoError(t, err)
 	assert.Nil(t, deletedA)
 }
@@ -195,7 +195,7 @@ func TestHouseRepo_VehicleAssets_CRUDAndMileage(t *testing.T) {
 		CurrentMileageKm:     45000,
 		NextServiceMileageKm: 50000,
 	}
-	require.NoError(t, repo.CreateVehicleAsset(&vA))
+	require.NoError(t, repo.CreateVehicleAsset(scopeFor(t, client, famA), &vA))
 	require.NotZero(t, vA.ID)
 
 	// 2. Create vehicle for Family B
@@ -206,21 +206,21 @@ func TestHouseRepo_VehicleAssets_CRUDAndMileage(t *testing.T) {
 		CurrentMileageKm:     25000,
 		NextServiceMileageKm: 30000,
 	}
-	require.NoError(t, repo.CreateVehicleAsset(&vB))
+	require.NoError(t, repo.CreateVehicleAsset(scopeFor(t, client, famB), &vB))
 	require.NotZero(t, vB.ID)
 
 	// 3. Positive read and isolation
-	gotA, err := repo.GetVehicleAsset(vA.ID)
+	gotA, err := repo.GetVehicleAsset(scopeFor(t, client, famA), vA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotA)
 	assert.Equal(t, "Toyota RAV4", gotA.Name)
 
-	listA, err := repo.ListVehicleAssets(famA)
+	listA, err := repo.ListVehicleAssets(scopeFor(t, client, famA))
 	require.NoError(t, err)
 	require.Len(t, listA, 1)
 	assert.Equal(t, "Toyota RAV4", listA[0].Name)
 
-	listB, err := repo.ListVehicleAssets(famB)
+	listB, err := repo.ListVehicleAssets(scopeFor(t, client, famB))
 	require.NoError(t, err)
 	require.Len(t, listB, 1)
 	assert.Equal(t, "Honda Civic", listB[0].Name)
@@ -229,15 +229,15 @@ func TestHouseRepo_VehicleAssets_CRUDAndMileage(t *testing.T) {
 	assert.False(t, vA.IsServiceDue(), "45000km < 50000km, service not due yet")
 
 	// 4. Update mileage past service threshold
-	updatedV, err := repo.UpdateVehicleMileage(vA.ID, 52000)
+	updatedV, err := repo.UpdateVehicleMileage(scopeFor(t, client, famA), vA.ID, 52000)
 	require.NoError(t, err)
 	require.NotNil(t, updatedV)
 	assert.Equal(t, 52000, updatedV.CurrentMileageKm)
 	assert.True(t, updatedV.IsServiceDue(), "52000km >= 50000km, service is now due")
 
 	// 5. Delete vehicle asset
-	require.NoError(t, repo.DeleteVehicleAsset(vA.ID))
-	deletedA, err := repo.GetVehicleAsset(vA.ID)
+	require.NoError(t, repo.DeleteVehicleAsset(scopeFor(t, client, famA), vA.ID))
+	deletedA, err := repo.GetVehicleAsset(scopeFor(t, client, famA), vA.ID)
 	require.NoError(t, err)
 	assert.Nil(t, deletedA)
 }

@@ -18,12 +18,16 @@ import (
 // It powers audit logs, undo/rollback operations, cross-user partner notifications,
 // prompt cache invalidation, and event-driven automations.
 type MutationEvent struct {
-	ID          string    `json:"id"`
-	Topic       string    `json:"topic"`       // e.g., "baby", "house", "finance", "schedule", "memory"
-	Action      string    `json:"action"`      // e.g., "create", "update", "delete", "complete"
-	EntityType  string    `json:"entity_type"` // e.g., "BabyCareLog", "FinancialTransaction"
-	EntityID    string    `json:"entity_id"`
-	ActorUserID string    `json:"actor_user_id"`
+	ID          string `json:"id"`
+	Topic       string `json:"topic"`       // e.g., "baby", "house", "finance", "schedule", "memory"
+	Action      string `json:"action"`      // e.g., "create", "update", "delete", "complete"
+	EntityType  string `json:"entity_type"` // e.g., "BabyCareLog", "FinancialTransaction"
+	EntityID    string `json:"entity_id"`
+	ActorUserID string `json:"actor_user_id"`
+	// HouseholdID is the tenant the mutation happened in (V4-30). Subscribers that act on the
+	// event (mutation log, partner notifications, automations, prompt cache) key by it.
+	HouseholdID string `json:"household_id"`
+	// FamilyGroup is the household's legacy label, still written beside HouseholdID until V4-44.
 	FamilyGroup string    `json:"family_group"`
 	BeforeJSON  string    `json:"before_json"`
 	AfterJSON   string    `json:"after_json"`

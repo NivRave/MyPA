@@ -52,7 +52,7 @@ func (m *Module) executeSaveContract(ctx context.Context, callCtx orchestrator.C
 	amount := parseFloat(args["amount"])
 	currency, _ := args["currency"].(string)
 	if strings.TrimSpace(currency) == "" {
-		currency = "USD"
+		currency = callCtx.Scope.Currency("USD") // the household's currency (V4-30)
 	}
 	noticePeriod := parseInt(args["notice_period_days"])
 
@@ -61,7 +61,7 @@ func (m *Module) executeSaveContract(ctx context.Context, callCtx orchestrator.C
 
 	keyTerms := parseKeyTerms(args["key_terms"])
 
-	familyGroup := resolveFamilyGroup(callCtx)
+	scope := resolveScope(callCtx)
 	userID := resolveUserID(callCtx)
 
 	contractID := parseInt(args["contract_id"])
@@ -70,13 +70,13 @@ func (m *Module) executeSaveContract(ctx context.Context, callCtx orchestrator.C
 	action := "contract_saved"
 
 	if contractID > 0 {
-		existing, err := repo.GetContract(uint(contractID))
+		existing, err := repo.GetContract(scope, uint(contractID))
 		if err != nil {
 			return "", fmt.Errorf("failed to load contract %d: %w", contractID, err)
 		}
-		isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.CreatedByUserID != "" && existing.CreatedByUserID == userID))
+		isAuthorized := existing != nil && existing.HouseholdID == scope.HouseholdID()
 		if !isAuthorized {
-			return "", fmt.Errorf("contract %d not found in family %q", contractID, familyGroup)
+			return "", fmt.Errorf("contract %d not found in family %q", contractID, scope.LegacyLabel())
 		}
 		b, _ := json.Marshal(existing)
 		beforeJSON = string(b)
@@ -85,7 +85,7 @@ func (m *Module) executeSaveContract(ctx context.Context, callCtx orchestrator.C
 	} else {
 		contract = &models.HouseContractRecord{
 			CreatedByUserID: userID,
-			FamilyGroup:     familyGroup,
+			FamilyGroup:     scope.LegacyLabel(),
 			CreatedAt:       time.Now(),
 		}
 	}
@@ -103,9 +103,9 @@ func (m *Module) executeSaveContract(ctx context.Context, callCtx orchestrator.C
 
 	var err error
 	if contractID > 0 {
-		err = repo.UpdateContract(contract)
+		err = repo.UpdateContract(scope, contract)
 	} else {
-		err = repo.CreateContract(contract)
+		err = repo.CreateContract(scope, contract)
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to save house contract: %w", err)
@@ -126,7 +126,7 @@ func (m *Module) executeSaveContract(ctx context.Context, callCtx orchestrator.C
 		EntityType:  "HouseContractRecord",
 		EntityID:    fmt.Sprintf("%d", contract.ID),
 		ActorUserID: userID,
-		FamilyGroup: familyGroup,
+		FamilyGroup: scope.LegacyLabel(),
 		BeforeJSON:  beforeJSON,
 		AfterJSON:   string(afterBytes),
 		Summary:     summary,
@@ -166,7 +166,7 @@ func (m *Module) executeSaveContract(ctx context.Context, callCtx orchestrator.C
 
 // executeListContracts handles listing house contracts and receipts with filters.
 func (m *Module) executeListContracts(ctx context.Context, callCtx orchestrator.CallContext, repo db.HouseRepository, args map[string]interface{}) (string, error) {
-	familyGroup := resolveFamilyGroup(callCtx)
+	scope := resolveScope(callCtx)
 	recordType, _ := args["record_type"].(string)
 	expiringDays := parseInt(args["expiring_within_days"])
 	searchQuery, _ := args["search_query"].(string)
@@ -176,9 +176,9 @@ func (m *Module) executeListContracts(ctx context.Context, callCtx orchestrator.
 	var err error
 
 	if expiringDays > 0 {
-		records, err = repo.ListExpiringContracts(familyGroup, expiringDays)
+		records, err = repo.ListExpiringContracts(scope, expiringDays)
 	} else {
-		records, err = repo.ListContracts(familyGroup, recordType, nil)
+		records, err = repo.ListContracts(scope, recordType, nil)
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to list house contracts: %w", err)
@@ -246,7 +246,7 @@ func (m *Module) executeListContracts(ctx context.Context, callCtx orchestrator.
 func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestrator.CallContext, repo db.HouseRepository, args map[string]interface{}) (string, error) {
 	action, _ := args["action"].(string)
 	action = strings.ToLower(strings.TrimSpace(action))
-	familyGroup := resolveFamilyGroup(callCtx)
+	scope := resolveScope(callCtx)
 	userID := resolveUserID(callCtx)
 
 	switch action {
@@ -278,7 +278,7 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 		notes, _ := args["notes"].(string)
 
 		item := &models.HomeMaintenanceItem{
-			FamilyGroup:     familyGroup,
+			FamilyGroup:     scope.LegacyLabel(),
 			TaskName:        taskName,
 			Category:        category,
 			IntervalDays:    intervalDays,
@@ -288,7 +288,7 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 			UpdatedByUserID: userID,
 		}
 
-		if err := repo.CreateMaintenanceItem(item); err != nil {
+		if err := repo.CreateMaintenanceItem(scope, item); err != nil {
 			return "", fmt.Errorf("failed to create home maintenance item: %w", err)
 		}
 
@@ -299,7 +299,7 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 			EntityType:  "HomeMaintenanceItem",
 			EntityID:    fmt.Sprintf("%d", item.ID),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			FamilyGroup: scope.LegacyLabel(),
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Created home maintenance task: %s (Category: %s, Next due: %s)", item.TaskName, item.Category, item.NextDueAt.Format("2006-01-02")),
 			Timestamp:   time.Now(),
@@ -314,16 +314,16 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 			return "", fmt.Errorf("item_id is required for complete action")
 		}
 
-		existing, err := repo.GetMaintenanceItem(uint(itemID))
+		existing, err := repo.GetMaintenanceItem(scope, uint(itemID))
 		if err != nil {
 			return "", fmt.Errorf("failed to load maintenance item: %w", err)
 		}
-		isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.UpdatedByUserID != "" && existing.UpdatedByUserID == userID))
+		isAuthorized := existing != nil && existing.HouseholdID == scope.HouseholdID()
 		if !isAuthorized {
-			return "", fmt.Errorf("maintenance item %d not found in family %q", itemID, familyGroup)
+			return "", fmt.Errorf("maintenance item %d not found in family %q", itemID, scope.LegacyLabel())
 		}
 
-		item, err := repo.CompleteMaintenanceItem(uint(itemID), time.Now(), userID, familyGroup)
+		item, err := repo.CompleteMaintenanceItem(scope, uint(itemID), time.Now(), userID)
 		if err != nil {
 			return "", fmt.Errorf("failed to mark maintenance item as completed: %w", err)
 		}
@@ -335,7 +335,7 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 			EntityType:  "HomeMaintenanceItem",
 			EntityID:    fmt.Sprintf("%d", item.ID),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			FamilyGroup: scope.LegacyLabel(),
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Completed home maintenance task: %s (Next due rolled forward to %s)", item.TaskName, item.NextDueAt.Format("2006-01-02")),
 			Timestamp:   time.Now(),
@@ -350,13 +350,13 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 			return "", fmt.Errorf("item_id is required for update action")
 		}
 
-		existing, err := repo.GetMaintenanceItem(uint(itemID))
+		existing, err := repo.GetMaintenanceItem(scope, uint(itemID))
 		if err != nil {
 			return "", fmt.Errorf("failed to load maintenance item: %w", err)
 		}
-		isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.UpdatedByUserID != "" && existing.UpdatedByUserID == userID))
+		isAuthorized := existing != nil && existing.HouseholdID == scope.HouseholdID()
 		if !isAuthorized {
-			return "", fmt.Errorf("maintenance item %d not found in family %q", itemID, familyGroup)
+			return "", fmt.Errorf("maintenance item %d not found in family %q", itemID, scope.LegacyLabel())
 		}
 
 		b, _ := json.Marshal(existing)
@@ -382,7 +382,7 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 		}
 		existing.UpdatedByUserID = userID
 
-		if err := repo.UpdateMaintenanceItem(existing); err != nil {
+		if err := repo.UpdateMaintenanceItem(scope, existing); err != nil {
 			return "", fmt.Errorf("failed to update maintenance item: %w", err)
 		}
 
@@ -393,7 +393,7 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 			EntityType:  "HomeMaintenanceItem",
 			EntityID:    fmt.Sprintf("%d", existing.ID),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			FamilyGroup: scope.LegacyLabel(),
 			BeforeJSON:  beforeJSON,
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Updated home maintenance task: %s", existing.TaskName),
@@ -409,17 +409,17 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 			return "", fmt.Errorf("item_id is required for delete action")
 		}
 
-		existing, err := repo.GetMaintenanceItem(uint(itemID))
+		existing, err := repo.GetMaintenanceItem(scope, uint(itemID))
 		if err != nil {
 			return "", fmt.Errorf("failed to load maintenance item: %w", err)
 		}
-		isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.UpdatedByUserID != "" && existing.UpdatedByUserID == userID))
+		isAuthorized := existing != nil && existing.HouseholdID == scope.HouseholdID()
 		if !isAuthorized {
-			return "", fmt.Errorf("maintenance item %d not found in family %q", itemID, familyGroup)
+			return "", fmt.Errorf("maintenance item %d not found in family %q", itemID, scope.LegacyLabel())
 		}
 
 		b, _ := json.Marshal(existing)
-		if err := repo.DeleteMaintenanceItem(uint(itemID)); err != nil {
+		if err := repo.DeleteMaintenanceItem(scope, uint(itemID)); err != nil {
 			return "", fmt.Errorf("failed to delete maintenance item: %w", err)
 		}
 
@@ -429,7 +429,7 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 			EntityType:  "HomeMaintenanceItem",
 			EntityID:    fmt.Sprintf("%d", itemID),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			FamilyGroup: scope.LegacyLabel(),
 			BeforeJSON:  string(b),
 			Summary:     fmt.Sprintf("Deleted home maintenance task: %s (ID %d)", existing.TaskName, itemID),
 			Timestamp:   time.Now(),
@@ -441,7 +441,7 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 		category, _ := args["category"].(string)
 		overdueOnly := parseBool(args["overdue_only"], false)
 
-		items, err := repo.ListMaintenanceItems(familyGroup, category, overdueOnly)
+		items, err := repo.ListMaintenanceItems(scope, category, overdueOnly)
 		if err != nil {
 			return "", fmt.Errorf("failed to list maintenance items: %w", err)
 		}
@@ -480,7 +480,7 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 		return sb.String(), nil
 
 	case "suggest_seasonal":
-		return m.getSeasonalMaintenanceSuggestions(repo, familyGroup)
+		return m.getSeasonalMaintenanceSuggestions(repo, scope)
 
 	default:
 		return "", fmt.Errorf("unknown maintenance action: %s", action)
@@ -491,7 +491,7 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.CallContext, repo db.HouseRepository, args map[string]interface{}) (string, error) {
 	action, _ := args["action"].(string)
 	action = strings.ToLower(strings.TrimSpace(action))
-	familyGroup := resolveFamilyGroup(callCtx)
+	scope := resolveScope(callCtx)
 	userID := resolveUserID(callCtx)
 
 	switch action {
@@ -511,7 +511,7 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 		notes, _ := args["notes"].(string)
 
 		vehicle := &models.VehicleAsset{
-			FamilyGroup:          familyGroup,
+			FamilyGroup:          scope.LegacyLabel(),
 			Name:                 name,
 			LicensePlate:         strings.TrimSpace(plate),
 			InsuranceExpiry:      insuranceExpiry,
@@ -522,7 +522,7 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			Notes:                strings.TrimSpace(notes),
 		}
 
-		if err := repo.CreateVehicleAsset(vehicle); err != nil {
+		if err := repo.CreateVehicleAsset(scope, vehicle); err != nil {
 			return "", fmt.Errorf("failed to create vehicle asset: %w", err)
 		}
 
@@ -533,7 +533,7 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			EntityType:  "VehicleAsset",
 			EntityID:    fmt.Sprintf("%d", vehicle.ID),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			FamilyGroup: scope.LegacyLabel(),
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Registered vehicle: %s (Plate: %s, Mileage: %d km)", vehicle.Name, vehicle.LicensePlate, vehicle.CurrentMileageKm),
 			Timestamp:   time.Now(),
@@ -566,13 +566,13 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			return "", fmt.Errorf("asset_id is required for update action")
 		}
 
-		existing, err := repo.GetVehicleAsset(uint(assetID))
+		existing, err := repo.GetVehicleAsset(scope, uint(assetID))
 		if err != nil {
 			return "", fmt.Errorf("failed to load vehicle asset: %w", err)
 		}
-		isAuthorized := existing != nil && existing.FamilyGroup != "" && existing.FamilyGroup == familyGroup
+		isAuthorized := existing != nil && existing.HouseholdID == scope.HouseholdID()
 		if !isAuthorized {
-			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, familyGroup)
+			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, scope.LegacyLabel())
 		}
 
 		b, _ := json.Marshal(existing)
@@ -603,7 +603,7 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			existing.Notes = strings.TrimSpace(notes)
 		}
 
-		if err := repo.UpdateVehicleAsset(existing); err != nil {
+		if err := repo.UpdateVehicleAsset(scope, existing); err != nil {
 			return "", fmt.Errorf("failed to update vehicle asset: %w", err)
 		}
 
@@ -614,7 +614,7 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			EntityType:  "VehicleAsset",
 			EntityID:    fmt.Sprintf("%d", existing.ID),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			FamilyGroup: scope.LegacyLabel(),
 			BeforeJSON:  beforeJSON,
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Updated vehicle asset: %s", existing.Name),
@@ -633,16 +633,16 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			return "", fmt.Errorf("valid current_mileage_km is required")
 		}
 
-		existing, err := repo.GetVehicleAsset(uint(assetID))
+		existing, err := repo.GetVehicleAsset(scope, uint(assetID))
 		if err != nil {
 			return "", fmt.Errorf("failed to load vehicle asset: %w", err)
 		}
-		isAuthorized := existing != nil && existing.FamilyGroup != "" && existing.FamilyGroup == familyGroup
+		isAuthorized := existing != nil && existing.HouseholdID == scope.HouseholdID()
 		if !isAuthorized {
-			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, familyGroup)
+			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, scope.LegacyLabel())
 		}
 
-		vehicle, err := repo.UpdateVehicleMileage(uint(assetID), mileage)
+		vehicle, err := repo.UpdateVehicleMileage(scope, uint(assetID), mileage)
 		if err != nil {
 			return "", fmt.Errorf("failed to update vehicle mileage: %w", err)
 		}
@@ -659,7 +659,7 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			EntityType:  "VehicleAsset",
 			EntityID:    fmt.Sprintf("%d", vehicle.ID),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			FamilyGroup: scope.LegacyLabel(),
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Updated mileage for %s to %d km", vehicle.Name, vehicle.CurrentMileageKm),
 			Timestamp:   time.Now(),
@@ -673,13 +673,13 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			return "", fmt.Errorf("asset_id is required for log_service action")
 		}
 
-		existing, err := repo.GetVehicleAsset(uint(assetID))
+		existing, err := repo.GetVehicleAsset(scope, uint(assetID))
 		if err != nil {
 			return "", fmt.Errorf("failed to load vehicle asset: %w", err)
 		}
-		isAuthorized := existing != nil && existing.FamilyGroup != "" && existing.FamilyGroup == familyGroup
+		isAuthorized := existing != nil && existing.HouseholdID == scope.HouseholdID()
 		if !isAuthorized {
-			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, familyGroup)
+			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, scope.LegacyLabel())
 		}
 
 		b, _ := json.Marshal(existing)
@@ -710,7 +710,7 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			}
 		}
 
-		if err := repo.UpdateVehicleAsset(existing); err != nil {
+		if err := repo.UpdateVehicleAsset(scope, existing); err != nil {
 			return "", fmt.Errorf("failed to log vehicle service: %w", err)
 		}
 
@@ -721,7 +721,7 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			EntityType:  "VehicleAsset",
 			EntityID:    fmt.Sprintf("%d", existing.ID),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			FamilyGroup: scope.LegacyLabel(),
 			BeforeJSON:  beforeJSON,
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Logged service for %s at %d km (Next service at %d km)", existing.Name, existing.CurrentMileageKm, existing.NextServiceMileageKm),
@@ -737,17 +737,17 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			return "", fmt.Errorf("asset_id is required for delete action")
 		}
 
-		existing, err := repo.GetVehicleAsset(uint(assetID))
+		existing, err := repo.GetVehicleAsset(scope, uint(assetID))
 		if err != nil {
 			return "", fmt.Errorf("failed to load vehicle asset: %w", err)
 		}
-		isAuthorized := existing != nil && existing.FamilyGroup != "" && existing.FamilyGroup == familyGroup
+		isAuthorized := existing != nil && existing.HouseholdID == scope.HouseholdID()
 		if !isAuthorized {
-			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, familyGroup)
+			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, scope.LegacyLabel())
 		}
 
 		b, _ := json.Marshal(existing)
-		if err := repo.DeleteVehicleAsset(uint(assetID)); err != nil {
+		if err := repo.DeleteVehicleAsset(scope, uint(assetID)); err != nil {
 			return "", fmt.Errorf("failed to delete vehicle asset: %w", err)
 		}
 
@@ -757,7 +757,7 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			EntityType:  "VehicleAsset",
 			EntityID:    fmt.Sprintf("%d", assetID),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			FamilyGroup: scope.LegacyLabel(),
 			BeforeJSON:  string(b),
 			Summary:     fmt.Sprintf("Deleted vehicle asset: %s", existing.Name),
 			Timestamp:   time.Now(),
@@ -766,7 +766,7 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 		return fmt.Sprintf("🗑️ Deleted vehicle asset %d (%s).", assetID, existing.Name), nil
 
 	case "list":
-		vehicles, err := repo.ListVehicleAssets(familyGroup)
+		vehicles, err := repo.ListVehicleAssets(scope)
 		if err != nil {
 			return "", fmt.Errorf("failed to list vehicle assets: %w", err)
 		}

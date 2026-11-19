@@ -11,11 +11,12 @@ import (
 	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/channel/adapters/adapterstest"
 	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/testutil"
 	"github.com/nivik/mypa/internal/domains/durability"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/testutil"
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,6 +37,8 @@ func TestAdversarial_SystemEntitiesVeto(t *testing.T) {
 	bus := events.NewEventBus()
 	module := durability.NewModule(client, bus)
 	ctx := context.Background()
+
+	scope := householdtest.Scope(t, client, "adversary_family", "adversary_user", "family") // V4-30: the tenant
 
 	systemEntities := []string{
 		"User", "users", "user",
@@ -63,16 +66,16 @@ func TestAdversarial_SystemEntitiesVeto(t *testing.T) {
 				CreatedAt:   time.Now(),
 			}
 
-			err := client.InsertMutationLog(log)
+			err := client.InsertMutationLog(scope, log)
 			require.NoError(t, err)
 			defer client.DB.Delete(&models.MutationLog{}, "id = ?", mutID)
 
-			res, err := module.Rollback(ctx, "adversary_user", "adversary_family", mutID)
+			res, err := module.Rollback(ctx, scope, mutID)
 			assert.Error(t, err, "System entity %q must be rejected unconditionally", entity)
 			assert.Nil(t, res)
 
 			// Verify in database that is_undone remains FALSE
-			refreshed, err := client.GetMutationLogByID(mutID)
+			refreshed, err := client.GetMutationLogByID(scope, mutID)
 			require.NoError(t, err)
 			assert.False(t, refreshed.IsUndone, "Mutation log must NOT be marked undone for rejected entity %s", entity)
 		})
@@ -91,11 +94,13 @@ func TestAdversarial_DomainRollbackLiveDB(t *testing.T) {
 
 	actorID := "durability_test_actor"
 	familyGroup := "durability_test_family"
+	scope := householdtest.Scope(t, client, familyGroup, actorID, "family") // V4-30: the tenant
 
 	// 1. BabyCareLog: Create action -> Rollback deletes the row
 	t.Run("Rollback_BabyCareLog_Create", func(t *testing.T) {
 		babyLog := models.BabyCareLog{
 			BabyID:         1,
+			HouseholdID:    scope.HouseholdID(),
 			FamilyGroup:    familyGroup,
 			LogType:        "feeding",
 			ValueNumeric:   120.0,
@@ -122,12 +127,12 @@ func TestAdversarial_DomainRollbackLiveDB(t *testing.T) {
 			IsUndone:    false,
 			CreatedAt:   time.Now(),
 		}
-		err = client.InsertMutationLog(mLog)
+		err = client.InsertMutationLog(scope, mLog)
 		require.NoError(t, err)
 		defer client.DB.Delete(&models.MutationLog{}, "id = ?", mutID)
 
 		// Execute rollback
-		res, err := module.Rollback(ctx, actorID, familyGroup, mutID)
+		res, err := module.Rollback(ctx, scope, mutID)
 		require.NoError(t, err)
 		assert.False(t, res.AlreadyUndone)
 		assert.Contains(t, res.Detail, fmt.Sprintf("Reverted create '%d' on BabyCareLog", babyLog.ID))
@@ -138,7 +143,7 @@ func TestAdversarial_DomainRollbackLiveDB(t *testing.T) {
 		assert.Equal(t, int64(0), count, "BabyCareLog row must be deleted after rolling back 'create'")
 
 		// Check mutation log is marked undone
-		refreshed, err := client.GetMutationLogByID(mutID)
+		refreshed, err := client.GetMutationLogByID(scope, mutID)
 		require.NoError(t, err)
 		assert.True(t, refreshed.IsUndone, "MutationLog.is_undone must be true")
 	})
@@ -147,6 +152,7 @@ func TestAdversarial_DomainRollbackLiveDB(t *testing.T) {
 	t.Run("Rollback_FinancialTransaction_Update", func(t *testing.T) {
 		finTx := models.FinancialTransaction{
 			UserID:          actorID,
+			HouseholdID:     scope.HouseholdID(),
 			FamilyGroup:     familyGroup,
 			Type:            models.TransactionTypeExpense,
 			Category:        models.CategoryGroceries,
@@ -180,12 +186,12 @@ func TestAdversarial_DomainRollbackLiveDB(t *testing.T) {
 			IsUndone:    false,
 			CreatedAt:   time.Now(),
 		}
-		err = client.InsertMutationLog(mLog)
+		err = client.InsertMutationLog(scope, mLog)
 		require.NoError(t, err)
 		defer client.DB.Delete(&models.MutationLog{}, "id = ?", mutID)
 
 		// Rollback
-		res, err := module.Rollback(ctx, actorID, familyGroup, mutID)
+		res, err := module.Rollback(ctx, scope, mutID)
 		require.NoError(t, err)
 		assert.False(t, res.AlreadyUndone)
 
@@ -197,7 +203,7 @@ func TestAdversarial_DomainRollbackLiveDB(t *testing.T) {
 		assert.Equal(t, "FarmerMarket", refreshedTx.Merchant, "Merchant must be reverted to FarmerMarket")
 
 		// Verify mutation log is marked undone
-		refreshedLog, err := client.GetMutationLogByID(mutID)
+		refreshedLog, err := client.GetMutationLogByID(scope, mutID)
 		require.NoError(t, err)
 		assert.True(t, refreshedLog.IsUndone)
 	})
@@ -241,12 +247,12 @@ func TestAdversarial_DomainRollbackLiveDB(t *testing.T) {
 			IsUndone:    false,
 			CreatedAt:   time.Now(),
 		}
-		err = client.InsertMutationLog(mLog)
+		err = client.InsertMutationLog(scope, mLog)
 		require.NoError(t, err)
 		defer client.DB.Delete(&models.MutationLog{}, "id = ?", mutID)
 
 		// Execute rollback
-		res, err := module.Rollback(ctx, actorID, familyGroup, mutID)
+		res, err := module.Rollback(ctx, scope, mutID)
 		require.NoError(t, err)
 		assert.False(t, res.AlreadyUndone)
 
@@ -257,7 +263,7 @@ func TestAdversarial_DomainRollbackLiveDB(t *testing.T) {
 		assert.Equal(t, "Doctor Appointment", restoredEvent.Title)
 
 		// Verify mutation log is marked undone
-		refreshedLog, err := client.GetMutationLogByID(mutID)
+		refreshedLog, err := client.GetMutationLogByID(scope, mutID)
 		require.NoError(t, err)
 		assert.True(t, refreshedLog.IsUndone)
 	})
@@ -274,6 +280,7 @@ func TestAdversarial_RollbackAtomicityOnFailure(t *testing.T) {
 
 	actorID := "durability_atomic_actor"
 	familyGroup := "durability_atomic_fam"
+	scope := householdtest.Scope(t, client, familyGroup, actorID, "family") // V4-30: the tenant
 
 	mutID := uuid.New().String()
 	mLog := models.MutationLog{
@@ -290,16 +297,16 @@ func TestAdversarial_RollbackAtomicityOnFailure(t *testing.T) {
 		CreatedAt:   time.Now(),
 	}
 
-	err := client.InsertMutationLog(mLog)
+	err := client.InsertMutationLog(scope, mLog)
 	require.NoError(t, err)
 	defer client.DB.Delete(&models.MutationLog{}, "id = ?", mutID)
 
-	res, err := module.Rollback(ctx, actorID, familyGroup, mutID)
+	res, err := module.Rollback(ctx, scope, mutID)
 	assert.Error(t, err, "Rollback with invalid columns must return an SQL error")
 	assert.Nil(t, res)
 
 	// Verify that is_undone was NOT set to true
-	refreshed, err := client.GetMutationLogByID(mutID)
+	refreshed, err := client.GetMutationLogByID(scope, mutID)
 	require.NoError(t, err)
 	assert.False(t, refreshed.IsUndone, "Mutation log is_undone must remain false after failed transaction")
 }
@@ -320,8 +327,10 @@ func TestAdversarial_EngineProcessMessageUndo(t *testing.T) {
 	client.DB.Where("user_id = ?", testUser).Delete(&models.MutationLog{})
 	client.DB.Where("platform_id = ?", testUser).Delete(&models.User{})
 
+	scope := householdtest.Scope(t, client, testFam, testUser, "family") // V4-30: the tenant
 	user := models.User{
 		PlatformID:  testUser,
+		HouseholdID: scope.HouseholdID(),
 		FamilyGroup: testFam,
 		Role:        "family",
 	}
@@ -333,6 +342,7 @@ func TestAdversarial_EngineProcessMessageUndo(t *testing.T) {
 	// Insert a valid mutation
 	babyLog := models.BabyCareLog{
 		BabyID:         1,
+		HouseholdID:    scope.HouseholdID(),
 		FamilyGroup:    testFam,
 		LogType:        "diaper",
 		Details:        "Wet diaper",
@@ -358,7 +368,7 @@ func TestAdversarial_EngineProcessMessageUndo(t *testing.T) {
 		IsUndone:    false,
 		CreatedAt:   time.Now(),
 	}
-	err = client.InsertMutationLog(mLog)
+	err = client.InsertMutationLog(scope, mLog)
 	require.NoError(t, err)
 
 	// Create a message interceptor to verify response
@@ -408,7 +418,7 @@ func TestAdversarial_EngineProcessMessageUndo(t *testing.T) {
 	assert.Equal(t, int64(0), count, "BabyCareLog must be reverted")
 
 	// Verify mutation is marked undone
-	refreshed, err := client.GetMutationLogByID(mutID)
+	refreshed, err := client.GetMutationLogByID(scope, mutID)
 	require.NoError(t, err)
 	assert.True(t, refreshed.IsUndone)
 

@@ -56,6 +56,7 @@ func TestSchemaResolvers_BabyLifecycle(t *testing.T) {
 
 	famA := "fam-" + uuid.New().String()
 	userA := "usr-" + uuid.New().String()
+	households(t, resolver.DB, famA)
 
 	ctxA := WithClaims(context.Background(), &AuthClaims{
 		UserID:      userA,
@@ -124,6 +125,7 @@ func TestSchemaResolvers_FinanceLifecycle(t *testing.T) {
 	defer cleanup()
 
 	fam := "fam-" + uuid.New().String()
+	households(t, resolver.DB, fam)
 	user := "usr-" + uuid.New().String()
 
 	ctx := WithClaims(context.Background(), &AuthClaims{
@@ -181,6 +183,7 @@ func TestSchemaResolvers_ScheduleLifecycle(t *testing.T) {
 	defer cleanup()
 
 	fam := "fam-" + uuid.New().String()
+	households(t, resolver.DB, fam)
 	user := "usr-" + uuid.New().String()
 
 	ctx := WithClaims(context.Background(), &AuthClaims{
@@ -232,6 +235,7 @@ func TestSchemaResolvers_HouseLifecycle(t *testing.T) {
 	defer cleanup()
 
 	fam := "fam-" + uuid.New().String()
+	households(t, resolver.DB, fam)
 	user := "usr-" + uuid.New().String()
 
 	ctx := WithClaims(context.Background(), &AuthClaims{
@@ -299,6 +303,7 @@ func TestSchemaResolvers_AutomationLifecycle(t *testing.T) {
 	defer cleanup()
 
 	fam := "fam-" + uuid.New().String()
+	households(t, resolver.DB, fam)
 	user := "usr-" + uuid.New().String()
 
 	ctx := WithClaims(context.Background(), &AuthClaims{
@@ -363,6 +368,7 @@ func TestSchemaResolvers_MultiTenantSecurity(t *testing.T) {
 	famA := "fam-" + uuid.New().String()
 	famB := "fam-" + uuid.New().String()
 	userA := "usr-" + uuid.New().String()
+	households(t, resolver.DB, famA, famB, "default")
 
 	// Member user belonging to Family A
 	ctxMemberA := WithClaims(context.Background(), &AuthClaims{

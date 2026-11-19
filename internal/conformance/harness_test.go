@@ -332,16 +332,16 @@ type env struct {
 	channels *layer.Registry
 	// polling is the registry of an install with no public address (V4-40), on the same fake
 	// transport: there Telegram is polled instead of calling the webhook.
-	polling  *layer.Registry
-	engine   *orchestrator.Engine
-	wire     *fakePlatforms
-	redis    *miniredis.Miniredis
-	db       *memoryDB
-	model    *scriptedModel
-	stt      *fakeTranscriber
-	tools    *scenarioTools
-	undo     *fakeDurability
-	seq      int
+	polling *layer.Registry
+	engine  *orchestrator.Engine
+	wire    *fakePlatforms
+	redis   *miniredis.Miniredis
+	db      *memoryDB
+	model   *scriptedModel
+	stt     *fakeTranscriber
+	tools   *scenarioTools
+	undo    *fakeDurability
+	seq     int
 	// compared is set once the scenario has compared its transcript (see golden).
 	compared bool
 }
@@ -413,10 +413,15 @@ func newEnv(t *testing.T, ch channel) *env {
 func (e *env) member(n int, role, familyGroup string) person {
 	e.t.Helper()
 	p := e.ch.person(n)
+	key := familyGroup // migration 00003: a member without a label has a household of their own
+	if key == "" {
+		key = p.UserID
+	}
 	require.NoError(e.t, e.db.UpsertUser(models.User{
 		PlatformID:  p.UserID,
 		Name:        fmt.Sprintf("Member %d", n),
 		Role:        role,
+		HouseholdID: e.db.household(key),
 		FamilyGroup: familyGroup,
 		CreatedAt:   time.Now(),
 	}))

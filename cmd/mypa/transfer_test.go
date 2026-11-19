@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"flag"
+	"fmt"
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -105,12 +107,10 @@ func (i *install) run(args ...string) (int, string) {
 func (i *install) seed() {
 	i.t.Helper()
 	require.NoError(i.t, db.Migrate(context.Background(), i.sqlDB))
-	for _, u := range []models.User{
-		{PlatformID: "1001", Name: "Dana", Role: "admin", FamilyGroup: "Levi"},
-		{PlatformID: "1002", Name: "Omer", Role: "family", FamilyGroup: "Levi"},
-	} {
-		require.NoError(i.t, i.client.UpsertUser(u))
-	}
+	// V4-30: the family is a household; its members belong to it.
+	householdtest.User(i.t, i.client, "1001", "Dana", "admin", "Levi")
+	householdtest.User(i.t, i.client, "1002", "Omer", "family", "Levi")
+	levi := householdtest.Household(i.t, i.client, "Levi").ID
 	ciphertext, err := crypto.Encrypt([]byte(danaToken), "")
 	require.NoError(i.t, err)
 	require.NoError(i.t, i.client.SaveEncryptedCredential(models.EncryptedCredential{UserID: "1001", Provider: googleProvider, Ciphertext: ciphertext}))
@@ -118,7 +118,7 @@ func (i *install) seed() {
 	embedding := make([]float32, 3072)
 	embedding[0], embedding[7] = 1, 0.5
 	require.NoError(i.t, i.client.DB.Create(&models.TopicMemory{
-		UserID: "1001", FamilyGroup: "Levi", Topic: "house", TagsJSON: "[]", Scope: "family",
+		UserID: "1001", HouseholdID: levi, FamilyGroup: "Levi", Topic: "house", TagsJSON: "[]", Scope: "family",
 		Fact: "The boiler is serviced every November.", CreatedByUserID: "1001", ValidFrom: time.Now(),
 		Embedding: pgvector.NewVector(embedding),
 	}).Error)
@@ -297,7 +297,7 @@ func TestTransfer_ReplaceIsExplicitAndReversible(t *testing.T) {
 	// The target already has a different household.
 	target := newInstall(t, nil)
 	require.NoError(t, db.Migrate(context.Background(), target.sqlDB))
-	require.NoError(t, target.client.UpsertUser(models.User{PlatformID: "9001", Name: "Existing owner", Role: "admin", FamilyGroup: "Cohen"}))
+	householdtest.User(t, target.client, "9001", "Existing owner", "admin", "Cohen")
 	copySet(t, source.deps.BackupDir, target.deps.BackupDir)
 
 	code, report = target.run("import", manifest)
@@ -494,6 +494,26 @@ func TestTransfer_BaselineDumpRestoresAndMigrates(t *testing.T) {
 		assert.Equal(t, rows, got[table], "rows of %s after restoring and migrating the baseline", table)
 	}
 	assert.Equal(t, []string{"Dana", "Omer"}, target.userNames())
+
+	// V4-30, ADR 0002 Decision 2 step 6: Migration A gave every baseline row of the 20 labelled
+	// tables a household, and it is the household its family label names. No row is without one.
+	var households int
+	require.NoError(t, target.sqlDB.QueryRow(`SELECT count(*) FROM households`).Scan(&households))
+	assert.Positive(t, households, "the baseline's family labels became households")
+	for _, table := range []string{
+		"automation_rules", "baby_care_logs", "baby_inventory_items", "baby_profiles", "category_budgets",
+		"entity_profiles", "external_api_connectors", "financial_transactions", "home_maintenance_items",
+		"house_contract_records", "mutation_logs", "pairing_codes", "personal_crm_contacts", "recurring_bills",
+		"schedule_events", "shared_spaces", "shared_task_reminders", "topic_memories", "users", "vehicle_assets",
+	} {
+		var rows, mismatched int
+		require.NoError(t, target.sqlDB.QueryRow(`SELECT count(*) FROM `+table).Scan(&rows))
+		require.NoError(t, target.sqlDB.QueryRow(`SELECT count(*) FROM `+table+` x
+			LEFT JOIN households h ON h.id = x.household_id
+			WHERE h.id IS NULL OR (COALESCE(btrim(x.family_group), '') <> '' AND h.legacy_label IS DISTINCT FROM btrim(x.family_group))`).Scan(&mismatched))
+		assert.Positive(t, rows, "%s holds baseline data", table)
+		assert.Zero(t, mismatched, "%s: every row is in the household its label names", table)
+	}
 	var fact string
 	require.NoError(t, target.client.DB.Model(&models.TopicMemory{}).Where("user_id = ?", "1001").Pluck("fact", &fact).Error)
 	assert.Equal(t, "The boiler is serviced every November.", fact)
@@ -605,7 +625,10 @@ func TestTransfer_RollbackRestoresWithoutMigrating(t *testing.T) {
 
 	code, report = target.run("import", findManifest(t, target.deps.BackupDir), "--no-migrate")
 	require.Zero(t, code, report)
-	assert.Contains(t, report, "left at schema version 2, as asked")
+	// The backup was taken at this build's latest schema version; --no-migrate leaves it there.
+	_, latest, err := db.SchemaVersion(context.Background(), source.sqlDB)
+	require.NoError(t, err)
+	assert.Contains(t, report, fmt.Sprintf("left at schema version %d, as asked", latest))
 	assert.Contains(t, report, "Do not start this release on this database")
 	assert.NotContains(t, report, "docker compose up")
 	assert.Equal(t, []string{"Dana", "Omer"}, target.userNames())
@@ -622,7 +645,7 @@ func TestTransfer_SafetyBackupDoesNotPruneTheSetBeingRestored(t *testing.T) {
 
 	target := newInstall(t, nil)
 	require.NoError(t, db.Migrate(context.Background(), target.sqlDB))
-	require.NoError(t, target.client.UpsertUser(models.User{PlatformID: "9001", Name: "Existing owner", Role: "admin"}))
+	householdtest.User(t, target.client, "9001", "Existing owner", "admin", "") // no label: their own household
 	copySet(t, source.deps.BackupDir, target.deps.BackupDir)
 	manifest := findManifest(t, target.deps.BackupDir)
 	// Many newer backups: under the retention policy the set to restore is now the oldest and

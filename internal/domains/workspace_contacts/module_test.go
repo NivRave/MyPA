@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 )
@@ -52,6 +53,7 @@ func TestWorkspaceContacts_Operations(t *testing.T) {
 			FamilyGroup: "family_contacts",
 		},
 		EventBus: bus,
+		Scope:    identitytest.Scope(t, "family_contacts", "tg_contact", "family"), // V4-30: the tenant
 	}
 
 	// 1. Search Contacts

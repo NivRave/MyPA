@@ -10,7 +10,6 @@ import (
 	"gorm.io/gorm"
 )
 
-
 var (
 	registeredModelsMu sync.RWMutex
 	registeredModels   []interface{}
@@ -147,6 +146,14 @@ func ApplyCustomIndexes(db *gorm.DB) error {
 
 		// 8. Topic Memories (Tenant Memory Retrieval)
 		`CREATE INDEX IF NOT EXISTS idx_topic_memories_family_created ON topic_memories (family_group, created_at DESC);`,
+
+		// 9. The same hot tenant lookups keyed by household (V4-30, migration 00003).
+		`CREATE INDEX IF NOT EXISTS idx_mutation_logs_household_created ON mutation_logs (household_id, created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_financial_transactions_household_date ON financial_transactions (household_id, transaction_date DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_baby_care_logs_household_timestamp ON baby_care_logs (household_id, timestamp DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_schedule_events_household_start ON schedule_events (household_id, start_time ASC);`,
+		`CREATE INDEX IF NOT EXISTS idx_topic_memories_household_created ON topic_memories (household_id, created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_shared_task_reminders_household_completed_due ON shared_task_reminders (household_id, is_completed, due_time ASC);`,
 	}
 
 	for _, stmt := range standardIndexes {
@@ -170,4 +177,3 @@ func ApplyCustomIndexes(db *gorm.DB) error {
 
 	return nil
 }
-

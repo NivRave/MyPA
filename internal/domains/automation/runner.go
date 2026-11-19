@@ -75,7 +75,9 @@ func init() {
 	for _, cidr := range blockedCIDRs {
 		_, ipNet, err := net.ParseCIDR(cidr)
 		if err == nil {
-			blockedIPNets = append(blockedIPNets, ipNet); _ = blockedHostnames; _ = blockedSuffixes
+			blockedIPNets = append(blockedIPNets, ipNet)
+			_ = blockedHostnames
+			_ = blockedSuffixes
 		}
 	}
 }
@@ -557,6 +559,14 @@ func (r *Runner) HandleMutationEvent(ctx context.Context, ev events.MutationEven
 		return nil
 	}
 
+	// V4-30: a rule only ever reacts to events of its own household. An event without a
+	// household matches no rule.
+	if strings.TrimSpace(ev.HouseholdID) == "" {
+		return nil
+	}
+
+	// Scans every household's active rules (the event runner); the household check below
+	// confines each rule to its own household.
 	rules, err := r.repo.ListActiveAutomationRules(ev.Topic)
 	if err != nil {
 		slog.Error("failed to query active automation rules", "topic", ev.Topic, "error", err)
@@ -568,12 +578,10 @@ func (r *Runner) HandleMutationEvent(ctx context.Context, ev events.MutationEven
 			continue
 		}
 
-		// Check user / family scope:
-		// If rule specifies a user, it matches either that actor or that family group
-		if rule.UserID != "" && ev.ActorUserID != "" && rule.UserID != ev.ActorUserID {
-			if rule.FamilyGroup == "" || rule.FamilyGroup != ev.FamilyGroup {
-				continue
-			}
+		// Household scope: the rule's household must be the event's. Within a household a rule
+		// reacts to every member's mutations, as it did within a family group before V4-30.
+		if rule.HouseholdID == "" || rule.HouseholdID != ev.HouseholdID {
+			continue
 		}
 
 		// Topic matching: if TriggerTopic is set and not wildcard, it must match event topic
@@ -611,6 +619,7 @@ func (r *Runner) HandleMutationEvent(ctx context.Context, ev events.MutationEven
 					EntityType:  "AutomationRule",
 					EntityID:    fmt.Sprint(rule.ID),
 					ActorUserID: rule.UserID,
+					HouseholdID: rule.HouseholdID,
 					FamilyGroup: rule.FamilyGroup,
 					Summary:     fmt.Sprintf("Rule %q execution failed: %v", rule.Name, execErr),
 					Timestamp:   time.Now(),
@@ -661,6 +670,7 @@ func (r *Runner) ExecuteAction(ctx context.Context, rule models.AutomationRule, 
 			EntityType:  "AutomationRule",
 			EntityID:    fmt.Sprint(rule.ID),
 			ActorUserID: rule.UserID,
+			HouseholdID: rule.HouseholdID,
 			FamilyGroup: rule.FamilyGroup,
 			Summary:     fmt.Sprintf("Automation rule %q executed for event %s.%s", rule.Name, ev.Topic, ev.Action),
 			Timestamp:   time.Now(),
@@ -703,4 +713,3 @@ func ExtractCronSchedule(conditionJSON string) (string, error) {
 	}
 	return trimmed, nil
 }
-

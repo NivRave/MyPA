@@ -80,6 +80,7 @@ func TestProcessMessage_AdminRBAC_FamilyRoleRejected(t *testing.T) {
 		Role:        "family",
 		FamilyGroup: "TestFamily",
 	}
+	inHousehold(familyUser)
 
 	// 1. /backup from family member rejected
 	dbMock.EXPECT().GetUser(familyUserID).Return(familyUser, nil)

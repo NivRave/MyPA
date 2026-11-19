@@ -68,6 +68,7 @@ func TestScale01_CacheHitMissAndTTL(t *testing.T) {
 			FamilyGroup: "fam_stress_1",
 			PlatformID:  "tg_parent_1",
 		},
+		Scope: idScope("fam_stress_1", "tg_parent_1", "family"),
 	}
 
 	ctx := context.Background()
@@ -120,6 +121,8 @@ func TestScale01_CacheHitMissAndTTL(t *testing.T) {
 			FamilyGroup: "",
 			PlatformID:  "actor_alone_99",
 		},
+		// Without a label the user has a household of their own, keyed by their platform ID.
+		Scope: idScope("actor_alone_99", "actor_alone_99", "family"),
 	}
 	promptNoFG := reg.CombinedSystemPrompt(ctx, callCtxNoFG)
 	assert.Contains(t, promptNoFG, "Baby Section")
@@ -127,12 +130,13 @@ func TestScale01_CacheHitMissAndTTL(t *testing.T) {
 }
 
 // TestScale01_EventBusInvalidationStress verifies:
-// 1. Publishing MutationEvent topic "baby" evicts ctx_prompt:<familyGroup>:*:baby (every member) and ctx_prompt:<actorUserID>:*:baby.
-// 2. Unrelated tenant keys (e.g. fam_beta) are NOT evicted.
-// 3. Unrelated module keys (e.g. finance, house) are NOT evicted.
-// 4. Aliased topics (e.g. "calendar" -> "schedule" and "workspace_calendar") evict both mapped modules.
-// 5. Entity-level fallbacks (e.g. entity_type: "topic_memory") evict "memory".
-// 6. Topic case-insensitivity and whitespace trimming work robustly.
+//  1. Publishing MutationEvent topic "baby" evicts ctx_prompt:<householdID>:*:baby (every member). Since V4-30
+//     every user has a household, so an actor's own ID is no longer a cache scope and is not scanned.
+//  2. Unrelated tenant keys (e.g. fam_beta) are NOT evicted.
+//  3. Unrelated module keys (e.g. finance, house) are NOT evicted.
+//  4. Aliased topics (e.g. "calendar" -> "schedule" and "workspace_calendar") evict both mapped modules.
+//  5. Entity-level fallbacks (e.g. entity_type: "topic_memory") evict "memory".
+//  6. Topic case-insensitivity and whitespace trimming work robustly.
 func TestScale01_EventBusInvalidationStress(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()
@@ -150,8 +154,8 @@ func TestScale01_EventBusInvalidationStress(t *testing.T) {
 	keysToSeed := map[string]string{
 		"ctx_prompt:fam_alpha:u_alpha:baby":               "Baby fam_alpha",
 		"ctx_prompt:fam_alpha:u_alpha2:baby":              "Baby fam_alpha second member",
-		"ctx_prompt:user_john:user_john:baby":              "Baby user_john",
-		"ctx_prompt:fam_beta:u_beta:baby":                "Baby fam_beta", // Unrelated family
+		"ctx_prompt:user_john:user_john:baby":             "Baby user_john",
+		"ctx_prompt:fam_beta:u_beta:baby":                 "Baby fam_beta",     // Unrelated family
 		"ctx_prompt:fam_alpha:u_alpha:finance":            "Finance fam_alpha", // Unrelated module
 		"ctx_prompt:fam_alpha:u_alpha:schedule":           "Schedule fam_alpha",
 		"ctx_prompt:fam_alpha:u_alpha:workspace_calendar": "Calendar fam_alpha",
@@ -166,6 +170,7 @@ func TestScale01_EventBusInvalidationStress(t *testing.T) {
 	// 1. Publish MutationEvent for "baby"
 	err = bus.Publish(ctx, events.MutationEvent{
 		Topic:       "  bAbY  ",
+		HouseholdID: "fam_alpha",
 		FamilyGroup: "fam_alpha",
 		ActorUserID: "user_john",
 		Action:      "create",
@@ -175,7 +180,7 @@ func TestScale01_EventBusInvalidationStress(t *testing.T) {
 	// Assert target keys evicted
 	assert.False(t, mr.Exists("ctx_prompt:fam_alpha:u_alpha:baby"), "fam_alpha:baby must be evicted")
 	assert.False(t, mr.Exists("ctx_prompt:fam_alpha:u_alpha2:baby"), "every fam_alpha member's baby section must be evicted")
-	assert.False(t, mr.Exists("ctx_prompt:user_john:user_john:baby"), "user_john:baby must be evicted")
+	assert.True(t, mr.Exists("ctx_prompt:user_john:user_john:baby"), "an actor ID is not a cache scope since V4-30 (DP-26)")
 
 	// Assert unrelated tenant preserved
 	assert.True(t, mr.Exists("ctx_prompt:fam_beta:u_beta:baby"), "fam_beta:baby must NOT be evicted")
@@ -186,6 +191,7 @@ func TestScale01_EventBusInvalidationStress(t *testing.T) {
 	// 2. Test topic alias "calendar" -> invalidates "schedule" and "workspace_calendar"
 	err = bus.Publish(ctx, events.MutationEvent{
 		Topic:       "calendar",
+		HouseholdID: "fam_alpha",
 		FamilyGroup: "fam_alpha",
 		Action:      "update",
 	})
@@ -197,6 +203,7 @@ func TestScale01_EventBusInvalidationStress(t *testing.T) {
 	err = bus.Publish(ctx, events.MutationEvent{
 		Topic:       "health_custom",
 		EntityType:  "topic_memory",
+		HouseholdID: "fam_alpha",
 		FamilyGroup: "fam_alpha",
 		Action:      "upsert",
 	})
@@ -208,11 +215,11 @@ func TestScale01_EventBusInvalidationStress(t *testing.T) {
 }
 
 // TestScale01_800msBoundedTimeoutStress verifies:
-// 1. When slow/hanging modules sleep for 2+ seconds or block indefinitely,
-//    CombinedSystemPrompt unblocks and returns within ~800ms-1100ms.
-// 2. Prompt contains outputs from fast modules.
-// 3. Prompt safely omits timed-out modules without panicking or stalling.
-// 4. Timed-out modules are NOT cached to Redis.
+//  1. When slow/hanging modules sleep for 2+ seconds or block indefinitely,
+//     CombinedSystemPrompt unblocks and returns within ~800ms-1100ms.
+//  2. Prompt contains outputs from fast modules.
+//  3. Prompt safely omits timed-out modules without panicking or stalling.
+//  4. Timed-out modules are NOT cached to Redis.
 func TestScale01_800msBoundedTimeoutStress(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()
@@ -258,7 +265,8 @@ func TestScale01_800msBoundedTimeoutStress(t *testing.T) {
 	reg.Register(blockingHangMod)
 
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "fam_timeout_test", PlatformID: "u_timeout"},
+		User:  &models.User{FamilyGroup: "fam_timeout_test", PlatformID: "u_timeout"},
+		Scope: idScope("fam_timeout_test", "u_timeout", "family"),
 	}
 
 	start := time.Now()
@@ -335,7 +343,8 @@ func (m *mockFailingPromptCache) InvalidateFamilyPromptSections(ctx context.Cont
 // 4. When miniredis is abruptly closed mid-operation, no panic occurs.
 func TestScale01_RedisFailureDegradation(t *testing.T) {
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "fam_deg_1", PlatformID: "u_deg"},
+		User:  &models.User{FamilyGroup: "fam_deg_1", PlatformID: "u_deg"},
+		Scope: idScope("fam_deg_1", "u_deg", "family"),
 	}
 
 	liveMod := &mockToolModule{
@@ -364,6 +373,7 @@ func TestScale01_RedisFailureDegradation(t *testing.T) {
 	RegisterPromptInvalidator(bus, failingCache)
 	err := bus.Publish(context.Background(), events.MutationEvent{
 		Topic:       "baby",
+		HouseholdID: "fam_deg_1",
 		FamilyGroup: "fam_deg_1",
 		Action:      "delete",
 	})
@@ -408,7 +418,7 @@ func TestScale01_ConcurrencyAndRaceStress(t *testing.T) {
 		reg.Register(&mockToolModule{
 			name: dom,
 			promptFunc: func(ctx context.Context, c CallContext) string {
-				return fmt.Sprintf("Section for %s [%s]", dom, c.TenantFamilyGroup())
+				return fmt.Sprintf("Section for %s [%s]", dom, c.Scope.LegacyLabel())
 			},
 		})
 	}
@@ -434,6 +444,7 @@ func TestScale01_ConcurrencyAndRaceStress(t *testing.T) {
 					FamilyGroup: fg,
 					PlatformID:  fmt.Sprintf("user_%d", workerID),
 				},
+				Scope: idScope(fg, fmt.Sprintf("user_%d", workerID), "family"),
 			}
 			for {
 				select {
@@ -464,6 +475,7 @@ func TestScale01_ConcurrencyAndRaceStress(t *testing.T) {
 					topic := domainNames[workerID%len(domainNames)]
 					_ = bus.Publish(context.Background(), events.MutationEvent{
 						Topic:       topic,
+						HouseholdID: fg,
 						FamilyGroup: fg,
 						ActorUserID: fmt.Sprintf("user_%d", workerID),
 						Action:      "update",

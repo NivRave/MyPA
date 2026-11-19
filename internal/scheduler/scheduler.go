@@ -139,7 +139,8 @@ func ReloadWorkflows(engine *orchestrator.Engine, dbClient *db.Client, runner *a
 		}
 	}
 
-	// 2. Load active cron automation rules (BUG-05)
+	// 2. Load active cron automation rules (BUG-05). This scans every household (a scheduled
+	// job); each rule runs in the scope of its own stored household_id (V4-30).
 	var cronRules []models.AutomationRule
 	if dbClient != nil && dbClient.DB != nil {
 		if findErr := dbClient.DB.Where("LOWER(trigger_type) = ? AND is_active = ?", "cron", true).Find(&cronRules).Error; findErr == nil {
@@ -162,6 +163,7 @@ func ReloadWorkflows(engine *orchestrator.Engine, dbClient *db.Client, runner *a
 						EntityType:  "AutomationRule",
 						EntityID:    fmt.Sprint(ruleCopy.ID),
 						ActorUserID: ruleCopy.UserID,
+						HouseholdID: ruleCopy.HouseholdID,
 						FamilyGroup: ruleCopy.FamilyGroup,
 						Summary:     fmt.Sprintf("Cron trigger fired for rule %q", ruleCopy.Name),
 						Timestamp:   time.Now(),

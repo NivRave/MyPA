@@ -3,6 +3,9 @@ package house_test
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +16,33 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// testHouseholds holds the households tests create tenants in (V4-30): a family label becomes a
+// household with an ID derived from the label, and scopes are built by the production constructor.
+var testHouseholds = identitytest.NewStore()
+
+// withScope gives a call context the scope of its user. The user's family label becomes a
+// household; a user without a label is their own tenant, keyed by their platform ID (DE-2), as
+// the migration maps them.
+func withScope(cc orchestrator.CallContext) orchestrator.CallContext {
+	label, key := "", cc.Message.Sender
+	if cc.User != nil {
+		label = cc.User.FamilyGroup
+		if cc.User.PlatformID != "" {
+			key = cc.User.PlatformID
+		}
+	}
+	if strings.TrimSpace(label) == "" {
+		label = key
+	}
+	h := testHouseholds.Household(label)
+	s, err := identity.ForUser(context.Background(), testHouseholds, &models.User{PlatformID: key, Role: "family", HouseholdID: h.ID})
+	if err != nil {
+		panic(err)
+	}
+	cc.Scope = s
+	return cc
+}
 
 // fakeRepoForIDOR provides an in-memory implementation for IDOR stress testing.
 type fakeRepoForIDOR struct {
@@ -35,96 +65,96 @@ func newFakeRepoForIDOR() *fakeRepoForIDOR {
 	}
 }
 
-func (r *fakeRepoForIDOR) CreateContract(c *models.HouseContractRecord) error {
+func (r *fakeRepoForIDOR) CreateContract(s identity.Scope, c *models.HouseContractRecord) error {
+	c.HouseholdID, c.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	c.ID = r.nextContract
 	r.nextContract++
 	cp := *c
 	r.contracts[c.ID] = &cp
 	return nil
 }
-func (r *fakeRepoForIDOR) GetContract(id uint, familyGroup ...string) (*models.HouseContractRecord, error) {
+func (r *fakeRepoForIDOR) GetContract(s identity.Scope, id uint) (*models.HouseContractRecord, error) {
 	c, ok := r.contracts[id]
 	if !ok {
 		return nil, nil
 	}
-	if len(familyGroup) > 0 && familyGroup[0] != "" {
-		if c.FamilyGroup != familyGroup[0] && c.CreatedByUserID != familyGroup[0] {
-			return nil, nil
-		}
+	if c.HouseholdID != s.HouseholdID() {
+		return nil, nil
 	}
 	cp := *c
 	return &cp, nil
 }
-func (r *fakeRepoForIDOR) UpdateContract(c *models.HouseContractRecord) error {
+func (r *fakeRepoForIDOR) UpdateContract(s identity.Scope, c *models.HouseContractRecord) error {
+	c.HouseholdID, c.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	cp := *c
 	r.contracts[c.ID] = &cp
 	return nil
 }
-func (r *fakeRepoForIDOR) DeleteContract(id uint) error {
+func (r *fakeRepoForIDOR) DeleteContract(_ identity.Scope, id uint) error {
 	delete(r.contracts, id)
 	return nil
 }
-func (r *fakeRepoForIDOR) ListContracts(familyGroup string, recordType string, expiringBefore *time.Time) ([]models.HouseContractRecord, error) {
+func (r *fakeRepoForIDOR) ListContracts(s identity.Scope, recordType string, expiringBefore *time.Time) ([]models.HouseContractRecord, error) {
 	var list []models.HouseContractRecord
 	for _, c := range r.contracts {
-		if familyGroup != "" && c.FamilyGroup != familyGroup && c.CreatedByUserID != familyGroup {
+		if c.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		list = append(list, *c)
 	}
 	return list, nil
 }
-func (r *fakeRepoForIDOR) ListExpiringContracts(familyGroup string, withinDays int) ([]models.HouseContractRecord, error) {
+func (r *fakeRepoForIDOR) ListExpiringContracts(s identity.Scope, withinDays int) ([]models.HouseContractRecord, error) {
 	var list []models.HouseContractRecord
 	for _, c := range r.contracts {
-		if familyGroup != "" && c.FamilyGroup != familyGroup {
+		if c.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		list = append(list, *c)
 	}
 	return list, nil
 }
-func (r *fakeRepoForIDOR) CreateMaintenanceItem(m *models.HomeMaintenanceItem) error {
+func (r *fakeRepoForIDOR) CreateMaintenanceItem(s identity.Scope, m *models.HomeMaintenanceItem) error {
+	m.HouseholdID, m.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	m.ID = r.nextMaint
 	r.nextMaint++
 	cp := *m
 	r.maintenance[m.ID] = &cp
 	return nil
 }
-func (r *fakeRepoForIDOR) GetMaintenanceItem(id uint, familyGroup ...string) (*models.HomeMaintenanceItem, error) {
+func (r *fakeRepoForIDOR) GetMaintenanceItem(s identity.Scope, id uint) (*models.HomeMaintenanceItem, error) {
 	m, ok := r.maintenance[id]
 	if !ok {
 		return nil, nil
 	}
-	if len(familyGroup) > 0 && familyGroup[0] != "" {
-		if m.FamilyGroup != familyGroup[0] && m.UpdatedByUserID != familyGroup[0] {
-			return nil, nil
-		}
+	if m.HouseholdID != s.HouseholdID() {
+		return nil, nil
 	}
 	cp := *m
 	return &cp, nil
 }
-func (r *fakeRepoForIDOR) UpdateMaintenanceItem(m *models.HomeMaintenanceItem) error {
+func (r *fakeRepoForIDOR) UpdateMaintenanceItem(s identity.Scope, m *models.HomeMaintenanceItem) error {
+	m.HouseholdID, m.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	cp := *m
 	r.maintenance[m.ID] = &cp
 	return nil
 }
-func (r *fakeRepoForIDOR) DeleteMaintenanceItem(id uint) error {
+func (r *fakeRepoForIDOR) DeleteMaintenanceItem(_ identity.Scope, id uint) error {
 	delete(r.maintenance, id)
 	return nil
 }
-func (r *fakeRepoForIDOR) ListMaintenanceItems(familyGroup string, category string, overdueOnly bool) ([]models.HomeMaintenanceItem, error) {
+func (r *fakeRepoForIDOR) ListMaintenanceItems(s identity.Scope, category string, overdueOnly bool) ([]models.HomeMaintenanceItem, error) {
 	var list []models.HomeMaintenanceItem
 	for _, m := range r.maintenance {
-		if familyGroup != "" && m.FamilyGroup != familyGroup {
+		if m.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		list = append(list, *m)
 	}
 	return list, nil
 }
-func (r *fakeRepoForIDOR) CompleteMaintenanceItem(id uint, completedAt time.Time, userID string, familyGroup ...string) (*models.HomeMaintenanceItem, error) {
-	item, err := r.GetMaintenanceItem(id, familyGroup...)
+func (r *fakeRepoForIDOR) CompleteMaintenanceItem(s identity.Scope, id uint, completedAt time.Time, userID string) (*models.HomeMaintenanceItem, error) {
+	item, err := r.GetMaintenanceItem(s, id)
 	if err != nil || item == nil {
 		return nil, fmt.Errorf("maintenance item %d not found in family", id)
 	}
@@ -133,14 +163,15 @@ func (r *fakeRepoForIDOR) CompleteMaintenanceItem(id uint, completedAt time.Time
 	cp := *m
 	return &cp, nil
 }
-func (r *fakeRepoForIDOR) CreateVehicleAsset(v *models.VehicleAsset) error {
+func (r *fakeRepoForIDOR) CreateVehicleAsset(s identity.Scope, v *models.VehicleAsset) error {
+	v.HouseholdID, v.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	v.ID = r.nextVehicle
 	r.nextVehicle++
 	cp := *v
 	r.vehicles[v.ID] = &cp
 	return nil
 }
-func (r *fakeRepoForIDOR) GetVehicleAsset(id uint) (*models.VehicleAsset, error) {
+func (r *fakeRepoForIDOR) GetVehicleAsset(_ identity.Scope, id uint) (*models.VehicleAsset, error) {
 	v, ok := r.vehicles[id]
 	if !ok {
 		return nil, nil
@@ -148,26 +179,27 @@ func (r *fakeRepoForIDOR) GetVehicleAsset(id uint) (*models.VehicleAsset, error)
 	cp := *v
 	return &cp, nil
 }
-func (r *fakeRepoForIDOR) UpdateVehicleAsset(v *models.VehicleAsset) error {
+func (r *fakeRepoForIDOR) UpdateVehicleAsset(s identity.Scope, v *models.VehicleAsset) error {
+	v.HouseholdID, v.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	cp := *v
 	r.vehicles[v.ID] = &cp
 	return nil
 }
-func (r *fakeRepoForIDOR) DeleteVehicleAsset(id uint) error {
+func (r *fakeRepoForIDOR) DeleteVehicleAsset(_ identity.Scope, id uint) error {
 	delete(r.vehicles, id)
 	return nil
 }
-func (r *fakeRepoForIDOR) ListVehicleAssets(familyGroup string) ([]models.VehicleAsset, error) {
+func (r *fakeRepoForIDOR) ListVehicleAssets(s identity.Scope) ([]models.VehicleAsset, error) {
 	var list []models.VehicleAsset
 	for _, v := range r.vehicles {
-		if familyGroup != "" && v.FamilyGroup != familyGroup {
+		if v.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		list = append(list, *v)
 	}
 	return list, nil
 }
-func (r *fakeRepoForIDOR) UpdateVehicleMileage(id uint, mileageKm int) (*models.VehicleAsset, error) {
+func (r *fakeRepoForIDOR) UpdateVehicleMileage(_ identity.Scope, id uint, mileageKm int) (*models.VehicleAsset, error) {
 	v, ok := r.vehicles[id]
 	if !ok {
 		return nil, assert.AnError
@@ -198,7 +230,7 @@ func TestSEC04_CrossTenant_MaintenanceComplete_IDOR_Vulnerability(t *testing.T) 
 
 	// 1. Family Alpha creates a maintenance item
 	userAlpha := &models.User{ID: "u1", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
-	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}}
+	callCtxAlpha := withScope(orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}})
 	createResp, err := mod.Execute(ctx, callCtxAlpha, "manage_home_maintenance", map[string]interface{}{
 		"action":        "create",
 		"task_name":     "Replace HVAC Filters",
@@ -209,7 +241,7 @@ func TestSEC04_CrossTenant_MaintenanceComplete_IDOR_Vulnerability(t *testing.T) 
 	assert.Contains(t, createResp, "Home Maintenance Task Created")
 
 	// Verify item 1 exists in family_alpha
-	item1, err := repo.GetMaintenanceItem(1)
+	item1, err := repo.GetMaintenanceItem(callCtxAlpha.Scope, 1)
 	require.NoError(t, err)
 	require.NotNil(t, item1)
 	assert.Equal(t, "family_alpha", item1.FamilyGroup)
@@ -217,7 +249,7 @@ func TestSEC04_CrossTenant_MaintenanceComplete_IDOR_Vulnerability(t *testing.T) 
 
 	// 2. Family Beta attempts to complete Family Alpha's task (item_id: 1)
 	userBeta := &models.User{ID: "u2", PlatformID: "user_beta", FamilyGroup: "family_beta"}
-	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}}
+	callCtxBeta := withScope(orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}})
 	_, completeErr := mod.Execute(ctx, callCtxBeta, "manage_home_maintenance", map[string]interface{}{
 		"action":  "complete",
 		"item_id": 1,
@@ -236,7 +268,7 @@ func TestSEC04_CrossTenant_MaintenanceUpdateDelete_Blocked(t *testing.T) {
 
 	// Family Alpha creates item
 	userAlpha := &models.User{ID: "u1", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
-	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}}
+	callCtxAlpha := withScope(orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}})
 	_, err := mod.Execute(ctx, callCtxAlpha, "manage_home_maintenance", map[string]interface{}{
 		"action":    "create",
 		"task_name": "Fix Roof",
@@ -245,7 +277,7 @@ func TestSEC04_CrossTenant_MaintenanceUpdateDelete_Blocked(t *testing.T) {
 
 	// Family Beta attempts update
 	userBeta := &models.User{ID: "u2", PlatformID: "user_beta", FamilyGroup: "family_beta"}
-	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}}
+	callCtxBeta := withScope(orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}})
 	_, updateErr := mod.Execute(ctx, callCtxBeta, "manage_home_maintenance", map[string]interface{}{
 		"action":    "update",
 		"item_id":   1,
@@ -271,7 +303,7 @@ func TestSEC04_EmptyFamilyGroup_StrictUserIsolation(t *testing.T) {
 
 	// User Solo1 (empty family group)
 	userSolo1 := &models.User{ID: "u10", PlatformID: "solo_1", FamilyGroup: ""}
-	callCtxSolo1 := orchestrator.CallContext{User: userSolo1, Message: channel.Inbound{Sender: "solo_1"}}
+	callCtxSolo1 := withScope(orchestrator.CallContext{User: userSolo1, Message: channel.Inbound{Sender: "solo_1"}})
 
 	// Solo1 creates vehicle
 	resp1, err := mod.Execute(ctx, callCtxSolo1, "manage_vehicle_asset", map[string]interface{}{
@@ -283,7 +315,7 @@ func TestSEC04_EmptyFamilyGroup_StrictUserIsolation(t *testing.T) {
 
 	// User Solo2 (also empty family group)
 	userSolo2 := &models.User{ID: "u20", PlatformID: "solo_2", FamilyGroup: ""}
-	callCtxSolo2 := orchestrator.CallContext{User: userSolo2, Message: channel.Inbound{Sender: "solo_2"}}
+	callCtxSolo2 := withScope(orchestrator.CallContext{User: userSolo2, Message: channel.Inbound{Sender: "solo_2"}})
 
 	// Solo2 attempts to update Solo1's vehicle (asset_id: 1)
 	_, solo2Err := mod.Execute(ctx, callCtxSolo2, "manage_vehicle_asset", map[string]interface{}{

@@ -3,16 +3,17 @@ package scheduler_test
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/testutil"
 	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/scheduler"
+	"github.com/nivik/mypa/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -55,6 +56,7 @@ func TestAdversarial_ConcurrencyDataRaceStress(t *testing.T) {
 
 		rule := models.AutomationRule{
 			UserID:            testUser,
+			HouseholdID:       householdtest.Household(t, client, testFam).ID, // V4-30
 			FamilyGroup:       testFam,
 			Name:              fmt.Sprintf("Race Rule %d", i),
 			TriggerType:       "cron",

@@ -26,7 +26,7 @@ type mockDBForMemory struct {
 }
 
 // TestMemory_AntiSpoofing verifies that memory tools (save_topic_memory,
-// search_topic_memories, upsert_entity_profile) strictly use callCtx.ActorID() and callCtx.TenantFamilyGroup(),
+// search_topic_memories, upsert_entity_profile) strictly use callCtx.ActorID() and callCtx.Scope (V4-30),
 // preventing caller-controlled argument overrides from cross-tenant spoofing.
 func TestMemory_AntiSpoofing(t *testing.T) {
 	repo := newInMemoryRepo()
@@ -49,6 +49,7 @@ func TestMemory_AntiSpoofing(t *testing.T) {
 
 	callCtx := orchestrator.CallContext{
 		User:     legitUser,
+		Scope:    sc(t, "mem_legit_family", "mem_canonical_actor"),
 		Message:  channel.Inbound{Sender: "mem_canonical_actor"},
 		DB:       dbMock,
 		LLM:      llmMock,
@@ -56,16 +57,16 @@ func TestMemory_AntiSpoofing(t *testing.T) {
 	}
 
 	adversarialArgs := map[string]interface{}{
-		"topic":               "health",
-		"fact":                "Allergic to penicillin",
-		"scope":               "family",
-		"entity_type":         "person",
-		"entity_name":         "VictimPerson",
-		"attributes":          map[string]interface{}{"blood_type": "O+"},
-		"user_id":             "hacker_attacker_666",
-		"family_group":        "evil_family_hacker",
-		"created_by_user_id":  "hacker_attacker_666",
-		"actor_user_id":       "hacker_attacker_666",
+		"topic":              "health",
+		"fact":               "Allergic to penicillin",
+		"scope":              "family",
+		"entity_type":        "person",
+		"entity_name":        "VictimPerson",
+		"attributes":         map[string]interface{}{"blood_type": "O+"},
+		"user_id":            "hacker_attacker_666",
+		"family_group":       "evil_family_hacker",
+		"created_by_user_id": "hacker_attacker_666",
+		"actor_user_id":      "hacker_attacker_666",
 	}
 
 	// One sub-test now carries every assertion the remember_fact sub-test made before the tool was
@@ -76,17 +77,17 @@ func TestMemory_AntiSpoofing(t *testing.T) {
 		assert.Contains(t, res, `"status":"saved"`)
 
 		// Saved under the canonical user and family, whatever the arguments claimed.
-		memories, err := repo.SearchTopicMemories(context.Background(), "mem_canonical_actor", "mem_legit_family", "", "", nil)
+		memories, err := repo.SearchTopicMemories(context.Background(), sc(t, "mem_legit_family", "mem_canonical_actor"), "", "", nil)
 		require.NoError(t, err)
 		require.Len(t, memories, 1)
 		assert.Equal(t, "mem_canonical_actor", memories[0].UserID)
 		assert.Equal(t, "mem_legit_family", memories[0].FamilyGroup)
-		byTopic, err := repo.SearchTopicMemories(context.Background(), "mem_canonical_actor", "mem_legit_family", "health", "", nil)
+		byTopic, err := repo.SearchTopicMemories(context.Background(), sc(t, "mem_legit_family", "mem_canonical_actor"), "health", "", nil)
 		require.NoError(t, err)
 		require.NotEmpty(t, byTopic)
 
 		// The family named in the spoofed arguments has no memories.
-		evilMemories, err := repo.SearchTopicMemories(context.Background(), "hacker_attacker_666", "evil_family_hacker", "", "", nil)
+		evilMemories, err := repo.SearchTopicMemories(context.Background(), sc(t, "evil_family_hacker", "hacker_attacker_666"), "", "", nil)
 		require.NoError(t, err)
 		assert.Empty(t, evilMemories)
 
@@ -105,13 +106,13 @@ func TestMemory_AntiSpoofing(t *testing.T) {
 		assert.Contains(t, res, `"status":"upserted"`)
 
 		// Verify profile belongs to legit family
-		profile, err := repo.GetEntityProfile(context.Background(), "mem_legit_family", "health", "VictimPerson")
+		profile, err := repo.GetEntityProfile(context.Background(), sc(t, "mem_legit_family", "mem_canonical_actor"), "health", "VictimPerson")
 		require.NoError(t, err)
 		require.NotNil(t, profile)
 		assert.Equal(t, "mem_legit_family", profile.FamilyGroup)
 
 		// Verify attacker cannot access it under evil_family
-		evilProfile, _ := repo.GetEntityProfile(context.Background(), "evil_family_hacker", "health", "VictimPerson")
+		evilProfile, _ := repo.GetEntityProfile(context.Background(), sc(t, "evil_family_hacker", "hacker_attacker_666"), "health", "VictimPerson")
 		assert.Nil(t, evilProfile)
 	})
 }

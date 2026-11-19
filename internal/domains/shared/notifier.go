@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
 	"strings"
 
 	"github.com/nivik/mypa/internal/events"
@@ -14,10 +15,12 @@ import (
 type NotificationSender func(ctx context.Context, recipientID, text string) error
 
 // DataProvider defines data access methods required by Notifier to check permissions
-// and discover family members.
+// and discover family members. It reads households too: the notifier is an event subscriber, so
+// it builds its scope from the event's stored household (V4-30, identity.ForStoredRow).
 type DataProvider interface {
-	GetSharedSpace(familyGroup, topic string) (*models.SharedSpace, error)
-	GetUsersByFamilyGroup(familyGroup string) ([]models.User, error)
+	identity.Store
+	GetSharedSpace(s identity.Scope, topic string) (*models.SharedSpace, error)
+	UsersInHousehold(ctx context.Context, s identity.Scope) ([]models.User, error)
 }
 
 // Notifier routes cross-user partner notifications upon mutation events.
@@ -48,8 +51,8 @@ func (n *Notifier) RegisterWithBus(bus *events.EventBus) {
 
 // HandleMutationEvent processes incoming MutationEvents and dispatches alerts to family partners.
 func (n *Notifier) HandleMutationEvent(ctx context.Context, event events.MutationEvent) error {
-	// If event has no family group or no actor, no family partner routing applies
-	if strings.TrimSpace(event.FamilyGroup) == "" {
+	// If event has no household, no family partner routing applies
+	if strings.TrimSpace(event.HouseholdID) == "" {
 		return nil
 	}
 
@@ -62,10 +65,16 @@ func (n *Notifier) HandleMutationEvent(ctx context.Context, event events.Mutatio
 	notifyMode := models.NotifyModeInstant
 	var targetedUserID string
 
+	var scope identity.Scope
 	if n.provider != nil {
-		space, err := n.provider.GetSharedSpace(event.FamilyGroup, normTopic)
+		s, err := identity.ForStoredRow(ctx, n.provider, event.HouseholdID, event.ActorUserID)
 		if err != nil {
-			return fmt.Errorf("failed to check shared space for %s/%s: %w", event.FamilyGroup, normTopic, err)
+			return fmt.Errorf("failed to resolve household of event: %w", err)
+		}
+		scope = s
+		space, err := n.provider.GetSharedSpace(scope, normTopic)
+		if err != nil {
+			return fmt.Errorf("failed to check shared space for %s/%s: %w", event.HouseholdID, normTopic, err)
 		}
 
 		if space != nil {
@@ -101,9 +110,9 @@ func (n *Notifier) HandleMutationEvent(ctx context.Context, event events.Mutatio
 	}
 
 	// 2. Discover family members
-	members, err := n.provider.GetUsersByFamilyGroup(event.FamilyGroup)
+	members, err := n.provider.UsersInHousehold(ctx, scope)
 	if err != nil {
-		return fmt.Errorf("failed to fetch family members for group %s: %w", event.FamilyGroup, err)
+		return fmt.Errorf("failed to fetch family members for household %s: %w", event.HouseholdID, err)
 	}
 
 	actorID := strings.TrimSpace(event.ActorUserID)

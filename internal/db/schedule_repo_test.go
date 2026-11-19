@@ -22,6 +22,9 @@ func TestScheduleRepo_Events_CRUDAndIsolation(t *testing.T) {
 	userB := "usr-" + uuid.New().String()
 	famB := "fam-" + uuid.New().String()
 
+	sA := scopeAs(t, client, famA, userA, "family")
+	sB := scopeAs(t, client, famB, userB, "family")
+
 	startTime := time.Now().Add(24 * time.Hour).Truncate(time.Second)
 	endTime := startTime.Add(1 * time.Hour)
 
@@ -38,7 +41,7 @@ func TestScheduleRepo_Events_CRUDAndIsolation(t *testing.T) {
 		SyncToGoogle:    true,
 		CreatedByUserID: userA,
 	}
-	require.NoError(t, repo.CreateScheduleEvent(&evA))
+	require.NoError(t, repo.CreateScheduleEvent(sA, &evA))
 	require.NotZero(t, evA.ID)
 
 	// 2. Create event for Tenant B
@@ -53,61 +56,61 @@ func TestScheduleRepo_Events_CRUDAndIsolation(t *testing.T) {
 		SyncToGoogle:    false,
 		CreatedByUserID: userB,
 	}
-	require.NoError(t, repo.CreateScheduleEvent(&evB))
+	require.NoError(t, repo.CreateScheduleEvent(sB, &evB))
 	require.NotZero(t, evB.ID)
 
 	// 3. Positive read and tenant isolation
-	gotA, err := repo.GetScheduleEvent(evA.ID, famA)
+	gotA, err := repo.GetScheduleEvent(sA, evA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotA)
 	assert.Equal(t, "Pediatrician Visit", gotA.Title)
 	assert.Equal(t, "baby", gotA.Topic)
 
 	// Tenant B querying Tenant A's event returns nil
-	gotLeak, err := repo.GetScheduleEvent(evA.ID, famB)
+	gotLeak, err := repo.GetScheduleEvent(sB, evA.ID)
 	require.NoError(t, err)
 	assert.Nil(t, gotLeak, "Tenant B must not access Tenant A's event")
 
 	// 4. ListScheduleEvents with isolation
-	eventsA, err := repo.ListScheduleEvents(userA, famA, "all", startTime.Add(-1*time.Hour), endTime.Add(1*time.Hour))
+	eventsA, err := repo.ListScheduleEvents(sA, "all", startTime.Add(-1*time.Hour), endTime.Add(1*time.Hour))
 	require.NoError(t, err)
 	require.Len(t, eventsA, 1)
 	assert.Equal(t, evA.ID, eventsA[0].ID)
 
-	eventsB, err := repo.ListScheduleEvents(userB, famB, "all", startTime.Add(-1*time.Hour), endTime.Add(1*time.Hour))
+	eventsB, err := repo.ListScheduleEvents(sB, "all", startTime.Add(-1*time.Hour), endTime.Add(1*time.Hour))
 	require.NoError(t, err)
 	require.Len(t, eventsB, 1)
 	assert.Equal(t, evB.ID, eventsB[0].ID)
 
 	// Filter Tenant A by topic "finance" -> empty
-	eventsFinanceA, err := repo.ListScheduleEvents(userA, famA, "finance", startTime.Add(-1*time.Hour), endTime.Add(1*time.Hour))
+	eventsFinanceA, err := repo.ListScheduleEvents(sA, "finance", startTime.Add(-1*time.Hour), endTime.Add(1*time.Hour))
 	require.NoError(t, err)
 	assert.Empty(t, eventsFinanceA)
 
 	// 5. Update event
 	evA.Title = "Pediatrician 6mo Checkup"
 	evA.Description = "Bring vaccination record"
-	require.NoError(t, repo.UpdateScheduleEvent(&evA))
+	require.NoError(t, repo.UpdateScheduleEvent(sA, &evA))
 
-	recheckA, err := repo.GetScheduleEvent(evA.ID, famA)
+	recheckA, err := repo.GetScheduleEvent(sA, evA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, recheckA)
 	assert.Equal(t, "Pediatrician 6mo Checkup", recheckA.Title)
 	assert.Equal(t, "Bring vaccination record", recheckA.Description)
 
 	// 6. Delete event: attempt deletion with wrong tenant scope should not delete
-	err = repo.DeleteScheduleEvent(evA.ID, famB)
+	err = repo.DeleteScheduleEvent(sB, evA.ID)
 	require.NoError(t, err)
 
-	recheckStillThere, err := repo.GetScheduleEvent(evA.ID, famA)
+	recheckStillThere, err := repo.GetScheduleEvent(sA, evA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, recheckStillThere, "Event should still exist because deletion was attempted with wrong tenant")
 
 	// Delete with correct tenant scope
-	err = repo.DeleteScheduleEvent(evA.ID, famA)
+	err = repo.DeleteScheduleEvent(sA, evA.ID)
 	require.NoError(t, err)
 
-	recheckDeleted, err := repo.GetScheduleEvent(evA.ID, famA)
+	recheckDeleted, err := repo.GetScheduleEvent(sA, evA.ID)
 	require.NoError(t, err)
 	assert.Nil(t, recheckDeleted, "Event should be deleted")
 }

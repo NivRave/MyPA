@@ -31,18 +31,19 @@ const (
 // Unlike flat vector memories, TopicMemory supports hierarchical categorization (topic + subtopic),
 // structured tag arrays in JSONB, temporal validity windows, automatic superseding, and pinning.
 type TopicMemory struct {
-	ID              uint       `json:"id" gorm:"primarykey"`
-	UserID          string     `json:"user_id" gorm:"index"`
-	FamilyGroup     string     `json:"family_group" gorm:"index"`
-	Topic           string     `json:"topic" gorm:"index"` // "baby" | "house" | "finance" | "health" | "work" | "personal"
-	Subtopic        string     `json:"subtopic" gorm:"index"`
-	TagsJSON        string     `json:"tags_json" gorm:"type:jsonb"`
-	Fact            string     `json:"fact"`
-	Scope           string     `json:"scope" gorm:"index;default:'personal'"` // "personal" | "family"
-	CreatedByUserID string     `json:"created_by_user_id"`
-	SupersededByID  *uint      `json:"superseded_by_id,omitempty" gorm:"index"`
-	ValidFrom       time.Time  `json:"valid_from"`
-	ValidUntil      *time.Time `json:"valid_until,omitempty"`
+	ID              uint            `json:"id" gorm:"primarykey"`
+	UserID          string          `json:"user_id" gorm:"index"`
+	HouseholdID     string          `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
+	FamilyGroup     string          `json:"family_group" gorm:"index"`
+	Topic           string          `json:"topic" gorm:"index"` // "baby" | "house" | "finance" | "health" | "work" | "personal"
+	Subtopic        string          `json:"subtopic" gorm:"index"`
+	TagsJSON        string          `json:"tags_json" gorm:"type:jsonb"`
+	Fact            string          `json:"fact"`
+	Scope           string          `json:"scope" gorm:"index;default:'personal'"` // "personal" | "family"
+	CreatedByUserID string          `json:"created_by_user_id"`
+	SupersededByID  *uint           `json:"superseded_by_id,omitempty" gorm:"index"`
+	ValidFrom       time.Time       `json:"valid_from"`
+	ValidUntil      *time.Time      `json:"valid_until,omitempty"`
 	IsPinned        bool            `json:"is_pinned" gorm:"default:false"`
 	Embedding       pgvector.Vector `json:"embedding,omitempty" gorm:"type:vector(3072)"`
 	CreatedAt       time.Time       `json:"created_at"`
@@ -113,8 +114,9 @@ func (m *TopicMemory) IsActive() bool {
 type EntityProfile struct {
 	ID              uint      `json:"id" gorm:"primarykey"`
 	UserID          string    `json:"user_id" gorm:"index"`
+	HouseholdID     string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup     string    `json:"family_group" gorm:"index"`
-	Topic           string    `json:"topic" gorm:"index"` // e.g. "baby" | "house" | "finance" | "personal"
+	Topic           string    `json:"topic" gorm:"index"`       // e.g. "baby" | "house" | "finance" | "personal"
 	EntityType      string    `json:"entity_type" gorm:"index"` // e.g. "baby" | "property" | "vehicle" | "person"
 	EntityName      string    `json:"entity_name" gorm:"index"` // e.g. "Liam", "123 Main St", "Tesla Model 3"
 	AttributesJSON  string    `json:"attributes_json" gorm:"type:jsonb"`

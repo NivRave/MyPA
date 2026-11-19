@@ -3,6 +3,7 @@ package shared
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
 	"strings"
 	"time"
 
@@ -13,15 +14,17 @@ import (
 	"google.golang.org/genai"
 )
 
-// Repository defines the database operations needed by the Shared ToolModule.
+// Repository defines the database operations needed by the Shared ToolModule. Every method is
+// confined to the caller's household (V4-30); UsersInHousehold resolves the people a tool
+// argument names (identity.Member).
 type Repository interface {
-	UpsertSharedSpace(space *models.SharedSpace) error
-	GetSharedSpacesForFamily(familyGroup string) ([]models.SharedSpace, error)
-	GetSharedSpace(familyGroup, topic string) (*models.SharedSpace, error)
-	CreateSharedReminder(reminder *models.SharedTaskReminder) error
-	CompleteSharedReminder(id uint, completedByUserID string, familyGroup ...string) (*models.SharedTaskReminder, error)
-	ListSharedReminders(familyGroup string, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error)
-	GetUsersByFamilyGroup(familyGroup string) ([]models.User, error)
+	UpsertSharedSpace(s identity.Scope, space *models.SharedSpace) error
+	GetSharedSpacesForFamily(s identity.Scope) ([]models.SharedSpace, error)
+	GetSharedSpace(s identity.Scope, topic string) (*models.SharedSpace, error)
+	CreateSharedReminder(s identity.Scope, reminder *models.SharedTaskReminder) error
+	CompleteSharedReminder(s identity.Scope, id uint, completedByUserID string) (*models.SharedTaskReminder, error)
+	ListSharedReminders(s identity.Scope, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error)
+	UsersInHousehold(ctx context.Context, s identity.Scope) ([]models.User, error)
 }
 
 // Module implements the orchestrator.ToolModule interface for multi-user shared spaces,
@@ -173,7 +176,7 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 	}
 
 	user := callCtx.User
-	if user == nil || strings.TrimSpace(user.FamilyGroup) == "" {
+	if user == nil || strings.TrimSpace(user.FamilyGroup) == "" || !callCtx.Scope.Valid() {
 		return "Family shared features require an active family group. Please ensure your account belongs to a family group.", nil
 	}
 
@@ -194,14 +197,14 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 // SystemPromptSection injects dynamic family sharing context and policies into the prompt.
 func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.CallContext) string {
 	user := callCtx.User
-	if user == nil || strings.TrimSpace(user.FamilyGroup) == "" {
+	if user == nil || strings.TrimSpace(user.FamilyGroup) == "" || !callCtx.Scope.Valid() {
 		return ""
 	}
 
 	repo := m.resolveRepo(callCtx)
 	var customPolicies []string
 	if repo != nil {
-		spaces, err := repo.GetSharedSpacesForFamily(user.FamilyGroup)
+		spaces, err := repo.GetSharedSpacesForFamily(callCtx.Scope)
 		if err == nil {
 			for _, sp := range spaces {
 				customPolicies = append(customPolicies, fmt.Sprintf("- Topic '%s': view=%v, edit=%v, notify=%s", sp.Topic, sp.CanView, sp.CanEdit, sp.NotifyMode))
@@ -210,7 +213,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("### Family Shared Spaces & Collaboration\nFamily Group: %s\n", user.FamilyGroup))
+	sb.WriteString(fmt.Sprintf("### Family Shared Spaces & Collaboration\nFamily Group: %s\n", callCtx.Scope.LegacyLabel()))
 	sb.WriteString("Default shared topics: baby, house, finance, family (instant partner notifications).\n")
 	sb.WriteString("Private by default: personal, work.\n")
 	if len(customPolicies) > 0 {
@@ -245,12 +248,15 @@ func (m *Module) executeConfigureSharedTopic(ctx context.Context, callCtx orches
 	}
 
 	sharedWith, _ := args["shared_with_user_id"].(string)
+	sharedWith, err := m.member(ctx, repo, callCtx, sharedWith)
+	if err != nil {
+		return "", fmt.Errorf("shared_with_user_id: %w", err)
+	}
 
 	actorID := callCtx.ActorID()
-	familyGroup := callCtx.TenantFamilyGroup()
+	familyGroup := callCtx.Scope.LegacyLabel()
 
 	space := models.SharedSpace{
-		FamilyGroup:      familyGroup,
 		Topic:            topic,
 		OwnerUserID:      actorID,
 		SharedWithUserID: sharedWith,
@@ -259,7 +265,7 @@ func (m *Module) executeConfigureSharedTopic(ctx context.Context, callCtx orches
 		NotifyMode:       notifyMode,
 	}
 
-	if err := repo.UpsertSharedSpace(&space); err != nil {
+	if err := repo.UpsertSharedSpace(callCtx.Scope, &space); err != nil {
 		return "", fmt.Errorf("failed to configure shared topic: %w", err)
 	}
 
@@ -270,6 +276,7 @@ func (m *Module) executeConfigureSharedTopic(ctx context.Context, callCtx orches
 		EntityType:  "SharedSpace",
 		EntityID:    fmt.Sprintf("%d", space.ID),
 		ActorUserID: actorID,
+		HouseholdID: callCtx.Scope.HouseholdID(),
 		FamilyGroup: familyGroup,
 		Summary:     summary,
 		Timestamp:   time.Now(),
@@ -293,7 +300,6 @@ func (m *Module) executeScheduleReminder(ctx context.Context, callCtx orchestrat
 	}
 
 	actorID := callCtx.ActorID()
-	familyGroup := callCtx.TenantFamilyGroup()
 
 	if callCtx.DB == nil {
 		return "❌ Database client not configured.", nil
@@ -317,7 +323,8 @@ func (m *Module) executeScheduleReminder(ctx context.Context, callCtx orchestrat
 		EntityType:  "ScheduledReminder",
 		EntityID:    fmt.Sprintf("%s:%d", actorID, dueTime.Unix()),
 		ActorUserID: actorID,
-		FamilyGroup: familyGroup,
+		HouseholdID: callCtx.Scope.HouseholdID(),
+		FamilyGroup: callCtx.Scope.LegacyLabel(),
 		Summary:     fmt.Sprintf("Scheduled reminder for %s: %s", dueTime.Format(time.RFC822), message),
 		Timestamp:   time.Now(),
 	})
@@ -349,20 +356,24 @@ func (m *Module) executeCreateSharedReminder(ctx context.Context, callCtx orches
 		}
 	}
 
+	assignedTo, err := m.member(ctx, repo, callCtx, assignedTo)
+	if err != nil {
+		return "", fmt.Errorf("assigned_to_user_id: %w", err)
+	}
+
 	actorID := callCtx.ActorID()
-	familyGroup := callCtx.TenantFamilyGroup()
+	familyGroup := callCtx.Scope.LegacyLabel()
 
 	reminder := models.SharedTaskReminder{
-		FamilyGroup:      familyGroup,
 		Topic:            topic,
 		Title:            title,
 		DueTime:          dueTime,
 		CreatedByUserID:  actorID,
-		AssignedToUserID: strings.TrimSpace(assignedTo),
+		AssignedToUserID: assignedTo,
 		IsCompleted:      false,
 	}
 
-	if err := repo.CreateSharedReminder(&reminder); err != nil {
+	if err := repo.CreateSharedReminder(callCtx.Scope, &reminder); err != nil {
 		return "", fmt.Errorf("failed to create shared reminder: %w", err)
 	}
 
@@ -373,6 +384,7 @@ func (m *Module) executeCreateSharedReminder(ctx context.Context, callCtx orches
 		EntityType:  "SharedTaskReminder",
 		EntityID:    fmt.Sprintf("%d", reminder.ID),
 		ActorUserID: actorID,
+		HouseholdID: callCtx.Scope.HouseholdID(),
 		FamilyGroup: familyGroup,
 		Summary:     summary,
 		Timestamp:   time.Now(),
@@ -399,17 +411,15 @@ func (m *Module) executeCompleteSharedReminder(ctx context.Context, callCtx orch
 	}
 
 	completedBy := callCtx.ActorID()
-	familyGroup := callCtx.TenantFamilyGroup()
+	familyGroup := callCtx.Scope.LegacyLabel()
 
-	reminder, err := repo.CompleteSharedReminder(id, completedBy, familyGroup)
+	reminder, err := repo.CompleteSharedReminder(callCtx.Scope, id, completedBy)
 	if err != nil {
 		return "", fmt.Errorf("failed to complete shared reminder: %w", err)
 	}
 
-	isAuthorized := reminder != nil && (
-		(familyGroup != "" && reminder.FamilyGroup == familyGroup) ||
-		(reminder.CreatedByUserID != "" && reminder.CreatedByUserID == completedBy) ||
-		(reminder.AssignedToUserID != "" && reminder.AssignedToUserID == completedBy))
+	// Defence in depth: the repository only finds the household's own tasks (V4-30).
+	isAuthorized := reminder != nil && callCtx.Scope.Valid() && reminder.HouseholdID == callCtx.Scope.HouseholdID()
 	if !isAuthorized {
 		return "", fmt.Errorf("shared reminder with id %d not found or permission denied", id)
 	}
@@ -426,6 +436,7 @@ func (m *Module) executeCompleteSharedReminder(ctx context.Context, callCtx orch
 		EntityType:  "SharedTaskReminder",
 		EntityID:    fmt.Sprintf("%d", reminder.ID),
 		ActorUserID: completedBy,
+		HouseholdID: callCtx.Scope.HouseholdID(),
 		FamilyGroup: familyGroup,
 		Summary:     summary,
 		Timestamp:   time.Now(),
@@ -438,12 +449,12 @@ func (m *Module) executeListSharedActivity(ctx context.Context, callCtx orchestr
 	topicFilter, _ := args["topic"].(string)
 	includeCompleted := parseBool(args["include_completed"], false)
 
-	spaces, err := repo.GetSharedSpacesForFamily(callCtx.User.FamilyGroup)
+	spaces, err := repo.GetSharedSpacesForFamily(callCtx.Scope)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch shared spaces: %w", err)
 	}
 
-	reminders, err := repo.ListSharedReminders(callCtx.User.FamilyGroup, topicFilter, includeCompleted)
+	reminders, err := repo.ListSharedReminders(callCtx.Scope, topicFilter, includeCompleted)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch shared reminders: %w", err)
 	}
@@ -482,6 +493,16 @@ func (m *Module) executeListSharedActivity(ctx context.Context, callCtx orchestr
 	}
 
 	return sb.String(), nil
+}
+
+// member resolves a tool argument that names another person inside the caller's household
+// (ADR 0002 Decision 3). "" and "*" keep their meaning (nobody / everyone in the household).
+func (m *Module) member(ctx context.Context, repo Repository, callCtx orchestrator.CallContext, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" || ref == "*" {
+		return ref, nil
+	}
+	return identity.Member(ctx, repo, callCtx.Scope, ref)
 }
 
 func (m *Module) resolveRepo(callCtx orchestrator.CallContext) Repository {

@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
 	"regexp"
 	"sort"
 	"strings"
@@ -24,20 +25,20 @@ type ConsolidationResult struct {
 
 // Single-value subtopics where a newer memory typically invalidates/supersedes an older memory.
 var singleValueSubtopics = map[string]bool{
-	"rent":              true,
-	"address":           true,
-	"landlord":          true,
-	"lease_end":         true,
-	"weight":            true,
-	"height":            true,
-	"current_weight":    true,
-	"pediatrician":      true,
-	"dob":               true,
-	"birth_date":        true,
-	"car_plate":         true,
-	"insurance_expiry":  true,
-	"license_plate":     true,
-	"current_mileage":   true,
+	"rent":             true,
+	"address":          true,
+	"landlord":         true,
+	"lease_end":        true,
+	"weight":           true,
+	"height":           true,
+	"current_weight":   true,
+	"pediatrician":     true,
+	"dob":              true,
+	"birth_date":       true,
+	"car_plate":        true,
+	"insurance_expiry": true,
+	"license_plate":    true,
+	"current_mileage":  true,
 }
 
 var keyValueRegex = regexp.MustCompile(`^([A-Za-z0-9_\-\s]{2,30})[:=]\s*(.+)$`)
@@ -45,10 +46,28 @@ var keyValueRegex = regexp.MustCompile(`^([A-Za-z0-9_\-\s]{2,30})[:=]\s*(.+)$`)
 // ConsolidateMemories performs the nightly or on-demand memory consolidation "sleep cycle".
 // It deduplicates redundant topic memories, identifies and marks superseded facts,
 // and aggregates structured facts into living EntityProfile cards.
-func ConsolidateMemories(ctx context.Context, repo db.MemoryV2Repository) (*ConsolidationResult, error) {
+//
+// It is a scheduled job over every household (V4-30): memories are grouped by household_id, and
+// each group's writes go through the scope built from that stored household
+// (identity.ForStoredRow). A row whose household yields no scope (the holding household) is
+// left alone.
+func ConsolidateMemories(ctx context.Context, repo db.MemoryV2Repository, store identity.Store) (*ConsolidationResult, error) {
 	start := time.Now()
 	result := &ConsolidationResult{
 		Details: make([]string, 0),
+	}
+	scopes := make(map[string]identity.Scope)
+	scopeFor := func(m models.TopicMemory) (identity.Scope, bool) {
+		key := m.HouseholdID + "|" + m.UserID
+		if s, ok := scopes[key]; ok {
+			return s, s.Valid()
+		}
+		s, err := identity.ForStoredRow(ctx, store, m.HouseholdID, m.UserID)
+		if err != nil {
+			s = identity.Scope{}
+		}
+		scopes[key] = s
+		return s, s.Valid()
 	}
 
 	memories, err := repo.ListActiveMemoriesForConsolidation(ctx)
@@ -62,10 +81,10 @@ func ConsolidateMemories(ctx context.Context, repo db.MemoryV2Repository) (*Cons
 		return result, nil
 	}
 
-	// 1. Deduplication: Group memories by (FamilyGroup/UserID, Topic, Subtopic, Scope)
+	// 1. Deduplication: Group memories by (HouseholdID/UserID, Topic, Subtopic, Scope)
 	grouped := make(map[string][]models.TopicMemory)
 	for _, m := range memories {
-		groupKey := fmt.Sprintf("%s|%s|%s|%s|%s", m.FamilyGroup, m.UserID, m.Topic, m.Subtopic, m.Scope)
+		groupKey := fmt.Sprintf("%s|%s|%s|%s|%s", m.HouseholdID, m.UserID, m.Topic, m.Subtopic, m.Scope)
 		grouped[groupKey] = append(grouped[groupKey], m)
 	}
 
@@ -73,6 +92,10 @@ func ConsolidateMemories(ctx context.Context, repo db.MemoryV2Repository) (*Cons
 
 	for _, list := range grouped {
 		if len(list) < 2 {
+			continue
+		}
+		hs, ok := scopeFor(list[0])
+		if !ok {
 			continue
 		}
 
@@ -87,7 +110,7 @@ func ConsolidateMemories(ctx context.Context, repo db.MemoryV2Repository) (*Cons
 			normFact := strings.ToLower(strings.TrimSpace(mem.Fact))
 			if existing, found := factMap[normFact]; found {
 				// Supersede the older memory with this newer one
-				if err := repo.SupersedeMemory(ctx, existing.ID, mem.ID); err == nil {
+				if err := repo.SupersedeMemory(ctx, hs, existing.ID, mem.ID); err == nil {
 					supersededIDs[existing.ID] = true
 					result.MemoriesDeduplicated++
 					result.MemoriesSuperseded++
@@ -107,7 +130,7 @@ func ConsolidateMemories(ctx context.Context, repo db.MemoryV2Repository) (*Cons
 			for i := 0; i < len(list)-1; i++ {
 				older := list[i]
 				if !supersededIDs[older.ID] && older.ID != latest.ID {
-					if err := repo.SupersedeMemory(ctx, older.ID, latest.ID); err == nil {
+					if err := repo.SupersedeMemory(ctx, hs, older.ID, latest.ID); err == nil {
 						supersededIDs[older.ID] = true
 						result.MemoriesSuperseded++
 						result.Details = append(result.Details,
@@ -120,9 +143,9 @@ func ConsolidateMemories(ctx context.Context, repo db.MemoryV2Repository) (*Cons
 	}
 
 	// 2. Entity Profile Aggregation
-	// Group active non-superseded memories by (FamilyGroup/UserID, Topic)
+	// Group active non-superseded memories by (HouseholdID/UserID, Topic)
 	type entityBucketKey struct {
-		familyGroup string
+		householdID string
 		userID      string
 		topic       string
 	}
@@ -132,7 +155,7 @@ func ConsolidateMemories(ctx context.Context, repo db.MemoryV2Repository) (*Cons
 			continue
 		}
 		key := entityBucketKey{
-			familyGroup: m.FamilyGroup,
+			householdID: m.HouseholdID,
 			userID:      m.UserID,
 			topic:       m.Topic,
 		}
@@ -140,12 +163,16 @@ func ConsolidateMemories(ctx context.Context, repo db.MemoryV2Repository) (*Cons
 	}
 
 	for key, mems := range topicBuckets {
-		profilesMap := aggregateProfilesForTopic(key.familyGroup, key.userID, key.topic, mems)
+		hs, ok := scopeFor(mems[0])
+		if !ok {
+			continue
+		}
+		profilesMap := aggregateProfilesForTopic(hs.LegacyLabel(), key.userID, key.topic, mems)
 		for _, prof := range profilesMap {
 			if len(prof.Attributes()) == 0 {
 				continue
 			}
-			if err := repo.UpsertEntityProfile(ctx, prof); err == nil {
+			if err := repo.UpsertEntityProfile(ctx, hs, prof); err == nil {
 				result.ProfilesUpdated++
 				result.Details = append(result.Details,
 					fmt.Sprintf("Aggregated entity profile: %s (%s • %s) with %d attributes",

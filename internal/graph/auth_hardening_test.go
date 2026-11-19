@@ -125,7 +125,7 @@ func TestResolveTenantAndActor_NilClaimsIsAnError(t *testing.T) {
 }
 
 func TestResolveTenantAndActor_TenantBoundAdminCannotLeaveFamily(t *testing.T) {
-	r := &Resolver{}
+	r := &Resolver{Households: labelStore("fam_dash", "fam_other")}
 	ctx := WithClaims(context.Background(), &AuthClaims{UserID: "dashboard-service", Role: "admin", FamilyGroup: "fam_dash", TenantBound: true})
 
 	other := "fam_other"
@@ -133,20 +133,23 @@ func TestResolveTenantAndActor_TenantBoundAdminCannotLeaveFamily(t *testing.T) {
 	assert.Error(t, err)
 
 	own := "fam_dash"
-	_, fg, err := r.resolveTenantAndActor(ctx, &own)
+	_, hs, err := r.resolveTenantAndActor(ctx, &own)
+	fg := hs.LegacyLabel()
 	require.NoError(t, err)
 	assert.Equal(t, "fam_dash", fg)
 
-	_, fg, err = r.resolveTenantAndActor(ctx, nil)
+	_, hs, err = r.resolveTenantAndActor(ctx, nil)
+	fg = hs.LegacyLabel()
 	require.NoError(t, err)
 	assert.Equal(t, "fam_dash", fg)
 }
 
 func TestResolveTenantAndActor_GlobalAdminUnchanged(t *testing.T) {
-	r := &Resolver{}
+	r := &Resolver{Households: labelStore("f1", "f2")}
 	ctx := WithClaims(context.Background(), &AuthClaims{UserID: "root", Role: "admin", FamilyGroup: "f1"})
 	other := "f2"
-	_, fg, err := r.resolveTenantAndActor(ctx, &other)
+	_, hs, err := r.resolveTenantAndActor(ctx, &other)
+	fg := hs.LegacyLabel()
 	require.NoError(t, err)
 	assert.Equal(t, "f2", fg)
 }
@@ -169,10 +172,10 @@ func TestCanActOnUser(t *testing.T) {
 	bound := &AuthClaims{UserID: "dashboard-service", Role: "admin", FamilyGroup: "fam_dash", TenantBound: true}
 	member := &AuthClaims{UserID: "alice", Role: "family", FamilyGroup: "fam_dash"}
 
-	assert.True(t, canActOnUser(global, "bob", familyOf))
-	assert.True(t, canActOnUser(bound, "alice", familyOf))
-	assert.False(t, canActOnUser(bound, "bob", familyOf), "tenant-bound admin must not reach other families")
-	assert.True(t, canActOnUser(member, "alice", familyOf))
-	assert.False(t, canActOnUser(member, "bob", familyOf))
-	assert.False(t, canActOnUser(nil, "alice", familyOf))
+	assert.True(t, canActOnUser(global, "", "bob", familyOf))
+	assert.True(t, canActOnUser(bound, "fam_dash", "alice", familyOf))
+	assert.False(t, canActOnUser(bound, "fam_dash", "bob", familyOf), "tenant-bound admin must not reach other families")
+	assert.True(t, canActOnUser(member, "fam_dash", "alice", familyOf))
+	assert.False(t, canActOnUser(member, "fam_dash", "bob", familyOf))
+	assert.False(t, canActOnUser(nil, "fam_dash", "alice", familyOf))
 }

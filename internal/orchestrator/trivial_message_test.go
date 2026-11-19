@@ -24,8 +24,8 @@ func TestIsTrivialMessage(t *testing.T) {
 	}
 
 	substantive := []string{
-		"remind me tomorrow",          // 3 tokens, but content words
-		"yes, delete the second one",  // starts with filler, has content
+		"remind me tomorrow",         // 3 tokens, but content words
+		"yes, delete the second one", // starts with filler, has content
 		"thanks, also book the dentist",
 		"no meat tonight",
 		"what's on my calendar",
@@ -61,7 +61,7 @@ func TestProcessMessage_SubstantiveMessageStillRetrievesMemories(t *testing.T) {
 	defer cleanup()
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), "remind me tomorrow").Return([]float32{0.1}, nil).Times(1)
-	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).Times(1)
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).Times(1)
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&llm.Response{Text: "Sure"}, nil)
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)

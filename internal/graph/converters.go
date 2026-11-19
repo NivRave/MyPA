@@ -5,7 +5,12 @@
 package graph
 
 import (
+	"fmt"
+	"github.com/nivik/mypa/internal/db"
 	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/nivik/mypa/internal/domains/durability"
 	"github.com/nivik/mypa/internal/graph/model"
@@ -350,4 +355,54 @@ func toModelMutationLog(m *dbmodels.MutationLog) *model.MutationLog {
 		IsUndone:    m.IsUndone,
 		CreatedAt:   m.CreatedAt,
 	}
+}
+
+// toModelHousehold converts a household for the API (V4-30).
+func toModelHousehold(h dbmodels.Household) *model.Household {
+	return &model.Household{
+		ID:       h.ID,
+		Name:     h.Name,
+		Language: h.Language,
+		TimeZone: h.TimeZone,
+		Currency: h.Currency,
+	}
+}
+
+// validateHouseholdSettings checks the settings an admin may change (V4-30). A nil field is left
+// unchanged; an empty language, time zone or currency resets it to the install default.
+func validateHouseholdSettings(name, language, timeZone, currency *string) (db.HouseholdSettings, error) {
+	var in db.HouseholdSettings
+	if name != nil {
+		n := strings.TrimSpace(*name)
+		if n == "" || utf8.RuneCountInString(n) > 100 {
+			return in, fmt.Errorf("invalid household name: it must be 1 to 100 characters")
+		}
+		in.Name = &n
+	}
+	if language != nil {
+		l := strings.TrimSpace(*language)
+		if len(l) > 35 || strings.IndexFunc(l, func(r rune) bool {
+			return !(r == '-' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
+		}) >= 0 {
+			return in, fmt.Errorf("invalid language %q: use a language tag such as \"he\" or \"en-US\"", l)
+		}
+		in.Language = &l
+	}
+	if timeZone != nil {
+		tz := strings.TrimSpace(*timeZone)
+		if tz != "" {
+			if _, err := time.LoadLocation(tz); err != nil || strings.EqualFold(tz, "local") {
+				return in, fmt.Errorf("invalid time zone %q: use an IANA name such as \"Asia/Jerusalem\"", tz)
+			}
+		}
+		in.TimeZone = &tz
+	}
+	if currency != nil {
+		c := strings.ToUpper(strings.TrimSpace(*currency))
+		if c != "" && (len(c) != 3 || strings.IndexFunc(c, func(r rune) bool { return r < 'A' || r > 'Z' }) >= 0) {
+			return in, fmt.Errorf("invalid currency %q: use a 3-letter code such as \"ILS\"", c)
+		}
+		in.Currency = &c
+	}
+	return in, nil
 }

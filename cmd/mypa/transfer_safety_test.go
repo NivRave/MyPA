@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/testutil/pgtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,7 +19,7 @@ func populatedTarget(t *testing.T, source *install) *install {
 	t.Helper()
 	target := newInstall(t, source.identity)
 	require.NoError(t, db.Migrate(context.Background(), target.sqlDB))
-	require.NoError(t, target.client.UpsertUser(models.User{PlatformID: "9001", Name: "Existing owner", Role: "admin", FamilyGroup: "Cohen"}))
+	householdtest.User(t, target.client, "9001", "Existing owner", "admin", "Cohen")
 	copySet(t, source.deps.BackupDir, target.deps.BackupDir)
 	return target
 }
@@ -70,7 +70,7 @@ func TestTransfer_ATruncatedDumpChangesNothing(t *testing.T) {
 
 	target := newInstall(t, nil)
 	require.NoError(t, db.Migrate(context.Background(), target.sqlDB))
-	require.NoError(t, target.client.UpsertUser(models.User{PlatformID: "9001", Name: "Existing owner", Role: "admin"}))
+	householdtest.User(t, target.client, "9001", "Existing owner", "admin", "") // no label: their own household
 	name := "backup_2026-11-18_21-52-46.dump"
 	require.NoError(t, os.WriteFile(filepath.Join(target.deps.BackupDir, name), whole[:len(whole)*6/10], 0o600))
 

@@ -3,6 +3,7 @@ package memory_test
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"strings"
 	"testing"
 	"time"
@@ -47,15 +48,17 @@ func TestSaveTopicMemory_IsRecalledByMeaning(t *testing.T) {
 	repo := db.NewMemoryV2Repo(client.DB)
 	mod := memory.NewModule(repo)
 	llm := topicEmbedder{}
+	scope := householdtest.Scope(t, client, "recall_family", "recall_user", "family")
 	callCtx := orchestrator.CallContext{
 		User:     &models.User{PlatformID: "recall_user", FamilyGroup: "recall_family"},
+		Scope:    scope,
 		LLM:      llm,
 		EventBus: events.NewEventBus(),
 	}
 
 	// Memories as they were written before V4-06: no embedding (a zero vector).
 	for i := 0; i < 6; i++ {
-		require.NoError(t, repo.SaveTopicMemory(ctx, &models.TopicMemory{
+		require.NoError(t, repo.SaveTopicMemory(ctx, scope, &models.TopicMemory{
 			UserID: "recall_user", FamilyGroup: "recall_family", Topic: "personal", TagsJSON: "[]", Scope: "personal",
 			Fact: fmt.Sprintf("An older note without an embedding, number %d", i), CreatedByUserID: "recall_user", ValidFrom: time.Now(),
 		}))
@@ -74,7 +77,7 @@ func TestSaveTopicMemory_IsRecalledByMeaning(t *testing.T) {
 		t.Helper()
 		embedding, err := llm.GenerateEmbedding(ctx, question)
 		require.NoError(t, err)
-		got, err := repo.SearchSimilarMemories(ctx, "recall_user", "recall_family", pgvector.NewVector(embedding), 1)
+		got, err := repo.SearchSimilarMemories(ctx, scope, pgvector.NewVector(embedding), 1)
 		require.NoError(t, err)
 		return got
 	}

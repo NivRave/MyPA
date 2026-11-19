@@ -18,10 +18,11 @@ type EncryptedCredential struct {
 type MutationLog struct {
 	ID          string    `json:"id" gorm:"primaryKey"`
 	UserID      string    `json:"user_id" gorm:"index;index:idx_mutation_logs_user_created,priority:1"`
+	HouseholdID string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup string    `json:"family_group" gorm:"index;index:idx_mutation_logs_family_created,priority:1;index:idx_mutation_logs_family_topic_created,priority:1"`
-	Topic       string    `json:"topic" gorm:"index;index:idx_mutation_logs_family_topic_created,priority:2"`       // e.g. "baby", "house", "finance", "schedule", "memory"
-	Action      string    `json:"action"`                  // e.g. "create", "update", "delete", "complete", "undo"
-	EntityType  string    `json:"entity_type" gorm:"index"` // e.g. "BabyCareLog", "ScheduleEvent"
+	Topic       string    `json:"topic" gorm:"index;index:idx_mutation_logs_family_topic_created,priority:2"` // e.g. "baby", "house", "finance", "schedule", "memory"
+	Action      string    `json:"action"`                                                                     // e.g. "create", "update", "delete", "complete", "undo"
+	EntityType  string    `json:"entity_type" gorm:"index"`                                                   // e.g. "BabyCareLog", "ScheduleEvent"
 	EntityID    string    `json:"entity_id" gorm:"index"`
 	BeforeJSON  string    `json:"before_json" gorm:"type:jsonb"`
 	AfterJSON   string    `json:"after_json" gorm:"type:jsonb"`
@@ -51,4 +52,3 @@ type RollbackResult struct {
 	Detail        string `json:"detail"`
 	AlreadyUndone bool   `json:"already_undone"`
 }
-

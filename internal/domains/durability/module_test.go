@@ -16,14 +16,20 @@ import (
 	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // inMemoryDurabilityRepo is a fully functional in-memory implementation of Repository for unit tests.
+// Mutation logs are household-scoped like the real repository (V4-30); households come from the
+// embedded identitytest.Store, which also gives the event subscriber its identity.Store.
 type inMemoryDurabilityRepo struct {
+	*identitytest.Store
 	mu           sync.RWMutex
 	credentials  map[string]models.EncryptedCredential // key: userID + ":" + provider
 	mutationLogs []models.MutationLog
@@ -32,6 +38,7 @@ type inMemoryDurabilityRepo struct {
 
 func newInMemoryDurabilityRepo() *inMemoryDurabilityRepo {
 	return &inMemoryDurabilityRepo{
+		Store:        identitytest.NewStore(),
 		credentials:  make(map[string]models.EncryptedCredential),
 		mutationLogs: make([]models.MutationLog, 0),
 		idempotency:  make(map[string]models.IdempotencyRecord),
@@ -60,7 +67,10 @@ func (r *inMemoryDurabilityRepo) GetEncryptedCredential(userID, provider string)
 	return &cred, nil
 }
 
-func (r *inMemoryDurabilityRepo) InsertMutationLog(log models.MutationLog) error {
+func (r *inMemoryDurabilityRepo) InsertMutationLog(s identity.Scope, log models.MutationLog) error {
+	if !s.Valid() {
+		return identity.ErrNoScope
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if log.ID == "" {
@@ -69,11 +79,16 @@ func (r *inMemoryDurabilityRepo) InsertMutationLog(log models.MutationLog) error
 	if log.CreatedAt.IsZero() {
 		log.CreatedAt = time.Now()
 	}
+	log.HouseholdID = s.HouseholdID()
+	log.FamilyGroup = s.LegacyLabel()
 	r.mutationLogs = append(r.mutationLogs, log)
 	return nil
 }
 
-func (r *inMemoryDurabilityRepo) GetMutationLogsByTopic(familyGroup, userID, topic string, limit int) ([]models.MutationLog, error) {
+func (r *inMemoryDurabilityRepo) GetMutationLogsByTopic(s identity.Scope, topic string, limit int) ([]models.MutationLog, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if limit <= 0 {
@@ -83,12 +98,8 @@ func (r *inMemoryDurabilityRepo) GetMutationLogsByTopic(familyGroup, userID, top
 	// return newest first
 	for i := len(r.mutationLogs) - 1; i >= 0; i-- {
 		item := r.mutationLogs[i]
-		if familyGroup != "" || userID != "" {
-			matchesFamily := (familyGroup != "" && item.FamilyGroup == familyGroup)
-			matchesUser := (userID != "" && item.UserID == userID)
-			if !matchesFamily && !matchesUser {
-				continue
-			}
+		if item.HouseholdID != s.HouseholdID() {
+			continue
 		}
 		if topic == "" || strings.EqualFold(topic, "all") || strings.EqualFold(item.Topic, topic) {
 			res = append(res, item)
@@ -100,39 +111,41 @@ func (r *inMemoryDurabilityRepo) GetMutationLogsByTopic(familyGroup, userID, top
 	return res, nil
 }
 
-func (r *inMemoryDurabilityRepo) GetMutationLogByID(id string) (*models.MutationLog, error) {
+func (r *inMemoryDurabilityRepo) GetMutationLogByID(s identity.Scope, id string) (*models.MutationLog, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, l := range r.mutationLogs {
-		if l.ID == id {
+		if l.ID == id && l.HouseholdID == s.HouseholdID() {
 			return &l, nil
 		}
 	}
-	return nil, errors.New("mutation log not found")
+	return nil, gorm.ErrRecordNotFound
 }
 
-func (r *inMemoryDurabilityRepo) GetLastMutation(userID string, familyGroup string) (*models.MutationLog, error) {
+func (r *inMemoryDurabilityRepo) GetLastMutation(s identity.Scope) (*models.MutationLog, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for i := len(r.mutationLogs) - 1; i >= 0; i-- {
 		item := r.mutationLogs[i]
-		if item.IsUndone {
+		if item.IsUndone || item.HouseholdID != s.HouseholdID() {
 			continue
 		}
-		matchesUser := (userID != "" && item.UserID == userID)
-		matchesFamily := (familyGroup != "" && item.FamilyGroup == familyGroup)
-		if (matchesUser || matchesFamily) || (userID == "" && familyGroup == "") {
-			return &item, nil
-		}
+		return &item, nil
 	}
 	return nil, errors.New("no active mutations found")
 }
 
-func (r *inMemoryDurabilityRepo) MarkMutationUndone(id string) error {
+func (r *inMemoryDurabilityRepo) MarkMutationUndone(s identity.Scope, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i, l := range r.mutationLogs {
-		if l.ID == id {
+		if l.ID == id && l.HouseholdID == s.HouseholdID() {
 			r.mutationLogs[i].IsUndone = true
 			return nil
 		}
@@ -140,11 +153,11 @@ func (r *inMemoryDurabilityRepo) MarkMutationUndone(id string) error {
 	return errors.New("mutation log not found")
 }
 
-func (r *inMemoryDurabilityRepo) RollbackSnapshot(ctx context.Context, log models.MutationLog, tableName string) error {
+func (r *inMemoryDurabilityRepo) RollbackSnapshot(ctx context.Context, s identity.Scope, log models.MutationLog, tableName string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i, l := range r.mutationLogs {
-		if l.ID == log.ID {
+		if l.ID == log.ID && l.HouseholdID == s.HouseholdID() {
 			r.mutationLogs[i].IsUndone = true
 			return nil
 		}
@@ -175,8 +188,8 @@ func (r *inMemoryDurabilityRepo) SaveIdempotency(rec models.IdempotencyRecord) e
 	return nil
 }
 
-func (r *inMemoryDurabilityRepo) ExportTopicData(familyGroup, userID, topic string, format string, limit int) (string, error) {
-	logs, err := r.GetMutationLogsByTopic(familyGroup, userID, topic, limit)
+func (r *inMemoryDurabilityRepo) ExportTopicData(s identity.Scope, topic string, format string, limit int) (string, error) {
+	logs, err := r.GetMutationLogsByTopic(s, topic, limit)
 	if err != nil {
 		return "", err
 	}
@@ -301,6 +314,7 @@ func TestEventBusSubscriber(t *testing.T) {
 	bus := events.NewEventBus()
 	_ = NewModule(repo, bus)
 	ctx := context.Background()
+	scope := repo.ScopeIn(t, "TheSmiths", "sarah_mom", "family") // V4-30: the event's household
 
 	ev := events.MutationEvent{
 		ID:          "mut-001",
@@ -309,6 +323,7 @@ func TestEventBusSubscriber(t *testing.T) {
 		EntityType:  "BabyCareLog",
 		EntityID:    "log-99",
 		ActorUserID: "sarah_mom",
+		HouseholdID: scope.HouseholdID(),
 		FamilyGroup: "TheSmiths",
 		BeforeJSON:  "",
 		AfterJSON:   `{"feeding_ml":120,"type":"formula"}`,
@@ -320,7 +335,7 @@ func TestEventBusSubscriber(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify that the event was persisted into repo
-	logs, err := repo.GetMutationLogsByTopic("fam-cooper", "sarah_mom", "baby", 10)
+	logs, err := repo.GetMutationLogsByTopic(scope, "baby", 10)
 	require.NoError(t, err)
 	require.Len(t, logs, 1)
 
@@ -349,6 +364,7 @@ func TestUndoLastAction_Generic(t *testing.T) {
 	}
 	callCtx := orchestrator.CallContext{
 		User:     user,
+		Scope:    repo.ScopeIn(t, "TheSmiths", "user_dad", "family"), // V4-30: the tenant
 		EventBus: bus,
 	}
 
@@ -365,6 +381,7 @@ func TestUndoLastAction_Generic(t *testing.T) {
 		EntityType:  "FinancialTransaction",
 		EntityID:    "tx-456",
 		ActorUserID: "user_dad",
+		HouseholdID: callCtx.Scope.HouseholdID(),
 		FamilyGroup: "TheSmiths",
 		BeforeJSON:  "",
 		AfterJSON:   `{"amount":85,"merchant":"Supermarket"}`,
@@ -374,7 +391,7 @@ func TestUndoLastAction_Generic(t *testing.T) {
 	require.NoError(t, bus.Publish(ctx, ev))
 
 	// Verify it's active
-	last, err := repo.GetLastMutation("user_dad", "TheSmiths")
+	last, err := repo.GetLastMutation(callCtx.Scope)
 	require.NoError(t, err)
 	assert.Equal(t, "mut-002", last.ID)
 	assert.False(t, last.IsUndone)
@@ -397,7 +414,7 @@ func TestUndoLastAction_Generic(t *testing.T) {
 	assert.Contains(t, resp, "FinancialTransaction")
 
 	// 4. Verify mutation is marked undone in repo
-	log, err := repo.GetMutationLogByID("mut-002")
+	log, err := repo.GetMutationLogByID(callCtx.Scope, "mut-002")
 	require.NoError(t, err)
 	assert.True(t, log.IsUndone, "Mutation should be marked undone")
 
@@ -423,8 +440,10 @@ func TestCustomUndoHandler(t *testing.T) {
 		return fmt.Sprintf("Custom rollback: Deleted baby care log record %s", log.EntityID), nil
 	})
 
+	scope := repo.ScopeIn(t, "TheSmiths", "sarah_mom", "family") // V4-30: the tenant
+
 	// Insert mutation
-	err := repo.InsertMutationLog(models.MutationLog{
+	err := repo.InsertMutationLog(scope, models.MutationLog{
 		ID:          "mut-003",
 		UserID:      "sarah_mom",
 		FamilyGroup: "TheSmiths",
@@ -439,7 +458,8 @@ func TestCustomUndoHandler(t *testing.T) {
 	require.NoError(t, err)
 
 	callCtx := orchestrator.CallContext{
-		User: &models.User{PlatformID: "sarah_mom", FamilyGroup: "TheSmiths"},
+		User:  &models.User{PlatformID: "sarah_mom", FamilyGroup: "TheSmiths"},
+		Scope: scope,
 	}
 
 	resp, err := mod.Execute(ctx, callCtx, "undo_last_action", nil)
@@ -453,10 +473,10 @@ func TestListRecentChanges(t *testing.T) {
 	repo := newInMemoryDurabilityRepo()
 	mod := NewModule(repo)
 	ctx := context.Background()
-	callCtx := orchestrator.CallContext{}
+	callCtx := orchestrator.CallContext{Scope: repo.ScopeIn(t, "F", "u", "family")} // V4-30: the tenant
 
 	// Insert multiple logs across topics
-	_ = repo.InsertMutationLog(models.MutationLog{
+	_ = repo.InsertMutationLog(callCtx.Scope, models.MutationLog{
 		ID:         "mut-1",
 		Topic:      "baby",
 		Action:     "create",
@@ -464,7 +484,7 @@ func TestListRecentChanges(t *testing.T) {
 		Summary:    "Morning feeding 150ml",
 		CreatedAt:  time.Now().Add(-10 * time.Minute),
 	})
-	_ = repo.InsertMutationLog(models.MutationLog{
+	_ = repo.InsertMutationLog(callCtx.Scope, models.MutationLog{
 		ID:         "mut-2",
 		Topic:      "house",
 		Action:     "update",
@@ -472,7 +492,7 @@ func TestListRecentChanges(t *testing.T) {
 		Summary:    "AC filter replaced",
 		CreatedAt:  time.Now().Add(-5 * time.Minute),
 	})
-	_ = repo.InsertMutationLog(models.MutationLog{
+	_ = repo.InsertMutationLog(callCtx.Scope, models.MutationLog{
 		ID:         "mut-3",
 		Topic:      "finance",
 		Action:     "create",
@@ -513,9 +533,9 @@ func TestExportTopicData(t *testing.T) {
 	repo := newInMemoryDurabilityRepo()
 	mod := NewModule(repo)
 	ctx := context.Background()
-	callCtx := orchestrator.CallContext{}
+	callCtx := orchestrator.CallContext{Scope: repo.ScopeIn(t, "F1", "u1", "family")} // V4-30: the tenant
 
-	_ = repo.InsertMutationLog(models.MutationLog{
+	_ = repo.InsertMutationLog(callCtx.Scope, models.MutationLog{
 		ID:          "exp-1",
 		UserID:      "u1",
 		FamilyGroup: "F1",
@@ -616,11 +636,14 @@ func TestSEC04_CrossTenant_DurabilityUndo_Blocked(t *testing.T) {
 		IsUndone:    false,
 		CreatedAt:   time.Now(),
 	}
-	require.NoError(t, repo.InsertMutationLog(alphaMut))
+	scopeAlpha := repo.ScopeIn(t, "family_alpha", "user_alpha", "family") // V4-30: the tenants
+	scopeBeta := repo.ScopeIn(t, "family_beta", "user_beta", "family")
+	require.NoError(t, repo.InsertMutationLog(scopeAlpha, alphaMut))
 
 	// 2. Family Beta attempts to undo Family Alpha's mutation by passing mutation_id
 	callCtxBeta := orchestrator.CallContext{
 		User:    &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"},
+		Scope:   scopeBeta,
 		Message: channel.Inbound{Sender: "user_beta"},
 	}
 
@@ -631,13 +654,14 @@ func TestSEC04_CrossTenant_DurabilityUndo_Blocked(t *testing.T) {
 	assert.Contains(t, undoBetaErr.Error(), "permission denied")
 
 	// Verify mutation remains undone == false
-	log1, err := repo.GetMutationLogByID("mut-alpha-99")
+	log1, err := repo.GetMutationLogByID(scopeAlpha, "mut-alpha-99")
 	require.NoError(t, err)
 	assert.False(t, log1.IsUndone, "Mutation must not be marked undone after unauthorized attempt")
 
 	// 3. Legitimate same-family undo (non-regression)
 	callCtxAlpha := orchestrator.CallContext{
 		User:    &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"},
+		Scope:   scopeAlpha,
 		Message: channel.Inbound{Sender: "user_alpha"},
 	}
 
@@ -648,7 +672,7 @@ func TestSEC04_CrossTenant_DurabilityUndo_Blocked(t *testing.T) {
 	assert.Contains(t, undoAlphaResp, "Successfully undone")
 
 	// Verify mutation is now marked undone
-	log1After, err := repo.GetMutationLogByID("mut-alpha-99")
+	log1After, err := repo.GetMutationLogByID(scopeAlpha, "mut-alpha-99")
 	require.NoError(t, err)
 	assert.True(t, log1After.IsUndone, "Mutation must be marked undone after legitimate undo")
 }
@@ -658,6 +682,7 @@ func TestRollbackEngine_AllowlistAndIdempotency(t *testing.T) {
 	bus := events.NewEventBus()
 	mod := NewModule(repo, bus)
 	ctx := context.Background()
+	scope1 := repo.ScopeIn(t, "family_1", "user_1", "family") // V4-30: the tenant
 
 	// 1. Rejection of system entity
 	sysMut := models.MutationLog{
@@ -669,9 +694,9 @@ func TestRollbackEngine_AllowlistAndIdempotency(t *testing.T) {
 		UserID:      "user_1",
 		FamilyGroup: "family_1",
 	}
-	require.NoError(t, repo.InsertMutationLog(sysMut))
+	require.NoError(t, repo.InsertMutationLog(scope1, sysMut))
 
-	_, err := mod.Rollback(ctx, "user_1", "family_1", "mut-sys-1")
+	_, err := mod.Rollback(ctx, scope1, "mut-sys-1")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "system entity")
 
@@ -685,9 +710,9 @@ func TestRollbackEngine_AllowlistAndIdempotency(t *testing.T) {
 		UserID:      "user_1",
 		FamilyGroup: "family_1",
 	}
-	require.NoError(t, repo.InsertMutationLog(unkMut))
+	require.NoError(t, repo.InsertMutationLog(scope1, unkMut))
 
-	_, err = mod.Rollback(ctx, "user_1", "family_1", "mut-unk-1")
+	_, err = mod.Rollback(ctx, scope1, "mut-unk-1")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not allowlisted")
 
@@ -702,15 +727,15 @@ func TestRollbackEngine_AllowlistAndIdempotency(t *testing.T) {
 		FamilyGroup: "family_1",
 		Summary:     "Logged feeding",
 	}
-	require.NoError(t, repo.InsertMutationLog(validMut))
+	require.NoError(t, repo.InsertMutationLog(scope1, validMut))
 
-	res, err := mod.Rollback(ctx, "user_1", "family_1", "mut-valid-1")
+	res, err := mod.Rollback(ctx, scope1, "mut-valid-1")
 	require.NoError(t, err)
 	assert.False(t, res.AlreadyUndone)
 	assert.Contains(t, res.Detail, "Reverted")
 
 	// Second rollback is idempotent
-	res2, err := mod.Rollback(ctx, "user_1", "family_1", "mut-valid-1")
+	res2, err := mod.Rollback(ctx, scope1, "mut-valid-1")
 	require.NoError(t, err)
 	assert.True(t, res2.AlreadyUndone)
 	assert.Contains(t, res2.Detail, "already been undone")

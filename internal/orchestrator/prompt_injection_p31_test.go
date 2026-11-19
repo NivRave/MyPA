@@ -29,7 +29,7 @@ func newInjectionHarness(t *testing.T, script ...*llm.Response) *injectionHarnes
 	engine, tgMock, llmMock, dbMock, cleanup := setupTestEngine(t)
 	t.Cleanup(cleanup)
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
-	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	h := &injectionHarness{engine: engine, ran: map[string]*int64{}}
@@ -139,7 +139,9 @@ func TestP31_UntrustedToolOutputIsWrapped(t *testing.T) {
 	_ = dbMock
 	reg := NewRegistry()
 	reg.Register(&mockToolModule{name: "workspace_gmail", declarations: []*genai.FunctionDeclaration{{Name: "search_emails"}},
-		executeFunc: func(context.Context, CallContext, string, map[string]interface{}) (string, error) { return injectedEmail, nil }})
+		executeFunc: func(context.Context, CallContext, string, map[string]interface{}) (string, error) {
+			return injectedEmail, nil
+		}})
 	engine.SetToolRegistry(reg)
 
 	sec := &TurnSecurityState{}
@@ -175,7 +177,7 @@ func TestP31_ImageTurnIsUntrusted(t *testing.T) {
 	engine, tgMock, llmMock, dbMock, cleanup := setupTestEngine(t)
 	defer cleanup()
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
-	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	tgMock.EXPECT().GetFile(gomock.Any(), "photo-1").Return("photos/p.jpg", nil)
 	tgMock.EXPECT().DownloadFile(gomock.Any(), "photos/p.jpg").Return([]byte{0xFF, 0xD8, 0xFF}, nil)

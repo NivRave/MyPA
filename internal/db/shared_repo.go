@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
 	"gorm.io/gorm"
 )
@@ -14,7 +15,9 @@ func init() {
 	RegisterModel(&models.SharedSpace{}, &models.SharedTaskReminder{})
 }
 
-// SharedRepository manages database operations for shared multi-user spaces and tasks.
+// SharedRepository manages database operations for shared multi-user spaces and tasks. Shared
+// spaces and shared tasks are household rows (V4-30): every method but the scheduler's scan
+// takes the caller's scope.
 type SharedRepository struct {
 	db *gorm.DB
 }
@@ -24,30 +27,38 @@ func NewSharedRepository(db *gorm.DB) *SharedRepository {
 	return &SharedRepository{db: db}
 }
 
-// UpsertSharedSpace creates or updates a SharedSpace record.
-func (r *SharedRepository) UpsertSharedSpace(space *models.SharedSpace) error {
+func (r *SharedRepository) scoped(s identity.Scope) (*gorm.DB, error) {
+	return (&Client{DB: r.db}).scoped(s)
+}
+
+// UpsertSharedSpace creates or updates a SharedSpace record of the scope's household.
+func (r *SharedRepository) UpsertSharedSpace(s identity.Scope, space *models.SharedSpace) error {
 	if space == nil {
 		return fmt.Errorf("shared space cannot be nil")
 	}
-	if space.FamilyGroup == "" {
-		return fmt.Errorf("family_group is required")
-	}
 	if space.Topic == "" {
 		return fmt.Errorf("topic is required")
+	}
+	q, err := r.scoped(s)
+	if err != nil {
+		return err
+	}
+	if err := stamp(s, &space.HouseholdID, &space.FamilyGroup); err != nil {
+		return err
 	}
 	space.Topic = strings.ToLower(strings.TrimSpace(space.Topic))
 	space.UpdatedAt = time.Now()
 
 	var existing models.SharedSpace
-	query := r.db.Where("family_group = ? AND topic = ?", space.FamilyGroup, space.Topic)
+	query := q.Where("topic = ?", space.Topic)
 	if space.SharedWithUserID != "" && space.SharedWithUserID != "*" {
 		query = query.Where("shared_with_user_id = ?", space.SharedWithUserID)
 	}
 
-	err := query.First(&existing).Error
+	err = query.First(&existing).Error
 	if err == nil {
 		space.ID = existing.ID
-		return r.db.Model(&existing).Updates(map[string]interface{}{
+		return r.db.Model(&models.SharedSpace{}).Where("id = ? AND household_id = ?", existing.ID, s.HouseholdID()).Updates(map[string]interface{}{
 			"can_view":            space.CanView,
 			"can_edit":            space.CanEdit,
 			"notify_mode":         space.NotifyMode,
@@ -56,27 +67,35 @@ func (r *SharedRepository) UpsertSharedSpace(space *models.SharedSpace) error {
 			"updated_at":          space.UpdatedAt,
 		}).Error
 	} else if errors.Is(err, gorm.ErrRecordNotFound) {
+		space.ID = 0
 		return r.db.Create(space).Error
 	}
 	return err
 }
 
-// GetSharedSpacesForFamily retrieves all configured shared spaces for a family group.
-func (r *SharedRepository) GetSharedSpacesForFamily(familyGroup string) ([]models.SharedSpace, error) {
-	var spaces []models.SharedSpace
-	err := r.db.Where("family_group = ?", familyGroup).Order("topic ASC").Find(&spaces).Error
+// GetSharedSpacesForFamily retrieves all configured shared spaces of the scope's household.
+func (r *SharedRepository) GetSharedSpacesForFamily(s identity.Scope) ([]models.SharedSpace, error) {
+	q, err := r.scoped(s)
 	if err != nil {
+		return nil, err
+	}
+	var spaces []models.SharedSpace
+	if err := q.Order("topic ASC").Find(&spaces).Error; err != nil {
 		return nil, fmt.Errorf("failed to get shared spaces for family: %w", err)
 	}
 	return spaces, nil
 }
 
-// GetSharedSpace retrieves a shared space for a specific family group and topic.
+// GetSharedSpace retrieves the scope household's shared space for a topic.
 // Returns (nil, nil) if no explicit configuration exists.
-func (r *SharedRepository) GetSharedSpace(familyGroup, topic string) (*models.SharedSpace, error) {
+func (r *SharedRepository) GetSharedSpace(s identity.Scope, topic string) (*models.SharedSpace, error) {
+	q, err := r.scoped(s)
+	if err != nil {
+		return nil, err
+	}
 	var space models.SharedSpace
 	normTopic := strings.ToLower(strings.TrimSpace(topic))
-	err := r.db.Where("family_group = ? AND LOWER(topic) = ?", familyGroup, normTopic).First(&space).Error
+	err = q.Where("LOWER(topic) = ?", normTopic).First(&space).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -86,13 +105,13 @@ func (r *SharedRepository) GetSharedSpace(familyGroup, topic string) (*models.Sh
 	return &space, nil
 }
 
-// CreateSharedReminder inserts a new shared collaborative reminder or task.
-func (r *SharedRepository) CreateSharedReminder(reminder *models.SharedTaskReminder) error {
+// CreateSharedReminder inserts a new shared collaborative reminder or task into the scope's household.
+func (r *SharedRepository) CreateSharedReminder(s identity.Scope, reminder *models.SharedTaskReminder) error {
 	if reminder == nil {
 		return fmt.Errorf("shared task reminder cannot be nil")
 	}
-	if reminder.FamilyGroup == "" {
-		return fmt.Errorf("family_group is required")
+	if err := stamp(s, &reminder.HouseholdID, &reminder.FamilyGroup); err != nil {
+		return err
 	}
 	if reminder.Title == "" {
 		return fmt.Errorf("title is required")
@@ -107,14 +126,14 @@ func (r *SharedRepository) CreateSharedReminder(reminder *models.SharedTaskRemin
 	return r.db.Create(reminder).Error
 }
 
-// CompleteSharedReminder marks a task as completed by completedByUserID.
-func (r *SharedRepository) CompleteSharedReminder(id uint, completedByUserID string, familyGroup ...string) (*models.SharedTaskReminder, error) {
-	var reminder models.SharedTaskReminder
-	query := r.db.Where("id = ?", id)
-	if len(familyGroup) > 0 && familyGroup[0] != "" {
-		query = query.Where("((family_group = ? AND family_group != '') OR created_by_user_id = ? OR assigned_to_user_id = ?)", familyGroup[0], completedByUserID, completedByUserID)
+// CompleteSharedReminder marks a task of the scope's household as completed by completedByUserID.
+func (r *SharedRepository) CompleteSharedReminder(s identity.Scope, id uint, completedByUserID string) (*models.SharedTaskReminder, error) {
+	q, err := r.scoped(s)
+	if err != nil {
+		return nil, err
 	}
-	if err := query.First(&reminder).Error; err != nil {
+	var reminder models.SharedTaskReminder
+	if err := q.Where("id = ?", id).First(&reminder).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("shared reminder with id %d not found", id)
 		}
@@ -123,13 +142,17 @@ func (r *SharedRepository) CompleteSharedReminder(id uint, completedByUserID str
 
 	now := time.Now()
 	updates := map[string]interface{}{
-		"is_completed":          true,
+		"is_completed":         true,
 		"completed_by_user_id": completedByUserID,
-		"completed_at":          &now,
+		"completed_at":         &now,
 	}
 
-	if err := r.db.Model(&reminder).Updates(updates).Error; err != nil {
-		return nil, fmt.Errorf("failed to complete shared reminder: %w", err)
+	res := r.db.Model(&models.SharedTaskReminder{}).Where("id = ? AND household_id = ?", reminder.ID, s.HouseholdID()).Updates(updates)
+	if res.Error != nil {
+		return nil, fmt.Errorf("failed to complete shared reminder: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return nil, fmt.Errorf("shared reminder with id %d not found", id)
 	}
 
 	reminder.IsCompleted = true
@@ -138,14 +161,14 @@ func (r *SharedRepository) CompleteSharedReminder(id uint, completedByUserID str
 	return &reminder, nil
 }
 
-// GetSharedReminder retrieves a shared reminder by ID, optionally scoped to familyGroup or user ID. Returns (nil, nil) if not found.
-func (r *SharedRepository) GetSharedReminder(id uint, familyGroup ...string) (*models.SharedTaskReminder, error) {
-	var reminder models.SharedTaskReminder
-	query := r.db.Where("id = ?", id)
-	if len(familyGroup) > 0 && familyGroup[0] != "" {
-		query = query.Where("((family_group = ? AND family_group != '') OR created_by_user_id = ? OR assigned_to_user_id = ?)", familyGroup[0], familyGroup[0], familyGroup[0])
+// GetSharedReminder retrieves a shared reminder of the scope's household by ID. Returns (nil, nil) if not found.
+func (r *SharedRepository) GetSharedReminder(s identity.Scope, id uint) (*models.SharedTaskReminder, error) {
+	q, err := r.scoped(s)
+	if err != nil {
+		return nil, err
 	}
-	result := query.First(&reminder)
+	var reminder models.SharedTaskReminder
+	result := q.Where("id = ?", id).First(&reminder)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -155,17 +178,20 @@ func (r *SharedRepository) GetSharedReminder(id uint, familyGroup ...string) (*m
 	return &reminder, nil
 }
 
-// ListSharedReminders queries shared reminders for a family group, optionally filtering by topic.
-func (r *SharedRepository) ListSharedReminders(familyGroup string, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error) {
+// ListSharedReminders queries the scope household's shared reminders, optionally filtering by topic.
+func (r *SharedRepository) ListSharedReminders(s identity.Scope, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error) {
+	q, err := r.scoped(s)
+	if err != nil {
+		return nil, err
+	}
 	var reminders []models.SharedTaskReminder
-	q := r.db.Where("family_group = ?", familyGroup)
 	if topic != "" && topic != "*" && !strings.EqualFold(topic, "all") {
 		q = q.Where("LOWER(topic) = ?", strings.ToLower(strings.TrimSpace(topic)))
 	}
 	if !includeCompleted {
 		q = q.Where("is_completed = ?", false)
 	}
-	err := q.Order("is_completed ASC, due_time ASC, created_at DESC").Find(&reminders).Error
+	err = q.Order("is_completed ASC, due_time ASC, created_at DESC").Find(&reminders).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to list shared reminders: %w", err)
 	}
@@ -175,41 +201,43 @@ func (r *SharedRepository) ListSharedReminders(familyGroup string, topic string,
 // Client extensions for Shared Repository
 
 // UpsertSharedSpace creates or updates a SharedSpace on Client.
-func (c *Client) UpsertSharedSpace(space *models.SharedSpace) error {
-	return NewSharedRepository(c.DB).UpsertSharedSpace(space)
+func (c *Client) UpsertSharedSpace(s identity.Scope, space *models.SharedSpace) error {
+	return NewSharedRepository(c.DB).UpsertSharedSpace(s, space)
 }
 
-// GetSharedSpacesForFamily retrieves all shared spaces for a family on Client.
-func (c *Client) GetSharedSpacesForFamily(familyGroup string) ([]models.SharedSpace, error) {
-	return NewSharedRepository(c.DB).GetSharedSpacesForFamily(familyGroup)
+// GetSharedSpacesForFamily retrieves all shared spaces of the scope's household on Client.
+func (c *Client) GetSharedSpacesForFamily(s identity.Scope) ([]models.SharedSpace, error) {
+	return NewSharedRepository(c.DB).GetSharedSpacesForFamily(s)
 }
 
-// GetSharedSpace retrieves a shared space for a family group and topic on Client.
-func (c *Client) GetSharedSpace(familyGroup, topic string) (*models.SharedSpace, error) {
-	return NewSharedRepository(c.DB).GetSharedSpace(familyGroup, topic)
+// GetSharedSpace retrieves the scope household's shared space for a topic on Client.
+func (c *Client) GetSharedSpace(s identity.Scope, topic string) (*models.SharedSpace, error) {
+	return NewSharedRepository(c.DB).GetSharedSpace(s, topic)
 }
 
 // CreateSharedReminder inserts a new shared reminder on Client.
-func (c *Client) CreateSharedReminder(reminder *models.SharedTaskReminder) error {
-	return NewSharedRepository(c.DB).CreateSharedReminder(reminder)
+func (c *Client) CreateSharedReminder(s identity.Scope, reminder *models.SharedTaskReminder) error {
+	return NewSharedRepository(c.DB).CreateSharedReminder(s, reminder)
 }
 
 // CompleteSharedReminder marks a shared reminder as completed on Client.
-func (c *Client) CompleteSharedReminder(id uint, completedByUserID string, familyGroup ...string) (*models.SharedTaskReminder, error) {
-	return NewSharedRepository(c.DB).CompleteSharedReminder(id, completedByUserID, familyGroup...)
+func (c *Client) CompleteSharedReminder(s identity.Scope, id uint, completedByUserID string) (*models.SharedTaskReminder, error) {
+	return NewSharedRepository(c.DB).CompleteSharedReminder(s, id, completedByUserID)
 }
 
 // GetSharedReminder retrieves a shared reminder on Client.
-func (c *Client) GetSharedReminder(id uint, familyGroup ...string) (*models.SharedTaskReminder, error) {
-	return NewSharedRepository(c.DB).GetSharedReminder(id, familyGroup...)
+func (c *Client) GetSharedReminder(s identity.Scope, id uint) (*models.SharedTaskReminder, error) {
+	return NewSharedRepository(c.DB).GetSharedReminder(s, id)
 }
 
 // ListSharedReminders queries shared reminders on Client.
-func (c *Client) ListSharedReminders(familyGroup string, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error) {
-	return NewSharedRepository(c.DB).ListSharedReminders(familyGroup, topic, includeCompleted)
+func (c *Client) ListSharedReminders(s identity.Scope, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error) {
+	return NewSharedRepository(c.DB).ListSharedReminders(s, topic, includeCompleted)
 }
 
-// GetDueSharedReminders returns uncompleted, unsent shared reminders that have reached their due time.
+// GetDueSharedReminders returns uncompleted, unsent shared reminders that have reached their due
+// time. It scans every household (scheduled job): each row's household_id becomes the scope
+// that sends and marks it (identity.ForStoredRow).
 func (r *SharedRepository) GetDueSharedReminders() ([]models.SharedTaskReminder, error) {
 	var reminders []models.SharedTaskReminder
 	now := time.Now()
@@ -220,21 +248,27 @@ func (r *SharedRepository) GetDueSharedReminders() ([]models.SharedTaskReminder,
 	return reminders, nil
 }
 
-// MarkSharedReminderSent sets is_sent = true and reminded_at to now for the shared reminder.
-func (r *SharedRepository) MarkSharedReminderSent(id uint) error {
+// MarkSharedReminderSent sets is_sent = true and reminded_at to now for a shared reminder of the
+// scope's household.
+func (r *SharedRepository) MarkSharedReminderSent(s identity.Scope, id uint) error {
+	q, err := r.scoped(s)
+	if err != nil {
+		return err
+	}
 	now := time.Now()
-	return r.db.Model(&models.SharedTaskReminder{}).Where("id = ?", id).Updates(map[string]interface{}{
+	return q.Model(&models.SharedTaskReminder{}).Where("id = ?", id).Updates(map[string]interface{}{
 		"is_sent":     true,
 		"reminded_at": &now,
 	}).Error
 }
 
-// GetDueSharedReminders returns uncompleted, unsent shared reminders on Client.
+// GetDueSharedReminders returns uncompleted, unsent shared reminders on Client. It scans every
+// household (scheduled job).
 func (c *Client) GetDueSharedReminders() ([]models.SharedTaskReminder, error) {
 	return NewSharedRepository(c.DB).GetDueSharedReminders()
 }
 
-// MarkSharedReminderSent marks a shared reminder as sent on Client.
-func (c *Client) MarkSharedReminderSent(id uint) error {
-	return NewSharedRepository(c.DB).MarkSharedReminderSent(id)
+// MarkSharedReminderSent marks a shared reminder of the scope's household as sent on Client.
+func (c *Client) MarkSharedReminderSent(s identity.Scope, id uint) error {
+	return NewSharedRepository(c.DB).MarkSharedReminderSent(s, id)
 }

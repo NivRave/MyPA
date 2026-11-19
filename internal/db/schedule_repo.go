@@ -3,6 +3,7 @@ package db
 import (
 	"errors"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
 	"strings"
 	"time"
 
@@ -19,11 +20,14 @@ func init() {
 
 // ScheduleRepository defines repository methods for topic-based schedule events and configurations.
 type ScheduleRepository interface {
-	CreateScheduleEvent(ev *models.ScheduleEvent) error
-	GetScheduleEvent(id uint, familyGroup ...string) (*models.ScheduleEvent, error)
-	UpdateScheduleEvent(ev *models.ScheduleEvent) error
-	DeleteScheduleEvent(id uint, familyGroup ...string) error
-	ListScheduleEvents(userID, familyGroup, topic string, start, end time.Time) ([]models.ScheduleEvent, error)
+	// Schedule events are household rows (V4-30): every method takes the caller's scope.
+	CreateScheduleEvent(s identity.Scope, ev *models.ScheduleEvent) error
+	GetScheduleEvent(s identity.Scope, id uint) (*models.ScheduleEvent, error)
+	UpdateScheduleEvent(s identity.Scope, ev *models.ScheduleEvent) error
+	DeleteScheduleEvent(s identity.Scope, id uint) error
+	// ListScheduleEvents returns the household's shared events plus the scope person's own.
+	ListScheduleEvents(s identity.Scope, topic string, start, end time.Time) ([]models.ScheduleEvent, error)
+	// Topic calendar configs are per person (no household_id) and keep their user key.
 	UpsertTopicCalendarConfig(cfg *models.TopicCalendarConfig) error
 	GetTopicCalendarConfig(userID, topic string) (*models.TopicCalendarConfig, error)
 	ListTopicCalendarConfigs(userID string) ([]models.TopicCalendarConfig, error)
@@ -34,10 +38,13 @@ func NewScheduleRepository(db *gorm.DB) ScheduleRepository {
 	return &Client{DB: db}
 }
 
-// CreateScheduleEvent inserts a new schedule event into the database.
-func (c *Client) CreateScheduleEvent(ev *models.ScheduleEvent) error {
+// CreateScheduleEvent inserts a new schedule event into the scope's household.
+func (c *Client) CreateScheduleEvent(s identity.Scope, ev *models.ScheduleEvent) error {
 	if ev == nil {
 		return fmt.Errorf("schedule event cannot be nil")
+	}
+	if err := stamp(s, &ev.HouseholdID, &ev.FamilyGroup); err != nil {
+		return err
 	}
 	if ev.CreatedAt.IsZero() {
 		ev.CreatedAt = time.Now()
@@ -54,15 +61,15 @@ func (c *Client) CreateScheduleEvent(ev *models.ScheduleEvent) error {
 	return nil
 }
 
-// GetScheduleEvent fetches a single schedule event by its ID, optionally scoped to tenant.
-// Returns (nil, nil) if the event is not found.
-func (c *Client) GetScheduleEvent(id uint, familyGroup ...string) (*models.ScheduleEvent, error) {
-	var ev models.ScheduleEvent
-	query := c.DB.Where("id = ?", id)
-	if len(familyGroup) > 0 && familyGroup[0] != "" {
-		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup[0], familyGroup[0])
+// GetScheduleEvent fetches a schedule event of the scope's household by its ID.
+// Returns (nil, nil) if the household has no such event.
+func (c *Client) GetScheduleEvent(s identity.Scope, id uint) (*models.ScheduleEvent, error) {
+	q, err := c.scoped(s)
+	if err != nil {
+		return nil, err
 	}
-	result := query.First(&ev)
+	var ev models.ScheduleEvent
+	result := q.Where("id = ?", id).First(&ev)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -72,43 +79,56 @@ func (c *Client) GetScheduleEvent(id uint, familyGroup ...string) (*models.Sched
 	return &ev, nil
 }
 
-// UpdateScheduleEvent updates an existing schedule event.
-func (c *Client) UpdateScheduleEvent(ev *models.ScheduleEvent) error {
+// UpdateScheduleEvent updates an existing event of the scope's household. An event of another
+// household is not found and is left untouched.
+func (c *Client) UpdateScheduleEvent(s identity.Scope, ev *models.ScheduleEvent) error {
 	if ev == nil {
 		return fmt.Errorf("schedule event cannot be nil")
 	}
+	q, err := c.scoped(s)
+	if err != nil {
+		return err
+	}
+	if err := stamp(s, &ev.HouseholdID, &ev.FamilyGroup); err != nil {
+		return err
+	}
 	ev.Topic = strings.ToLower(strings.TrimSpace(ev.Topic))
-	result := c.DB.Save(ev)
+	result := q.Model(&models.ScheduleEvent{}).Where("id = ?", ev.ID).Select("*").Omit("id", "created_at").Updates(ev)
 	if result.Error != nil {
 		return fmt.Errorf("failed to update schedule event: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("schedule event %d not found", ev.ID)
 	}
 	return nil
 }
 
-// DeleteScheduleEvent removes a schedule event by ID, optionally scoped to tenant.
-func (c *Client) DeleteScheduleEvent(id uint, familyGroup ...string) error {
-	query := c.DB.Where("id = ?", id)
-	if len(familyGroup) > 0 && familyGroup[0] != "" {
-		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup[0], familyGroup[0])
+// DeleteScheduleEvent removes an event of the scope's household by ID. Deleting an ID the
+// household does not have is a no-op, as deleting a missing ID was before.
+func (c *Client) DeleteScheduleEvent(s identity.Scope, id uint) error {
+	q, err := c.scoped(s)
+	if err != nil {
+		return err
 	}
-	result := query.Delete(&models.ScheduleEvent{})
+	result := q.Where("id = ?", id).Delete(&models.ScheduleEvent{})
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete schedule event: %w", result.Error)
 	}
 	return nil
 }
 
-// ListScheduleEvents retrieves schedule events matching the specified filters.
-func (c *Client) ListScheduleEvents(userID, familyGroup, topic string, start, end time.Time) ([]models.ScheduleEvent, error) {
-	query := c.DB.Model(&models.ScheduleEvent{})
-
-	// User / FamilyGroup filter
-	if userID != "" && familyGroup != "" {
-		query = query.Where("((family_group = ? AND family_group != '' AND is_shared = true) OR user_id = ?)", familyGroup, userID)
-	} else if userID != "" {
-		query = query.Where("user_id = ?", userID)
-	} else if familyGroup != "" {
-		query = query.Where("family_group = ? AND family_group != ''", familyGroup)
+// ListScheduleEvents retrieves the scope household's shared events plus the scope person's own
+// events, matching the topic and time filters.
+func (c *Client) ListScheduleEvents(s identity.Scope, topic string, start, end time.Time) ([]models.ScheduleEvent, error) {
+	q, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
+	query := q.Model(&models.ScheduleEvent{})
+	if userID := s.PersonKey(); userID != "" {
+		query = query.Where("(is_shared = true OR user_id = ?)", userID)
+	} else {
+		query = query.Where("is_shared = true")
 	}
 
 	// Topic filter

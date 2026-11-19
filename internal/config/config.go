@@ -193,13 +193,19 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
-// ParseAllowedUsers parses the ALLOWED_USERS string into a map keyed by platform ID.
+// ParseAllowedUsers parses the ALLOWED_USERS string, in the order the entries are written (the
+// bootstrap makes the first entry of a household without an admin its owner). A platform ID
+// written twice keeps its first position and its last values.
 // Format: "phone:name:role:family_group, phone2:name2:role2:family_group2"
-func (c *Config) ParseAllowedUsers() map[string]models.User {
-	users := make(map[string]models.User)
+//
+// Since V4-30 the setting seeds a fresh install only: it is read when no household exists
+// (ADR 0002 Decision 6, db.BootstrapHouseholds).
+func (c *Config) ParseAllowedUsers() []models.User {
+	var users []models.User
 	if c.Server.AllowedUsersRaw == "" {
 		return users
 	}
+	index := map[string]int{}
 
 	entries := strings.Split(c.Server.AllowedUsersRaw, ",")
 	for _, entry := range entries {
@@ -223,9 +229,15 @@ func (c *Config) ParseAllowedUsers() map[string]models.User {
 			u.FamilyGroup = strings.TrimSpace(parts[3])
 		}
 
-		if u.PlatformID != "" {
-			users[u.PlatformID] = u
+		if u.PlatformID == "" {
+			continue
 		}
+		if i, seen := index[u.PlatformID]; seen {
+			users[i] = u
+			continue
+		}
+		index[u.PlatformID] = len(users)
+		users = append(users, u)
 	}
 	return users
 }

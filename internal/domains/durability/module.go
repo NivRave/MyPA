@@ -2,6 +2,7 @@ package durability
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -12,9 +13,11 @@ import (
 	"github.com/nivik/mypa/internal/crypto"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"google.golang.org/genai"
+	"gorm.io/gorm"
 )
 
 func init() {
@@ -25,19 +28,22 @@ func init() {
 	)
 }
 
-// Repository defines the persistence interface required by the durability module.
+// Repository defines the persistence interface required by the durability module. Mutation logs
+// are household-scoped (V4-30); credentials and idempotency records are keyed by person or key.
+// identity.Store lets the event subscriber build the scope of each event's household.
 type Repository interface {
+	identity.Store
 	SaveEncryptedCredential(cred models.EncryptedCredential) error
 	GetEncryptedCredential(userID, provider string) (*models.EncryptedCredential, error)
-	InsertMutationLog(log models.MutationLog) error
-	GetMutationLogsByTopic(familyGroup, userID, topic string, limit int) ([]models.MutationLog, error)
-	GetMutationLogByID(id string) (*models.MutationLog, error)
-	GetLastMutation(userID string, familyGroup string) (*models.MutationLog, error)
-	MarkMutationUndone(id string) error
-	RollbackSnapshot(ctx context.Context, log models.MutationLog, tableName string) error
+	InsertMutationLog(s identity.Scope, log models.MutationLog) error
+	GetMutationLogsByTopic(s identity.Scope, topic string, limit int) ([]models.MutationLog, error)
+	GetMutationLogByID(s identity.Scope, id string) (*models.MutationLog, error)
+	GetLastMutation(s identity.Scope) (*models.MutationLog, error)
+	MarkMutationUndone(s identity.Scope, id string) error
+	RollbackSnapshot(ctx context.Context, s identity.Scope, log models.MutationLog, tableName string) error
 	CheckIdempotency(key string) (*models.IdempotencyRecord, error)
 	SaveIdempotency(rec models.IdempotencyRecord) error
-	ExportTopicData(familyGroup, userID, topic string, format string, limit int) (string, error)
+	ExportTopicData(s identity.Scope, topic string, format string, limit int) (string, error)
 }
 
 // RollbackResult provides unified, structured feedback on completed rollback operations.
@@ -45,8 +51,8 @@ type RollbackResult = models.RollbackResult
 
 // RollbackEngine is the unified interface exposed to engine, tools, and resolvers.
 type RollbackEngine interface {
-	Rollback(ctx context.Context, actorID, familyGroup, mutationID string, reason ...string) (*RollbackResult, error)
-	RollbackLast(ctx context.Context, actorID, familyGroup string, reason ...string) (*RollbackResult, error)
+	Rollback(ctx context.Context, s identity.Scope, mutationID string, reason ...string) (*RollbackResult, error)
+	RollbackLast(ctx context.Context, s identity.Scope, reason ...string) (*RollbackResult, error)
 }
 
 // UndoHandler defines a custom rollback function for a specific EntityType.
@@ -91,30 +97,37 @@ func (m *Module) AttachEventBus(bus *events.EventBus) {
 	bus.SubscribeSync(m.HandleMutationEvent)
 }
 
-// HandleMutationEvent processes incoming MutationEvents and persists them to the audit log.
+// HandleMutationEvent processes incoming MutationEvents and persists them to the audit log of the
+// event's household. The scope is built from the event's stored household (ADR 0002 Decision 3);
+// an event without a usable household is not logged.
 func (m *Module) HandleMutationEvent(ctx context.Context, ev events.MutationEvent) error {
 	if m.repo == nil {
+		return nil
+	}
+
+	scope, err := identity.ForStoredRow(ctx, m.repo, ev.HouseholdID, ev.ActorUserID)
+	if err != nil {
+		slog.Warn("durability: mutation event has no usable household; not logged", "id", ev.ID, "topic", ev.Topic, "error", err)
 		return nil
 	}
 
 	isUndone := strings.EqualFold(ev.Action, "undo")
 
 	log := models.MutationLog{
-		ID:          ev.ID,
-		UserID:      ev.ActorUserID,
-		FamilyGroup: ev.FamilyGroup,
-		Topic:       ev.Topic,
-		Action:      ev.Action,
-		EntityType:  ev.EntityType,
-		EntityID:    ev.EntityID,
-		BeforeJSON:  ev.BeforeJSON,
-		AfterJSON:   ev.AfterJSON,
-		Summary:     ev.Summary,
-		IsUndone:    isUndone,
-		CreatedAt:   ev.Timestamp,
+		ID:         ev.ID,
+		UserID:     ev.ActorUserID,
+		Topic:      ev.Topic,
+		Action:     ev.Action,
+		EntityType: ev.EntityType,
+		EntityID:   ev.EntityID,
+		BeforeJSON: ev.BeforeJSON,
+		AfterJSON:  ev.AfterJSON,
+		Summary:    ev.Summary,
+		IsUndone:   isUndone,
+		CreatedAt:  ev.Timestamp,
 	}
 
-	if err := m.repo.InsertMutationLog(log); err != nil {
+	if err := m.repo.InsertMutationLog(scope, log); err != nil {
 		slog.Error("durability: failed to insert mutation log", "error", err, "id", ev.ID, "topic", ev.Topic)
 		return err
 	}
@@ -185,7 +198,7 @@ func (m *Module) GetCredentialFallback(ctx context.Context, userID, provider str
 func (m *Module) Declarations() []*genai.FunctionDeclaration {
 	return []*genai.FunctionDeclaration{
 		{
-			Name: "undo_last_action",
+			Name:        "undo_last_action",
 			Description: "Reverts the user's or family's most recent mutation or change (such as an expense, baby feeding log, schedule entry, or task) using the recorded BeforeJSON state and marks it undone.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
@@ -202,7 +215,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 			},
 		},
 		{
-			Name: "list_recent_changes",
+			Name:        "list_recent_changes",
 			Description: "Lists recent data mutations and changes across life domains (baby, house, finance, schedule, memory). Use when user asks 'what did I change recently?', 'show audit log', or 'who updated what?'.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
@@ -219,7 +232,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 			},
 		},
 		{
-			Name: "export_topic_data",
+			Name:        "export_topic_data",
 			Description: "Exports structured data and mutation history for a specific topic (baby, house, finance, memory, schedule, or all) as formatted JSON or CSV.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
@@ -276,49 +289,58 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 	}
 }
 
-// Rollback performs atomic, snapshot-backed rollback for a specific mutation ID.
-func (m *Module) Rollback(ctx context.Context, actorID, familyGroup, mutationID string, reason ...string) (*RollbackResult, error) {
+// Rollback performs atomic, snapshot-backed rollback for a specific mutation ID of the scope's
+// household. A mutation of another household is refused exactly like one that does not exist, so
+// the answer does not reveal whether it exists.
+func (m *Module) Rollback(ctx context.Context, s identity.Scope, mutationID string, reason ...string) (*RollbackResult, error) {
 	if m.repo == nil {
 		return nil, fmt.Errorf("durability: repository is not configured")
+	}
+	if !s.Valid() {
+		return nil, fmt.Errorf("permission denied: %w", identity.ErrNoScope)
 	}
 
 	trimmedID := strings.TrimSpace(mutationID)
 	if trimmedID == "" {
-		return m.RollbackLast(ctx, actorID, familyGroup, reason...)
+		return m.RollbackLast(ctx, s, reason...)
 	}
 
-	log, err := m.repo.GetMutationLogByID(trimmedID)
-	if err != nil {
+	log, err := m.repo.GetMutationLogByID(s, trimmedID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("failed to lookup mutation %s: %w", trimmedID, err)
 	}
 	if log == nil {
-		return nil, fmt.Errorf("mutation %s not found", trimmedID)
+		return nil, fmt.Errorf("permission denied: mutation %q is not a mutation of this household", trimmedID)
 	}
 
-	return m.executeRollbackInternal(ctx, actorID, familyGroup, log)
+	return m.executeRollbackInternal(ctx, s, log)
 }
 
-// RollbackLast performs atomic, snapshot-backed rollback for the most recent mutation of an actor/family.
-func (m *Module) RollbackLast(ctx context.Context, actorID, familyGroup string, reason ...string) (*RollbackResult, error) {
+// RollbackLast performs atomic, snapshot-backed rollback for the most recent mutation of the
+// scope's household.
+func (m *Module) RollbackLast(ctx context.Context, s identity.Scope, reason ...string) (*RollbackResult, error) {
 	if m.repo == nil {
 		return nil, fmt.Errorf("durability: repository is not configured")
 	}
+	if !s.Valid() {
+		return nil, fmt.Errorf("permission denied: %w", identity.ErrNoScope)
+	}
 
-	log, err := m.repo.GetLastMutation(actorID, familyGroup)
+	log, err := m.repo.GetLastMutation(s)
 	if err != nil || log == nil {
 		return nil, fmt.Errorf("no recent undoable actions found")
 	}
 
-	return m.executeRollbackInternal(ctx, actorID, familyGroup, log)
+	return m.executeRollbackInternal(ctx, s, log)
 }
 
-func (m *Module) executeRollbackInternal(ctx context.Context, actorID, familyGroup string, log *models.MutationLog) (*RollbackResult, error) {
-	// Tenant boundary check
-	matchesFamily := (familyGroup != "" && log.FamilyGroup == familyGroup)
-	matchesUser := (actorID != "" && log.UserID == actorID)
-	if !matchesFamily && !matchesUser && actorID != "system" {
+func (m *Module) executeRollbackInternal(ctx context.Context, s identity.Scope, log *models.MutationLog) (*RollbackResult, error) {
+	// Tenant boundary check (V4-30): the log must belong to the scope's household. The repository
+	// already confines the lookup; this is the second fence.
+	if !s.Valid() || log.HouseholdID != s.HouseholdID() {
 		return nil, fmt.Errorf("permission denied: mutation %q belongs to another tenant", log.ID)
 	}
+	actorID := s.PersonKey()
 
 	if log.IsUndone {
 		return &RollbackResult{
@@ -343,7 +365,8 @@ func (m *Module) executeRollbackInternal(ctx context.Context, actorID, familyGro
 	// Check if a domain registered a custom UndoHandler (e.g. external Google Calendar deletion)
 	if handler, exists := m.getUndoHandler(log.EntityType); exists {
 		callCtx := orchestrator.CallContext{
-			User:     &models.User{PlatformID: actorID, FamilyGroup: familyGroup},
+			User:     &models.User{PlatformID: actorID, HouseholdID: s.HouseholdID(), FamilyGroup: s.LegacyLabel()},
+			Scope:    s,
 			Message:  channel.Inbound{Sender: actorID},
 			EventBus: m.bus,
 		}
@@ -352,12 +375,12 @@ func (m *Module) executeRollbackInternal(ctx context.Context, actorID, familyGro
 			return nil, fmt.Errorf("custom undo handler failed for %s: %w", log.EntityType, err)
 		}
 		detail = customDetail
-		if err := m.repo.MarkMutationUndone(log.ID); err != nil {
+		if err := m.repo.MarkMutationUndone(s, log.ID); err != nil {
 			return nil, fmt.Errorf("failed to mark mutation log undone: %w", err)
 		}
 	} else {
 		// Default: Atomic Transactional Snapshot Rollback
-		if err := m.repo.RollbackSnapshot(ctx, *log, tbl); err != nil {
+		if err := m.repo.RollbackSnapshot(ctx, s, *log, tbl); err != nil {
 			return nil, fmt.Errorf("snapshot rollback failed: %w", err)
 		}
 		detail = fmt.Sprintf("Reverted %s '%s' on %s.", log.Action, log.EntityID, log.EntityType)
@@ -374,7 +397,8 @@ func (m *Module) executeRollbackInternal(ctx context.Context, actorID, familyGro
 			EntityType:  log.EntityType,
 			EntityID:    log.EntityID,
 			ActorUserID: actorID,
-			FamilyGroup: familyGroup,
+			HouseholdID: s.HouseholdID(),
+			FamilyGroup: s.LegacyLabel(),
 			BeforeJSON:  log.AfterJSON,
 			AfterJSON:   log.BeforeJSON,
 			Summary:     fmt.Sprintf("Undid %s (%s): %s", log.ID, log.Action, log.Summary),
@@ -396,7 +420,7 @@ func (m *Module) executeRollbackInternal(ctx context.Context, actorID, familyGro
 
 func (m *Module) executeUndo(ctx context.Context, callCtx orchestrator.CallContext, repo Repository, args map[string]interface{}) (string, error) {
 	mutID, _ := args["mutation_id"].(string)
-	res, err := m.Rollback(ctx, callCtx.ActorID(), callCtx.TenantFamilyGroup(), mutID)
+	res, err := m.Rollback(ctx, callCtx.Scope, mutID)
 	if err != nil {
 		if strings.Contains(err.Error(), "no recent undoable actions found") {
 			return "No recent undoable actions found.", nil
@@ -423,9 +447,7 @@ func (m *Module) executeListRecentChanges(ctx context.Context, callCtx orchestra
 		limit = 50
 	}
 
-	familyGroup := callCtx.TenantFamilyGroup()
-	userID := callCtx.ActorID()
-	logs, err := repo.GetMutationLogsByTopic(familyGroup, userID, topic, limit)
+	logs, err := repo.GetMutationLogsByTopic(callCtx.Scope, topic, limit)
 	if err != nil {
 		return "", fmt.Errorf("failed to retrieve recent changes: %w", err)
 	}
@@ -473,9 +495,7 @@ func (m *Module) executeExportTopicData(ctx context.Context, callCtx orchestrato
 		limit = parseInt(l, 100)
 	}
 
-	familyGroup := callCtx.TenantFamilyGroup()
-	userID := callCtx.ActorID()
-	data, err := repo.ExportTopicData(familyGroup, userID, topic, format, limit)
+	data, err := repo.ExportTopicData(callCtx.Scope, topic, format, limit)
 	if err != nil {
 		return "", fmt.Errorf("failed to export topic data: %w", err)
 	}

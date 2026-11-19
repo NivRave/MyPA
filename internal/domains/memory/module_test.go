@@ -1,11 +1,13 @@
 package memory_test
 
 import (
-	"google.golang.org/genai"
-	"errors"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
+	"google.golang.org/genai"
 	"sort"
 
 	"strings"
@@ -22,7 +24,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// inMemoryRepo provides a thread-safe in-memory implementation of db.MemoryV2Repository for unit testing.
+// households is the in-memory household store every scope in these tests is built against (V4-30).
+var households = identitytest.NewStore()
+
+// sc returns the scope of user in the household labelled label.
+func sc(t testing.TB, label, user string) identity.Scope {
+	t.Helper()
+	return households.ScopeIn(t, label, user, "family")
+}
+
+// inMemoryRepo provides a thread-safe in-memory implementation of db.MemoryV2Repository for unit
+// testing, with the same household scoping as the real repository.
 type inMemoryRepo struct {
 	mu             sync.RWMutex
 	nextMemoryID   uint
@@ -40,10 +52,22 @@ func newInMemoryRepo() *inMemoryRepo {
 	}
 }
 
-func (r *inMemoryRepo) SaveTopicMemory(ctx context.Context, mem *models.TopicMemory) error {
+// visible mirrors the repository: the household's family memories and the person's own personal ones.
+func visible(s identity.Scope, m models.TopicMemory) bool {
+	if m.HouseholdID != s.HouseholdID() {
+		return false
+	}
+	return m.Scope == "family" || (m.UserID == s.PersonKey() && s.PersonKey() != "" && m.Scope == "personal")
+}
+
+func (r *inMemoryRepo) SaveTopicMemory(ctx context.Context, s identity.Scope, mem *models.TopicMemory) error {
+	if !s.Valid() {
+		return identity.ErrNoScope
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	mem.HouseholdID, mem.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	if mem.ID == 0 {
 		mem.ID = r.nextMemoryID
 		r.nextMemoryID++
@@ -65,7 +89,10 @@ func (r *inMemoryRepo) SaveTopicMemory(ctx context.Context, mem *models.TopicMem
 	return nil
 }
 
-func (r *inMemoryRepo) SearchTopicMemories(ctx context.Context, userID, familyGroup, topic, query string, tags []string) ([]models.TopicMemory, error) {
+func (r *inMemoryRepo) SearchTopicMemories(ctx context.Context, s identity.Scope, topic, query string, tags []string) ([]models.TopicMemory, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -84,21 +111,8 @@ func (r *inMemoryRepo) SearchTopicMemories(ctx context.Context, userID, familyGr
 		}
 
 		// Scope / access check
-		if familyGroup != "" && userID != "" {
-			canAccess := (m.UserID == userID && m.Scope == "personal") ||
-				(m.FamilyGroup == familyGroup && m.Scope == "family") ||
-				(m.UserID == userID && m.Scope == "family")
-			if !canAccess {
-				continue
-			}
-		} else if familyGroup != "" {
-			if m.FamilyGroup != familyGroup || m.Scope != "family" {
-				continue
-			}
-		} else if userID != "" {
-			if m.UserID != userID {
-				continue
-			}
+		if !visible(s, m) {
+			continue
 		}
 
 		// Topic filter
@@ -151,7 +165,10 @@ func (r *inMemoryRepo) SearchTopicMemories(ctx context.Context, userID, familyGr
 	return result, nil
 }
 
-func (r *inMemoryRepo) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
+func (r *inMemoryRepo) SearchSimilarMemories(ctx context.Context, s identity.Scope, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -164,21 +181,8 @@ func (r *inMemoryRepo) SearchSimilarMemories(ctx context.Context, userID, family
 		if m.ValidUntil != nil && m.ValidUntil.Before(now) {
 			continue
 		}
-		if familyGroup != "" && userID != "" {
-			canAccess := (m.UserID == userID && m.Scope == "personal") ||
-				(m.FamilyGroup == familyGroup && m.Scope == "family") ||
-				(m.UserID == userID && m.Scope == "family")
-			if !canAccess {
-				continue
-			}
-		} else if familyGroup != "" {
-			if m.FamilyGroup != familyGroup || m.Scope != "family" {
-				continue
-			}
-		} else if userID != "" {
-			if m.UserID != userID {
-				continue
-			}
+		if !visible(s, m) {
+			continue
 		}
 		result = append(result, m)
 		if limit > 0 && len(result) >= limit {
@@ -188,13 +192,16 @@ func (r *inMemoryRepo) SearchSimilarMemories(ctx context.Context, userID, family
 	return result, nil
 }
 
-func (r *inMemoryRepo) SupersedeMemory(ctx context.Context, oldID uint, newID uint) error {
+func (r *inMemoryRepo) SupersedeMemory(ctx context.Context, s identity.Scope, oldID uint, newID uint) error {
+	if !s.Valid() {
+		return identity.ErrNoScope
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	now := time.Now()
 	for i := range r.topicMemories {
-		if r.topicMemories[i].ID == oldID {
+		if r.topicMemories[i].ID == oldID && r.topicMemories[i].HouseholdID == s.HouseholdID() {
 			r.topicMemories[i].SupersededByID = &newID
 			r.topicMemories[i].ValidUntil = &now
 			return nil
@@ -203,10 +210,14 @@ func (r *inMemoryRepo) SupersedeMemory(ctx context.Context, oldID uint, newID ui
 	return nil
 }
 
-func (r *inMemoryRepo) UpsertEntityProfile(ctx context.Context, profile *models.EntityProfile) error {
+func (r *inMemoryRepo) UpsertEntityProfile(ctx context.Context, s identity.Scope, profile *models.EntityProfile) error {
+	if !s.Valid() {
+		return identity.ErrNoScope
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	profile.HouseholdID, profile.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	now := time.Now()
 	if profile.UpdatedAt.IsZero() {
 		profile.UpdatedAt = now
@@ -221,14 +232,7 @@ func (r *inMemoryRepo) UpsertEntityProfile(ctx context.Context, profile *models.
 	for i, existing := range r.entityProfiles {
 		match := strings.EqualFold(existing.Topic, profile.Topic) &&
 			strings.EqualFold(existing.EntityName, profile.EntityName)
-		scopeMatch := false
-		if profile.FamilyGroup != "" {
-			scopeMatch = existing.FamilyGroup == profile.FamilyGroup
-		} else {
-			scopeMatch = existing.UserID == profile.UserID
-		}
-
-		if match && scopeMatch {
+		if match && existing.HouseholdID == profile.HouseholdID {
 			profile.ID = existing.ID
 			r.entityProfiles[i] = *profile
 			return nil
@@ -241,7 +245,10 @@ func (r *inMemoryRepo) UpsertEntityProfile(ctx context.Context, profile *models.
 	return nil
 }
 
-func (r *inMemoryRepo) GetEntityProfile(ctx context.Context, familyGroup, topic, entityName string) (*models.EntityProfile, error) {
+func (r *inMemoryRepo) GetEntityProfile(ctx context.Context, s identity.Scope, topic, entityName string) (*models.EntityProfile, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -249,17 +256,18 @@ func (r *inMemoryRepo) GetEntityProfile(ctx context.Context, familyGroup, topic,
 	normName := strings.ToLower(strings.TrimSpace(entityName))
 
 	for _, p := range r.entityProfiles {
-		if strings.ToLower(p.Topic) == normTopic && strings.ToLower(p.EntityName) == normName {
-			if familyGroup == "" || p.FamilyGroup == familyGroup || p.FamilyGroup == "" {
-				copyProfile := p
-				return &copyProfile, nil
-			}
+		if strings.ToLower(p.Topic) == normTopic && strings.ToLower(p.EntityName) == normName && p.HouseholdID == s.HouseholdID() {
+			copyProfile := p
+			return &copyProfile, nil
 		}
 	}
 	return nil, nil
 }
 
-func (r *inMemoryRepo) ListEntityProfiles(ctx context.Context, familyGroup, topic string) ([]models.EntityProfile, error) {
+func (r *inMemoryRepo) ListEntityProfiles(ctx context.Context, s identity.Scope, topic string) ([]models.EntityProfile, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -267,7 +275,7 @@ func (r *inMemoryRepo) ListEntityProfiles(ctx context.Context, familyGroup, topi
 	normTopic := strings.ToLower(strings.TrimSpace(topic))
 
 	for _, p := range r.entityProfiles {
-		if familyGroup != "" && p.FamilyGroup != familyGroup {
+		if p.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		if normTopic != "" && strings.ToLower(p.Topic) != normTopic {
@@ -313,14 +321,14 @@ func (r *inMemoryRepo) ListActiveMemoriesForConsolidation(ctx context.Context) (
 	return result, nil
 }
 
-func (r *inMemoryRepo) GetTopicMemory(ctx context.Context, id uint, familyGroup ...string) (*models.TopicMemory, error) {
+func (r *inMemoryRepo) GetTopicMemory(ctx context.Context, s identity.Scope, id uint) (*models.TopicMemory, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, m := range r.topicMemories {
-		if m.ID == id {
-			if len(familyGroup) > 0 && familyGroup[0] != "" && m.FamilyGroup != familyGroup[0] {
-				return nil, nil
-			}
+		if m.ID == id && m.HouseholdID == s.HouseholdID() {
 			copyMem := m
 			return &copyMem, nil
 		}
@@ -328,14 +336,14 @@ func (r *inMemoryRepo) GetTopicMemory(ctx context.Context, id uint, familyGroup 
 	return nil, nil
 }
 
-func (r *inMemoryRepo) DeleteTopicMemory(ctx context.Context, id uint, familyGroup ...string) error {
+func (r *inMemoryRepo) DeleteTopicMemory(ctx context.Context, s identity.Scope, id uint) error {
+	if !s.Valid() {
+		return identity.ErrNoScope
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i, m := range r.topicMemories {
-		if m.ID == id {
-			if len(familyGroup) > 0 && familyGroup[0] != "" && m.FamilyGroup != familyGroup[0] {
-				return fmt.Errorf("topic memory %d not found", id)
-			}
+		if m.ID == id && m.HouseholdID == s.HouseholdID() {
 			r.topicMemories = append(r.topicMemories[:i], r.topicMemories[i+1:]...)
 			return nil
 		}
@@ -343,14 +351,14 @@ func (r *inMemoryRepo) DeleteTopicMemory(ctx context.Context, id uint, familyGro
 	return fmt.Errorf("topic memory %d not found", id)
 }
 
-func (r *inMemoryRepo) PinTopicMemory(ctx context.Context, id uint, isPinned bool, familyGroup ...string) (*models.TopicMemory, error) {
+func (r *inMemoryRepo) PinTopicMemory(ctx context.Context, s identity.Scope, id uint, isPinned bool) (*models.TopicMemory, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i, m := range r.topicMemories {
-		if m.ID == id {
-			if len(familyGroup) > 0 && familyGroup[0] != "" && m.FamilyGroup != familyGroup[0] {
-				return nil, fmt.Errorf("topic memory %d not found", id)
-			}
+		if m.ID == id && m.HouseholdID == s.HouseholdID() {
 			r.topicMemories[i].IsPinned = isPinned
 			copyMem := r.topicMemories[i]
 			return &copyMem, nil
@@ -359,7 +367,10 @@ func (r *inMemoryRepo) PinTopicMemory(ctx context.Context, id uint, isPinned boo
 	return nil, fmt.Errorf("topic memory %d not found", id)
 }
 
-func (r *inMemoryRepo) ListTopicMemories(ctx context.Context, familyGroup, topic string, includeSuperseded bool) ([]models.TopicMemory, error) {
+func (r *inMemoryRepo) ListTopicMemories(ctx context.Context, s identity.Scope, topic string, includeSuperseded bool) ([]models.TopicMemory, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var result []models.TopicMemory
@@ -368,7 +379,7 @@ func (r *inMemoryRepo) ListTopicMemories(ctx context.Context, familyGroup, topic
 		if !includeSuperseded && m.SupersededByID != nil {
 			continue
 		}
-		if familyGroup != "" && m.FamilyGroup != familyGroup {
+		if m.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		if normTopic != "" && !strings.EqualFold(normTopic, "all") && strings.ToLower(m.Topic) != normTopic {
@@ -382,7 +393,6 @@ func (r *inMemoryRepo) ListTopicMemories(ctx context.Context, familyGroup, topic
 // ---------------------------------------------------------------------------
 // Unit Tests
 // ---------------------------------------------------------------------------
-
 
 func TestMemoryV2Repository_CRUD(t *testing.T) {
 	ctx := context.Background()
@@ -400,14 +410,14 @@ func TestMemoryV2Repository_CRUD(t *testing.T) {
 		IsPinned:        true,
 	}
 	mem1.SetTags([]string{"allergy", "diet", "liam"})
-	err := repo.SaveTopicMemory(ctx, &mem1)
+	err := repo.SaveTopicMemory(ctx, sc(t, "fam-1", "user-1"), &mem1)
 	require.NoError(t, err)
 	assert.Equal(t, uint(1), mem1.ID)
 	assert.True(t, mem1.IsActive())
 	assert.Equal(t, []string{"allergy", "diet", "liam"}, mem1.Tags())
 
 	// 2. SearchTopicMemories by topic and tag
-	results, err := repo.SearchTopicMemories(ctx, "user-1", "fam-1", models.TopicBaby, "", []string{"allergy"})
+	results, err := repo.SearchTopicMemories(ctx, sc(t, "fam-1", "user-1"), models.TopicBaby, "", []string{"allergy"})
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "Liam is allergic to eggs", results[0].Fact)
@@ -423,14 +433,14 @@ func TestMemoryV2Repository_CRUD(t *testing.T) {
 		Scope:           "family",
 		CreatedByUserID: "user-1",
 	}
-	err = repo.SaveTopicMemory(ctx, &mem2)
+	err = repo.SaveTopicMemory(ctx, sc(t, "fam-1", "user-1"), &mem2)
 	require.NoError(t, err)
 
-	err = repo.SupersedeMemory(ctx, mem1.ID, mem2.ID)
+	err = repo.SupersedeMemory(ctx, sc(t, "fam-1", "user-1"), mem1.ID, mem2.ID)
 	require.NoError(t, err)
 
 	// Search again - only mem2 should appear
-	active, err := repo.SearchTopicMemories(ctx, "user-1", "fam-1", models.TopicBaby, "", nil)
+	active, err := repo.SearchTopicMemories(ctx, sc(t, "fam-1", "user-1"), models.TopicBaby, "", nil)
 	require.NoError(t, err)
 	require.Len(t, active, 1)
 	assert.Equal(t, mem2.ID, active[0].ID)
@@ -449,7 +459,7 @@ func TestMemoryV2Repository_CRUD(t *testing.T) {
 		"birth_date": "2024-05-10",
 		"weight_kg":  7.5,
 	})
-	err = repo.UpsertEntityProfile(ctx, &profile)
+	err = repo.UpsertEntityProfile(ctx, sc(t, "fam-1", "user-1"), &profile)
 	require.NoError(t, err)
 	assert.Equal(t, uint(1), profile.ID)
 
@@ -458,12 +468,12 @@ func TestMemoryV2Repository_CRUD(t *testing.T) {
 		"weight_kg": 7.8,
 		"height_cm": 68.0,
 	})
-	err = repo.UpsertEntityProfile(ctx, &profile)
+	err = repo.UpsertEntityProfile(ctx, sc(t, "fam-1", "user-1"), &profile)
 	require.NoError(t, err)
 	assert.Equal(t, uint(1), profile.ID) // ID preserved
 
 	// Fetch profile
-	fetched, err := repo.GetEntityProfile(ctx, "fam-1", models.TopicBaby, "Liam")
+	fetched, err := repo.GetEntityProfile(ctx, sc(t, "fam-1", "user-1"), models.TopicBaby, "Liam")
 	require.NoError(t, err)
 	require.NotNil(t, fetched)
 	assert.Equal(t, "Liam", fetched.EntityName)
@@ -472,7 +482,7 @@ func TestMemoryV2Repository_CRUD(t *testing.T) {
 	assert.Equal(t, 68.0, attrs["height_cm"])
 
 	// List profiles
-	profiles, err := repo.ListEntityProfiles(ctx, "fam-1", models.TopicBaby)
+	profiles, err := repo.ListEntityProfiles(ctx, sc(t, "fam-1", "user-1"), models.TopicBaby)
 	require.NoError(t, err)
 	assert.Len(t, profiles, 1)
 }
@@ -517,6 +527,7 @@ func TestToolModule_Execute_SaveAndSearch(t *testing.T) {
 			PlatformID:  "tg-123",
 			FamilyGroup: "Smiths",
 		},
+		Scope:    sc(t, "Smiths", "tg-123"),
 		EventBus: bus,
 	}
 
@@ -598,6 +609,7 @@ func TestToolModule_Execute_EntityProfiles(t *testing.T) {
 			PlatformID:  "tg-user",
 			FamilyGroup: "FamilyA",
 		},
+		Scope:    sc(t, "FamilyA", "tg-user"),
 		EventBus: bus,
 	}
 
@@ -655,6 +667,7 @@ func TestToolModule_SystemPromptSection(t *testing.T) {
 			PlatformID:  "user-a",
 			FamilyGroup: "SmithFamily",
 		},
+		Scope: sc(t, "SmithFamily", "user-a"),
 	}
 
 	// Initially empty
@@ -672,7 +685,7 @@ func TestToolModule_SystemPromptSection(t *testing.T) {
 		"birth_date": "2024-05-10",
 		"weight_kg":  7.5,
 	})
-	err := repo.UpsertEntityProfile(ctx, &p)
+	err := repo.UpsertEntityProfile(ctx, sc(t, "SmithFamily", "user-a"), &p)
 	require.NoError(t, err)
 
 	// Add pinned memory
@@ -685,7 +698,7 @@ func TestToolModule_SystemPromptSection(t *testing.T) {
 		Scope:       "family",
 		IsPinned:    true,
 	}
-	err = repo.SaveTopicMemory(ctx, &mem)
+	err = repo.SaveTopicMemory(ctx, sc(t, "SmithFamily", "user-a"), &mem)
 	require.NoError(t, err)
 
 	prompt = mod.SystemPromptSection(ctx, callCtx)
@@ -722,8 +735,8 @@ func TestConsolidation_DeduplicationAndSuperseding(t *testing.T) {
 		Scope:       "personal",
 		CreatedAt:   time.Now().Add(-1 * time.Hour),
 	}
-	require.NoError(t, repo.SaveTopicMemory(ctx, &m1))
-	require.NoError(t, repo.SaveTopicMemory(ctx, &m2))
+	require.NoError(t, repo.SaveTopicMemory(ctx, sc(t, "fam-1", "user-1"), &m1))
+	require.NoError(t, repo.SaveTopicMemory(ctx, sc(t, "fam-1", "user-1"), &m2))
 
 	// 2. Create single-value subtopic updates (rent)
 	rentOld := models.TopicMemory{
@@ -744,8 +757,8 @@ func TestConsolidation_DeduplicationAndSuperseding(t *testing.T) {
 		Scope:       "family",
 		CreatedAt:   time.Now().Add(-1 * time.Hour),
 	}
-	require.NoError(t, repo.SaveTopicMemory(ctx, &rentOld))
-	require.NoError(t, repo.SaveTopicMemory(ctx, &rentNew))
+	require.NoError(t, repo.SaveTopicMemory(ctx, sc(t, "fam-1", "user-1"), &rentOld))
+	require.NoError(t, repo.SaveTopicMemory(ctx, sc(t, "fam-1", "user-1"), &rentNew))
 
 	// 3. Create structured attribute memories for consolidation aggregation
 	babyWeight := models.TopicMemory{
@@ -757,10 +770,10 @@ func TestConsolidation_DeduplicationAndSuperseding(t *testing.T) {
 		Scope:       "family",
 		CreatedAt:   time.Now().Add(-30 * time.Minute),
 	}
-	require.NoError(t, repo.SaveTopicMemory(ctx, &babyWeight))
+	require.NoError(t, repo.SaveTopicMemory(ctx, sc(t, "fam-1", "user-1"), &babyWeight))
 
 	// Run consolidation
-	res, err := memory.ConsolidateMemories(ctx, repo)
+	res, err := memory.ConsolidateMemories(ctx, repo, households)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 
@@ -771,18 +784,18 @@ func TestConsolidation_DeduplicationAndSuperseding(t *testing.T) {
 	assert.NotEmpty(t, res.Details)
 
 	// Verify older memories are superseded
-	active, err := repo.SearchTopicMemories(ctx, "user-1", "fam-1", "health", "", nil)
+	active, err := repo.SearchTopicMemories(ctx, sc(t, "fam-1", "user-1"), "health", "", nil)
 	require.NoError(t, err)
 	require.Len(t, active, 1)
 	assert.Equal(t, m2.ID, active[0].ID)
 
-	activeRent, err := repo.SearchTopicMemories(ctx, "user-1", "fam-1", "house", "", nil)
+	activeRent, err := repo.SearchTopicMemories(ctx, sc(t, "fam-1", "user-1"), "house", "", nil)
 	require.NoError(t, err)
 	require.Len(t, activeRent, 1)
 	assert.Equal(t, rentNew.ID, activeRent[0].ID)
 
 	// Verify EntityProfile was aggregated
-	prof, err := repo.GetEntityProfile(ctx, "fam-1", "baby", "Liam")
+	prof, err := repo.GetEntityProfile(ctx, sc(t, "fam-1", "user-1"), "baby", "Liam")
 	require.NoError(t, err)
 	require.NotNil(t, prof)
 	attrs := prof.Attributes()
@@ -806,6 +819,7 @@ func TestIntegration_RegistryWired(t *testing.T) {
 			PlatformID:  "u-99",
 			FamilyGroup: "Group1",
 		},
+		Scope: sc(t, "Group1", "u-99"),
 	}
 
 	result, handled, err := reg.Execute(ctx, callCtx, "save_topic_memory", map[string]interface{}{
@@ -839,9 +853,10 @@ func (failingEmbedder) GenerateEmbedding(context.Context, string) ([]float32, er
 	return nil, errors.New("embedding service unavailable")
 }
 
-func memoryCallCtx(llm orchestrator.LLMClient) orchestrator.CallContext {
+func memoryCallCtx(t testing.TB, llm orchestrator.LLMClient) orchestrator.CallContext {
 	return orchestrator.CallContext{
 		User:     &models.User{PlatformID: "tg_123", FamilyGroup: "FamAlpha"},
+		Scope:    sc(t, "FamAlpha", "tg_123"),
 		DB:       &testDBClient{},
 		LLM:      llm,
 		EventBus: events.NewEventBus(),
@@ -856,7 +871,7 @@ func TestSaveTopicMemory_StoresTheEmbedding(t *testing.T) {
 	repo := newInMemoryRepo()
 	mod := memory.NewModule(repo)
 
-	res, err := mod.Execute(ctx, memoryCallCtx(&testLLMClient{}), "save_topic_memory", map[string]interface{}{
+	res, err := mod.Execute(ctx, memoryCallCtx(t, &testLLMClient{}), "save_topic_memory", map[string]interface{}{
 		"topic": "family",
 		"fact":  "Likes dark chocolate 85%",
 		"scope": "family",
@@ -864,7 +879,7 @@ func TestSaveTopicMemory_StoresTheEmbedding(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, res, `"status":"saved"`)
 
-	mems, err := repo.SearchTopicMemories(ctx, "tg_123", "FamAlpha", models.TopicFamily, "chocolate", nil)
+	mems, err := repo.SearchTopicMemories(ctx, sc(t, "FamAlpha", "tg_123"), models.TopicFamily, "chocolate", nil)
 	require.NoError(t, err)
 	require.Len(t, mems, 1, "exactly one memory is written")
 	assert.Equal(t, "Likes dark chocolate 85%", mems[0].Fact)
@@ -883,7 +898,7 @@ func TestSaveTopicMemory_SavesWithoutAnEmbeddingWhenItCannotBeComputed(t *testin
 			repo := newInMemoryRepo()
 			mod := memory.NewModule(repo)
 
-			res, err := mod.Execute(ctx, memoryCallCtx(llm), "save_topic_memory", map[string]interface{}{
+			res, err := mod.Execute(ctx, memoryCallCtx(t, llm), "save_topic_memory", map[string]interface{}{
 				"topic": "personal",
 				"fact":  "Allergic to penicillin",
 			})
@@ -891,7 +906,7 @@ func TestSaveTopicMemory_SavesWithoutAnEmbeddingWhenItCannotBeComputed(t *testin
 			assert.Contains(t, res, `"status":"saved"`)
 			assert.NotContains(t, res, "embedding service unavailable", "the failure is not the user's concern")
 
-			mems, err := repo.SearchTopicMemories(ctx, "tg_123", "FamAlpha", "personal", "penicillin", nil)
+			mems, err := repo.SearchTopicMemories(ctx, sc(t, "FamAlpha", "tg_123"), "personal", "penicillin", nil)
 			require.NoError(t, err)
 			require.Len(t, mems, 1)
 			assert.Empty(t, mems[0].Embedding.Slice())
@@ -908,10 +923,10 @@ func TestRememberFact_IsNoLongerATool(t *testing.T) {
 	for _, d := range mod.Declarations() {
 		assert.NotEqual(t, "remember_fact", d.Name)
 	}
-	_, err := mod.Execute(ctx, memoryCallCtx(&testLLMClient{}), "remember_fact", map[string]interface{}{"fact": "Likes dark chocolate 85%"})
+	_, err := mod.Execute(ctx, memoryCallCtx(t, &testLLMClient{}), "remember_fact", map[string]interface{}{"fact": "Likes dark chocolate 85%"})
 	require.ErrorContains(t, err, "unsupported memory tool")
 
-	all, err := repo.SearchTopicMemories(ctx, "tg_123", "FamAlpha", "", "", nil)
+	all, err := repo.SearchTopicMemories(ctx, sc(t, "FamAlpha", "tg_123"), "", "", nil)
 	require.NoError(t, err)
 	assert.Empty(t, all, "a call to the removed tool must write nothing")
 }

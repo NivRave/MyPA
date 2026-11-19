@@ -126,12 +126,14 @@ mypa/
 │   ├── channel/                    # Channel layer (V4-31): adapter interface, neutral Inbound/Outbound, registry, fallback renderer (§3.10)
 │   │   └── adapters/               #   the one list of shipped adapters and their settings; `adapterstest` builds it around mocks
 │   ├── conformance/                # Channel conformance suite (V4-34): every scenario on every registered adapter over a fake transport (tests only, §3.7)
-│   ├── config/                     # Viper + godotenv loader & `ALLOWED_USERS` parser
+│   ├── config/                     # Viper + godotenv loader & `ALLOWED_USERS` parser (fresh-install seed only, V4-30)
 │   ├── contacts/                   # Google People API v1 client (search & create contacts)
 │   ├── crypto/                     # AES-256-GCM encryption/decryption at rest (`ENCRYPTION_KEY`)
 │   ├── deploy/                     # How the install is reached (V4-40): INGRESS, PUBLIC_URL and the addresses derived from it (§3.11)
 │   ├── db/                         # GORM PostgreSQL client, goose migrations (migrations/), backup/restore & domain repos:
 │   │   ├── db.go                   # `db.Client` initialization, `vector` extension & core Wave 0 queries
+│   │   ├── household_repo.go       # Households (V4-30): `identity.Store`, settings, members, `scoped`/`stamp` helpers
+│   │   ├── bootstrap.go            # `BootstrapHouseholds`: ALLOWED_USERS seeds a fresh install once (V4-30)
 │   │   ├── migrations.go           # `RegisterModel`, `RegisterWave1Models`, `RegisterWave2Models`
 │   │   ├── backup.go               # `pg_dump` / `pg_restore` streaming backup/restore, age encryption, GFS retention (P3-4)
 │   │   ├── backup_set.go           # Backup sets (V4-43): dump + archive files + manifest, verification, archive extraction
@@ -165,6 +167,8 @@ mypa/
 │   │   └── automation/             # Topics 7, 8.2 & 8.3: SSRF-guarded external APIs, `EventBus` rule `Runner`, preferences, CRM
 │   ├── events/                     # Thread-safe internal `EventBus` & `MutationEvent` pub/sub
 │   ├── gmail/                      # Gmail v1 client (search, read, draft reply, archive, trash, labels, unsubscribe)
+│   ├── identity/                   # Households (V4-30): `Scope` (built only by ForUser/ForLabel/ForStoredRow), roles and `Can`, `Member` (§3.12)
+│   │   └── identitytest/           #   in-memory household store for tests without a database
 │   ├── graph/                      # gqlgen GraphQL layer:
 │   │   ├── schema.graphqls         # GraphQL schema definition (types, queries, mutations)
 │   │   ├── resolver.go             # Root `Resolver` struct holding `*db.Client`
@@ -204,11 +208,11 @@ mypa/
 4. **System Prompt Assembly & Dynamic Two-Tier Tool Selection:**
    - **Assembly order (*P2-6*, [`prompt.go`](./internal/orchestrator/prompt.go) `buildSystemPrompt`), most-stable first for Gemini implicit prefix caching:** `staticInstructions` (package constant, identical for all users) → calendar conventions (`WEEK_START_DAY`/`WEEKEND_DAYS`, per deployment) → user profile (name, role, family group) → tool guidance filtered to the tools selected this turn (`toolGuidance`; nothing about tools the model cannot call) → module sections → retrieved memories → current date/time at minute precision **in the configured timezone** (last). Tool selection therefore runs *before* prompt assembly.
    - Semantic vector memory retrieval (skipped for trivial acknowledgements — empty/emoji-only or ≤ `maxTrivialTokens` (3) words that are all filler like "thanks", "ok", "תודה", "כן"; `isTrivialMessage`, *P2-5*): embeds `msg.Text` via `gemini-embedding-001` (3072 dims) and queries top-5 cosine matches from `topic_memories` (the single memory store since *P2-4*) via `DBClient.SearchSimilarMemories(ctx, userID, familyGroup, …)`: the user's personal memories plus their family group's shared ones. No legacy `memories` fallback.
-   - Dynamic Domain Sections (SCALE-01): calls [`e.toolRegistry.CombinedSystemPrompt(ctx, callCtx)`](./internal/orchestrator/registry.go), leveraging Redis `MGet` dynamic prompt caching (`ctx_prompt:<familyGroup>:<userID>:<module>`, 10m TTL, **per user** — sections render personal data such as pinned memories and standing instructions) with `EventBus` cache invalidation and concurrent `errgroup.Group` evaluation bounded to an 800ms context timeout on cache misses.
+   - Dynamic Domain Sections (SCALE-01): calls [`e.toolRegistry.CombinedSystemPrompt(ctx, callCtx)`](./internal/orchestrator/registry.go), leveraging Redis `MGet` dynamic prompt caching (`ctx_prompt:<householdID>:<userID>:<module>`, 10m TTL, **per user** — sections render personal data such as pinned memories and standing instructions) with `EventBus` cache invalidation and concurrent `errgroup.Group` evaluation bounded to an 800ms context timeout on cache misses.
    - Dynamic Two-Tier Tool Scoping (SCALE-01): [`KeywordIntentMatcher`](./internal/orchestrator/intent_matcher.go) inspects query text across English and Hebrew prefixes to classify intent into Domain Groups (`baby`, `finance`, `house`, `calendar`, `gmail`, `tasks`, `contacts`, `automation`, `shared`). [`SelectDeclarations`](./internal/orchestrator/registry.go) injects Tier 1 Core Tools (7 ubiquitous tools) + only matching Tier 2 Domain Groups via `llm.WithActiveTools(ctx, activeTools)`, dropping tool schema overhead from ~9,500 to ~1,680–2,380 tokens per call (75%–82% reduction).
 5. **LLM Chat & Bounded Multi-Turn Execution Loop (SCALE-03):**
    - Calls `e.llm.Chat(ctx, systemPrompt, history, promptText, photoData, photoMimeType)` (with automatic retry normalizing Hebrew preposition numbers like `ב18` -> `ב-18` via [`NormalizeHebrewPrepositionNumbers`](./internal/orchestrator/engine.go) if flagged by safety filters).
-   - If `resp.ToolCalls` is non-empty, [`handleToolCalls`](./internal/orchestrator/engine.go) delegates to `executeToolsConcurrently` which executes parallel tool calls concurrently via `errgroup.WithContext(ctx)` bounded by `MaxConcurrentTools = 8` with index-based slice assignment preserving strict 1:1 ordering and per-goroutine panic recovery. After checking the SEC-09 interactive confirmation gate for meta-tools, `executeSingleTool` dynamically dispatches the call via `e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)`, building `callCtx` from the user resolved once at the start of the turn (`withTurnUser`, *P2-7*; a `GetUser` lookup happens only for calls outside a turn). All tools receive standardized canonical identity through `callCtx.ActorID()` and `callCtx.TenantFamilyGroup()`.
+   - If `resp.ToolCalls` is non-empty, [`handleToolCalls`](./internal/orchestrator/engine.go) delegates to `executeToolsConcurrently` which executes parallel tool calls concurrently via `errgroup.WithContext(ctx)` bounded by `MaxConcurrentTools = 8` with index-based slice assignment preserving strict 1:1 ordering and per-goroutine panic recovery. After checking the SEC-09 interactive confirmation gate for meta-tools, `executeSingleTool` dynamically dispatches the call via `e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)`, building `callCtx` from the user resolved once at the start of the turn (`withTurnUser`, *P2-7*; a `GetUser` lookup happens only for calls outside a turn). All tools receive standardized canonical identity through `callCtx.Scope` (the household, built once per message by `identity.ForUser` from the sender's row; a sender without a usable household is refused before any tool or model call, V4-30) and `callCtx.ActorID()`.
    - Tool execution appends `Role: "assistant"` (`ToolCalls`) and `Role: "function"` (`ToolResponses`), and recurses up to a strict limit of 8 iterations (`const MaxToolRecursionDepth = 8`). Upon reaching iteration 8, the engine forces a final summary call via `llm.WithNoTools(ctx)` to guarantee clean conversational termination without further tool loops. Both summary requests (`continuationPrompt`, `toolLimitSummaryPrompt` in `turn.go`) and `staticInstructions` scope the reply to the user's **latest message**: since *P2-9* the history also holds earlier turns' tool calls, and an unscoped "summarize all your actions" made the model recap those as new (*BL-9*).
 6. **Delivery, State & Telemetry (SCALE-02):**
    - Sends the reply through the channel registry: `channel.Render` applies the fallbacks for what the destination cannot show, then the adapter converts and splits the text — Telegram: single-pass HTML (`telegram.ToTelegramHTML`) chunked by `telegram.SafeChunkTelegramHTML` (balanced open-tag stacks, 4,000 bytes); WhatsApp: `twilio.ToWhatsApp`, split at 1,500 bytes (`twilio.SplitMessage`). The converters and split functions are the ones the engine used before V4-31, unchanged.
@@ -264,7 +268,7 @@ Rather than injecting all <!-- gen:tool-count -->67<!-- /gen:tool-count --> regi
    - *Token Savings:* Average turn consumes ~1,680 to ~2,380 tokens across 12–20 tools, representing a 75% to 82% token reduction per LLM interaction.
 
 **Unified Durability Rollback Engine (`internal/domains/durability`):**
-All undo paths—the `/undo` chat command, LLM `undo_last_action` tool, and GraphQL `RollbackMutation`—delegate to `durability.Module.Rollback(ctx, actorID, familyGroup, mutationID)` and `RollbackLast(ctx, actorID, familyGroup)`.
+All undo paths—the `/undo` chat command, LLM `undo_last_action` tool, and GraphQL `RollbackMutation`—delegate to `durability.Module.Rollback(ctx, scope, mutationID)` and `RollbackLast(ctx, scope)` (V4-30): the actor is `scope.PersonKey()`, the log must belong to the scope's household (reloaded inside the rollback transaction), every statement filters by household, and a restored snapshot is forced into the scope's household (`household_id`, legacy label), so a pre-V4-30 snapshot restores and a crafted one cannot move a row. `households`, `users` and `pairing_codes` are never undoable.
 - **Entity Allowlist (`allowlist.go`):** Centralized `ResolveRollbackTable` validates 19 allowed domain entity types and rejects system tables (`users`, `pairing_codes`, `encrypted_credentials`, `audit_sessions`, `audit_events`, `schema_migrations`).
 - **Snapshot Restoration (`durability_repo.go`):** Executes in an atomic ACID transaction (`RollbackSnapshot`). For `action == "create"`, deletes the inserted record; for `action == "delete"`, recreates the record from `before_json`; for `action == "update"`, restores the exact prior state from `before_json`. Upon commit, marks `is_undone = true`.
 
@@ -280,7 +284,8 @@ type MutationEvent struct {
     EntityType  string    `json:"entity_type"`   // Exact model struct name (e.g. "BabyCareLog", "FinancialTransaction")
     EntityID    string    `json:"entity_id"`     // Stringified primary key of the mutated record
     ActorUserID string    `json:"actor_user_id"` // PlatformID / UserID of the user who triggered the change
-    FamilyGroup string    `json:"family_group"`  // Tenant family group name
+    HouseholdID string    `json:"household_id"`  // The tenant (V4-30); subscribers key by it
+    FamilyGroup string    `json:"family_group"`  // The household's legacy label, still written until V4-44
     BeforeJSON  string    `json:"before_json"`   // JSON snapshot before mutation (empty on "create")
     AfterJSON   string    `json:"after_json"`    // JSON snapshot after mutation (empty on "delete")
     Summary     string    `json:"summary"`       // Human-readable description of the change
@@ -297,7 +302,7 @@ To prevent slow network I/O, external partner notifications, and automation webh
    - Guarded by panic recovery (`recover()`) logging the stack trace without crashing the server.
    - **Active Subscribers:**
      - [`durability.Module.HandleMutationEvent`](./internal/domains/durability/module.go): Writes immutable audit snapshots to `mutation_logs` before tool completion.
-     - [`orchestrator.RegisterPromptInvalidator`](./internal/orchestrator/prompt_cache.go): Evicts cached Redis system prompt sections for **every user** in the event's family/actor scope (`SCAN MATCH ctx_prompt:<scope>:*` filtered by module, glob-escaped) synchronously to guarantee cache consistency.
+     - [`orchestrator.RegisterPromptInvalidator`](./internal/orchestrator/prompt_cache.go): Evicts cached Redis system prompt sections for **every user** in the event's household (`SCAN MATCH ctx_prompt:<householdID>:*` filtered by module, glob-escaped; V4-30: every user has a household, so there is no per-user fallback scope) synchronously to guarantee cache consistency.
 2. **Async Lane (`SubscribeAsync`, `SubscribeAsyncTopic`):**
    - Dispatches jobs to a bounded background worker pool (default: **4 workers**, configurable via `WithWorkerCount`).
    - Buffered job queue with default capacity of **1,024 events** (`WithQueueCapacity`) preserving deterministic FIFO task submission.
@@ -335,21 +340,18 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
    - Injects authenticated claims into request context (`ForContext` / `GetAuthClaims`).
 
 4. **Multi-Tenant Isolation & Anti-IDOR (`internal/orchestrator/registry.go`, `internal/db/`, domain modules):**
-   - `CallContext` exposes canonical identity helpers: `ActorID()` (platform ID) and `TenantFamilyGroup()` (family group falling back to `ActorID()`).
+   - **Households (V4-30, ADR 0002, §3.12).** The tenant is a household row, keyed by `household_id` (UUID) on the 20 household tables. `CallContext.Scope` (an `identity.Scope`, built once per message from the sender's users row) is the only tenant a module sees; `ActorID()` stays the person key. Every repository method on a household table takes the scope first and filters `household_id`; writes stamp it (and the legacy `family_group` label) and overwrite whatever the caller set; the zero scope is refused with `identity.ErrNoScope`. No tool argument names a household, family or tenant (`TestToolDeclarations_NoParameterNamesATenant`); an argument naming another person (`shared_with_user_id`, `assigned_to_user_id`, the finance `user_id` filter) resolves through `identity.Member`, inside the caller's household only.
    - All tool argument overrides (`family_group`, `user_id`, `fgOverride`) have been removed from schemas and handlers across `baby`, `house`, `automation`, and `schedule`.
-   - Repositories enforce compound scoping: `WHERE ((family_group = ? AND family_group != '') OR user_id = ?)`.
+   - **Proof:** `TestHouseholdIsolation_EveryRepositoryMethodIsConfinedToItsScope` calls every scoped repository method with household B's scope and arguments aimed at household A's rows and requires that nothing of A is read, changed or deleted; `TestHouseholdSchema_EveryHouseholdColumnIsGuarded` requires every `household_id` to be NOT NULL, a foreign key and the first column of an index, and every model to be classified.
    - **Positive Authorization Pattern (SEC-04 Remediation):**
-     Domain tool execution guards (`house`, `automation`, `schedule`, `finance`, `shared`, `durability`) and repository operations strictly apply positive authorization validation:
-     `isAuthorized := record != nil && ((familyGroup != "" && record.FamilyGroup == familyGroup) || (record.UserID != "" && record.UserID == userID))`
-     For family-level entities without a user ID (`VehicleAsset`, `RecurringBill`):
-     `isAuthorized := record != nil && record.FamilyGroup != "" && record.FamilyGroup == familyGroup`
-     This eliminates fail-open De Morgan boolean fallacies (`record.FamilyGroup != "" && record.FamilyGroup != familyGroup`) ensuring records with unpopulated or legacy `FamilyGroup` fail closed.
-   - Operations mutating by ID (`CompleteMaintenanceItem`, `CompleteSharedReminder`, `manage_recurring_bills`, `DeleteAutomationRule`, `executeUpsertPersonalCRM`, `undo_last_action`) verify tenant authorization prior to mutation and propagate `familyGroup ...string` into repository queries.
+     Domain tool execution guards (`house`, `automation`, `schedule`, `finance`, `shared`, `durability`) keep a positive check on top of the repository filter, by household ID:
+     `isAuthorized := record != nil && record.HouseholdID == scope.HouseholdID()`
+   - Operations mutating by ID (`CompleteMaintenanceItem`, `CompleteSharedReminder`, `manage_recurring_bills`, `DeleteAutomationRule`, `executeUpsertPersonalCRM`, `undo_last_action`) filter by household in the same statement and report not-found when no row matches; an upsert given an ID outside the household is not-found, never a new row.
 
     - **GraphQL Resolvers Anti-IDOR & Scoping Enforcement (Milestone 1C):**
       - `ToggleAutomationRule` and `DeleteAutomationRule` enforce tenant boundaries: non-admins are denied with `permission denied: unauthorized access to automation rule` if `rule.FamilyGroup` does not match the caller's family group (or `rule.UserID != actorID` for personal rules).
       - `UserPreference` enforces `targetUserID = actorID` for non-admin callers, preventing user preference disclosure or modification across users.
-      - `AuditSessions` and `UserSessions` are positively scoped via `r.resolveTenantAndActor(ctx, familyGroup)` (defaulting to the caller's family group for non-admins, while preserving system-wide access for admins when `familyGroup` is empty or `"*"`), and utilize type-cast JOIN predicates `JOIN users ON (users.id::text = audit_sessions.user_id OR users.platform_id = audit_sessions.user_id)` to prevent PostgreSQL `SQLSTATE 42883` (`uuid = text`) mismatches.
+      - `AuditSessions` and `UserSessions` are positively scoped via `r.resolveTenantAndActor(ctx, familyGroup)` (defaulting to the caller's household for non-admins, while preserving system-wide access for admins when `familyGroup` is empty or `"*"`), and utilize type-cast JOIN predicates `JOIN users ON (users.id::text = audit_sessions.user_id OR users.platform_id = audit_sessions.user_id)` to prevent PostgreSQL `SQLSTATE 42883` (`uuid = text`) mismatches.
       - `CompleteSharedTask` pre-fetches the target task with `r.sharedRepo().GetSharedReminder` to populate `BeforeJSON` in the emitted `MutationEvent`, ensuring full rollback durability.
 
 5. **Centralized SSRF Protection (`internal/netguard/netguard.go`):**
@@ -395,7 +397,7 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
 | `rate_limit:pairing:<userID>` | String (Int) | 15 minutes | Failed pairing code attempts counter |
 | `inbound:<source>:<chatID\|userID>:<messageID>` | String | 24 hours | Inbound message dedup claim (`SET NX`); released on retryable failure (*P1-4*) |
 | `rate_limit:pairing:lockout:<userID>` | String | 1 hour | Lockout flag set after 5 failed pairing attempts |
-| `ctx_prompt:<familyGroup>:<userID>:<module>` | String | 10 minutes | Dynamic system prompt section cached **per user** (segments percent-encode `%`/`:`), invalidated for all family members on domain `MutationEvent`s |
+| `ctx_prompt:<householdID>:<userID>:<module>` | String | 10 minutes | Dynamic system prompt section cached **per user** (segments percent-encode `%`/`:`), invalidated for all household members on domain `MutationEvent`s (keyed by household ID since V4-30) |
 
 ### 3.6 RabbitMQ Enterprise Broker Topology & Resilience (SCALE-04)
 
@@ -454,7 +456,7 @@ On both channels a voice note is transcribed, echoed, then answered; an approval
 
 - **Shape.** `doctor.Doctor` runs a list of independent `Check`s concurrently (15 s each; a check that panics or hangs becomes a failed line and never blocks the others) and renders one Markdown report: failures and warnings first, each with a `➡️` next step, then what passed, then notes. The engine knows only the `orchestrator.HealthReporter` port (`WithHealthReporter`); [`cmd/mypa/doctor.go`](./cmd/mypa/doctor.go) binds each check to the real system. Channel checks belong to their adapters (`HealthCheck()`: `telegram.WebhookCheck`, `twilio.WhatsAppCheck`, *V4-31*) and come first in the report, in registration order; `internal/doctor` exports its wording helpers (`Reason`, `HostOf`, `Plural`, `Ago`, `MaskTail`) so they read the same. Every check takes its inputs as functions, so each failure is reproduced in tests without infrastructure.
 - **Healthy** means no failed check. Warnings and notes do not make an install unhealthy.
-- **Scope.** Install-level checks are the same for every admin. The Google check covers only the members of the admin's own family group (an admin without one is checked alone), and names a member without a stored name by the last four characters of their ID, never by a phone number.
+- **Scope.** Install-level checks are the same for every admin. The Google check covers only the members of the admin's own household, listed by household ID (V4-30), and names a member without a stored name by the last four characters of their ID, never by a phone number.
 
 | Check | Source | Fails when | Warns when |
 | :--- | :--- | :--- | :--- |
@@ -521,6 +523,16 @@ The same release runs on a home PC or a server, chosen by settings and compose p
 - **Telegram by polling** ([`internal/telegram/poll.go`](./internal/telegram/poll.go)). Without a public address the Telegram adapter's ingress is `Outward`: it calls `deleteWebhook` (keeping waiting updates), then long-polls `getUpdates` (25 s, below the client's 30 s timeout), parses each update with the webhook's `ParseUpdate`, logs it as the webhook does (no content at INFO) and hands it to the same sink. An update is confirmed (the next call's `offset`) only after its message was queued; a queue failure waits and fetches it again, as a webhook answered 500 is retried, and a crash in between is caught by the engine's inbound dedup. Failures back off from 1 s to 1 min and never stop the app; a `409 Conflict` (another poller or a webhook) is logged as another install being live. The webhook route is not mounted and no secret token is needed. Every conformance scenario delivers its Telegram update both through the webhook and through polling and requires the same `channel.Inbound` (§3.7). `TestRun_TelegramOnlyInstallRunsWithNoTunnel` runs the production `run` with a Telegram-only configuration and no tunnel against a fake Bot API and a real RabbitMQ.
 - **Moving between modes** uses the restore-and-migrate procedure (§3.9, [`docs/RESTORE_AND_MIGRATE.md`](./docs/RESTORE_AND_MIGRATE.md) section D).
 
+### 3.12 Households ([`internal/identity/`](./internal/identity/), *V4-30*, ADR 0002)
+
+A family is a `households` row (§4.2), not a text label. The data model allows many households per install; the experience is built for one (DE-7).
+
+- **`identity.Scope`** is who acts and in which household. It has no exported fields; it is built only by `ForUser` (an inbound message: the sender's users row), `ForLabel` (the dashboard: its bound label, matched ignoring case, refused when two households match) and `ForStoredRow` (a scheduled job: the row's `household_id`; no admin powers). Each reads the household from the database through `identity.Store`. The holding household and the zero scope are never valid.
+- **Roles.** `scope.Can(action)` is the only permission check, backed by one role-to-action table: an admin may do everything an admin could before, including the operator commands `/backup`, `/restore` and `/doctor`; a family member the rest. V4-35 replaces the roles.
+- **Settings.** `language`, `time_zone` and `currency` live on the household (`''` = the install default). The turn's time zone, the default currency of finance and house, and a prompt line for the language come from them. The GraphQL `household` query returns the caller's household; `updateHousehold` (admins, `identity.ManageHousehold`) changes it.
+- **Upgrade (migration `00003`).** One household per trimmed label, case variants apart; an unlabelled user gets a household keyed by their platform ID; a label found only on data rows becomes a memberless household; an empty-label row its owner could read goes to the owner's household, and any other goes to the memberless holding household (DP-26). `family_group` stays and is still written (with the household's legacy label) until V4-44.
+- **Fresh install.** `ALLOWED_USERS` is read only while no household exists (`db.BootstrapHouseholds`, §8.1).
+
 ---
 
 ## 4. PostgreSQL + `pgvector` Database Schema Reference
@@ -546,14 +558,17 @@ The same release runs on a home PC or a server, chosen by settings and compose p
   - `idx_topic_memories_embedding`: `CREATE INDEX IF NOT EXISTS idx_topic_memories_embedding ON topic_memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`
   - `idx_memories_embedding`: `CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops)`
   - Uses `halfvec(3072)` casting to enable HNSW indexing on 3,072-dimensional Gemini embeddings within PostgreSQL pgvector's 2,000-dimension limit for standard vector indexes. Fallback logging ensures compatibility with pgvector versions lacking halfvec.
-- **Total Database Tables:** **29 tables** across 9 model files in [`internal/models/`](./internal/models/).
+- **Total Database Tables:** **30 tables** across 10 model files in [`internal/models/`](./internal/models/).
 
-### 4.2 Complete Table & GORM Model Inventory (29 Tables)
+### 4.2 Complete Table & GORM Model Inventory (30 Tables)
+
+Since V4-30 the 20 tables that carry a family label also carry `HouseholdID` (`uuid`, NOT NULL, foreign key to `households(id)`, indexed; migration `00003_households.sql`); the per-table rows below list `FamilyGroup`, which is still written beside it until V4-44 drops it. The other tables are person-keyed (`personKeyedTables` in `internal/db/household_schema_test.go`).
 
 #### A. Core / Wave 0 Models ([`internal/models/models.go`](./internal/models/models.go))
 
 | # | Struct Name | Table Name | Primary Key | Fields, Types & Indexes |
 | :---: | :--- | :--- | :--- | :--- |
+| 0 | **`Household`** ([`household.go`](./internal/models/household.go), *V4-30*) | `households` | `ID` (`uuid`, `default:gen_random_uuid()`) | `Name` (`string`, not null), `LegacyLabel` (`*string`, `uniqueIndex`: the family label it replaces, or an unlabelled user's platform ID; NULL only for the holding household `00000000-0000-0000-0000-000000000000`), `Language`, `TimeZone`, `Currency` (`string`, not null, default `''` = the install default), `CreatedAt`, `UpdatedAt` |
 | 1 | **`User`** (`L111`) | `users` | `ID` (`uuid`, `default:gen_random_uuid()`) | `PlatformID` (`string`, `uniqueIndex`), `Name` (`string`), `Role` (`string`: `"admin"`\|`"family"`), `FamilyGroup` (`string`), `CreatedAt` (`time.Time`) |
 | 2 | **`PairingCode`** (`L121`) | `pairing_codes` | `ID` (`uuid`, `default:gen_random_uuid()`) | `Code` (`string`, `uniqueIndex`, 6-digit), `Role` (`string`), `FamilyGroup` (`string`), `ExpiresAt` (`time.Time`), `IsUsed` (`bool`, `default:false`), `CreatedAt` (`time.Time`) |
 | 3 | **`Memory`** (`L132`) — **legacy, read-only (*P2-4*)** | `memories` | `ID` (`uint`) | `UserID` (`string`, `index`), `Scope` (`string`, `index`, `default:'personal'`), `Fact` (`string`), `Embedding` (`pgvector.Vector`, `type:vector(3072)`), `CreatedAt` (`time.Time`). No code writes or reads it at runtime; `db.MigrateLegacyMemories` copies rows into `topic_memories` at every startup (idempotent: skips facts already present for the user; `family_group` from `users`; scope `family` → topic `family`). Kept until the migration is verified in production, then drop manually. |
@@ -660,7 +675,7 @@ Part of the goose baseline (`00001_baseline.sql`); `ApplyCustomIndexes` creates 
 | :--- | :---: | :--- | :--- | :---: | :--- |
 | `chat:<userID>` | `LIST` | JSON [`models.ChatMessage`](./internal/models/models.go#L31-L38) (`role`, `content`, `tool_calls`, `tool_responses`). *SCALE-02:* Raw `PhotoData` bytes are stripped before Redis persistence to avoid memory bloat, replaced with a concise `[Attachment: <mime> (<size>)]` metadata tag. | Last **30** messages (`LTRIM -30 -1`, `ChatHistoryMaxMessages`) | `24h` (sliding on write, `ChatHistoryTTL`) | `AppendChatHistory`, `GetChatHistory` |
 | `token:<userID>` | `STRING` | Encrypted AES-256-GCM token bytes (`oauth2.Token` JSON) | 1 encrypted payload per user | `0` (no expiry) | `SetOAuthToken`, `GetOAuthToken` |
-| `ctx_prompt:<familyGroup>:<userID>:<module>` | `STRING` | Dynamic system prompt section text for one user and life domain (*SCALE-01*, per-user since P1-3). Key built by `state.PromptCacheKey`; `familyGroup` falls back to the user ID when the user has no family group; not cached when the caller's ID is unknown | 1 cached section per user per domain module | `10m` | `SetPromptSection`, `GetPromptSection`, `GetPromptSections` (`MGET`), `InvalidateFamilyPromptSections` (`SCAN`+`DEL`), `InvalidatePromptSections` (`DEL`) |
+| `ctx_prompt:<householdID>:<userID>:<module>` | `STRING` | Dynamic system prompt section text for one user and life domain (*SCALE-01*, per-user since P1-3). Key built by `state.PromptCacheKey`; the first segment is the household ID since V4-30; not cached without a valid scope or when the caller's ID is unknown | 1 cached section per user per domain module | `10m` | `SetPromptSection`, `GetPromptSection`, `GetPromptSections` (`MGET`), `InvalidateFamilyPromptSections` (`SCAN`+`DEL`), `InvalidatePromptSections` (`DEL`) |
 | `oauth_state:<nonce>` | `STRING` | Hex string mapping to `userID` | 1 nonce per in-flight OAuth exchange | `10m` | `SaveOAuthState`, `ValidateAndDeleteOAuthState` (`GETDEL`) |
 | `pending_meta_tool:<userID>` | `STRING` | JSON `PendingMetaToolAction` interactive confirmation payload (*SEC-09*) | 1 pending action per user | `5m` | `StagePendingMetaTool`, `GetAndClearPendingMetaTool` (`GETDEL`) |
 | `turn_domains:<userID>` | `STRING` | JSON array of `DomainGroup` names used by the last turn: domains matched by its text plus domains of tools it actually executed (inherited sticky domains are not re-saved, so they decay after one unused turn). Empty set deletes the key (*P2-2*) | 1 small array per user | `15m` | `SetTurnDomains`, `GetTurnDomains` |
@@ -874,12 +889,13 @@ Failed syncs are **not retried**; the event stays in MyPA with an empty `externa
 - **Code Generation:** Configured via [`gqlgen.yml`](./gqlgen.yml). Run `go run github.com/99designs/gqlgen generate` after editing `internal/graph/schema.graphqls` (always save files with UTF-8 encoding without BOM).
 - **Resolver Decoupling & Positive Authorization (Milestone 1C):** `graph.Resolver` receives explicit domain repository interfaces (`BabyRepo`, `FinanceRepo`, `HouseRepo`, `ScheduleRepo`, `SharedRepo`, `MemoryRepo`, `AutomationRepo`, `UserRepo`), `durability.RollbackEngine`, and `events.EventBus`. Direct `r.DB.DB` calls are eliminated across domain resolvers.
   - **Safe ID Parsing:** All string entity IDs are strictly validated via [`toolutil.ParseID`](./internal/domains/toolutil/toolutil.go), rejecting empty, non-numeric, or `<= 0` values.
-  - **Positive Multi-Tenant Authorization:** Enforced via `resolveTenantAndActor`. Only *global* admins (`IsGlobalAdmin`: JWT role admin) can target any `familyGroup`; tenant-bound admins (the dashboard) and members are strictly bounded to their authenticated `familyGroup`; missing claims are rejected (*P3-2*). A caller **without a family group is its own tenant** (its user ID — the same fallback as the orchestrator's `CallContext.TenantFamilyGroup`); there is no shared `"default"` tenant, and claims with neither user ID nor family group are refused. Dropping the family filter is only ever an explicit global-admin read: `wantsAllTenants(claims, familyGroup)` (no family group or `"*"`), used by `AuditSessions`, `UserSessions`, `ActivePairingCodes` and `MutationLogs`; `"*"` is never accepted as a tenant to read from or write into (*DE-2*).
+  - **Positive Multi-Tenant Authorization:** Enforced via `resolveTenantAndActor`, which returns the caller's `identity.Scope` (V4-30). Each `familyGroup` argument (kept until V4-35) and the caller's own label are resolved to households with `identity.ForLabel`, ignoring case as before; a label that matches two households is refused, and a requested household must be the caller's own, compared by ID. Only *global* admins (`IsGlobalAdmin`: JWT role admin) can target any household; tenant-bound admins (the dashboard) and members are strictly bounded to their own; missing claims are rejected (*P3-2*). A caller **without a family group is its own tenant** (its user ID, which keys that user's household since V4-30); there is no shared `"default"` tenant, and claims with neither user ID nor family group are refused. Dropping the family filter is only ever an explicit global-admin read: `wantsAllTenants(claims, familyGroup)` (no family group or `"*"`), used by `AuditSessions`, `UserSessions`, `ActivePairingCodes` and `MutationLogs`; `"*"` is never accepted as a tenant to read from or write into (*DE-2*).
+  - **Acting on another household's row (global admins only):** `RollbackMutation`, `ToggleAutomationRule`, `DeleteAutomationRule` and `CompleteSharedTask` find the row install-wide and act in the row's own household (`resolveActingScope`, `identity.ForStoredRow`); everyone else acts only in their own household.
   - **MutationEvent Emission:** Every state-changing GraphQL mutation captures `BeforeJSON` and `AfterJSON` snapshots and publishes an [`events.MutationEvent`](./internal/events/bus.go) to `r.EventBus`, triggering audit logging, partner sync notifications, and automation rules across the system.
 
 | Domain | GraphQL Object Types | Queries (`type Query`) | Mutations (`type Mutation`) |
 | :--- | :--- | :--- | :--- |
-| **Core / Auth** | `User`, `PairingCode` | `users`, `activePairingCodes` | `generatePairingCode` |
+| **Core / Auth** | `User`, `PairingCode`, `Household` (*V4-30*) | `users`, `activePairingCodes`, `household` (the caller's own) | `generatePairingCode`, `updateHousehold` (admins only: name, language, IANA time zone, 3-letter currency; `""` resets to the install default) |
 | **System / Audit** | `AuditSession`, `UserSessionSummary` | `auditSessions`, `userSessions` | — |
 | **Topic 1: Durability** | `MutationLog` | `mutationLogs` | `rollbackMutation` |
 | **Topic 2: Memory** | `TopicMemory`, `EntityProfile` | `topicMemories`, `entityProfiles` | `saveTopicMemory`, `deleteTopicMemory`, `pinTopicMemory`, `upsertEntityProfile` |
@@ -934,9 +950,9 @@ Deployment settings, checked for every app role (*V4-40*, §3.11): `INGRESS` mus
 
 | Environment Variable | Viper Config Key | Default | Used By | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `ALLOWED_USERS` | `server.allowed_users` | `""` | `app` | Comma-separated bootstrap users: `"platform_id:Name:Role:FamilyGroup"` |
+| `ALLOWED_USERS` | `server.allowed_users` | `""` | `app` | Comma-separated bootstrap users: `"platform_id:Name:Role:FamilyGroup"`. **Read only on a start with no household** (V4-30, ADR 0002 Decision 6, `db.BootstrapHouseholds`): one household per label, a household of its own for an entry without one, the first entry made admin where a household has none. Ignored once a household exists (start-up log at INFO, `/doctor` "Allowed users") |
 | `LOG_LEVEL` | *(direct `os.Getenv`, `internal/logging`)* | `info` | all Go services | `debug`/`info`/`warn`/`error`. Message content is logged only at `debug` (*P3-3*); at `info` user messages appear as `message_id` + `text_len`. GORM logs through the same JSON handler (`db.newSQLLogger`, *BL-2*): only failed or slow (> 200 ms) statements, as `SQL executed` with `trace.sql` using `$n` placeholders — bound values are never logged — and `record not found` is not logged at all |
-| `DEFAULT_TIMEZONE` | `server.default_timezone` | `"UTC"` | `app` | Default IANA timezone injected into system prompt |
+| `DEFAULT_TIMEZONE` | `server.default_timezone` | `"UTC"` | `app` | Default IANA timezone injected into system prompt; a household's own `time_zone` wins (V4-30), and a household created by the bootstrap starts with this value; the cron scheduler still uses it install-wide (per-household scheduling is V4-05) |
 | `WEEK_START_DAY` | `server.week_start_day` | `"Sunday"` | `app` | First day of the household week, stated in the system prompt (*P2-6*); invalid values fall back to the default |
 | `WEEKEND_DAYS` | `server.weekend_days` | `"Friday,Saturday"` | `app` | Comma-separated weekend days for the system prompt (*P2-6*) |
 | `HTTP_PORT` | `server.port` | `8000` | `app` | The app's one HTTP port, whatever its role (*V4-01*). `GATEWAY_URL` and `ORCHESTRATOR_URL` were removed with the proxy |
@@ -989,7 +1005,7 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
 
 ### Section 1: Domain Modeling, PostgreSQL Migrations & Index Architecture
 1. **Model Definition (`internal/models/<domain>.go`):**
-   - Include multi-tenant identifiers on all domain entities: `FamilyGroup string` (`gorm:"index"`) and `UserID string` (`gorm:"index"`).
+   - Include multi-tenant identifiers on all domain entities: `HouseholdID string` (`gorm:"type:uuid;not null;index"`, plus the foreign key in the migration), `FamilyGroup string` (`gorm:"index"`, still written until V4-44) and `UserID string` (`gorm:"index"`). A new household table goes into the migration and `labelledTables`; a person-keyed one into `personKeyedTables` with a reason (`TestHouseholdSchema_EveryHouseholdColumnIsGuarded`).
    - Use `snake_case` JSON tags matching GraphQL schemas and snapshot conventions.
    - For high-dimensional vector fields, declare `Embedding pgvector.Vector` (`gorm:"type:vector(3072)"`) and attach `BeforeCreate` / `BeforeSave` hooks initializing zero vectors to prevent PostgreSQL `SQLSTATE 22000`.
 2. **Deduplicated Model Registration (`internal/db/migrations.go`):**
@@ -1017,14 +1033,7 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
 ### Section 2: Domain Services, Repositories & Tool Utilities
 1. **Decoupled Domain Repositories (`internal/db/<domain>_repo.go`):**
    - Define explicit repository interfaces (`<Domain>Repository`) decoupling data access from business logic and GraphQL resolvers.
-   - Every read, update, and delete query **MUST** enforce positive tenant authorization:
-     ```go
-     isAuthorized := record != nil && ((familyGroup != "" && record.FamilyGroup == familyGroup) || (record.UserID != "" && record.UserID == userID))
-     ```
-   - For family-level assets without a user ID (`VehicleAsset`, `RecurringBill`):
-     ```go
-     isAuthorized := record != nil && record.FamilyGroup != "" && record.FamilyGroup == familyGroup
-     ```
+   - Every repository method on a household table takes `s identity.Scope` first (after `ctx`) and starts from `c.scoped(s)` (`WHERE household_id = ?`, `ErrNoScope` for an invalid scope); creates call `stamp(s, &row.HouseholdID, &row.FamilyGroup)`; updates and deletes by ID filter the household in the same statement. Never `Save` or update by primary key alone. A method without a scope must be classified in `unscopedMethods` (`internal/db/household_isolation_walk_test.go`), which walks every scoped method against another household's rows.
 2. **Centralized Typed Argument Parsing (`internal/domains/toolutil/toolutil.go`):**
    - Eliminate duplicated type assertions across domain modules by utilizing `toolutil` parsers:
      - `toolutil.String(args, key, defaultVal)`
@@ -1043,7 +1052,7 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
    - Every tool is provided by an `orchestrator.ToolModule` (catalogue: §6, generated):
      - `Name() string`: Unique domain identifier (e.g., `"baby"`, `"finance"`, `"durability"`).
      - `Declarations() []*genai.FunctionDeclaration`: Standardized schemas without tool-arg tenant overrides.
-     - `Execute(ctx, callCtx, toolName, args) (string, error)`: Resolves tenant identity strictly from `callCtx.ActorID()` and `callCtx.TenantFamilyGroup()`.
+     - `Execute(ctx, callCtx, toolName, args) (string, error)`: Resolves tenant identity strictly from `callCtx.Scope` (household) and `callCtx.ActorID()` (person).
      - `SystemPromptSection(ctx, callCtx) string`: Concise domain briefing.
 2. **Two-Tier Intent Routing (`internal/orchestrator/registry.go`):**
    - **Tier 1 Core Tools** (`CoreToolNames`): always injected into every prompt turn (current list: §3.2, generated).
@@ -1062,7 +1071,7 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
 2. **Resolver Delegation & Positive Authorization:**
    - Route all 28 GraphQL queries and mutations through injected Domain Repositories (`r.babyRepo()`, `r.financeRepo()`, etc.).
    - Zero direct SQL queries or database handles (`r.DB.DB`) in resolvers.
-   - Enforce tenant isolation via `resolveTenantAndActor`: non-admin callers are strictly bounded to their authenticated context `familyGroup`.
+   - Enforce tenant isolation via `resolveTenantAndActor`: non-admin callers are strictly bounded to their own household (`identity.Scope`, V4-30).
 3. **State Mutation Durability:**
    - Every mutating resolver pre-fetches `BeforeJSON` snapshots, performs the repository mutation, captures `AfterJSON`, and publishes an `events.MutationEvent` to `r.EventBus`.
    - Rollback operations delegate to `durability.Module.Rollback` with strict entity allowlist validation.
@@ -1088,7 +1097,7 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
    - Atomically validate and delete nonces via `GETDEL` on OAuth callback.
 3. **PhotoData Stripping (`SCALE-02`):**
    - Strip raw `PhotoData` bytes from `models.ChatMessage` prior to Redis persistence, storing lightweight metadata tags (`[Attachment: <mime> (<size>)]`) to drop chat list memory from >5MB to <10KB per user.
-4. **Dynamic Prompt Caching (`ctx_prompt:<familyGroup>:<userID>:<module>`):**
+4. **Dynamic Prompt Caching (`ctx_prompt:<householdID>:<userID>:<module>`):**
    - Cache domain system prompt sections in Redis with 10-minute TTL, keyed per user (never per family only — sections contain personal data).
    - Check cache with Redis `MGet` (< 1ms); on cache miss, evaluate concurrently via `errgroup.Group` bounded to 800ms.
    - Synchronously invalidate prompt cache for all members of the affected family via EventBus subscribers on any state mutation (`SCAN`, never `KEYS`).

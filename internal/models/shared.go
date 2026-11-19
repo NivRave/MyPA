@@ -21,6 +21,7 @@ const (
 // within a family group.
 type SharedSpace struct {
 	ID               uint      `json:"id" gorm:"primarykey"`
+	HouseholdID      string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup      string    `json:"family_group" gorm:"index;size:100;not null"`
 	Topic            string    `json:"topic" gorm:"index;size:100;not null"`
 	OwnerUserID      string    `json:"owner_user_id" gorm:"size:100"`
@@ -35,6 +36,7 @@ type SharedSpace struct {
 // under a family shared topic with claim/complete hand-off tracking.
 type SharedTaskReminder struct {
 	ID                uint       `json:"id" gorm:"primarykey"`
+	HouseholdID       string     `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup       string     `json:"family_group" gorm:"index;index:idx_shared_task_reminders_family_completed_due,priority:1;size:100;not null"`
 	Topic             string     `json:"topic" gorm:"index;size:100;not null"`
 	Title             string     `json:"title" gorm:"type:text;not null"`

@@ -3,6 +3,7 @@ package db
 import (
 	"errors"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
 	"strings"
 	"time"
 
@@ -18,30 +19,32 @@ func init() {
 	)
 }
 
-// BabyRepository defines all persistence operations for the Baby & Family Care Tracker.
+// BabyRepository defines all persistence operations for the Baby & Family Care Tracker. Every
+// method is confined to the scope's household (V4-30): reads filter by household_id, writes
+// stamp it.
 type BabyRepository interface {
 	// Baby Profile CRUD
-	UpsertBabyProfile(profile *models.BabyProfile) error
-	GetBabyProfile(id uint) (*models.BabyProfile, error)
-	GetBabyProfileByName(familyGroup, name string) (*models.BabyProfile, error)
-	GetBabyProfilesForFamily(familyGroup string) ([]models.BabyProfile, error)
-	DeleteBabyProfile(id uint) error
+	UpsertBabyProfile(s identity.Scope, profile *models.BabyProfile) error
+	GetBabyProfile(s identity.Scope, id uint) (*models.BabyProfile, error)
+	GetBabyProfileByName(s identity.Scope, name string) (*models.BabyProfile, error)
+	GetBabyProfilesForFamily(s identity.Scope) ([]models.BabyProfile, error)
+	DeleteBabyProfile(s identity.Scope, id uint) error
 
 	// Baby Care Log CRUD & Analytics
-	CreateCareLog(log *models.BabyCareLog) error
-	GetCareLogByID(id uint) (*models.BabyCareLog, error)
-	GetCareLogs(babyID uint, familyGroup, logType string, start, end time.Time, limit int) ([]models.BabyCareLog, error)
-	DeleteCareLog(id uint) error
-	GetLastMedicationLog(babyID uint, familyGroup, medName string) (*models.BabyCareLog, error)
-	GetCareStatsSummary(babyID uint, familyGroup string, start, end time.Time) (*models.BabyCareSummary, error)
+	CreateCareLog(s identity.Scope, log *models.BabyCareLog) error
+	GetCareLogByID(s identity.Scope, id uint) (*models.BabyCareLog, error)
+	GetCareLogs(s identity.Scope, babyID uint, logType string, start, end time.Time, limit int) ([]models.BabyCareLog, error)
+	DeleteCareLog(s identity.Scope, id uint) error
+	GetLastMedicationLog(s identity.Scope, babyID uint, medName string) (*models.BabyCareLog, error)
+	GetCareStatsSummary(s identity.Scope, babyID uint, start, end time.Time) (*models.BabyCareSummary, error)
 
 	// Baby Supplies & Inventory
-	UpsertBabyInventoryItem(item *models.BabyInventoryItem) error
-	GetBabyInventoryItem(id uint) (*models.BabyInventoryItem, error)
-	GetBabyInventoryItemByName(familyGroup, itemName string) (*models.BabyInventoryItem, error)
-	ListBabyInventoryItems(familyGroup string) ([]models.BabyInventoryItem, error)
-	GetLowBabyInventoryItems(familyGroup string) ([]models.BabyInventoryItem, error)
-	DeleteBabyInventoryItem(id uint) error
+	UpsertBabyInventoryItem(s identity.Scope, item *models.BabyInventoryItem) error
+	GetBabyInventoryItem(s identity.Scope, id uint) (*models.BabyInventoryItem, error)
+	GetBabyInventoryItemByName(s identity.Scope, itemName string) (*models.BabyInventoryItem, error)
+	ListBabyInventoryItems(s identity.Scope) ([]models.BabyInventoryItem, error)
+	GetLowBabyInventoryItems(s identity.Scope) ([]models.BabyInventoryItem, error)
+	DeleteBabyInventoryItem(s identity.Scope, id uint) error
 }
 
 // NewBabyRepository constructs a BabyRepository backed by the given gorm.DB.
@@ -49,49 +52,53 @@ func NewBabyRepository(db *gorm.DB) BabyRepository {
 	return &Client{DB: db}
 }
 
-// UpsertBabyProfile creates or updates a child profile.
-func (c *Client) UpsertBabyProfile(profile *models.BabyProfile) error {
+// UpsertBabyProfile creates or updates a child profile in the scope's household. A profile ID
+// that is not in the scope's household is "not found": it is never created under that ID.
+func (c *Client) UpsertBabyProfile(s identity.Scope, profile *models.BabyProfile) error {
 	if profile == nil {
 		return fmt.Errorf("baby profile cannot be nil")
 	}
 	if strings.TrimSpace(profile.Name) == "" {
 		return fmt.Errorf("baby name is required")
 	}
-	if strings.TrimSpace(profile.FamilyGroup) == "" {
-		return fmt.Errorf("family group is required")
+	if err := stamp(s, &profile.HouseholdID, &profile.FamilyGroup); err != nil {
+		return err
 	}
 
 	profile.Name = strings.TrimSpace(profile.Name)
-	profile.FamilyGroup = strings.TrimSpace(profile.FamilyGroup)
 	profile.UpdatedAt = time.Now()
 
 	if profile.ID != 0 {
 		var existing models.BabyProfile
-		if err := c.DB.First(&existing, profile.ID).Error; err != nil {
+		if err := c.DB.Where("household_id = ? AND id = ?", s.HouseholdID(), profile.ID).First(&existing).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return c.DB.Create(profile).Error
+				return fmt.Errorf("baby profile %d not found", profile.ID)
 			}
 			return fmt.Errorf("failed to lookup baby profile: %w", err)
 		}
-		return c.DB.Model(&existing).Updates(profile).Error
+		return c.DB.Model(&existing).Where("household_id = ?", s.HouseholdID()).Updates(profile).Error
 	}
 
-	// Match on FamilyGroup + Name
+	// Match on household + Name
 	var existing models.BabyProfile
-	err := c.DB.Where("family_group = ? AND LOWER(name) = ?", profile.FamilyGroup, strings.ToLower(profile.Name)).First(&existing).Error
+	err := c.DB.Where("household_id = ? AND LOWER(name) = ?", s.HouseholdID(), strings.ToLower(profile.Name)).First(&existing).Error
 	if err == nil {
 		profile.ID = existing.ID
-		return c.DB.Model(&existing).Updates(profile).Error
+		return c.DB.Model(&existing).Where("household_id = ?", s.HouseholdID()).Updates(profile).Error
 	} else if errors.Is(err, gorm.ErrRecordNotFound) {
 		return c.DB.Create(profile).Error
 	}
 	return fmt.Errorf("failed to query existing profile: %w", err)
 }
 
-// GetBabyProfile fetches a baby profile by primary key.
-func (c *Client) GetBabyProfile(id uint) (*models.BabyProfile, error) {
+// GetBabyProfile fetches a baby profile of the scope's household by primary key.
+func (c *Client) GetBabyProfile(s identity.Scope, id uint) (*models.BabyProfile, error) {
+	q, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
 	var profile models.BabyProfile
-	err := c.DB.First(&profile, id).Error
+	err = q.Where("id = ?", id).First(&profile).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -101,10 +108,14 @@ func (c *Client) GetBabyProfile(id uint) (*models.BabyProfile, error) {
 	return &profile, nil
 }
 
-// GetBabyProfileByName finds a profile by family group and name (case-insensitive).
-func (c *Client) GetBabyProfileByName(familyGroup, name string) (*models.BabyProfile, error) {
+// GetBabyProfileByName finds a profile of the scope's household by name (case-insensitive).
+func (c *Client) GetBabyProfileByName(s identity.Scope, name string) (*models.BabyProfile, error) {
+	q, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
 	var profile models.BabyProfile
-	err := c.DB.Where("family_group = ? AND LOWER(name) = ?", strings.TrimSpace(familyGroup), strings.ToLower(strings.TrimSpace(name))).First(&profile).Error
+	err = q.Where("LOWER(name) = ?", strings.ToLower(strings.TrimSpace(name))).First(&profile).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -114,29 +125,32 @@ func (c *Client) GetBabyProfileByName(familyGroup, name string) (*models.BabyPro
 	return &profile, nil
 }
 
-// GetBabyProfilesForFamily returns all baby profiles registered to a family group.
-func (c *Client) GetBabyProfilesForFamily(familyGroup string) ([]models.BabyProfile, error) {
+// GetBabyProfilesForFamily returns all baby profiles registered to the scope's household.
+func (c *Client) GetBabyProfilesForFamily(s identity.Scope) ([]models.BabyProfile, error) {
+	q, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
 	var profiles []models.BabyProfile
-	err := c.DB.Where("family_group = ?", strings.TrimSpace(familyGroup)).Order("date_of_birth ASC").Find(&profiles).Error
+	err = q.Order("date_of_birth ASC").Find(&profiles).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to list baby profiles for family: %w", err)
 	}
 	return profiles, nil
 }
 
-// DeleteBabyProfile removes a baby profile and associated logs.
-func (c *Client) DeleteBabyProfile(id uint) error {
-	result := c.DB.Delete(&models.BabyProfile{}, id)
-	if result.Error != nil {
-		return fmt.Errorf("failed to delete baby profile: %w", result.Error)
-	}
-	return nil
+// DeleteBabyProfile removes a baby profile of the scope's household.
+func (c *Client) DeleteBabyProfile(s identity.Scope, id uint) error {
+	return removeFromHousehold(c, s, &models.BabyProfile{}, id, "baby profile")
 }
 
-// CreateCareLog inserts a new care log entry.
-func (c *Client) CreateCareLog(log *models.BabyCareLog) error {
+// CreateCareLog inserts a new care log entry into the scope's household.
+func (c *Client) CreateCareLog(s identity.Scope, log *models.BabyCareLog) error {
 	if log == nil {
 		return fmt.Errorf("care log cannot be nil")
+	}
+	if err := stamp(s, &log.HouseholdID, &log.FamilyGroup); err != nil {
+		return err
 	}
 	if strings.TrimSpace(log.LogType) == "" {
 		return fmt.Errorf("log type is required")
@@ -145,7 +159,6 @@ func (c *Client) CreateCareLog(log *models.BabyCareLog) error {
 		log.Timestamp = time.Now()
 	}
 	log.LogType = strings.ToLower(strings.TrimSpace(log.LogType))
-	log.FamilyGroup = strings.TrimSpace(log.FamilyGroup)
 
 	if err := c.DB.Create(log).Error; err != nil {
 		return fmt.Errorf("failed to insert baby care log: %w", err)
@@ -153,10 +166,14 @@ func (c *Client) CreateCareLog(log *models.BabyCareLog) error {
 	return nil
 }
 
-// GetCareLogByID retrieves a single care log by its ID.
-func (c *Client) GetCareLogByID(id uint) (*models.BabyCareLog, error) {
+// GetCareLogByID retrieves a single care log of the scope's household by its ID.
+func (c *Client) GetCareLogByID(s identity.Scope, id uint) (*models.BabyCareLog, error) {
+	q, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
 	var log models.BabyCareLog
-	err := c.DB.First(&log, id).Error
+	err = q.Where("id = ?", id).First(&log).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -166,15 +183,16 @@ func (c *Client) GetCareLogByID(id uint) (*models.BabyCareLog, error) {
 	return &log, nil
 }
 
-// GetCareLogs queries care logs using multiple optional filters.
-func (c *Client) GetCareLogs(babyID uint, familyGroup, logType string, start, end time.Time, limit int) ([]models.BabyCareLog, error) {
-	query := c.DB.Model(&models.BabyCareLog{})
+// GetCareLogs queries the scope household's care logs using multiple optional filters.
+func (c *Client) GetCareLogs(s identity.Scope, babyID uint, logType string, start, end time.Time, limit int) ([]models.BabyCareLog, error) {
+	query, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
+	query = query.Model(&models.BabyCareLog{})
 
 	if babyID > 0 {
 		query = query.Where("baby_id = ?", babyID)
-	}
-	if strings.TrimSpace(familyGroup) != "" {
-		query = query.Where("family_group = ?", strings.TrimSpace(familyGroup))
 	}
 	if strings.TrimSpace(logType) != "" && !strings.EqualFold(logType, "all") {
 		query = query.Where("LOWER(log_type) = ?", strings.ToLower(strings.TrimSpace(logType)))
@@ -201,24 +219,21 @@ func (c *Client) GetCareLogs(babyID uint, familyGroup, logType string, start, en
 	return logs, nil
 }
 
-// DeleteCareLog deletes a single care log entry.
-func (c *Client) DeleteCareLog(id uint) error {
-	result := c.DB.Delete(&models.BabyCareLog{}, id)
-	if result.Error != nil {
-		return fmt.Errorf("failed to delete care log: %w", result.Error)
-	}
-	return nil
+// DeleteCareLog deletes a single care log entry of the scope's household.
+func (c *Client) DeleteCareLog(s identity.Scope, id uint) error {
+	return removeFromHousehold(c, s, &models.BabyCareLog{}, id, "care log")
 }
 
-// GetLastMedicationLog retrieves the most recent medication log entry for a baby/family.
-func (c *Client) GetLastMedicationLog(babyID uint, familyGroup, medName string) (*models.BabyCareLog, error) {
-	query := c.DB.Model(&models.BabyCareLog{}).Where("LOWER(log_type) = ?", "medication")
+// GetLastMedicationLog retrieves the most recent medication log entry for a baby of the scope's household.
+func (c *Client) GetLastMedicationLog(s identity.Scope, babyID uint, medName string) (*models.BabyCareLog, error) {
+	query, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
+	query = query.Model(&models.BabyCareLog{}).Where("LOWER(log_type) = ?", "medication")
 
 	if babyID > 0 {
 		query = query.Where("baby_id = ?", babyID)
-	}
-	if strings.TrimSpace(familyGroup) != "" {
-		query = query.Where("family_group = ?", strings.TrimSpace(familyGroup))
 	}
 	if strings.TrimSpace(medName) != "" {
 		norm := strings.ToLower(strings.TrimSpace(medName))
@@ -239,7 +254,7 @@ func (c *Client) GetLastMedicationLog(babyID uint, familyGroup, medName string) 
 	}
 
 	var log models.BabyCareLog
-	err := query.Order("timestamp DESC").First(&log).Error
+	err = query.Order("timestamp DESC").First(&log).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -249,16 +264,16 @@ func (c *Client) GetLastMedicationLog(babyID uint, familyGroup, medName string) 
 	return &log, nil
 }
 
-// GetCareStatsSummary computes aggregated metrics over a date range.
-func (c *Client) GetCareStatsSummary(babyID uint, familyGroup string, start, end time.Time) (*models.BabyCareSummary, error) {
-	logs, err := c.GetCareLogs(babyID, familyGroup, "all", start, end, 1000)
+// GetCareStatsSummary computes aggregated metrics over a date range for the scope's household.
+func (c *Client) GetCareStatsSummary(s identity.Scope, babyID uint, start, end time.Time) (*models.BabyCareSummary, error) {
+	logs, err := c.GetCareLogs(s, babyID, "all", start, end, 1000)
 	if err != nil {
 		return nil, err
 	}
 
 	summary := &models.BabyCareSummary{
 		BabyID:         babyID,
-		FamilyGroup:    familyGroup,
+		FamilyGroup:    s.LegacyLabel(),
 		StartTime:      start,
 		EndTime:        end,
 		LogCountByType: make(map[string]int),
@@ -309,39 +324,39 @@ func (c *Client) GetCareStatsSummary(babyID uint, familyGroup string, start, end
 	return summary, nil
 }
 
-// UpsertBabyInventoryItem creates or updates a tracked baby inventory item.
-func (c *Client) UpsertBabyInventoryItem(item *models.BabyInventoryItem) error {
+// UpsertBabyInventoryItem creates or updates a tracked baby inventory item in the scope's
+// household. An item ID that is not in the scope's household is "not found".
+func (c *Client) UpsertBabyInventoryItem(s identity.Scope, item *models.BabyInventoryItem) error {
 	if item == nil {
 		return fmt.Errorf("inventory item cannot be nil")
 	}
 	if strings.TrimSpace(item.ItemName) == "" {
 		return fmt.Errorf("item name is required")
 	}
-	if strings.TrimSpace(item.FamilyGroup) == "" {
-		return fmt.Errorf("family group is required")
+	if err := stamp(s, &item.HouseholdID, &item.FamilyGroup); err != nil {
+		return err
 	}
 
 	item.ItemName = strings.TrimSpace(item.ItemName)
-	item.FamilyGroup = strings.TrimSpace(item.FamilyGroup)
 	item.UpdatedAt = time.Now()
 
 	if item.ID != 0 {
 		var existing models.BabyInventoryItem
-		if err := c.DB.First(&existing, item.ID).Error; err != nil {
+		if err := c.DB.Where("household_id = ? AND id = ?", s.HouseholdID(), item.ID).First(&existing).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return c.DB.Create(item).Error
+				return fmt.Errorf("inventory item %d not found", item.ID)
 			}
 			return fmt.Errorf("failed to lookup inventory item: %w", err)
 		}
-		return c.DB.Model(&existing).Updates(item).Error
+		return c.DB.Model(&existing).Where("household_id = ?", s.HouseholdID()).Updates(item).Error
 	}
 
-	// Match on FamilyGroup + ItemName
+	// Match on household + ItemName
 	var existing models.BabyInventoryItem
-	err := c.DB.Where("family_group = ? AND LOWER(item_name) = ?", item.FamilyGroup, strings.ToLower(item.ItemName)).First(&existing).Error
+	err := c.DB.Where("household_id = ? AND LOWER(item_name) = ?", s.HouseholdID(), strings.ToLower(item.ItemName)).First(&existing).Error
 	if err == nil {
 		item.ID = existing.ID
-		return c.DB.Model(&existing).Updates(map[string]interface{}{
+		return c.DB.Model(&existing).Where("household_id = ?", s.HouseholdID()).Updates(map[string]interface{}{
 			"quantity_remaining": item.QuantityRemaining,
 			"unit":               item.Unit,
 			"low_threshold":      item.LowThreshold,
@@ -353,10 +368,14 @@ func (c *Client) UpsertBabyInventoryItem(item *models.BabyInventoryItem) error {
 	return fmt.Errorf("failed to query inventory item: %w", err)
 }
 
-// GetBabyInventoryItem fetches a baby inventory item by ID.
-func (c *Client) GetBabyInventoryItem(id uint) (*models.BabyInventoryItem, error) {
+// GetBabyInventoryItem fetches a baby inventory item of the scope's household by ID.
+func (c *Client) GetBabyInventoryItem(s identity.Scope, id uint) (*models.BabyInventoryItem, error) {
+	q, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
 	var item models.BabyInventoryItem
-	err := c.DB.First(&item, id).Error
+	err = q.Where("id = ?", id).First(&item).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -366,10 +385,14 @@ func (c *Client) GetBabyInventoryItem(id uint) (*models.BabyInventoryItem, error
 	return &item, nil
 }
 
-// GetBabyInventoryItemByName finds an inventory item by family group and name.
-func (c *Client) GetBabyInventoryItemByName(familyGroup, itemName string) (*models.BabyInventoryItem, error) {
+// GetBabyInventoryItemByName finds an inventory item of the scope's household by name.
+func (c *Client) GetBabyInventoryItemByName(s identity.Scope, itemName string) (*models.BabyInventoryItem, error) {
+	q, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
 	var item models.BabyInventoryItem
-	err := c.DB.Where("family_group = ? AND LOWER(item_name) = ?", strings.TrimSpace(familyGroup), strings.ToLower(strings.TrimSpace(itemName))).First(&item).Error
+	err = q.Where("LOWER(item_name) = ?", strings.ToLower(strings.TrimSpace(itemName))).First(&item).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -379,31 +402,35 @@ func (c *Client) GetBabyInventoryItemByName(familyGroup, itemName string) (*mode
 	return &item, nil
 }
 
-// ListBabyInventoryItems returns all inventory items for a family group.
-func (c *Client) ListBabyInventoryItems(familyGroup string) ([]models.BabyInventoryItem, error) {
+// ListBabyInventoryItems returns all inventory items of the scope's household.
+func (c *Client) ListBabyInventoryItems(s identity.Scope) ([]models.BabyInventoryItem, error) {
+	q, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
 	var items []models.BabyInventoryItem
-	err := c.DB.Where("family_group = ?", strings.TrimSpace(familyGroup)).Order("item_name ASC").Find(&items).Error
+	err = q.Order("item_name ASC").Find(&items).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to list inventory items: %w", err)
 	}
 	return items, nil
 }
 
-// GetLowBabyInventoryItems finds items where QuantityRemaining <= LowThreshold.
-func (c *Client) GetLowBabyInventoryItems(familyGroup string) ([]models.BabyInventoryItem, error) {
+// GetLowBabyInventoryItems finds the scope household's items where QuantityRemaining <= LowThreshold.
+func (c *Client) GetLowBabyInventoryItems(s identity.Scope) ([]models.BabyInventoryItem, error) {
+	q, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
 	var items []models.BabyInventoryItem
-	err := c.DB.Where("family_group = ? AND quantity_remaining <= low_threshold", strings.TrimSpace(familyGroup)).Order("quantity_remaining ASC").Find(&items).Error
+	err = q.Where("quantity_remaining <= low_threshold").Order("quantity_remaining ASC").Find(&items).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to query low inventory items: %w", err)
 	}
 	return items, nil
 }
 
-// DeleteBabyInventoryItem removes an inventory item by primary key.
-func (c *Client) DeleteBabyInventoryItem(id uint) error {
-	result := c.DB.Delete(&models.BabyInventoryItem{}, id)
-	if result.Error != nil {
-		return fmt.Errorf("failed to delete inventory item: %w", result.Error)
-	}
-	return nil
+// DeleteBabyInventoryItem removes an inventory item of the scope's household by primary key.
+func (c *Client) DeleteBabyInventoryItem(s identity.Scope, id uint) error {
+	return removeFromHousehold(c, s, &models.BabyInventoryItem{}, id, "inventory item")
 }

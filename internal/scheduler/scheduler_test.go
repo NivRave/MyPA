@@ -1,13 +1,14 @@
 package scheduler
 
 import (
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/nivik/mypa/internal/testutil"
 	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -69,6 +70,7 @@ func TestReloadWorkflows_WithPostgres(t *testing.T) {
 	// 2. Insert active cron automation rule
 	cronRule := models.AutomationRule{
 		UserID:            "test-scheduler-user",
+		HouseholdID:       householdtest.Household(t, client, "fam-test").ID, // V4-30
 		FamilyGroup:       "fam-test",
 		Name:              "Test Cron Rule",
 		TriggerType:       "cron",
@@ -84,6 +86,7 @@ func TestReloadWorkflows_WithPostgres(t *testing.T) {
 	// 3. Insert inactive cron rule (must not be scheduled)
 	inactiveRule := models.AutomationRule{
 		UserID:            "test-scheduler-user",
+		HouseholdID:       householdtest.Household(t, client, "fam-test").ID, // V4-30
 		FamilyGroup:       "fam-test",
 		Name:              "Inactive Rule",
 		TriggerType:       "cron",

@@ -6,6 +6,7 @@ import (
 
 	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"github.com/stretchr/testify/assert"
@@ -14,12 +15,12 @@ import (
 )
 
 type recordingTasksClient struct {
-	lastListUser     string
+	lastListUser       string
 	lastCreateListUser string
-	lastListTasksUser string
+	lastListTasksUser  string
 	lastCreateTaskUser string
-	lastCompleteUser  string
-	lastDeleteUser    string
+	lastCompleteUser   string
+	lastDeleteUser     string
 }
 
 func (r *recordingTasksClient) ListTaskLists(ctx context.Context, userID string) ([]*tasksapi.TaskList, error) {
@@ -68,6 +69,7 @@ func TestWorkspaceTasks_AntiSpoofing(t *testing.T) {
 	}
 	callCtx := orchestrator.CallContext{
 		User:     legitUser,
+		Scope:    identitytest.Scope(t, "family_legit", "canonical_victim_123", "family"), // V4-30: the tenant
 		Message:  channel.Inbound{Sender: "canonical_victim_123"},
 		EventBus: bus,
 	}

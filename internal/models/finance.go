@@ -40,8 +40,9 @@ const (
 type FinancialTransaction struct {
 	ID              uint      `json:"id" gorm:"primaryKey"`
 	UserID          string    `json:"user_id" gorm:"index;index:idx_financial_transactions_user_date,priority:1"`
+	HouseholdID     string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup     string    `json:"family_group" gorm:"index;index:idx_financial_transactions_family_date,priority:1;index:idx_financial_transactions_fam_cat,priority:1"`
-	Type            string    `json:"type" gorm:"index"` // "expense", "income"
+	Type            string    `json:"type" gorm:"index"`                                                         // "expense", "income"
 	Category        string    `json:"category" gorm:"index;index:idx_financial_transactions_fam_cat,priority:2"` // "baby", "house", "groceries", "utilities", "dining", "health", "other"
 	Merchant        string    `json:"merchant" gorm:"index"`
 	Amount          float64   `json:"amount"`
@@ -57,6 +58,7 @@ type FinancialTransaction struct {
 // threshold for a specific life domain or expense category.
 type CategoryBudget struct {
 	ID                uint      `json:"id" gorm:"primaryKey"`
+	HouseholdID       string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup       string    `json:"family_group" gorm:"index;uniqueIndex:idx_fam_cat"`
 	Category          string    `json:"category" gorm:"uniqueIndex:idx_fam_cat"`
 	MonthlyLimit      float64   `json:"monthly_limit"`
@@ -81,6 +83,7 @@ func (b *CategoryBudget) ThresholdRatio() float64 {
 // alerting family members before due dates and flagging renewal changes.
 type RecurringBill struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
+	HouseholdID    string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup    string    `json:"family_group" gorm:"index"`
 	Name           string    `json:"name"`
 	Category       string    `json:"category"`

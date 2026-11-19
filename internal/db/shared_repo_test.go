@@ -21,6 +21,9 @@ func TestSharedRepo_SharedSpaces_PositiveAndIsolation(t *testing.T) {
 	userA := "usr-" + uuid.New().String()
 	userB := "usr-" + uuid.New().String()
 
+	sA := scopeAs(t, client, famA, userA, "family")
+	sB := scopeAs(t, client, famB, userB, "family")
+
 	// 1. Upsert shared spaces for Family A
 	spaceA1 := models.SharedSpace{
 		FamilyGroup:      famA,
@@ -31,7 +34,7 @@ func TestSharedRepo_SharedSpaces_PositiveAndIsolation(t *testing.T) {
 		CanEdit:          true,
 		NotifyMode:       "immediate",
 	}
-	require.NoError(t, repo.UpsertSharedSpace(&spaceA1))
+	require.NoError(t, repo.UpsertSharedSpace(sA, &spaceA1))
 	require.NotZero(t, spaceA1.ID)
 
 	spaceA2 := models.SharedSpace{
@@ -43,7 +46,7 @@ func TestSharedRepo_SharedSpaces_PositiveAndIsolation(t *testing.T) {
 		CanEdit:          false,
 		NotifyMode:       "daily",
 	}
-	require.NoError(t, repo.UpsertSharedSpace(&spaceA2))
+	require.NoError(t, repo.UpsertSharedSpace(sA, &spaceA2))
 	require.NotZero(t, spaceA2.ID)
 
 	// 2. Upsert shared space for Family B
@@ -56,29 +59,29 @@ func TestSharedRepo_SharedSpaces_PositiveAndIsolation(t *testing.T) {
 		CanEdit:          true,
 		NotifyMode:       "digest",
 	}
-	require.NoError(t, repo.UpsertSharedSpace(&spaceB))
+	require.NoError(t, repo.UpsertSharedSpace(sB, &spaceB))
 	require.NotZero(t, spaceB.ID)
 
 	// 3. Positive verification and cross-tenant isolation
-	spacesA, err := repo.GetSharedSpacesForFamily(famA)
+	spacesA, err := repo.GetSharedSpacesForFamily(sA)
 	require.NoError(t, err)
 	require.Len(t, spacesA, 2)
 	assert.Equal(t, "baby", spacesA[0].Topic)
 	assert.Equal(t, "house", spacesA[1].Topic)
 
-	spacesB, err := repo.GetSharedSpacesForFamily(famB)
+	spacesB, err := repo.GetSharedSpacesForFamily(sB)
 	require.NoError(t, err)
 	require.Len(t, spacesB, 1)
 	assert.Equal(t, "finance", spacesB[0].Topic)
 
 	// Direct lookup by topic
-	gotA1, err := repo.GetSharedSpace(famA, "baby")
+	gotA1, err := repo.GetSharedSpace(sA, "baby")
 	require.NoError(t, err)
 	require.NotNil(t, gotA1)
 	assert.Equal(t, "immediate", gotA1.NotifyMode)
 
 	// Family B cannot see Family A's space
-	gotWrong, err := repo.GetSharedSpace(famB, "baby")
+	gotWrong, err := repo.GetSharedSpace(sB, "baby")
 	require.NoError(t, err)
 	assert.Nil(t, gotWrong, "Family B should not see Family A's baby space")
 
@@ -92,10 +95,10 @@ func TestSharedRepo_SharedSpaces_PositiveAndIsolation(t *testing.T) {
 		CanEdit:          false, // flipped to false
 		NotifyMode:       "muted",
 	}
-	require.NoError(t, repo.UpsertSharedSpace(&updatedSpaceA1))
+	require.NoError(t, repo.UpsertSharedSpace(sA, &updatedSpaceA1))
 	assert.Equal(t, spaceA1.ID, updatedSpaceA1.ID)
 
-	recheckA1, err := repo.GetSharedSpace(famA, "baby")
+	recheckA1, err := repo.GetSharedSpace(sA, "baby")
 	require.NoError(t, err)
 	require.NotNil(t, recheckA1)
 	assert.False(t, recheckA1.CanEdit)
@@ -113,6 +116,9 @@ func TestSharedRepo_SharedReminders_CRUDAndIsolation(t *testing.T) {
 	userA := "usr-" + uuid.New().String()
 	userB := "usr-" + uuid.New().String()
 
+	sA := scopeAs(t, client, famA, userA, "family")
+	sB := scopeAs(t, client, famB, userB, "family")
+
 	dueTime := time.Now().Add(2 * time.Hour)
 
 	// 1. Create reminder for Family A
@@ -123,7 +129,7 @@ func TestSharedRepo_SharedReminders_CRUDAndIsolation(t *testing.T) {
 		DueTime:         &dueTime,
 		CreatedByUserID: userA,
 	}
-	require.NoError(t, repo.CreateSharedReminder(&remA))
+	require.NoError(t, repo.CreateSharedReminder(sA, &remA))
 	require.NotZero(t, remA.ID)
 
 	// 2. Create reminder for Family B
@@ -134,33 +140,33 @@ func TestSharedRepo_SharedReminders_CRUDAndIsolation(t *testing.T) {
 		DueTime:         &dueTime,
 		CreatedByUserID: userB,
 	}
-	require.NoError(t, repo.CreateSharedReminder(&remB))
+	require.NoError(t, repo.CreateSharedReminder(sB, &remB))
 	require.NotZero(t, remB.ID)
 
 	// 3. Verify GetSharedReminder with tenant scoping
-	gotA, err := repo.GetSharedReminder(remA.ID, famA)
+	gotA, err := repo.GetSharedReminder(sA, remA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotA)
 	assert.Equal(t, "Buy vitamin D drops", gotA.Title)
 
 	// Cross-tenant scoping: Family B querying Family A's reminder ID returns nil
-	gotLeak, err := repo.GetSharedReminder(remA.ID, famB)
+	gotLeak, err := repo.GetSharedReminder(sB, remA.ID)
 	require.NoError(t, err)
 	assert.Nil(t, gotLeak, "Family B should not access Family A's reminder")
 
 	// 4. Verify ListSharedReminders isolation
-	listA, err := repo.ListSharedReminders(famA, "all", false)
+	listA, err := repo.ListSharedReminders(sA, "all", false)
 	require.NoError(t, err)
 	require.Len(t, listA, 1)
 	assert.Equal(t, remA.ID, listA[0].ID)
 
-	listB, err := repo.ListSharedReminders(famB, "all", false)
+	listB, err := repo.ListSharedReminders(sB, "all", false)
 	require.NoError(t, err)
 	require.Len(t, listB, 1)
 	assert.Equal(t, remB.ID, listB[0].ID)
 
 	// 5. Complete reminder for Family A
-	completed, err := repo.CompleteSharedReminder(remA.ID, userA, famA)
+	completed, err := repo.CompleteSharedReminder(sA, remA.ID, userA)
 	require.NoError(t, err)
 	require.NotNil(t, completed)
 	assert.True(t, completed.IsCompleted)
@@ -168,12 +174,12 @@ func TestSharedRepo_SharedReminders_CRUDAndIsolation(t *testing.T) {
 	assert.NotNil(t, completed.CompletedAt)
 
 	// After completion, incomplete list should be empty
-	listAActive, err := repo.ListSharedReminders(famA, "all", false)
+	listAActive, err := repo.ListSharedReminders(sA, "all", false)
 	require.NoError(t, err)
 	assert.Empty(t, listAActive)
 
 	// When includeCompleted is true, it should appear
-	listAAll, err := repo.ListSharedReminders(famA, "all", true)
+	listAAll, err := repo.ListSharedReminders(sA, "all", true)
 	require.NoError(t, err)
 	require.Len(t, listAAll, 1)
 	assert.True(t, listAAll[0].IsCompleted)
@@ -188,6 +194,8 @@ func TestSharedRepo_DueReminders(t *testing.T) {
 	fam := "fam-" + uuid.New().String()
 	user := "usr-" + uuid.New().String()
 
+	s := scopeAs(t, client, fam, user, "family")
+
 	pastDue := time.Now().Add(-15 * time.Minute)
 	futureDue := time.Now().Add(15 * time.Minute)
 
@@ -201,7 +209,7 @@ func TestSharedRepo_DueReminders(t *testing.T) {
 		IsCompleted:     false,
 		IsSent:          false,
 	}
-	require.NoError(t, repo.CreateSharedReminder(&rem1))
+	require.NoError(t, repo.CreateSharedReminder(s, &rem1))
 
 	// Reminder 2: future due
 	rem2 := models.SharedTaskReminder{
@@ -213,7 +221,7 @@ func TestSharedRepo_DueReminders(t *testing.T) {
 		IsCompleted:     false,
 		IsSent:          false,
 	}
-	require.NoError(t, repo.CreateSharedReminder(&rem2))
+	require.NoError(t, repo.CreateSharedReminder(s, &rem2))
 
 	// Fetch due
 	dueReminders, err := repo.GetDueSharedReminders()
@@ -222,7 +230,7 @@ func TestSharedRepo_DueReminders(t *testing.T) {
 	assert.Equal(t, rem1.ID, dueReminders[0].ID)
 
 	// Mark sent
-	err = repo.MarkSharedReminderSent(rem1.ID)
+	err = repo.MarkSharedReminderSent(s, rem1.ID)
 	require.NoError(t, err)
 
 	// Recheck due: should now be empty

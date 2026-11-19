@@ -2,7 +2,9 @@ package db
 
 import (
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/nivik/mypa/internal/models"
@@ -88,6 +90,7 @@ func AutoMigrateSchema(db *gorm.DB) error {
 		return fmt.Errorf("failed to create vector extension: %w", err)
 	}
 	baseModels := []interface{}{
+		&models.Household{}, // first: every household_id references it (V4-30)
 		&models.AuditSession{},
 		&models.AuditEvent{},
 		&models.Memory{},
@@ -102,6 +105,9 @@ func AutoMigrateSchema(db *gorm.DB) error {
 	}
 	if err := ApplyCustomIndexes(db); err != nil {
 		return fmt.Errorf("failed to apply custom database indexes: %w", err)
+	}
+	if err := applyHouseholdForeignKeys(db, allModels); err != nil {
+		return err
 	}
 	if _, err := MigrateLegacyMemories(db); err != nil {
 		return err
@@ -210,8 +216,12 @@ func (c *Client) GetUser(platformID string) (*models.User, error) {
 	return &user, nil
 }
 
-// UpsertUser creates or updates a user.
+// UpsertUser creates or updates a user. The user must carry the household it belongs to (V4-30);
+// only the bootstrap (ALLOWED_USERS on an install with no household) calls it.
 func (c *Client) UpsertUser(user models.User) error {
+	if strings.TrimSpace(user.HouseholdID) == "" {
+		return fmt.Errorf("failed to upsert user: no household")
+	}
 	result := c.DB.Where("platform_id = ?", user.PlatformID).Assign(user).FirstOrCreate(&user)
 	if result.Error != nil {
 		return fmt.Errorf("failed to upsert user: %w", result.Error)
@@ -219,8 +229,12 @@ func (c *Client) UpsertUser(user models.User) error {
 	return nil
 }
 
-// CreatePairingCode inserts a new pairing code.
-func (c *Client) CreatePairingCode(code models.PairingCode) error {
+// CreatePairingCode inserts a new pairing code into the scope's household: whoever redeems it
+// joins that household (V4-30).
+func (c *Client) CreatePairingCode(s identity.Scope, code models.PairingCode) error {
+	if err := stamp(s, &code.HouseholdID, &code.FamilyGroup); err != nil {
+		return err
+	}
 	result := c.DB.Create(&code)
 	if result.Error != nil {
 		return fmt.Errorf("failed to create pairing code: %w", result.Error)
@@ -228,19 +242,30 @@ func (c *Client) CreatePairingCode(code models.PairingCode) error {
 	return nil
 }
 
-// GetPairingCode retrieves a valid pairing code.
+// GetPairingCode retrieves a valid pairing code. A code left in the holding household (written
+// before V4-30 without a family) is never valid: it would admit someone to rows nobody owns.
 func (c *Client) GetPairingCode(code string) (*models.PairingCode, error) {
 	var pc models.PairingCode
-	result := c.DB.Where("code = ? AND is_used = ? AND expires_at > now()", code, false).First(&pc)
+	result := c.DB.Where("code = ? AND is_used = ? AND expires_at > now() AND household_id <> ?", code, false, models.HoldingHouseholdID).First(&pc)
 	if result.Error != nil {
 		return nil, result.Error // e.g., gorm.ErrRecordNotFound
 	}
 	return &pc, nil
 }
 
-// RedeemPairingCode marks a code as used and creates the user in a transaction.
+// RedeemPairingCode marks a code as used and creates the user in a transaction. The new user's
+// household is the code's, read inside the transaction; the caller's value is not trusted.
 func (c *Client) RedeemPairingCode(codeID string, user models.User) error {
 	return c.DB.Transaction(func(tx *gorm.DB) error {
+		var pc models.PairingCode
+		if err := tx.Where("id = ?", codeID).First(&pc).Error; err != nil {
+			return err
+		}
+		if pc.HouseholdID == "" || pc.HouseholdID == models.HoldingHouseholdID {
+			return fmt.Errorf("pairing code has no household")
+		}
+		user.HouseholdID = pc.HouseholdID
+		user.FamilyGroup = pc.FamilyGroup
 		// Mark code as used
 		if err := tx.Model(&models.PairingCode{}).Where("id = ?", codeID).Update("is_used", true).Error; err != nil {
 			return err
@@ -251,16 +276,6 @@ func (c *Client) RedeemPairingCode(codeID string, user models.User) error {
 		}
 		return nil
 	})
-}
-
-// GetUsersByFamilyGroup retrieves all users in a family group.
-func (c *Client) GetUsersByFamilyGroup(familyGroup string) ([]models.User, error) {
-	var users []models.User
-	result := c.DB.Where("family_group = ?", familyGroup).Find(&users)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	return users, nil
 }
 
 // SaveWorkflow creates a new workflow macro.

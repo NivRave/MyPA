@@ -26,9 +26,9 @@ func TestProcessMessage_ResolvesUserOncePerTurn(t *testing.T) {
 	var lookups int64
 	dbMock.EXPECT().GetUser("user-once").DoAndReturn(func(string) (*models.User, error) {
 		atomic.AddInt64(&lookups, 1)
-		return &models.User{PlatformID: "user-once", Name: "Once", FamilyGroup: "fam"}, nil
+		return inHousehold(&models.User{PlatformID: "user-once", Name: "Once", FamilyGroup: "fam"}), nil
 	}).AnyTimes()
-	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
@@ -40,7 +40,7 @@ func TestProcessMessage_ResolvesUserOncePerTurn(t *testing.T) {
 		declarations: []*genai.FunctionDeclaration{{Name: "t1"}, {Name: "t2"}, {Name: "t3"}},
 		executeFunc: func(_ context.Context, callCtx CallContext, _ string, _ map[string]interface{}) (string, error) {
 			mu.Lock()
-			seenFamily = append(seenFamily, callCtx.TenantFamilyGroup())
+			seenFamily = append(seenFamily, callCtx.Scope.LegacyLabel())
 			mu.Unlock()
 			return "ok", nil
 		},
@@ -84,11 +84,11 @@ func TestExecuteSingleTool_UsesTurnUserWithoutLookup(t *testing.T) {
 	})
 	engine.SetToolRegistry(reg)
 
-	user := &models.User{PlatformID: "u-turn", FamilyGroup: "fam-turn", Role: "admin"}
+	user := inHousehold(&models.User{PlatformID: "u-turn", FamilyGroup: "fam-turn", Role: "admin"})
 	ctx := withTurnUser(context.Background(), user)
 	res := engine.executeSingleTool(ctx, channel.Inbound{Sender: "u-turn"}, nil, "", &genai.FunctionCall{Name: "probe_tool"})
 	require.Equal(t, "ok", res)
-	assert.Equal(t, "fam-turn", got.TenantFamilyGroup())
+	assert.Equal(t, "fam-turn", got.Scope.LegacyLabel())
 	assert.Equal(t, "admin", got.User.Role)
 }
 
@@ -96,7 +96,7 @@ func TestExecuteSingleTool_UsesTurnUserWithoutLookup(t *testing.T) {
 func TestExecuteSingleTool_FallsBackToLookupWithoutTurnUser(t *testing.T) {
 	engine, _, dbMock, cleanup := setupUnauthTestEngine(t)
 	defer cleanup()
-	dbMock.EXPECT().GetUser("u-direct").Return(&models.User{PlatformID: "u-direct", FamilyGroup: "fam-direct"}, nil).Times(1)
+	dbMock.EXPECT().GetUser("u-direct").Return(inHousehold(&models.User{PlatformID: "u-direct", FamilyGroup: "fam-direct"}), nil).Times(1)
 
 	var got CallContext
 	reg := NewRegistry()
@@ -111,5 +111,5 @@ func TestExecuteSingleTool_FallsBackToLookupWithoutTurnUser(t *testing.T) {
 	engine.SetToolRegistry(reg)
 
 	engine.executeSingleTool(context.Background(), channel.Inbound{Sender: "u-direct"}, nil, "", &genai.FunctionCall{Name: "probe_tool"})
-	assert.Equal(t, "fam-direct", got.TenantFamilyGroup())
+	assert.Equal(t, "fam-direct", got.Scope.LegacyLabel())
 }

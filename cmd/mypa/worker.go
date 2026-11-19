@@ -166,13 +166,14 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 	}
 	w.onStop(func() { _ = telemetryPublisher.Close() })
 
-	// Bootstrap legacy ALLOWED_USERS into Database
-	allowedMap := cfg.ParseAllowedUsers()
-	for _, u := range allowedMap {
-		if err := dbClient.UpsertUser(u); err != nil {
-			slog.Error("failed to bootstrap allowed user", "error", err)
-		}
+	// ALLOWED_USERS seeds the first households on a fresh install only (V4-30, ADR 0002
+	// Decision 6); once a household exists the database is the single source of truth.
+	allowed := cfg.ParseAllowedUsers()
+	boot, err := dbClient.BootstrapHouseholds(context.Background(), allowed, cfg.Server.DefaultTimezone)
+	if err != nil {
+		return w, err
 	}
+	db.LogBootstrap(boot, len(allowed) > 0)
 
 	// 8.6 Initialize Wave 1 EventBus with dual-lane worker pool and Domain ToolModules
 	eventBus := events.NewEventBus(events.WithWorkerCount(4), events.WithQueueCapacity(1024))

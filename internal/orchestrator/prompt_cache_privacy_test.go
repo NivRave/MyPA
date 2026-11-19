@@ -42,7 +42,7 @@ func personalModules() []ToolModule {
 }
 
 func familyCtx(userID, family string) CallContext {
-	return CallContext{User: &models.User{PlatformID: userID, FamilyGroup: family}}
+	return CallContext{User: &models.User{PlatformID: userID, FamilyGroup: family}, Scope: idScope(family, userID, "family")}
 }
 
 // P1-3 acceptance: user B in the same family must never see user A's personal sections,
@@ -87,7 +87,7 @@ func TestPromptCache_NoUserID_NoCaching(t *testing.T) {
 		reg.Register(m)
 	}
 	// No PlatformID and no Message.UserID: identity unknown → must not cache under a shared key.
-	_ = reg.CombinedSystemPrompt(context.Background(), CallContext{User: &models.User{FamilyGroup: "fam_x"}})
+	_ = reg.CombinedSystemPrompt(context.Background(), CallContext{User: &models.User{FamilyGroup: "fam_x"}, Scope: idScope("fam_x", "", "family")})
 	assert.Empty(t, mr.Keys())
 }
 
@@ -115,7 +115,7 @@ func TestPromptCache_InvalidationEvictsAllFamilyMembers(t *testing.T) {
 
 	bus := events.NewEventBus()
 	RegisterPromptInvalidator(bus, store)
-	require.NoError(t, bus.Publish(ctx, events.MutationEvent{Topic: "memory", FamilyGroup: "fam_alpha", ActorUserID: "user_a"}))
+	require.NoError(t, bus.Publish(ctx, events.MutationEvent{Topic: "memory", HouseholdID: "fam_alpha", FamilyGroup: "fam_alpha", ActorUserID: "user_a"}))
 
 	for _, u := range []string{"user_a", "user_b", "user_c"} {
 		assert.False(t, mr.Exists(fmt.Sprintf("ctx_prompt:fam_alpha:%s:memory", u)), "%s memory must be evicted", u)

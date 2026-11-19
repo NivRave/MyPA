@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/models"
 	"time"
 
 	"github.com/nivik/mypa/internal/broker"
@@ -49,10 +51,21 @@ func newHealthReporter(cfg *config.Config, channels *channel.Registry, store *st
 	checks := channelChecks(channels)
 	checks = append(checks,
 		doctor.GoogleAccounts{
-			Configured:    cfg.Google.ClientID != "",
-			FamilyMembers: dbClient.GetUsersByFamilyGroup,
-			Token:         store.GetOAuthToken,
-			Refresh:       doctor.RefreshWith(oauthCfg.TokenSource),
+			Configured: cfg.Google.ClientID != "",
+			HouseholdMembers: func(householdID string) ([]models.User, error) {
+				// The household comes from the admin's own row (V4-30); the scope is built from it.
+				scope, err := identity.ForStoredRow(context.Background(), dbClient, householdID, "")
+				if err != nil {
+					return nil, err
+				}
+				return dbClient.UsersInHousehold(context.Background(), scope)
+			},
+			Token:   store.GetOAuthToken,
+			Refresh: doctor.RefreshWith(oauthCfg.TokenSource),
+		},
+		doctor.AllowedUsers{
+			Set:        len(cfg.ParseAllowedUsers()) > 0,
+			Households: dbClient.CountHouseholds,
 		},
 		doctor.Queues{
 			Names:       []string{broker.InboundMessagesQueue, broker.AuditEventsQueue},
