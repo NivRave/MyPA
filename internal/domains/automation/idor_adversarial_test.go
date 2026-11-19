@@ -2,6 +2,7 @@ package automation_test
 
 import (
 	"context"
+	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/identity/identitytest"
 	"strings"
@@ -110,7 +111,7 @@ func (r *idorAutomationRepo) GetAutomationRule(s identity.Scope, id uint) (*mode
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	rule, ok := r.rules[id]
-	if !ok {
+	if !ok || rule.HouseholdID != s.HouseholdID() { // as the real repository: confined to the household
 		return nil, nil
 	}
 	cp := *rule
@@ -153,7 +154,9 @@ func (r *idorAutomationRepo) UpdateAutomationRule(s identity.Scope, rule *models
 func (r *idorAutomationRepo) DeleteAutomationRule(s identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.rules, id)
+	if rule, ok := r.rules[id]; ok && rule.HouseholdID == s.HouseholdID() { // as the real repository
+		delete(r.rules, id)
+	}
 	return nil
 }
 func (r *idorAutomationRepo) UpsertUserPreference(pref *models.UserPreference) error {
@@ -467,4 +470,49 @@ func TestSEC04_CrossTenant_PersonalCRM_Overwrite_Blocked(t *testing.T) {
 	})
 	assert.Error(t, errSolo2, "Solo2 must NOT be able to overwrite Solo1's contact")
 	assert.Contains(t, errSolo2.Error(), "permission denied")
+}
+
+// V4-30 (review finding): the rule lookup is confined to the caller's household, so another
+// household's rule comes back as not found. The delete must be refused: no success reply, no
+// rule_deleted event in the caller's mutation log, and the rule untouched.
+func TestDeleteAutomationRule_ForeignRuleIsRefusedWithoutAnEvent(t *testing.T) {
+	repo := newIDORAutomationRepo()
+	bus := events.NewEventBus()
+	var mu sync.Mutex
+	var deleted []events.MutationEvent
+	bus.SubscribeSync(func(_ context.Context, ev events.MutationEvent) error {
+		if ev.Action == "rule_deleted" {
+			mu.Lock()
+			deleted = append(deleted, ev)
+			mu.Unlock()
+		}
+		return nil
+	})
+	mod := automation.NewModule(repo, automation.WithEventBus(bus))
+	ctx := context.Background()
+
+	owner := &models.User{ID: "u_owner", PlatformID: "owner_1", FamilyGroup: "Levi"}
+	ownerCtx := orchestrator.CallContext{User: owner, Message: channel.Inbound{Sender: "owner_1"}, Scope: idorScope(t, owner), EventBus: bus}
+	_, err := mod.Execute(ctx, ownerCtx, "create_automation_rule", map[string]interface{}{
+		"name": "Levi Rule", "trigger_type": "keyword", "trigger_topic": "tasks",
+		"condition_json": `{"keyword": "urgent"}`, "action_instruction": "notify: check task",
+	})
+	require.NoError(t, err)
+
+	stranger := &models.User{ID: "u_stranger", PlatformID: "stranger_1", FamilyGroup: "Cohen"}
+	strangerCtx := orchestrator.CallContext{User: stranger, Message: channel.Inbound{Sender: "stranger_1"}, Scope: idorScope(t, stranger), EventBus: bus}
+	reply, err := mod.Execute(ctx, strangerCtx, "delete_automation_rule", map[string]interface{}{"rule_id": 1})
+	require.Error(t, err)
+	assert.NotContains(t, reply, "Successfully deleted")
+
+	mu.Lock()
+	assert.Empty(t, deleted, "a refused delete publishes no rule_deleted event")
+	mu.Unlock()
+	rule, err := repo.GetAutomationRule(idorScope(t, owner), 1)
+	require.NoError(t, err)
+	require.NotNil(t, rule, "the owner's rule is untouched")
+
+	// A rule that does not exist at all is refused the same way.
+	_, err = mod.Execute(ctx, ownerCtx, "delete_automation_rule", map[string]interface{}{"rule_id": 99})
+	assert.Error(t, err)
 }

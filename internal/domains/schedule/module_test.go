@@ -731,3 +731,42 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, ev1Deleted)
 }
+
+// V4-30 (review finding): every schedule mutation carries the household, or the mutation log
+// drops it and the write cannot be undone.
+func TestModule_EveryMutationEventCarriesTheHousehold(t *testing.T) {
+	repo := newFakeScheduleRepo()
+	bus := events.NewEventBus()
+	var published []events.MutationEvent
+	var mu sync.Mutex
+	bus.SubscribeTopic("schedule", func(ctx context.Context, ev events.MutationEvent) error {
+		mu.Lock()
+		defer mu.Unlock()
+		published = append(published, ev)
+		return nil
+	})
+	mod := NewModule(repo, WithEventBus(bus))
+	scope := sc(t, "Family1", "usr_alice")
+	callCtx := orchestrator.CallContext{User: &models.User{PlatformID: "usr_alice", FamilyGroup: "Family1"}, Scope: scope, EventBus: bus}
+
+	_, err := mod.Execute(context.Background(), callCtx, "schedule_topic_event", map[string]interface{}{
+		"title": "Gym Session", "topic": "health", "start_time": "2026-11-04T07:00:00Z", "sync_to_google": false,
+	})
+	require.NoError(t, err)
+	_, err = mod.Execute(context.Background(), callCtx, "configure_topic_calendar", map[string]interface{}{
+		"topic": "health", "prefix_tag": "Fitness", "color_id": "2",
+	})
+	require.NoError(t, err)
+	_, err = mod.Execute(context.Background(), callCtx, "update_topic_event", map[string]interface{}{"event_id": 1, "title": "Intense"})
+	require.NoError(t, err)
+	_, err = mod.Execute(context.Background(), callCtx, "delete_topic_event", map[string]interface{}{"event_id": 1})
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, published, 4)
+	for _, ev := range published {
+		assert.Equal(t, scope.HouseholdID(), ev.HouseholdID, "%s %s carries the household", ev.Action, ev.EntityType)
+		assert.Equal(t, scope.LegacyLabel(), ev.FamilyGroup, "%s %s carries the legacy label", ev.Action, ev.EntityType)
+	}
+}

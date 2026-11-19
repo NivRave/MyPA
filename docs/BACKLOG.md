@@ -549,8 +549,10 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Evidence:** `DeleteAutomationRule(scope, id)` filters by household and deletes nothing for a rule of another
   household, but returns no error when no row matched, because an existing test asserts that deleting a missing
   rule succeeds. The dashboard path checks the rule's household first; the repository answer is the same
-  "success" for a missing rule and for a rule elsewhere.
-- **Impact:** no data changes; a caller may be told a deletion happened when it did not.
+  "success" for a missing rule and for a rule elsewhere. Both callers (the chat tool and the dashboard) look the
+  rule up in the household first and refuse, so no caller is told a deletion happened; only a new caller of the
+  repository method could be.
+- **Impact:** none today; a trap for a future caller.
 - **Fix:** return not-found on zero rows, as every other delete by ID does since V4-30, and change that test's
   expectation deliberately.
 

@@ -354,11 +354,10 @@ func (m *Module) executeDeleteAutomationRule(ctx context.Context, callCtx orches
 	if err != nil {
 		return "", fmt.Errorf("failed to lookup automation rule: %w", err)
 	}
-	if rule != nil {
-		isAuthorized := rule.HouseholdID != "" && rule.HouseholdID == s.HouseholdID()
-		if !isAuthorized {
-			return "", fmt.Errorf("automation rule %d not found or permission denied", ruleID)
-		}
+	// V4-30: the lookup is confined to the caller's household, so a rule of another household (or
+	// none at all) comes back nil. Refuse it: never report a deletion that did not happen.
+	if rule == nil || rule.HouseholdID == "" || rule.HouseholdID != s.HouseholdID() {
+		return "", fmt.Errorf("automation rule %d not found or permission denied", ruleID)
 	}
 
 	if err := repo.DeleteAutomationRule(s, uint(ruleID)); err != nil {

@@ -491,6 +491,9 @@ func (m *Module) executeConfigureTopicCalendar(ctx context.Context, callCtx orch
 			EntityType:  "TopicCalendarConfig",
 			EntityID:    strconv.FormatUint(uint64(cfg.ID), 10),
 			ActorUserID: userID,
+			// V4-30: without the household the mutation log drops the event, so it could not be undone.
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Configured virtual sub-calendar for topic '%s' (Prefix: [%s], Color: %s)", cfg.Topic, cfg.PrefixTag, cfg.ColorID),
 			Timestamp:   time.Now(),

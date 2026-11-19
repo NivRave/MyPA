@@ -759,9 +759,11 @@ func TestAutomation_ToolEdgeCases(t *testing.T) {
 	_, err = mod.Execute(ctx, callCtx, "call_external_api", map[string]interface{}{"connector_name": "ghost_connector"})
 	assert.Error(t, err)
 
-	// Delete non-existent rule
+	// Delete non-existent rule. V4-30 (DP-26): the lookup is confined to the caller's household,
+	// so "missing" and "another household's" cannot be told apart without a cross-household read;
+	// both are refused alike, never reported as a deletion.
 	_, err = mod.Execute(ctx, callCtx, "delete_automation_rule", map[string]interface{}{"rule_id": 9999})
-	require.NoError(t, err) // Idempotent delete
+	require.Error(t, err)
 
 	// Missing person_name in CRM
 	_, err = mod.Execute(ctx, callCtx, "upsert_personal_crm", map[string]interface{}{})
