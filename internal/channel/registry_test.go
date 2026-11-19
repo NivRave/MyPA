@@ -195,3 +195,23 @@ func TestNilRegistryIsEmpty(t *testing.T) {
 	_, ok = r.Recognize("x")
 	assert.False(t, ok)
 }
+
+// A sealed registry takes no more adapters (V4-34): the app's registry is sealed where it is
+// built, so an adapter cannot reach the engine except through the one list the conformance suite
+// runs.
+func TestSeal_RefusesLaterRegistrations(t *testing.T) {
+	r := NewRegistry()
+	require.NoError(t, r.Register(newFake("one")))
+	assert.False(t, r.Sealed())
+	r.Seal()
+	r.Seal() // idempotent
+	assert.True(t, r.Sealed())
+
+	err := r.Register(newFake("two"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sealed")
+	assert.Len(t, r.All(), 1, "the refused adapter is not added")
+	_, ok := r.Get("two")
+	assert.False(t, ok)
+	assert.Equal(t, []string{WebhookPrefix + "one"}, r.WebhookPaths(), "nor are its routes")
+}

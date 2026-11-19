@@ -107,7 +107,7 @@ mypa/
 │   │   └── transfer.go, doctor.go  #   `mypa transfer` (V4-43) and the /doctor wiring (V4-17)
 │   ├── audit-worker/main.go        # Async RabbitMQ telemetry consumer & 30-day session archiver
 │   ├── devtools/listmodels/        # Dev-only utility (lists Gemini models); not in any image
-│   └── devtools/gendocs/           # Regenerates the tool-catalogue sections of SYSTEM.md/README.md (P5-5)
+│   └── devtools/gendocs/           # Regenerates the generated sections of SYSTEM.md/README.md: tool catalogue (P5-5), channel capability matrix (V4-34)
 ├── .github/dependabot.yml          # Weekly updates → PRs to dev: gomod, npm, docker, docker-compose, github-actions (P5-4)
 ├── .github/workflows/ci.yml       # CI (P5-3): go test -race, golangci-lint (.golangci.yml), govulncheck, dashboard, compose build
 ├── scripts/clean.{ps1,sh}          # Remove local build artefacts (bin/, root *.exe/*.test, coverage)
@@ -118,7 +118,7 @@ mypa/
 │   ├── calendar/                   # Google Calendar v3 client & OAuth2 config/token helpers
 │   ├── channel/                    # Channel layer (V4-31): adapter interface, neutral Inbound/Outbound, registry, fallback renderer (§3.10)
 │   │   └── adapters/               #   the one list of shipped adapters and their settings; `adapterstest` builds it around mocks
-│   ├── conformance/                # Channel conformance suite (V4-34): shared scenarios run on every channel over a fake transport (tests only, §3.7)
+│   ├── conformance/                # Channel conformance suite (V4-34): every scenario on every registered adapter over a fake transport (tests only, §3.7)
 │   ├── config/                     # Viper + godotenv loader & `ALLOWED_USERS` parser
 │   ├── contacts/                   # Google People API v1 client (search & create contacts)
 │   ├── crypto/                     # AES-256-GCM encryption/decryption at rest (`ENCRYPTION_KEY`)
@@ -135,6 +135,7 @@ mypa/
 │   │   ├── house_repo.go           # `HouseRepository` (HouseContractRecord, HomeMaintenanceItem, VehicleAsset)
 │   │   ├── finance_repo.go         # `FinanceRepository` (FinancialTransaction, CategoryBudget, RecurringBill)
 │   │   └── automation_repo.go      # `AutomationRepository` (ExternalAPIConnector, AutomationRule, UserPreference, PersonalCRMContact)
+│   ├── docgen/                     # Every generated doc region in one map (tool catalogue, channel matrix) for gendocs and its drift test
 │   ├── doctor/                     # `/doctor` health checks (V4-17): Google sign-ins, queues, backups, schema; each channel adapter brings its own (§3.8)
 │   ├── domains/                    # Modular `orchestrator.ToolModule` implementations. Large modules (house, automation,
 │   │                               #   schedule, baby, finance — P4-2) are split: module.go (struct, NewModule/options, Name,
@@ -416,29 +417,27 @@ The message broker layer ([`internal/broker/`](./internal/broker/)) provides dec
 
 ### 3.7 Channel Conformance Suite ([`internal/conformance/`](./internal/conformance/), *V4-34*)
 
-One shared set of scenarios is run against every supported channel, in CI (`go test ./...`). It exists so that a change to how messages enter or leave MyPA cannot silently change what users receive.
+One shared set of scenarios is run against every channel adapter the app registers, in CI (`go test ./...`). It exists so that a change to how messages enter or leave MyPA cannot silently change what users receive, and so that a new channel cannot ship without passing the same scenarios as the others.
 
-- **What is real and what is fake.** Each scenario builds the channel registry the app builds (`adapters.Build`, §3.10) and drives each adapter through its real webhook route, authenticated as the platform authenticates (Telegram's secret-token header, Twilio's signature), then the real `orchestrator.Engine`, and the real API clients behind the adapters (`telegram.Client`, `twilio.Client`). Only the network is replaced: every client is built with `adapters.WithHTTPClient(...)` on a fake transport that answers as the Telegram Bot API and the Twilio REST API would, checks the credentials on every request, records every message, and fails the test on a request to any other host. The model, the database, speech-to-text and the audit pipeline are in-memory fakes.
-- **Scenarios** (`scenarios_test.go`): `plain_reply`, `pairing`, `pairing_lockout`, `approval`, `reminder`, `undo`, `media_photo`, `media_voice`, `media_document`, `long_reply`, `duplicate_delivery`, `doctor` (the `/doctor` report, V4-17). Every scenario runs on every channel in `channels` (`harness_test.go`); each entry names its adapter (`telegram.Name`, `twilio.Name`) and the harness takes that adapter from the registry.
-- **Two layers of assertion.** The outcome in channel-neutral terms (the held tool ran exactly once with the held arguments; the reminder is marked sent; nothing went to another person or platform), and the bytes on the wire as a golden transcript per scenario and channel in `testdata/golden/<scenario>.<channel>.txt`. `long_reply` is asserted by properties instead (every message within the platform limit, valid UTF-8, complete, in order).
+- **What is real and what is fake.** Each scenario builds the channel registry the app builds (`adapters.Build`, §3.10) and drives each adapter through its real webhook route, authenticated as the platform authenticates (Telegram's secret-token header, Twilio's signature), then the real `orchestrator.Engine`, and the real API clients behind the adapters (`telegram.Client`, `twilio.Client`). Only the network is replaced: every client is built with `adapters.WithHTTPClient(...)` on a fake transport that answers as the Telegram Bot API and the Twilio REST API would, checks the credentials on every request, records every message, and fails the test on a request to any other host or endpoint. The model, the database, speech-to-text and the audit pipeline are in-memory fakes.
+- **Every registered adapter, and only through the one list.** The suite takes the adapters from `adapters.Build`, the list the app starts, not from a copy kept in the test, and runs every scenario on each. Each adapter needs a fixture in `harness_test.go`: how to forge a person's action as its platform delivers it, and what its platform accepts back. A registered adapter without a fixture fails `TestConformance` (it is never skipped), and `TestFixturesMatchRegisteredAdapters` requires exactly one fixture per adapter, in registration order, with the declared `MaxTextLen` within the platform's own limit. `Build` seals the registry it returns (`Registry.Seal`: a later `Register` is refused), and `TestAdaptersReachTheAppOnlyThroughBuild` fails when production code outside `internal/channel/adapters/adapters.go` calls `channel.NewRegistry` (it parses every production Go file and resolves import names, so an alias does not hide the call). So a new adapter cannot be registered without passing the suite.
+- **Scenarios** (`scenarios_test.go`): `plain_reply`, `pairing`, `pairing_lockout`, `approval`, `reminder`, `undo`, `media_photo`, `media_voice`, `media_document`, `long_reply`, `duplicate_delivery`, `doctor` (the `/doctor` report, V4-17), `fallbacks` (V4-34).
+- **Expectations come from what the adapter declares**, not from the fixture. A kind of file the adapter does not list in `AttachmentsIn` must be dropped by it: nothing reaches the engine, is downloaded or is answered. A kind it lists must reach the engine as that kind. Every part of a long reply must fit the declared `MaxTextLen`, and keep its tags balanced where the markup is HTML. `fallbacks` sends a message with three choices, a document and a voice note through the production registry (nothing in the engine sends one yet) and requires the documented fallback of every capability that is missing (§3.10). A capability that is declared has no fallback to check, so declaring buttons, files out or voice replies fails `fallbacks` until the adapter's fixture checks them on the wire: switching one on (V4-10, V4-18) extends the suite.
+- **Two layers of assertion.** The outcome in channel-neutral terms (the held tool ran exactly once with the held arguments; the reminder is marked sent; nothing went to another person or platform), and the bytes on the wire as a golden transcript per scenario and channel in `testdata/golden/<scenario>.<channel>.txt`. `long_reply` is asserted by properties instead (every message within the platform limit and the declared length, valid UTF-8, complete, in order).
 - **Changing a transcript is changing what users see.** Regenerate with `go test ./internal/conformance -update` and review the diff. A transcript that no scenario compares fails the suite.
 - **Through the port (V4-31).** The transcripts were not regenerated when the channel layer replaced the engine's platform branches: every one is byte-identical to the stage-1 pin, which is the proof that the port changed nothing users receive. The `doctor` fixture lists its checks in the order they were pinned in (Telegram, Google, WhatsApp, …); the app lists the adapters' checks first (§3.8).
+- **Pinned as found, not fixed:** a document sent on Telegram gets no answer (BL-18); reminder labels render italic (BL-19); a person who never wrote gets no reminder (V4-33); the numbered list of choices arrives as bullets on both channels, so its numbers are lost (BL-35).
 
-Behaviour the suite pins today:
+What the adapters declare is the generated matrix in §3.10. Behaviour the suite pins that is not a declared capability:
 
 | | Telegram | WhatsApp (Twilio) |
 | :--- | :--- | :--- |
 | Person is identified by | Telegram user ID; replies go to the chat ID | Phone number (the `whatsapp:` prefix is stripped on the way in and added on the way out) |
-| Formatting | HTML (`parse_mode=HTML`): `<b>`, `<i>`, `<code>`, `<a href>` | WhatsApp markup: `*bold*`, `_italic_`, triple backticks; a link becomes `text (url)` |
-| Long replies | Split at 4,000 bytes with tags kept balanced (platform limit 4,096) | Split at 1,500 bytes (platform limit 1,600) |
 | Photo | Largest size is downloaded and given to the model; the turn is untrusted | Downloaded with Twilio credentials and given to the model; the turn is untrusted |
-| Voice note | Transcribed, echoed, then answered | Transcribed, echoed, then answered |
-| Document | Dropped at the ingress: nothing reaches the engine and nothing is answered | Text files are inlined as untrusted content, PDFs go to the model, other types get an explanation |
-| Approval | Typed `CONFIRM <TOOL>`, any letter case | Typed `CONFIRM <TOOL>`, any letter case |
-| Reminder | Sent to the chat the person last wrote from; a person who never wrote gets nothing and the reminder stays due | Same |
+| Document | Not declared: dropped by the adapter | Text files are inlined as untrusted content, PDFs go to the model, other types get an explanation |
 | Duplicate webhook delivery | Answered once (claim scoped by chat ID) | Answered once (claim scoped by user ID) |
 
-**Still to come (V4-34):** the scenarios now run against the adapters of the production registry (V4-31). Still open: an adapter cannot be registered without passing them (the suite does not yet fail for a registered adapter that has no fixture), and this table and the one in §3.10 are replaced by a capability matrix generated from what each adapter declares. Until then V4-34 stays `In progress`.
+On both channels a voice note is transcribed, echoed, then answered; an approval is typed `CONFIRM <TOOL>`, in any letter case; and a reminder goes to the chat the person last wrote from, while a person who never wrote gets nothing and the reminder stays due.
 
 ### 3.8 `/doctor` Health Check ([`internal/doctor/`](./internal/doctor/), *V4-17*)
 
@@ -478,21 +477,27 @@ One mechanism for upgrading from the pre-V4 baseline, moving an install between 
 One adapter per messaging platform behind one interface. Nothing outside the adapters names a platform: `TestNoPlatformNamedOutsideAdapters` (`internal/channel`) fails on any line of production code outside `internal/telegram/`, `internal/twilio/` and `internal/channel/adapters/` that contains `telegram`, `whatsapp` or `twilio` in any case, comments included: Go, the dashboard sources (`dashboard/src`, tests excepted) and the shipped settings in `config/`. Tests may name platforms; `.env.example` and the docs document the platforms' own setting names and are outside it.
 
 - **Interface** (`channel.Adapter`): `Name()` (stable, stored with audit sessions), `Capabilities()`, `Ingress()` (`Webhook{Routes, Register}` — needs a public address — or `Outward{Run}`, a connection the adapter opens itself; the first outward ingress is V4-40), `Send(ctx, Address, Outbound) (Receipt, error)` and `Fetch(ctx, AttachmentRef)`. Messages in are `channel.Inbound` (§3.1); messages out are `channel.Outbound` (text in the model's Markdown subset, plus optional `Choices`, `Attachments`, `Voice`, `Proactive`, `ReplyContext`). An `Address` is `{Channel, Conversation, Person}`: Telegram sends to the conversation (falling back to the person's private chat), WhatsApp to the person's number.
-- **Registry** (`channel.Registry`): adapters reach the engine only by `Register`, which refuses an invalid name, a duplicate name, invalid capabilities, an ingress that is not exactly one of webhook or outward, a webhook route outside `/webhook/` or one another adapter serves. `adapters.Build` ([`internal/channel/adapters`](./internal/channel/adapters/adapters.go)) is the one list of shipped adapters; it registers both always, configured or not (an unconfigured adapter's webhooks fail closed, as the ingress always did). Each adapter owns its settings (`telegram.Config`, `twilio.Config`, read from the environment and validated per role through `config.Config.Channels`). `Send` turns a refusal into a `*channel.RefusedError` (reasons: `window_closed`, `not_reachable`, `rate_limited`, `too_large`; today's adapters report only accepted or an error — refusals are V4-33).
+- **Registry** (`channel.Registry`): adapters reach the engine only by `Register`, which refuses an invalid name, a duplicate name, invalid capabilities, an ingress that is not exactly one of webhook or outward, a webhook route outside `/webhook/` or one another adapter serves, and any adapter once the registry is sealed. `adapters.Build` ([`internal/channel/adapters`](./internal/channel/adapters/adapters.go)) is the one list of shipped adapters and the only production code that creates a registry; it seals what it returns, so every adapter the app runs is one the conformance suite runs (§3.7, *V4-34*). It registers both always, configured or not (an unconfigured adapter's webhooks fail closed, as the ingress always did). Each adapter owns its settings (`telegram.Config`, `twilio.Config`, read from the environment and validated per role through `config.Config.Channels`). `Send` turns a refusal into a `*channel.RefusedError` (reasons: `window_closed`, `not_reachable`, `rate_limited`, `too_large`; today's adapters report only accepted or an error — refusals are V4-33).
 - **People known only by an ID** (partner notifications, automations, the Google sign-in confirmation) are sent to through `Registry.Recognize`: the adapter that recognizes the ID sends (WhatsApp: a `+` or `whatsapp:` number; Telegram: a decimal ID). This is the leading-`+` rule the wiring used before, moved into the adapters, and it lasts until V4-32 links a person to their channel accounts. The Google confirmation therefore now reaches WhatsApp users too.
 - **Fallbacks** (`channel.Render`, applied before the adapter is called; it reads only declared values): choices become a numbered list at the end of the text when the channel has no buttons, has fewer than there are choices, or a label is too long — all of them, never a mix; an attachment of a kind the channel cannot send is dropped with a line saying the file could not be sent here; a voice message on a channel without voice is dropped and the text is the message. Length and markup are the adapter's.
-- **Capabilities declared today** (what the adapters do now; later items switch each on):
+- **Capabilities.** The matrix is generated from each registered adapter's `Capabilities()` and `Ingress()`, in registration order, as an unconfigured install declares them. "When missing" is the fallback `channel.Render` applies before the adapter is called (buttons, files sent, voice) or what the adapter does (files received, length). The values are what the adapters do today; later items switch them on: buttons V4-10, invite links V4-36, groups V4-16 (Telegram group chats are already reported as `Kind: group`, not addressed; WhatsApp has none, DE-8), voice replies V4-18, documents on Telegram BL-18, the rule for unprompted messages V4-33. The conformance suite checks every declared value against what the adapter does (§3.7).
 
-| Capability | Telegram (`telegram`) | WhatsApp over Twilio (`whatsapp`) | When missing |
+> Generated by `go run ./cmd/devtools/gendocs`; do not edit by hand (`internal/docgen` `TestDocsAreUpToDate` fails on drift).
+
+<!-- BEGIN GENERATED: channel-matrix -->
+| Capability | `telegram` | `whatsapp` | When missing |
 | :--- | :--- | :--- | :--- |
-| Buttons (`MaxChoices`) | 0 (inline buttons: V4-10) | 0 (quick replies: V4-10) | numbered list, typed reply |
-| Invite link | no (V4-36) | no (V4-36) | the typed pairing code |
-| Groups | no (V4-16; group chats are already reported as `Kind: group`, not addressed) | no (DE-8) | direct chats |
-| Voice out | no (V4-18) | no (V4-18) | text |
-| Attachments in | image, audio (documents: BL-18) | image, audio, document | the "unsupported attachment" reply |
-| Attachments out | none | none | a note that the file could not be sent |
-| Text length, markup | 4,000 bytes, HTML | 1,500 bytes, light markup | split by the adapter |
-| Unprompted messages | always | within 24 hours of the person's last message; outside it only an approved template (V4-33) | V4-33 |
+| Receives messages | webhook (needs a public address) | webhook (needs a public address) | — |
+| Buttons (`MaxChoices`) | none | none | all choices as a numbered list at the end of the text, never a mix; the person types the number or the words |
+| Invite link (`InviteLink`) | no | no | the typed pairing code |
+| Group chats (`Groups`) | no | no | direct chats only |
+| Voice replies (`VoiceOut`) | no | no | the text alone |
+| Files received (`AttachmentsIn`) | image, audio | image, audio, document | the adapter drops the message: nothing is downloaded or answered |
+| Files sent (`AttachmentsOut`) | none | none | a line saying the file could not be sent here |
+| Longest message (`MaxTextLen`) | 4,000 bytes | 1,500 bytes | longer text is split by the adapter |
+| Formatting (`Markup`) | HTML | light markup (`*bold*`, `_italic_`, `~strike~`, triple backticks) | — |
+| Unprompted messages (`Proactive`) | always | within 24 hours of the person's last message; outside it only an approved template (V4-33) | — |
+<!-- END GENERATED: channel-matrix -->
 
 - **Upgrading.** The `inbound.messages` payload changed from `models.Message` to `channel.Inbound`: a message queued by an older version decodes with no channel and no sender, so it cannot be answered and ends in the DLQ after its retries. Drain the queue before upgrading, as the upgrade procedure already requires (`docs/RESTORE_AND_MIGRATE.md`, V4-43).
 
@@ -675,7 +680,7 @@ The consumer loop guarantees resilient, bounded message processing:
 
 ## 6. Complete AI Agent Tool Catalog
 
-> Generated from the live `ToolModule` declarations by `go run ./cmd/devtools/gendocs`; do not edit by hand (`internal/toolcatalog` `TestDocsAreUpToDate` fails on drift).
+> Generated from the live `ToolModule` declarations by `go run ./cmd/devtools/gendocs`; do not edit by hand (`internal/docgen` `TestDocsAreUpToDate` fails on drift).
 
 <!-- BEGIN GENERATED: tool-catalog -->
 67 tools across 13 modules. Tier 1 = always offered to the model; Tier 2 = offered when the intent matcher selects the module's domain (see §3.2).

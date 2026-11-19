@@ -144,7 +144,7 @@ Phone numbers in committed files (examples, docs, fixtures) must be fictional: u
 
 To remove local build artefacts (root `*.exe`/`*.test`, `bin/`, coverage files): `powershell -File scripts/clean.ps1` (Windows) or `sh scripts/clean.sh`. Build outputs belong in `bin/` (gitignored).
 
-When you change a tool declaration, regenerate the catalogue: `go run ./cmd/devtools/gendocs` (CI fails if the generated sections of `SYSTEM.md`/`README.md` are stale).
+When you change a tool declaration or a channel adapter's capabilities, regenerate the docs: `go run ./cmd/devtools/gendocs` (CI fails if the generated sections of `SYSTEM.md`/`README.md` are stale).
 
 ---
 

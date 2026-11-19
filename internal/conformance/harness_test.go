@@ -57,18 +57,18 @@ type inbound struct {
 	MessageID  string // the platform's ID for the message; assigned when empty
 }
 
-// channel is what the suite needs to know about one platform: how a person's action arrives, and
-// what the platform will accept back. Everything else about a channel is pinned by its transcripts.
+// channel is the conformance fixture of one adapter: how to forge a person's action as the
+// platform would deliver it, and what the platform will accept back. What the adapter can do is
+// not repeated here: scenarios read it from the adapter's declared capabilities (env.caps).
+// Everything else about a channel is pinned by its transcripts.
 type channel struct {
 	// name is the adapter's name: the value the engine sees in channel.Inbound.Channel.
 	name string
 	// webhookPath is the adapter's route for inbound messages.
 	webhookPath string
-	// hardLimit is the platform's own maximum length of one message, in characters.
+	// hardLimit is the platform's own maximum length of one message, in characters. The adapter's
+	// declared MaxTextLen must not exceed it (TestFixturesMatchRegisteredAdapters).
 	hardLimit int
-	// ingestsDocuments says whether a file sent as a document reaches the assistant today.
-	// WhatsApp: yes. Telegram: no, the update is dropped at the gateway (see SYSTEM.md).
-	ingestsDocuments bool
 	// person returns the n-th test person on this channel.
 	person func(n int) person
 	// address is the recipient a reply to p must carry on the wire.
@@ -81,13 +81,15 @@ type channel struct {
 	receive func(e *env, in inbound) (msg layer.Inbound, ok bool)
 }
 
-// channels lists every supported channel. A scenario runs on all of them.
-var channels = []channel{
+// fixtures holds one fixture per adapter the app registers (adapters.Build), in registration
+// order. The suite runs every scenario on every registered adapter and fails when one has no
+// fixture, so a new adapter cannot ship without passing (V4-34); a fixture without an adapter
+// fails too (TestFixturesMatchRegisteredAdapters).
+var fixtures = []channel{
 	{
-		name:             telegram.Name,
-		webhookPath:      telegram.WebhookPath,
-		hardLimit:        4096,
-		ingestsDocuments: false,
+		name:        telegram.Name,
+		webhookPath: telegram.WebhookPath,
+		hardLimit:   4096,
 		person: func(n int) person {
 			id := strconv.Itoa(7000 + n)
 			return person{UserID: id, ChatID: id} // a private chat has the user's ID
@@ -97,10 +99,9 @@ var channels = []channel{
 		receive:   receiveTelegram,
 	},
 	{
-		name:             twilio.Name,
-		webhookPath:      twilio.WebhookPath,
-		hardLimit:        1600,
-		ingestsDocuments: true,
+		name:        twilio.Name,
+		webhookPath: twilio.WebhookPath,
+		hardLimit:   1600,
 		person: func(n int) person {
 			return person{UserID: fmt.Sprintf("+1202555010%d", n)} // reserved fictional numbers
 		},
@@ -108,6 +109,28 @@ var channels = []channel{
 		messageID: func(n int) string { return fmt.Sprintf("SM%032x", n) },
 		receive:   receiveWhatsApp,
 	},
+}
+
+// fixtureFor returns the fixture of the named adapter.
+func fixtureFor(name string) (channel, bool) {
+	for _, ch := range fixtures {
+		if ch.name == name {
+			return ch, true
+		}
+	}
+	return channel{}, false
+}
+
+// registeredAdapters returns the adapters the app registers, in registration order: the
+// production list (adapters.Build), not a copy of it kept in the test.
+func registeredAdapters(t *testing.T) []layer.Adapter {
+	t.Helper()
+	reg, err := adapters.Build(adapters.Config{})
+	require.NoError(t, err)
+	require.True(t, reg.Sealed(), "the app's registry must be sealed, or an adapter could be added that the suite never runs")
+	all := reg.All()
+	require.NotEmpty(t, all, "the app registers no channel adapter")
+	return all
 }
 
 // receiveTelegram builds a Telegram Update and posts it, with the secret token Telegram sends, to
@@ -193,7 +216,9 @@ func receiveWhatsApp(e *env, in inbound) (layer.Inbound, bool) {
 }
 
 // post serves req with the webhook route of the scenario's adapter, taken from the production
-// registry, and returns what the adapter handed to the inbound queue.
+// registry, and returns what the adapter handed to the inbound queue. (A fixture for an adapter
+// with an outward ingress, V4-40, hands its forged payload to the fake transport and runs
+// Outward.Run with the same sink instead.)
 func (e *env) post(req *http.Request) (layer.Inbound, bool) {
 	e.t.Helper()
 	adapter, ok := e.channels.Get(e.ch.name)
@@ -371,12 +396,61 @@ func (e *env) deliver(in inbound) bool {
 	assert.Equal(e.t, in.From.ChatID, msg.Conversation.ID, "conversation ID")
 	assert.Equal(e.t, in.MessageID, msg.MessageID, "message ID")
 	assert.True(e.t, msg.Conversation.Addressed, "a direct message is addressed to the assistant")
+	if in.Attachment != nil {
+		// A file reaches the engine only as a kind the adapter declares it receives.
+		kind := attachmentKind(e.t, in.Attachment.Kind)
+		if assert.Len(e.t, msg.Attachments, 1, "the file the person sent") {
+			assert.Equal(e.t, kind, msg.Attachments[0].Kind, "attachment kind")
+		}
+		assert.True(e.t, e.accepts(kind), "%s handed the engine a %s, which it does not declare in AttachmentsIn", e.ch.name, kind)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	require.NoError(e.t, e.engine.ProcessMessage(ctx, msg))
 	e.engine.Wait() // the audit session is published in the background
 	return true
+}
+
+// attachmentKind maps the kind of file a person sends to the channel layer's kind.
+func attachmentKind(t *testing.T, kind string) layer.AttachmentKind {
+	t.Helper()
+	switch kind {
+	case "photo":
+		return layer.KindImage
+	case "voice":
+		return layer.KindAudio
+	case "document":
+		return layer.KindDocument
+	}
+	t.Fatalf("unknown attachment kind %q", kind)
+	return ""
+}
+
+// caps returns what the scenario's adapter declares.
+func (e *env) caps() layer.Capabilities {
+	e.t.Helper()
+	adapter, ok := e.channels.Get(e.ch.name)
+	require.True(e.t, ok, "adapter %q is not registered", e.ch.name)
+	return adapter.Capabilities()
+}
+
+// accepts reports whether the scenario's adapter declares that it receives files of this kind.
+func (e *env) accepts(kind layer.AttachmentKind) bool {
+	return layer.Accepts(e.caps().AttachmentsIn, kind)
+}
+
+// declined asserts the documented fallback for a file of a kind the adapter does not declare in
+// AttachmentsIn: the adapter drops the message, so nothing reaches the engine, nothing is
+// downloaded and nothing is answered (SYSTEM.md §3.10).
+func (e *env) declined(scenario string, in inbound) {
+	e.t.Helper()
+	ok := e.deliver(in)
+	assert.False(e.t, ok, "a %s must not reach the engine on %s, which does not declare it", in.Attachment.Kind, e.ch.name)
+	assert.Empty(e.t, e.wire.fetched(), "the file must not be downloaded")
+	assert.Empty(e.t, e.model.requests())
+	assert.Empty(e.t, e.wire.messages())
+	e.golden(scenario)
 }
 
 // says delivers a plain text message and requires that it reached the engine.

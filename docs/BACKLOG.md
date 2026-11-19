@@ -45,6 +45,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-32 | Low | A pairing code can be redeemed by two senders at the same moment | open: ADR 0002 requires a one-statement claim for every code |
 | BL-33 | Low | WhatsApp and Telegram message splitting counts bytes, not characters, so non-Latin text is split at about half the allowed length | open: fix after the channel port (V4-31), not during it |
 | BL-34 | Low | The dashboard home page still shows the label "Orchestrator V3 • Active" | open |
+| BL-35 | Medium | A numbered list loses its numbers on both channels, so the typed fallback for choices cannot be answered "with the number" | open: before buttons (V4-10) rely on the fallback |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -488,6 +489,23 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** with the dashboard reorganisation (V4-37), or on its own: show the app and its version, taken
   from the app instead of hard-coded (for example from `/doctor`'s data once V4-37 gives it a page), or
   drop the label. Test: the home page does not contain "Orchestrator".
+
+### BL-35 — A numbered list loses its numbers on both channels (Medium)
+- **Found:** 2026-11-19, by the new conformance scenario `fallbacks` (V4-34).
+- **Evidence:** `channel.ChoiceList` (`internal/channel/render.go`) renders choices for a channel without
+  buttons as `1. Book it (reply yes)`, `2. …`, and ADR 0003 Decision 2 says the person replies "with the
+  number or the words". Both adapters then convert the text from Markdown, and both converters write every
+  list item with a fixed bullet whether the list is ordered or not: `internal/telegram/markdown.go:97-103`
+  writes `• `, the WhatsApp converter in `internal/twilio/markdown.go` writes `- `. What arrives is pinned in
+  `internal/conformance/testdata/golden/fallbacks.*.txt`: `• Book it (reply yes)` on Telegram and
+  `- Book it (reply yes)` on WhatsApp. The same happens to any numbered list the model writes in a reply.
+- **Impact:** no user hits it through choices yet, because nothing in the engine sends choices before V4-10.
+  Once it does, a person on either channel sees an unnumbered list and is told elsewhere to answer with a
+  number. Numbered steps in ordinary replies (a recipe, a plan) already lose their numbers today.
+- **Fix:** in both converters, render an item of an ordered list (`ast.List.IsOrdered()`) with its number
+  (`Start` plus its position) instead of the bullet. Tests: a converter test per channel, and in the
+  conformance scenario `fallbacks` assert `1. Book it` … `3. Another day` and regenerate the two transcripts.
+  The `plain_reply` transcripts stay as they are (their list is unordered).
 
 ## Operations (owner)
 

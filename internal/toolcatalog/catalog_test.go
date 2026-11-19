@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -107,22 +106,8 @@ func TestProductionModulesMatchTheWorkerWiring(t *testing.T) {
 	assert.Equal(t, wired, listed, "toolcatalog.ProductionModules is out of sync with cmd/mypa/worker.go")
 }
 
-// The committed docs must equal their regenerated form.
-func TestDocsAreUpToDate(t *testing.T) {
-	regions := Build().Regions()
-	for _, name := range DocFiles {
-		raw, err := os.ReadFile(filepath.Join(repoRoot, name))
-		require.NoError(t, err)
-		want, err := Apply(string(raw), regions)
-		require.NoError(t, err, name)
-		assert.True(t, want == string(raw), "%s is stale: run `go run ./cmd/devtools/gendocs`", name)
-	}
-	system, err := os.ReadFile(filepath.Join(repoRoot, "SYSTEM.md"))
-	require.NoError(t, err)
-	for _, region := range []string{"tool-catalog", "tool-tiers"} {
-		assert.True(t, strings.Contains(string(system), "<!-- BEGIN GENERATED: "+region+" -->"), "SYSTEM.md lost its %s region", region)
-	}
-}
+// TestDocsAreUpToDate lives in internal/docgen, which also generates the channel capability
+// matrix (V4-34).
 
 // V4-06 "done when": remember_fact is gone. No production module declares it, the static tool
 // list does not, it is not a core tool and not in the confirmation gate, and the generated
