@@ -114,6 +114,7 @@ mypa/
 │   ├── audio/                      # Groq Whisper API client (`whisper-large-v3`) for voice transcription
 │   ├── broker/                     # RabbitMQ AMQP 0-9-1 `Publisher` and `Consumer`
 │   ├── calendar/                   # Google Calendar v3 client & OAuth2 config/token helpers
+│   ├── conformance/                # Channel conformance suite (V4-34): shared scenarios run on every channel over a fake transport (tests only, §3.7)
 │   ├── config/                     # Viper + godotenv loader & `ALLOWED_USERS` parser
 │   ├── contacts/                   # Google People API v1 client (search & create contacts)
 │   ├── crypto/                     # AES-256-GCM encryption/decryption at rest (`ENCRYPTION_KEY`)
@@ -407,6 +408,32 @@ The message broker layer ([`internal/broker/`](./internal/broker/)) provides dec
    - **Non-retryable failures (*P1-4*):** a handler error wrapping `broker.ErrNonRetryable` (`broker.NonRetryable(err)`) is **acked** without redelivery — used once a turn has produced side effects (tool executed, admin command acted, reply delivered, pairing state changed), because re-running the turn would duplicate calendar events/emails/ledger rows. Policy lives in `broker/retry_policy.go` (`decideFailure`). Handlers registered via `ConsumeWithInfo` receive `broker.DeliveryInfo{Attempt, MaxAttempts}`.
    - **Poison-Pill Protection:** Malformed JSON payloads that fail deserialization are immediately rejected without requeue (`Reject(false)`), instantly shunting toxic payloads to the DLQ without stalling consumers.
    - **Graceful Shutdown:** `Stop()` cancels the consumption context and closes the AMQP channel cleanly.
+
+### 3.7 Channel Conformance Suite ([`internal/conformance/`](./internal/conformance/), *V4-34*)
+
+One shared set of scenarios is run against every supported channel, in CI (`go test ./...`). It exists so that a change to how messages enter or leave MyPA cannot silently change what users receive.
+
+- **What is real and what is fake.** Each scenario drives the platform's real ingress code (`telegram.ParseUpdate`; the signed form through `twilio.Handler.HandleWebhook`), the real `orchestrator.Engine`, and the real API clients (`telegram.Client`, `twilio.Client`). Only the network is replaced: both clients are built with `WithHTTPClient(...)` on a fake transport that answers as the Telegram Bot API and the Twilio REST API would, checks the credentials on every request, records every message, and fails the test on a request to any other host. The model, the database, speech-to-text and the audit pipeline are in-memory fakes.
+- **Scenarios** (`scenarios_test.go`): `plain_reply`, `pairing`, `pairing_lockout`, `approval`, `reminder`, `undo`, `media_photo`, `media_voice`, `media_document`, `long_reply`, `duplicate_delivery`. Every scenario runs on every channel in `channels` (`harness_test.go`).
+- **Two layers of assertion.** The outcome in channel-neutral terms (the held tool ran exactly once with the held arguments; the reminder is marked sent; nothing went to another person or platform), and the bytes on the wire as a golden transcript per scenario and channel in `testdata/golden/<scenario>.<channel>.txt`. `long_reply` is asserted by properties instead (every message within the platform limit, valid UTF-8, complete, in order).
+- **Changing a transcript is changing what users see.** Regenerate with `go test ./internal/conformance -update` and review the diff. A transcript that no scenario compares fails the suite.
+- **Not covered here:** the Telegram webhook's secret-token check, which lives in `cmd/gateway` and is pinned by that package's tests.
+
+Behaviour the suite pins today:
+
+| | Telegram | WhatsApp (Twilio) |
+| :--- | :--- | :--- |
+| Person is identified by | Telegram user ID; replies go to the chat ID | Phone number (the `whatsapp:` prefix is stripped on the way in and added on the way out) |
+| Formatting | HTML (`parse_mode=HTML`): `<b>`, `<i>`, `<code>`, `<a href>` | WhatsApp markup: `*bold*`, `_italic_`, triple backticks; a link becomes `text (url)` |
+| Long replies | Split at 4,000 bytes with tags kept balanced (platform limit 4,096) | Split at 1,500 bytes (platform limit 1,600) |
+| Photo | Largest size is downloaded and given to the model; the turn is untrusted | Downloaded with Twilio credentials and given to the model; the turn is untrusted |
+| Voice note | Transcribed, echoed, then answered | Transcribed, echoed, then answered |
+| Document | Dropped at the gateway: nothing reaches the engine and nothing is answered | Text files are inlined as untrusted content, PDFs go to the model, other types get an explanation |
+| Approval | Typed `CONFIRM <TOOL>`, any letter case | Typed `CONFIRM <TOOL>`, any letter case |
+| Reminder | Sent to the chat the person last wrote from; a person who never wrote gets nothing and the reminder stays due | Same |
+| Duplicate webhook delivery | Answered once (claim scoped by chat ID) | Answered once (claim scoped by user ID) |
+
+**Still to come with the channel layer (V4-31):** the scenarios run against every registered adapter, an adapter cannot be registered without passing them, and this table is replaced by a capability matrix generated from what each adapter declares. Until then V4-34 stays `In progress`.
 
 ---
 

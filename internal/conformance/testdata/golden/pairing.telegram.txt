@@ -1,0 +1,10 @@
+=== message 1: telegram to=7001 parse_mode=HTML
+🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue. (4 attempts remaining before 1-hour lockout)
+=== message 2: telegram to=7001 parse_mode=HTML
+✅ Pairing successful! Welcome to MyPA. You can now use all features.
+=== message 3: telegram to=7001 parse_mode=HTML
+Hi! How can I help?
+=== message 4: telegram to=7002 parse_mode=HTML
+✅ Pairing successful! Welcome to MyPA. You can now use all features.
+=== message 5: telegram to=7003 parse_mode=HTML
+🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue. (4 attempts remaining before 1-hour lockout)

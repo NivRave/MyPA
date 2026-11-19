@@ -1,0 +1,12 @@
+=== message 1: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
+🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue. (4 attempts remaining before 1-hour lockout)
+=== message 2: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
+🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue. (3 attempts remaining before 1-hour lockout)
+=== message 3: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
+🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue. (2 attempts remaining before 1-hour lockout)
+=== message 4: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
+🚫 Unauthorized access. Please provide a valid 6-digit pairing code to continue. (1 attempts remaining before 1-hour lockout)
+=== message 5: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
+🚫 Too many failed attempts (5/5). Your account has been locked for 1 hour.
+=== message 6: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
+🚫 Too many failed pairing attempts. You are temporarily locked out. Please try again in 60 minutes.

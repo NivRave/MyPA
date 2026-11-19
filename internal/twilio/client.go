@@ -19,14 +19,32 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// Option configures a Client.
+type Option func(*Client)
+
+// WithHTTPClient replaces the HTTP client used for every Twilio API call and media download. The
+// channel conformance suite (V4-34) uses it to run this client against a fake transport instead
+// of the network. The HTTPS and host allowlist checks in DownloadMedia apply regardless.
+func WithHTTPClient(hc *http.Client) Option {
+	return func(c *Client) {
+		if hc != nil {
+			c.httpClient = hc
+		}
+	}
+}
+
 // NewClient creates a new Twilio API client.
-func NewClient(cfg config.TwilioConfig) *Client {
-	return &Client{
+func NewClient(cfg config.TwilioConfig, opts ...Option) *Client {
+	c := &Client{
 		cfg: cfg,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // SendMessage sends a WhatsApp message (text) to the target number.

@@ -1,0 +1,8 @@
+=== message 1: telegram to=7001 parse_mode=HTML
+🔒 <b>Interactive Security Confirmation Required</b>
+
+The assistant tried to perform a sensitive action (<code>delete_task</code>) after reading external data (telegram_photo).
+To prevent indirect prompt injection, this modification was NOT applied automatically.
+
+👉 If you intended to make this change, please reply with:
+<code>CONFIRM DELETE_TASK</code>

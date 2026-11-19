@@ -1,0 +1,11 @@
+=== message 1: telegram to=7001 parse_mode=HTML
+Here is your plan:
+
+<b>Morning</b>
+
+• Call <i>Dana</i> about the trip
+• Buy milk &amp; eggs
+
+See <a href="https://example.com/list">the list</a> or run <code>git status</code>.
+
+שלום, הכול מוכן ב-18:00.

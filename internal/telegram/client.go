@@ -20,14 +20,31 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// Option configures a Client.
+type Option func(*Client)
+
+// WithHTTPClient replaces the HTTP client used for every Bot API call. The channel conformance
+// suite (V4-34) uses it to run this client against a fake transport instead of the network.
+func WithHTTPClient(hc *http.Client) Option {
+	return func(c *Client) {
+		if hc != nil {
+			c.httpClient = hc
+		}
+	}
+}
+
 // NewClient creates a new Telegram API client.
-func NewClient(token string) *Client {
-	return &Client{
+func NewClient(token string, opts ...Option) *Client {
+	c := &Client{
 		token: token,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // SendMessageRequest represents the payload for sendMessage API.

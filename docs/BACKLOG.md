@@ -27,6 +27,9 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-14 | Medium | Memory consolidation is implemented but never runs: nothing schedules or calls it | open — tracked as V4-14 |
 | BL-15 | Low | Two code comments point to `docs/PLAN.md`, which does not exist | open |
 | BL-16 | Medium | No re-encryption path for old-format (unsalted) ciphertexts, so the legacy decryption fallback cannot be removed safely | open — tracked as V4-07 |
+| BL-17 | Low | WhatsApp message splitter cuts by bytes and can split a character in unbroken non-Latin text | open |
+| BL-18 | Low | A document sent on Telegram gets no answer at all | open — the channel layer (V4-31) is the natural place |
+| BL-19 | Low | Reminder and transcription labels render as italics, probably meant as bold | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -178,6 +181,39 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   about tokens encrypted under the old public fallback key.
 - **Fix:** a one-off re-encryption pass over the three stores that rewrites each value in the current format
   and reports how many old-format values remain; delete the fallback only when the report shows zero (V4-07).
+
+### BL-17 — WhatsApp splitter can cut inside a character (Low)
+- **Found:** 2026-11-19, while writing the channel conformance suite (V4-34).
+- **Evidence:** `twilio.SplitMessage` (`internal/twilio/client.go`) measures and cuts by bytes. It prefers a
+  paragraph break, a newline or a space, but when the first 1,500 bytes contain none it cuts at byte 1,500.
+  Probe: `SplitMessage("a"+strings.Repeat("א", 1200), 1500)` returns two chunks that are both invalid UTF-8.
+- **Impact:** only text with more than 1,500 bytes and no space or newline, in a multi-byte script (about 750
+  Hebrew letters, 500 CJK characters, or a long run of emoji). Ordinary Hebrew or English prose is not
+  affected, and the conformance suite's long-reply scenario (mixed Hebrew and English) passes. When it does
+  happen, Twilio receives a broken character at the cut.
+- **Fix:** cut on a rune boundary (back up while `!utf8.RuneStart`). Test: the probe above yields only valid
+  UTF-8 and loses no character. If the splitter moves into a channel adapter (V4-31), fix it there.
+
+### BL-18 — A document sent on Telegram gets no answer (Low)
+- **Found:** 2026-11-19, pinned by the conformance scenario `media_document`.
+- **Evidence:** `telegram.ParseUpdate` (`internal/telegram/handler.go`) returns nothing for an update that has
+  neither text, a voice note nor a photo, so a file sent as a document never reaches the engine and the sender
+  gets silence. With a caption, the caption is answered and the file is ignored without a word. WhatsApp reads
+  text files and PDFs and explains what it cannot read (`internal/orchestrator/media.go`).
+- **Impact:** the same action has a different outcome per channel, and on Telegram the person cannot tell
+  whether the file arrived (ROADMAP §2, principle 8).
+- **Fix:** at minimum answer that documents are not supported on Telegram yet; better, ingest them as on
+  WhatsApp. Either belongs in the Telegram adapter (V4-31). Update the pinned transcript when it changes.
+
+### BL-19 — Reminder and transcription labels render as italics (Low)
+- **Found:** 2026-11-19, visible in the conformance transcripts `reminder.*` and `media_voice.*`.
+- **Evidence:** `engine.go` sends `🔔 *Reminder:*` and `🔔 *Shared Task Reminder:*`, and `media.go` sends
+  `🗣️ *Transcribed:*`. A single asterisk is Markdown emphasis, so Telegram shows `<i>Reminder:</i>` and
+  WhatsApp `_Reminder:_`. Other headings in the code use `**…**` and render bold.
+- **Impact:** cosmetic. The single asterisk looks like a leftover from Telegram's old Markdown mode, where it
+  meant bold.
+- **Fix:** if bold is intended, use `**…**` and regenerate the transcripts
+  (`go test ./internal/conformance -update`).
 
 ## Operations (owner)
 
