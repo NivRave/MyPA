@@ -100,7 +100,7 @@ func TestMarkdown_ProblemsFirstWithNextSteps(t *testing.T) {
 		{Check: "Database schema", Status: StatusOK, Detail: "Version 4, up to date."},
 		{Check: "WhatsApp", Status: StatusInfo, Detail: "Not configured."},
 		{Check: "Backups", Status: StatusWarn, Detail: "The newest backup is not encrypted.", NextStep: "Set `BACKUP_AGE_RECIPIENTS`."},
-		{Check: "Telegram webhook", Status: StatusFail, Detail: "No webhook is registered.", NextStep: "Set `TELEGRAM_WEBHOOK_URL` and restart the gateway."},
+		{Check: "Telegram webhook", Status: StatusFail, Detail: "No webhook is registered.", NextStep: "Set `TELEGRAM_WEBHOOK_URL` and restart the app."},
 	}}
 
 	md := report.Markdown()
@@ -114,7 +114,7 @@ func TestMarkdown_ProblemsFirstWithNextSteps(t *testing.T) {
 	info := strings.Index(md, "ℹ️ **WhatsApp**")
 	require.True(t, fail > 0 && warn > 0 && ok > 0 && info > 0, md)
 	assert.True(t, fail < warn && warn < ok && ok < info, "problems come first:\n%s", md)
-	assert.Contains(t, md, "➡️ Set `TELEGRAM_WEBHOOK_URL` and restart the gateway.")
+	assert.Contains(t, md, "➡️ Set `TELEGRAM_WEBHOOK_URL` and restart the app.")
 	assert.Contains(t, md, "➡️ Set `BACKUP_AGE_RECIPIENTS`.")
 }
 

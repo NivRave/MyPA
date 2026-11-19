@@ -29,9 +29,9 @@ import (
 )
 
 // ProductionModules returns one instance of every module registered in
-// cmd/orchestrator/main.go, in registration order. Dependencies are nil: only Name() and
+// cmd/mypa/worker.go, in registration order. Dependencies are nil: only Name() and
 // Declarations() may be called, and neither touches dependencies.
-// TestProductionModulesMatchOrchestratorMain keeps this list in sync with main.go.
+// TestProductionModulesMatchTheWorkerWiring keeps this list in sync with worker.go.
 func ProductionModules() []orchestrator.ToolModule {
 	return []orchestrator.ToolModule{
 		workspace_calendar.NewModule(nil),

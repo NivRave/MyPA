@@ -6,35 +6,18 @@ x-logging: &default-logging
     max-file: "5"
 
 services:
-  gateway:
+  # V4-01: the app is one binary with roles (ADR 0001 option 1c). It runs the default role, `all`:
+  # it receives the webhooks, enqueues them on RabbitMQ (the durable hand-off is kept), consumes
+  # them, and serves /graphql and the Google sign-in on the same port. `--role=ingress` and
+  # `--role=worker` split it again when a deploy needs that.
+  app:
     logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
-      target: gateway
+      target: app
     ports:
-      - "127.0.0.1:8080:8080"
-    env_file:
-      - .env
-    environment:
-      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER:-mypa}:${RABBITMQ_DEFAULT_PASS:-mypa_dev}@rabbitmq:5672/
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgres://${POSTGRES_USER:-mypa}:${POSTGRES_PASSWORD:-mypa_password}@postgres:5432/${POSTGRES_DB:-mypa}?sslmode=disable
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  orchestrator:
-    logging: *default-logging
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: orchestrator
-    ports:
-      - "127.0.0.1:8081:8081"
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     environment:
@@ -67,8 +50,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: orchestrator
-    entrypoint: ["/usr/local/bin/orchestrator", "transfer"]
+      target: app
+    entrypoint: ["/usr/local/bin/mypa", "transfer"]
     env_file:
       - .env
     environment:
@@ -88,14 +71,14 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # P4-3: one-shot schema migration job. The orchestrator and audit-worker start only after it
+  # P4-3: one-shot schema migration job. The app and audit-worker start only after it
   # completes successfully, and themselves refuse to run with pending migrations.
   migrate:
     logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
-      target: orchestrator
+      target: app
     command: ["-migrate-only"]
     env_file:
       - .env
@@ -131,24 +114,6 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  proxy:
-    logging: *default-logging
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: proxy
-    ports:
-      - "127.0.0.1:8000:8000"
-    environment:
-      - GATEWAY_URL=http://gateway:8080
-      - ORCHESTRATOR_URL=http://orchestrator:8081
-    depends_on:
-      gateway:
-        condition: service_started
-      orchestrator:
-        condition: service_started
-    restart: unless-stopped
-
   ngrok:
     logging: *default-logging
     # Pinned by digest (ngrok agent 3.39.8) — P3-5. Bump deliberately (Dependabot, P5-4).
@@ -156,7 +121,7 @@ services:
     restart: unless-stopped
     command:
       - "http"
-      - "proxy:8000"
+      - "app:8000"
       # P3-5: no committed default domain. Without NGROK_DOMAIN ngrok fails loudly at start
       # (a ${VAR:?} guard would break every compose command, incl. CI builds without a .env).
       - "--url=${NGROK_DOMAIN:-}"
@@ -165,9 +130,8 @@ services:
     ports:
       - "127.0.0.1:4040:4040"
     depends_on:
-      proxy:
+      app:
         condition: service_started
-
 
   rabbitmq:
     logging: *default-logging
@@ -251,13 +215,14 @@ services:
     ports:
       - "127.0.0.1:3030:3000"
     environment:
-      - NEXT_PUBLIC_PROXY_URL=http://localhost:8000
-      - GRAPHQL_ENDPOINT=http://proxy:8000/graphql
+      # V4-01: the dashboard talks to the app directly.
+      - NEXT_PUBLIC_APP_URL=http://localhost:8000
+      - GRAPHQL_ENDPOINT=http://app:8000/graphql
       - DASHBOARD_API_SECRET=${DASHBOARD_API_SECRET:-}
-      # Must match the orchestrator's: the dashboard secret is scoped to this family group (P3-2)
+      # Must match the app's: the dashboard secret is scoped to this family group (P3-2)
       - DASHBOARD_FAMILY_GROUP=${DASHBOARD_FAMILY_GROUP:-}
     depends_on:
-      proxy:
+      app:
         condition: service_started
     restart: unless-stopped
 

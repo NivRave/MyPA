@@ -9,9 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -22,23 +19,24 @@ import (
 	"github.com/nivik/mypa/internal/twilio"
 )
 
-func main() {
-	// Initialize logger
-	logging.Setup() // JSON on stdout at LOG_LEVEL (default info); P3-3
+// The ingress (formerly cmd/gateway, V4-01): it verifies and normalises the Telegram and Twilio
+// webhooks and publishes each message to the durable inbound.messages queue. It never processes a
+// message itself, so a webhook returns fast and a crash in a turn cannot lose an accepted message.
+// It runs in the roles `all` and `ingress`.
 
-	// Load config
-	cfg, err := config.Load()
-	if err != nil {
-		slog.Error("failed to load config", "error", err)
-		os.Exit(1)
-	}
-	if err := cfg.Validate(config.ServiceGateway); err != nil {
-		slog.Error("invalid gateway configuration — refusing to start", "error", err)
-		os.Exit(1)
-	}
+// ingress is what the ingress side of the app holds while it runs.
+type ingress struct {
+	router   http.Handler
+	pub      *broker.Publisher
+	stopRegs context.CancelFunc
+}
 
-	// Initialize RabbitMQ Publisher with retry
+// startIngress connects the publisher (with retry, as the gateway did), builds the webhook router
+// and registers the Telegram webhook in the background. Network failures of the registration are
+// retried with backoff and never stop the app.
+func startIngress(cfg *config.Config) (*ingress, error) {
 	var pub *broker.Publisher
+	var err error
 	for i := 0; i < 5; i++ {
 		pub, err = broker.NewSafePublisher(cfg.RabbitMQ.URL, broker.InboundMessagesQueue)
 		if err == nil {
@@ -48,36 +46,10 @@ func main() {
 		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
-		slog.Error("failed to initialize rabbitmq publisher after retries", "error", err)
-		os.Exit(1)
-	}
-	defer pub.Close()
-
-	// Initialize HTTP router
-	r := setupRouter(pub, cfg)
-
-	// Start server
-	server := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Server.GatewayPort),
-		Handler:           r,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		return nil, fmt.Errorf("rabbitmq publisher: %w", err)
 	}
 
-	go func() {
-		slog.Info("gateway starting", "port", cfg.Server.GatewayPort)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("server failed", "error", err)
-			os.Exit(1)
-		}
-	}()
-
-	// Register the Telegram webhook (with secret_token) in the background.
-	// Network failures are retried with backoff and never crash the gateway.
 	regCtx, cancelReg := context.WithCancel(context.Background())
-	defer cancelReg()
 	if cfg.Telegram.WebhookURL != "" {
 		go func() {
 			client := telegram.NewClient(cfg.Telegram.BotToken)
@@ -91,18 +63,15 @@ func main() {
 		slog.Warn("TELEGRAM_WEBHOOK_URL not set; skipping setWebhook — the webhook must already be registered with the secret token")
 	}
 
-	// Graceful shutdown
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	return &ingress{router: setupIngressRouter(pub, cfg), pub: pub, stopRegs: cancelReg}, nil
+}
 
-	slog.Info("gateway shutting down")
-	cancelReg()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(ctx); err != nil {
-		slog.Error("failed to shutdown server gracefully", "error", err)
+// stop cancels a webhook registration still in progress and closes the publisher. Call it after
+// the HTTP server has stopped accepting requests.
+func (in *ingress) stop() {
+	in.stopRegs()
+	if err := in.pub.Close(); err != nil {
+		slog.Warn("closing the inbound publisher failed", "error", err)
 	}
 }
 
@@ -110,7 +79,7 @@ type EventPublisher interface {
 	Publish(ctx context.Context, msg any) error
 }
 
-func setupRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
+func setupIngressRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
@@ -158,8 +127,8 @@ func setupRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
 			return
 		}
 
-		// Forward to orchestrator regardless of authorization
-		// (Orchestrator handles unauthorized pairing flows)
+		// Enqueue regardless of authorization
+		// (the worker handles unauthorized pairing flows)
 
 		// P3-3: never log message content at INFO (length + message_id only).
 		logging.LogMessageText(r.Context(), nil, "received message", msg.Text, "user_id", msg.UserID, "message_id", msg.ID)

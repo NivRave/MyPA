@@ -6,7 +6,7 @@
 
 ❌ *Telegram webhook*
 Telegram could not deliver updates: Connection refused (12 minutes ago). 3 updates are waiting.
-➡️ Check that the address in ```TELEGRAM_WEBHOOK_URL``` is reachable from the internet (is the tunnel up?) and that the gateway is running.
+➡️ Check that the address in ```TELEGRAM_WEBHOOK_URL``` is reachable from the internet (is the tunnel up?) and that the app is running.
 
 ❌ *Google account: Omer*
 The Google sign-in has expired or was revoked: Google refused to renew it.

@@ -35,29 +35,31 @@ export class GraphQLClientError extends Error {
 /**
  * Resolves the target GraphQL endpoint based on execution context:
  * 1. Explicit GRAPHQL_ENDPOINT (e.g. from docker-compose or .env)
- * 2. PROXY_URL / NEXT_PUBLIC_PROXY_URL
- * 3. Fallback to container DNS http://proxy:8000/graphql (or http://localhost:8000/graphql)
+ * 2. APP_URL / NEXT_PUBLIC_APP_URL (the base address of the MyPA app)
+ * 3. Fallback to container DNS http://app:8000/graphql (or http://localhost:8000/graphql)
+ *
+ * V4-01: the dashboard talks to the app directly; there is no proxy in between any more.
  */
 export function getGraphQLEndpoint(): string {
   if (process.env.GRAPHQL_ENDPOINT) {
     return process.env.GRAPHQL_ENDPOINT;
   }
-  if (process.env.PROXY_URL) {
-    return `${process.env.PROXY_URL.replace(/\/+$/, "")}/graphql`;
+  if (process.env.APP_URL) {
+    return `${process.env.APP_URL.replace(/\/+$/, "")}/graphql`;
   }
-  if (process.env.NEXT_PUBLIC_PROXY_URL) {
-    return `${process.env.NEXT_PUBLIC_PROXY_URL.replace(/\/+$/, "")}/graphql`;
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return `${process.env.NEXT_PUBLIC_APP_URL.replace(/\/+$/, "")}/graphql`;
   }
   // In Node/SSR environment inside Docker network vs client browser:
   return typeof window === "undefined"
-    ? "http://proxy:8000/graphql"
+    ? "http://app:8000/graphql"
     : "http://localhost:8000/graphql";
 }
 
 /**
  * The family group this dashboard manages. The dashboard's API secret is an admin bound to
  * exactly this family group on the server (P3-2), so every query/mutation must use the same
- * value: DASHBOARD_FAMILY_GROUP (server-side env, shared with the orchestrator).
+ * value: DASHBOARD_FAMILY_GROUP (server-side env, shared with the app).
  * Falls back to the demo family when unset (the server rejects any mismatch).
  */
 export function getDashboardFamilyGroup(): string {
@@ -66,7 +68,7 @@ export function getDashboardFamilyGroup(): string {
 }
 
 /**
- * Executes a typed GraphQL query or mutation through the API Proxy.
+ * Executes a typed GraphQL query or mutation against the app's /graphql.
  */
 export async function graphqlFetch<TData = unknown, TVariables = Record<string, unknown>>(
   query: string,
@@ -78,7 +80,7 @@ export async function graphqlFetch<TData = unknown, TVariables = Record<string, 
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    // Always supply Authorization header to satisfy proxy and auth_middleware ingress
+    // Always supply Authorization header to satisfy the app's edge guard and auth_middleware
     Authorization: `Bearer ${secret || "dev-dashboard-token"}`,
     ...(init?.headers as Record<string, string>),
   };

@@ -2,7 +2,7 @@
 // checks, each of which reports what it found and, for every problem, what to do next.
 //
 // The package knows nothing about where its facts come from. Every check takes its inputs as
-// small functions, bound to Telegram, Redis, RabbitMQ and Postgres in cmd/orchestrator, so each
+// small functions, bound to Telegram, Redis, RabbitMQ and Postgres in cmd/mypa, so each
 // way an install breaks can be reproduced in a test without any of them running.
 package doctor
 
@@ -58,7 +58,7 @@ type Check interface {
 const DefaultCheckTimeout = 15 * time.Second
 
 // genericNextStep is used when a check reports a problem without saying what to do.
-const genericNextStep = "Check the orchestrator log for details, then run /doctor again."
+const genericNextStep = "Check the app log for details, then run /doctor again."
 
 // Doctor runs a fixed list of checks.
 type Doctor struct {

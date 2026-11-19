@@ -38,17 +38,18 @@ func TestCompose_TransferToolIsOptInAndSeesBackupsAndArchives(t *testing.T) {
 
 	assert.Equal(t, []string{"tools"}, svc.Profiles, "transfer must be opt-in: `up` must not run a restore tool")
 	assert.Equal(t, "no", svc.Restart)
-	assert.Equal(t, []string{"/usr/local/bin/orchestrator", "transfer"}, svc.Entrypoint,
-		"`docker compose run --rm transfer export` must run `orchestrator transfer export`")
+	assert.Equal(t, []string{"/usr/local/bin/mypa", "transfer"}, svc.Entrypoint,
+		"`docker compose run --rm transfer export` must run `mypa transfer export`")
 	assert.Contains(t, svc.Volumes, "./backups:/backups")
 	assert.Contains(t, svc.Volumes, "audit_archives:/app/archives", "an import writes archive files, so the mount is read-write")
 	assert.Empty(t, svc.Ports, "the tool listens on nothing")
 }
 
-// A backup is the database dump plus the archive files, and the orchestrator takes the backups.
-// It only ever reads the archives: the audit worker stays their single writer.
-func TestCompose_OrchestratorReadsArchivesForBackups(t *testing.T) {
+// A backup is the database dump plus the archive files, and the app takes the backups (V4-01:
+// the orchestrator is part of the app). It only ever reads the archives: the audit worker stays
+// their single writer.
+func TestCompose_AppReadsArchivesForBackups(t *testing.T) {
 	services := loadComposeTools(t)
-	assert.Contains(t, services["orchestrator"].Volumes, "audit_archives:/app/archives:ro")
+	assert.Contains(t, services["app"].Volumes, "audit_archives:/app/archives:ro")
 	assert.Contains(t, services["audit-worker"].Volumes, "audit_archives:/app/archives")
 }

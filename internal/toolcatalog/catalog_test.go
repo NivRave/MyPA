@@ -64,10 +64,10 @@ func TestBuild_Sanity(t *testing.T) {
 	}
 }
 
-// ProductionModules must mirror the modules wired in the orchestrator, or the docs (and the
+// ProductionModules must mirror the modules wired in the app's worker, or the docs (and the
 // reachability test that reuses this list) silently miss tools.
-func TestProductionModulesMatchOrchestratorMain(t *testing.T) {
-	path := filepath.Join(repoRoot, "cmd", "orchestrator", "main.go")
+func TestProductionModulesMatchTheWorkerWiring(t *testing.T) {
+	path := filepath.Join(repoRoot, "cmd", "mypa", "worker.go")
 	f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 	require.NoError(t, err)
 
@@ -104,7 +104,7 @@ func TestProductionModulesMatchOrchestratorMain(t *testing.T) {
 	}
 	sort.Strings(wired)
 	sort.Strings(listed)
-	assert.Equal(t, wired, listed, "toolcatalog.ProductionModules is out of sync with cmd/orchestrator/main.go")
+	assert.Equal(t, wired, listed, "toolcatalog.ProductionModules is out of sync with cmd/mypa/worker.go")
 }
 
 // The committed docs must equal their regenerated form.

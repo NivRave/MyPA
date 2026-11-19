@@ -2,13 +2,12 @@
 # Secrets should be set via environment variables (see .env.example)
 
 server:
-  gateway_port: 8080
-  orchestrator_port: 8081
+  port: 8000 # the app's one HTTP port (V4-01); HTTP_PORT overrides it
 
 google:
   client_id: ""
   client_secret: ""
-  redirect_url: "http://localhost:8081/auth/google/callback"
+  redirect_url: "http://localhost:8000/auth/google/callback"
 
 tavily:
   api_key: ""

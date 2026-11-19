@@ -19,7 +19,7 @@ func TestAdversarial_SEC02_PlaygroundDisabledInProduction(t *testing.T) {
 	os.Setenv("DASHBOARD_API_SECRET", "adv-dashboard-secret")
 
 	dbClient := &db.Client{}
-	mux := setupRouter(nil, nil, nil, dbClient, nil)
+	mux := setupAppRouter(nil, nil, nil, dbClient, nil)
 
 	// 1. In production, GET /playground must return HTTP 404 Not Found
 	reqPlayground := httptest.NewRequest("GET", "/playground", nil)
@@ -45,7 +45,7 @@ func TestAdversarial_SEC02_PlaygroundAllowedInDevelopment(t *testing.T) {
 	os.Setenv("DASHBOARD_API_SECRET", "adv-dashboard-secret")
 
 	dbClient := &db.Client{}
-	mux := setupRouter(nil, nil, nil, dbClient, nil)
+	mux := setupAppRouter(nil, nil, nil, dbClient, nil)
 
 	// In development, GET /playground returns 200 OK (HTML UI)
 	reqPlayground := httptest.NewRequest("GET", "/playground", nil)

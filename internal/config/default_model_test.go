@@ -119,7 +119,7 @@ func TestDefaultChatModelIsDefinedInOnePlace(t *testing.T) {
 // The files the guard has to cover are covered, and the ones it must leave alone are left alone.
 func TestDecidesTheDefault(t *testing.T) {
 	for _, name := range []string{
-		"internal/config/config.go", "internal/llm/client.go", "cmd/orchestrator/main.go",
+		"internal/config/config.go", "internal/llm/client.go", "cmd/mypa/worker.go",
 		"config/config.yaml", "docker-compose.yml", ".env.example", "Dockerfile", "dashboard/Dockerfile",
 		"dashboard/src/app/page.tsx", "dashboard/src/app/settings/page.tsx", "dashboard/package.json",
 	} {
@@ -147,8 +147,8 @@ func TestDefaultChatModel_IsWhatAnInstallGetsWithoutSettingOne(t *testing.T) {
 	// One value of the copy is changed to something no default has, to prove below that the file
 	// is really what Load reads here; everything else, including what it says or does not say
 	// about the model, is the shipped file.
-	const portInFile, marker = "gateway_port: 8080", "gateway_port: 18080"
-	require.Equal(t, 1, strings.Count(string(shipped), portInFile), "expected the shipped settings file to set the gateway port once")
+	const portInFile, marker = "port: 8000", "port: 18080"
+	require.Equal(t, 1, strings.Count(string(shipped), portInFile), "expected the shipped settings file to set the app port once")
 	copyOfShipped := strings.Replace(string(shipped), portInFile, marker, 1)
 	dir := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "config"), 0o755))
@@ -158,7 +158,7 @@ func TestDefaultChatModel_IsWhatAnInstallGetsWithoutSettingOne(t *testing.T) {
 
 	cfg, err := Load()
 	require.NoError(t, err)
-	require.Equal(t, 18080, cfg.Server.GatewayPort, "Load did not read ./config/config.yaml, so this test would prove nothing about it")
+	require.Equal(t, 18080, cfg.Server.Port, "Load did not read ./config/config.yaml, so this test would prove nothing about it")
 	assert.Equal(t, DefaultGeminiModel, cfg.Gemini.Model, "the shipped settings file must not name a different model")
 }
 

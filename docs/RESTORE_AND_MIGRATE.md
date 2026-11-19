@@ -13,7 +13,7 @@ date. The backup that was restored is never modified, so it is also the way back
 > databases (real `pg_dump`, `pg_restore` and migrations). It has not yet been run on the live
 > system. V4-43 is marked done at the V4.0 release, after the checks at the end of this file.
 
-The tool is `orchestrator transfer`, run through the `transfer` compose service. It is never
+The tool is `mypa transfer`, run through the `transfer` compose service. It is never
 started by `docker compose up`.
 
 ```
@@ -109,24 +109,33 @@ empty.
 Two installs on the same Telegram bot and WhatsApp number would both answer. The tool checks
 what the queues can show:
 
-- `export` refuses unless both work queues are **empty** and have **no consumer**: the
-  orchestrator and the audit worker are stopped and nothing is waiting.
+- `export` refuses unless both work queues are **empty** and have **no consumer**: the app (on
+  `v3.4.x`, the orchestrator) and the audit worker are stopped and nothing is waiting.
 - `import` refuses while anything is consuming the target's queues.
 
-It cannot see the gateway, which only publishes. A gateway left running keeps accepting messages
-that then sit in the old broker and are lost to the new install. Stopping it is your step, and it
-comes first:
+It cannot see what only accepts messages, because that publishes without consuming. Whatever
+lets messages in must stop first, so the queue can drain before the app goes away. On V4 (one
+`app` container, V4-01) that is the tunnel:
 
 ```
-docker compose stop proxy gateway        # nothing new comes in
+docker compose stop ngrok                         # nothing new comes in
+# wait a few seconds: the app finishes what is queued
+docker compose stop app audit-worker dashboard
+```
+
+On the baseline (`v3.4.x`, before the upgrade in section A), the same steps name its services:
+
+```
+docker compose stop proxy gateway                 # nothing new comes in
 # wait a few seconds: the orchestrator finishes what is queued
 docker compose stop orchestrator audit-worker dashboard
 ```
 
-The order lets the queue drain before the app goes away. Check with `docker compose ps` that
-none of the five is still running. Leave `postgres`, `rabbitmq` and `redis` running: the tool
-needs them. If `export` says a queue still holds messages, start the orchestrator again until it
-is empty.
+Check with `docker compose ps` that none of them is still running (an app started with
+`--role=ingress` in a split deploy counts as something that lets messages in). Leave `postgres`,
+`rabbitmq` and `redis` running: the tool needs them. If `export` says a queue still holds
+messages, start the app (on `v3.4.x`, the orchestrator) again, leaving what lets messages in
+stopped, until it is empty.
 
 While the app is stopped, Telegram keeps messages and delivers them when a webhook is registered
 again. Twilio does not hold them for later: WhatsApp messages sent during the move are lost. Tell
@@ -134,16 +143,18 @@ the family first.
 
 ## A. Upgrade from the baseline (`v3.4.x`) on the same machine
 
-1. Stop the app (see above).
+1. Stop the app with the baseline's commands (see above).
 2. Check out the V4 release. Do **not** run `up` yet.
 3. Take the final backup of the baseline. This is the rollback point:
    ```
    docker compose --profile tools build transfer
    docker compose --profile tools run --rm transfer export
    ```
-4. Start V4. The `migrate` service brings the schema up to date in place:
+4. Start V4. The `migrate` service brings the schema up to date in place. `--remove-orphans`
+   removes the stopped `proxy`, `gateway` and `orchestrator` containers, which V4 replaces with
+   the one `app` container (V4-01):
    ```
-   docker compose up -d --build
+   docker compose up -d --build --remove-orphans
    ```
 5. Send `/doctor` as an admin.
 
@@ -154,7 +165,7 @@ and start it.
 docker compose --profile tools run --rm -e BACKUP_AGE_IDENTITY_FILE=/backups/backup-key.txt \
   transfer import backup_<time>.manifest.json --replace --no-migrate
 git checkout v3.4.x
-docker compose up -d --build
+docker compose up -d --build --remove-orphans
 ```
 
 ## B. Move to another machine (or restore the baseline backup into V4 elsewhere)

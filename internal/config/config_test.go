@@ -82,9 +82,8 @@ func TestLoad_Defaults(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
-	assert.Equal(t, 8080, cfg.Server.GatewayPort)
-	assert.Equal(t, 8081, cfg.Server.OrchestratorPort)
-	assert.Equal(t, 8000, cfg.Server.ProxyPort)
+	// V4-01: one app, one port. It is the old proxy's port, so the public address does not change.
+	assert.Equal(t, 8000, cfg.Server.Port)
 	assert.Equal(t, "UTC", cfg.Server.DefaultTimezone)
 	assert.Equal(t, DefaultGeminiModel, cfg.Gemini.Model)
 	assert.Equal(t, "Sunday", cfg.Server.WeekStartDay)
@@ -103,8 +102,7 @@ func TestLoad_EnvVars(t *testing.T) {
 	defer func() { _ = os.Chdir(origDir) }()
 
 	t.Setenv("DEFAULT_TIMEZONE", "America/New_York")
-	t.Setenv("GATEWAY_URL", "http://localhost:8080")
-	t.Setenv("ORCHESTRATOR_URL", "http://localhost:8081")
+	t.Setenv("HTTP_PORT", "9001")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "test-token")
 	t.Setenv("TELEGRAM_WEBHOOK_URL", "https://example.com/webhook")
 	t.Setenv("RABBITMQ_URL", "amqp://user:pass@localhost:5672/")
@@ -128,8 +126,7 @@ func TestLoad_EnvVars(t *testing.T) {
 
 	assert.Equal(t, "https://example.com/webhook/twilio/status", cfg.Twilio.StatusCallbackURL)
 	assert.Equal(t, "America/New_York", cfg.Server.DefaultTimezone)
-	assert.Equal(t, "http://localhost:8080", cfg.Server.GatewayURL)
-	assert.Equal(t, "http://localhost:8081", cfg.Server.OrchestratorURL)
+	assert.Equal(t, 9001, cfg.Server.Port)
 	assert.Equal(t, "test-token", cfg.Telegram.BotToken)
 	assert.Equal(t, "https://example.com/webhook", cfg.Telegram.WebhookURL)
 	assert.Equal(t, "amqp://user:pass@localhost:5672/", cfg.RabbitMQ.URL)
@@ -159,7 +156,7 @@ func TestLoad_ConfigFile(t *testing.T) {
 
 	configContent := `
 server:
-  gateway_port: 9090
+  port: 9090
   default_timezone: "Europe/London"
 gemini:
   model: "gemini-test"
@@ -171,9 +168,7 @@ gemini:
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
-	assert.Equal(t, 9090, cfg.Server.GatewayPort)
+	assert.Equal(t, 9090, cfg.Server.Port)
 	assert.Equal(t, "Europe/London", cfg.Server.DefaultTimezone)
 	assert.Equal(t, "gemini-test", cfg.Gemini.Model)
-
-	assert.Equal(t, 8081, cfg.Server.OrchestratorPort)
 }

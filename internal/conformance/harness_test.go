@@ -104,7 +104,7 @@ var channels = []channel{
 }
 
 // receiveTelegram builds a Telegram Update and parses it with the real parser. The webhook's
-// secret-token check lives in cmd/gateway and is pinned by that package's own tests.
+// secret-token check lives in cmd/mypa (the ingress) and is pinned by that package's own tests.
 func receiveTelegram(e *env, in inbound) (models.Message, bool) {
 	e.t.Helper()
 	userID, err := strconv.ParseInt(in.From.UserID, 10, 64)

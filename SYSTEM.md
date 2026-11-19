@@ -21,14 +21,14 @@ flowchart LR
         Browser["Next.js Dashboard (:3030)"]
     end
 
-    subgraph Edge["Unified Routing & Ingestion"]
-        Proxy["Proxy Service (:8000)"]
-        Gateway["Gateway Service (:8080)"]
-        RMQ[("RabbitMQ (:5672)")]
+    subgraph App["App (:8000) — one binary, --role=all (V4-01)"]
+        Edge["Edge router"]
+        Ingress["Ingress (webhooks)"]
+        Orch["Worker (engine, GraphQL, OAuth)"]
     end
 
-    subgraph Core["Orchestrator & Workers"]
-        Orch["Orchestrator (:8081)"]
+    subgraph Core["Workers & Broker"]
+        RMQ[("RabbitMQ (:5672)")]
         Registry["ToolModule Registry"]
         Bus["Internal MutationEvent Bus"]
         Cron["Cron Scheduler (Asia/Jerusalem)"]
@@ -47,11 +47,11 @@ flowchart LR
         Tavily["Tavily Search API"]
     end
 
-    TG & WA --> Ngrok --> Proxy
-    Browser -->|"/graphql"| Proxy
-    Proxy -->|"/webhook/telegram, /webhook/twilio"| Gateway
-    Proxy -->|"/graphql, /playground, /auth/google/*"| Orch
-    Gateway -->|"Queue: inbound.messages"| RMQ
+    TG & WA --> Ngrok --> Edge
+    Browser -->|"/graphql"| Edge
+    Edge -->|"/webhook/telegram, /webhook/twilio"| Ingress
+    Edge -->|"/graphql, /auth/google/*"| Orch
+    Ingress -->|"Queue: inbound.messages"| RMQ
     RMQ -->|"Consume models.Message"| Orch
     Orch -->|"Queue: audit.events"| RMQ
     RMQ -->|"Consume models.AuditSession"| AuditW
@@ -72,20 +72,18 @@ flowchart LR
 
 | Service | Entrypoint | Runtime Base Image | Port(s) | Responsibility |
 | :--- | :--- | :--- | :---: | :--- |
-| **`proxy`** | [`cmd/proxy/main.go`](./cmd/proxy/main.go) | `gcr.io/distroless/static-debian12` | `8000` | Unified reverse proxy routing `/webhook/*` to `gateway:8080` and `/graphql`, `/playground`, `/auth/google/*` to `orchestrator:8081`. |
-| **`gateway`** | [`cmd/gateway/main.go`](./cmd/gateway/main.go) | `gcr.io/distroless/static-debian12` | `8080` | High-throughput HTTP webhook receiver for Telegram (`/webhook/telegram`) and Twilio WhatsApp (`/webhook/twilio`); normalizes payloads into [`models.Message`](./internal/models/models.go#L9-L22) and publishes to RabbitMQ `inbound.messages`. Also receives Twilio delivery reports on `/webhook/twilio/status` (signature-verified, never published; `failed`/`undelivered` → WARN `whatsapp message not delivered` with `message_sid`, `error_code`, `hint`, *BL-8*). |
-| **`orchestrator`** | [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go) | `debian:12.15-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8081` | Core brain: consumes `inbound.messages`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](./internal/orchestrator/registry.go#L30-L43) registry (<!-- gen:tool-summary -->67 tools across 13 modules<!-- /gen:tool-summary -->), dual-lane [`EventBus`](./internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](./internal/scheduler/scheduler.go). |
+| **`app`** | [`cmd/mypa/main.go`](./cmd/mypa/main.go) (`mypa`, default `--role=all`) | `debian:12.15-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8000` | One binary with roles (*V4-01*, ADR 0001 option 1c), replacing `proxy`, `gateway` and `orchestrator`. **Edge** ([`edge.go`](./cmd/mypa/edge.go), role `all`): the public surface the proxy had — `/webhook/telegram*` and `/webhook/twilio*` (10 MB) to the ingress, `/auth/google*` (1 MB) and `/graphql*` (1 MB, only with an `Authorization` header, else 401) to the worker, `/favicon.ico` 204, everything else 404 (including `/playground` and `/health`). **Ingress** ([`ingress.go`](./cmd/mypa/ingress.go), roles `all`, `ingress`): verifies the Telegram and Twilio webhooks, normalizes them into [`models.Message`](./internal/models/models.go#L9-L22) and publishes to RabbitMQ `inbound.messages` — the durable hand-off is kept inside one process; registers the Telegram webhook on start; receives Twilio delivery reports on `/webhook/twilio/status` (signature-verified, never published; `failed`/`undelivered` → WARN `whatsapp message not delivered` with `message_sid`, `error_code`, `hint`, *BL-8*). **Worker** ([`worker.go`](./cmd/mypa/worker.go), roles `all`, `worker`): consumes `inbound.messages`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](./internal/orchestrator/registry.go#L30-L43) registry (<!-- gen:tool-summary -->67 tools across 13 modules<!-- /gen:tool-summary -->), dual-lane [`EventBus`](./internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](./internal/scheduler/scheduler.go). `--role=ingress` serves the webhooks plus `/health`; `--role=worker` serves `/graphql`, the OAuth callback and, outside `ENV=production`, `/playground`. Split roles need an external reverse proxy, and exactly one worker (the scheduler has no leader election). |
 | **`audit-worker`** | [`cmd/audit-worker/main.go`](./cmd/audit-worker/main.go) | `gcr.io/distroless/static-debian12` | — | Consumes `audit.events` from RabbitMQ, persists [`models.AuditSession`](./internal/models/models.go#L80-L92) rows to PostgreSQL, and runs a 24h ticker archiving sessions older than 30 days. |
-| **`migrate`** | [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go) (`-migrate-only`) | orchestrator image | — | One-shot (*P4-3*): applies goose migrations ([`internal/db/migrations/`](./internal/db/migrations)) and exits. `orchestrator` and `audit-worker` depend on it with `condition: service_completed_successfully`. |
-| **`transfer`** | [`cmd/orchestrator/transfer.go`](./cmd/orchestrator/transfer.go) (`orchestrator transfer …`) | orchestrator image | — | One-shot, opt-in (compose profile `tools`, *V4-43*): the restore-and-migrate tool. Run next to a stopped app with `docker compose --profile tools run --rm transfer <command>`; mounts `./backups` and `audit_archives` (§3.9) |
+| **`migrate`** | [`cmd/mypa/main.go`](./cmd/mypa/main.go) (`-migrate-only`) | app image | — | One-shot (*P4-3*): applies goose migrations ([`internal/db/migrations/`](./internal/db/migrations)) and exits. `app` and `audit-worker` depend on it with `condition: service_completed_successfully`. |
+| **`transfer`** | [`cmd/mypa/transfer.go`](./cmd/mypa/transfer.go) (`mypa transfer …`) | app image | — | One-shot, opt-in (compose profile `tools`, *V4-43*): the restore-and-migrate tool. Run next to a stopped app with `docker compose --profile tools run --rm transfer <command>`; mounts `./backups` and `audit_archives` (§3.9) |
 | **`dashboard`** | [`dashboard/`](./dashboard/package.json) | `node:24.22.3-alpine` (digest-pinned; Next.js 16.4 standalone) | `3030:3000` | Next.js App Router web console for managing family spaces, memories, baby logs, house assets, finances, automations, pairing codes, and mutation rollbacks. |
 | **`postgres`** | `pgvector/pgvector:0.8.6-pg15` (digest-pinned) | Official Postgres 15 + `pgvector` 0.8.6 | `5432` | Primary relational + vector store (29 tables). |
 | **`redis`** | `redis:7.4.11-alpine` (digest-pinned) | Official Redis 7.4 (`--appendonly yes`) | `6379` | Hot rolling conversation state (`chat:<userID>`) and OAuth token cache (`token:<userID>`). |
 | **`rabbitmq`** | `rabbitmq:4.3.7-management-alpine` (digest-pinned) | Official RabbitMQ 4.3 | `5672`, `15672` | Durable AMQP 0-9-1 broker decoupling webhook ingestion and audit telemetry. `hostname: rabbitmq` keeps the node name (`rabbit@rabbitmq`) stable so the `rabbitmq_data` volume survives container recreation (*P5-4*). |
-| **`ngrok`** | `ngrok/ngrok:3.39.8@sha256:14d8…` (digest-pinned, *P3-5*) | Official Ngrok container | `4040` | Tunnels public HTTPS webhook traffic to `proxy:8000`. Requires `NGROK_DOMAIN` (no committed default). |
+| **`ngrok`** | `ngrok/ngrok:3.39.8@sha256:14d8…` (digest-pinned, *P3-5*) | Official Ngrok container | `4040` | Tunnels public HTTPS webhook traffic to `app:8000`. Requires `NGROK_DOMAIN` (no committed default). |
 | **`pgadmin`** | `dpage/pgadmin4:9.17@sha256:2f4c…` (digest-pinned, *P3-5*) | Official pgAdmin 4 | `5050:80` | Web UI for inspecting PostgreSQL tables. **Opt-in** (`profiles: [tools]`): `docker compose --profile tools up -d pgadmin`; no default password. |
 
-Every external image (compose services and the `FROM` lines of both Dockerfiles) is pinned as `tag@sha256:digest` (*BL-7*), enforced by `TestAllExternalImagesArePinnedByDigest`; Dependabot proposes tag+digest bumps. Base images: `golang:1.26.11-alpine3.24` (build), `gcr.io/distroless/static-debian12` (gateway, proxy, audit-worker), `debian:12.15-slim` (orchestrator).
+Every external image (compose services and the `FROM` lines of both Dockerfiles) is pinned as `tag@sha256:digest` (*BL-7*), enforced by `TestAllExternalImagesArePinnedByDigest`; Dependabot proposes tag+digest bumps. Base images: `golang:1.26.11-alpine3.24` (build), `gcr.io/distroless/static-debian12` (audit-worker), `debian:12.15-slim` (app).
 
 ---
 
@@ -96,14 +94,17 @@ mypa/
 ├── AGENTS.md                       # Global AI agent development rules & guardrails
 ├── SYSTEM.md                       # THIS FILE: Canonical architecture, schema, API & feature playbook
 ├── README.md                       # User-facing overview & quickstart guide
-├── Dockerfile                      # Unified multi-target Go Dockerfile (gateway, orchestrator, proxy, audit-worker)
+├── Dockerfile                      # Unified multi-target Go Dockerfile (app, audit-worker)
 ├── docker-compose.yml              # Full stack container orchestration
 ├── gqlgen.yml                      # gqlgen GraphQL code generation config (must be UTF-8 without BOM)
 ├── config/config.yaml              # Default Viper YAML configuration
 ├── cmd/
-│   ├── gateway/main.go             # Webhook ingestion HTTP service (:8080)
-│   ├── orchestrator/main.go        # LLM engine, ToolRegistry, EventBus, OAuth & GraphQL server (:8081)
-│   ├── proxy/main.go               # Unified reverse proxy (:8000)
+│   ├── mypa/                       # The app, one binary with --role=all|ingress|worker (:8000, V4-01):
+│   │   ├── main.go                 #   flags, roles, the HTTP server and the shutdown order
+│   │   ├── edge.go                 #   public routes of role all (the former proxy)
+│   │   ├── ingress.go              #   webhook verification and enqueueing (the former gateway)
+│   │   ├── worker.go               #   LLM engine, ToolRegistry, EventBus, OAuth & GraphQL (the former orchestrator)
+│   │   └── transfer.go, doctor.go  #   `mypa transfer` (V4-43) and the /doctor wiring (V4-17)
 │   ├── audit-worker/main.go        # Async RabbitMQ telemetry consumer & 30-day session archiver
 │   ├── devtools/listmodels/        # Dev-only utility (lists Gemini models); not in any image
 │   └── devtools/gendocs/           # Regenerates the tool-catalogue sections of SYSTEM.md/README.md (P5-5)
@@ -183,8 +184,8 @@ mypa/
 
 ### 3.1 Multi-Turn Agent Execution Lifecycle ([`internal/orchestrator/engine.go`](./internal/orchestrator/engine.go))
 
-1. **Ingress & Queuing:** Telegram or Twilio sends an HTTP POST to `proxy:8000` -> `gateway:8080`, which parses it into a [`models.Message`](./internal/models/models.go#L9-L22) (`ID`, `UserID`, `ChatID`, `Text`, `VoiceFileID`, `PhotoFileID`, `MediaURL`, `MediaContentType`, `Source`) and publishes to RabbitMQ queue `inbound.messages`.
-2. **Consumption & Pre-Processing:** `orchestrator` consumes `models.Message` with a 5-minute context timeout (`Engine.Start` in [`engine.go`](./internal/orchestrator/engine.go)).
+1. **Ingress & Queuing:** Telegram or Twilio sends an HTTP POST to `app:8000`, whose ingress parses it into a [`models.Message`](./internal/models/models.go#L9-L22) (`ID`, `UserID`, `ChatID`, `Text`, `VoiceFileID`, `PhotoFileID`, `MediaURL`, `MediaContentType`, `Source`) and publishes to RabbitMQ queue `inbound.messages`.
+2. **Consumption & Pre-Processing:** the app's worker consumes `models.Message` with a 5-minute context timeout (`Engine.Start` in [`engine.go`](./internal/orchestrator/engine.go)).
    - **Code layout (*P4-1*):** `ProcessMessage` (`engine.go`, ~95 lines) only orchestrates: dedup claim → telemetry/retry defers → auth → `handleConfirmation` / `dispatchCommand` ([`commands.go`](./internal/orchestrator/commands.go), a command table for `/help`, `/connect`, `/backup`, `/restore`, `/undo`, `/doctor`) → `ingestMedia` ([`media.go`](./internal/orchestrator/media.go), normalized `mediaAttachment`) → `runTurn` ([`turn.go`](./internal/orchestrator/turn.go): history, tool selection, memory, prompt via [`prompt.go`](./internal/orchestrator/prompt.go), LLM loop, reply, persistence).
    - **Idempotency (*P1-4*):** the first step of `ProcessMessage` claims `inbound:<source>:<chat|user>:<messageID>` (`SET NX`, 24h); duplicates are acked and skipped. A per-turn `turnEffects` flag is set when a tool executes (read-only built-ins such as `get_current_time` excepted), an admin command acts, pairing state changes, or the final reply is delivered; any later error is wrapped in `broker.ErrNonRetryable` (acked, never re-run). Retryable failures release the claim so the redelivery is processed. The user-facing "internal error" notice is sent only on the final attempt or a non-retryable failure (`shouldNotifyUserOfFailure`). On a crash mid-turn the claim survives → the redelivery is skipped (at-most-once by design).
    - Slash commands (`/help`, `/connect`, `/backup`, `/restore`, `/undo`, `/doctor`) are handled directly (`/undo` invokes `durability.Module.RollbackLast` or rolls back a specific mutation ID; `/restore` only replies with the steps to restore the newest backup with `transfer import --replace` — see §Security).
@@ -228,7 +229,7 @@ type ToolModule interface {
 }
 ```
 
-**Registered Domain Modules (<!-- gen:module-count -->13<!-- /gen:module-count --> wired in [`cmd/orchestrator/main.go`](./cmd/orchestrator/main.go)):**
+**Registered Domain Modules (<!-- gen:module-count -->13<!-- /gen:module-count --> wired in [`cmd/mypa/worker.go`](./cmd/mypa/worker.go)):**
 - **5 Workspace Base Modules:** `workspace_calendar`, `workspace_gmail`, `workspace_tasks`, `workspace_contacts`, `web_research` (per-module tool lists: §6).
 - **8 Life Domain Modules:** `durability` (Topic 1 & `/undo`), `memory` (Topic 2; `save_topic_memory` stores each fact with its embedding, which is what per-turn recall searches by, *V4-06*), `shared` (Topic 9 & `schedule_reminder`), `schedule` (Topic 3), `baby` (Topic 4), `house` (Topic 5 & 8.1), `finance` (Topic 6), `automation` (Topics 7, 8.2, 8.3 & workflow management).
 
@@ -303,7 +304,7 @@ To prevent slow network I/O, external partner notifications, and automation webh
 
 Milestone 1A hardens the entire system across ingress, internal execution, storage, and egress:
 
-- **Request body limits:** `http.MaxBytesReader` caps bodies at 10 MB for webhooks (gateway and proxy `/webhook/*`) and 1 MB for GraphQL (proxy and orchestrator).
+- **Request body limits:** `http.MaxBytesReader` caps bodies at 10 MB for webhooks (the edge and the ingress router, `/webhook/*`) and 1 MB for GraphQL and the Google sign-in (the edge and the app router).
 
 1. **Pre-Auth Gate & Admin RBAC (`internal/orchestrator/engine.go`):**
    - At the very top of `ProcessMessage`, `e.db.GetUser(msg.UserID)` verifies caller identity before downloading media, transcribing voice, or running LLM prompts.
@@ -312,11 +313,11 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
    - `/backup` and `/restore` commands strictly verify `user.Role == "admin"`, rejecting non-admin attempts with an explicit permission denied alert.
    - **`/restore` restores nothing (*BL-21*, [`restore.go`](./internal/orchestrator/restore.go)):** the chat restore is retired, because a restore needs the app stopped, an emptied schema and the migrations afterwards, which only the restore tool does (§3.9). `/restore` names the newest backup in the backup directory (its manifest when it is a set, else the dump) and replies with the steps for `transfer import <name> --replace`, pointing to [`docs/RESTORE_AND_MIGRATE.md`](./docs/RESTORE_AND_MIGRATE.md). The backup is named by its file name only. The one path in the reply is the fixed key location of the documented command (`/backups/backup-key.txt`, shown only for an encrypted backup), and no error text is ever shown; with no backup it says so. It takes no backup and stages nothing, so `CONFIRM RESTORE` is an ordinary confirmation. A `restore` action staged by the retired command before the upgrade is dropped when confirmed and answered as if nothing were pending (`legacyRestoreActionName`, `handleConfirmation`). `TestOrchestrator_HasNoRestorePath` fails if the orchestrator package calls a restore function of `internal/db` or `internal/transfer` again.
 
-2. **Ingress Webhook Signatures & Proxy Guard (`cmd/gateway`, `internal/twilio`, `cmd/proxy`):**
-   - Telegram webhooks require `X-Telegram-Bot-Api-Secret-Token` matching `cfg.Telegram.SecretToken` using constant-time comparison (`subtle.ConstantTimeCompare`). **Fail closed:** `telegramSecretValid` rejects every request when the configured secret is empty, and `validateGatewayConfig` aborts gateway startup if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_URL` is set without a valid `TELEGRAM_SECRET_TOKEN` (1–256 chars `[A-Za-z0-9_-]`).
-   - On startup, when `TELEGRAM_WEBHOOK_URL` is set, the gateway calls `telegram.Client.SetWebhook(url, secret_token)` in the background (`registerWebhookWithRetry`: 8 attempts, exponential backoff from 2 s capped at 2 min; never crashes the gateway; errors are redacted so the bot token is never logged).
-   - Twilio WhatsApp webhooks verify `X-Twilio-Signature` using HMAC-SHA1 over the full request URL and sorted POST parameters with `cfg.Twilio.AuthToken`. **Fail closed:** the handler returns 403 for every request when no auth token is configured (an empty-key HMAC is forgeable), and gateway startup aborts if `TWILIO_ACCOUNT_SID` is set without `TWILIO_AUTH_TOKEN`.
-   - `proxy` restricts public ingress to `/webhook/*`, `/graphql`, and `/auth/google/*`. `/playground` returns HTTP 404 in production, and unauthenticated `/graphql` requests are rejected at the edge with HTTP 401.
+2. **Ingress Webhook Signatures & Edge Guard (`cmd/mypa`, `internal/twilio`):**
+   - Telegram webhooks require `X-Telegram-Bot-Api-Secret-Token` matching `cfg.Telegram.SecretToken` using constant-time comparison (`subtle.ConstantTimeCompare`). **Fail closed:** `telegramSecretValid` rejects every request when the configured secret is empty, and `cfg.Validate` aborts startup of the roles `all` and `ingress` if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_URL` is set without a valid `TELEGRAM_SECRET_TOKEN` (1–256 chars `[A-Za-z0-9_-]`).
+   - On startup, when `TELEGRAM_WEBHOOK_URL` is set, the ingress calls `telegram.Client.SetWebhook(url, secret_token)` in the background (`registerWebhookWithRetry`: 8 attempts, exponential backoff from 2 s capped at 2 min; never crashes the app; errors are redacted so the bot token is never logged).
+   - Twilio WhatsApp webhooks verify `X-Twilio-Signature` using HMAC-SHA1 over the full request URL and sorted POST parameters with `cfg.Twilio.AuthToken`. **Fail closed:** the handler returns 403 for every request when no auth token is configured (an empty-key HMAC is forgeable), and startup aborts if `TWILIO_ACCOUNT_SID` is set without `TWILIO_AUTH_TOKEN`.
+   - The edge of role `all` (`newEdgeRouter`, the former proxy) restricts public ingress to `/webhook/telegram*`, `/webhook/twilio*`, `/graphql*` and `/auth/google*`. `/playground` and `/health` return HTTP 404 there in every environment (the playground exists only on a `--role=worker` port outside production), and unauthenticated `/graphql` requests are rejected at the edge with HTTP 401 before the auth middleware runs. Each role keeps exactly the surface of the service it replaced (`TestRouterForRole_EachRoleKeepsTheSurfaceOfTheServiceItReplaces`).
 
 3. **GraphQL Authentication Middleware (`internal/graph/auth_middleware.go`):**
    - Inspects `Authorization: Bearer <token>` on all requests to `/graphql`.
@@ -356,7 +357,7 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
    - `RollbackMutation` verifies caller tenant permissions, wraps inversions in an ACID database transaction (`tx := r.DB.DB.Begin()`), checks row mutation counts, rolls back on any error, and sets `is_undone = true` only upon commit.
 
 8. **OAuth Hardening & Cryptographic Key Management (`internal/crypto/aes.go`, `internal/state/store.go`):**
-   - `ENCRYPTION_KEY` is validated at startup by `cfg.Validate("orchestrator")` and `crypto.ValidateKeyConfigured()`; a missing key is a clean startup error (no panic). At runtime `Encrypt`/`Decrypt` return `crypto.ErrKeyNotConfigured` instead of panicking.
+   - `ENCRYPTION_KEY` is validated at startup by `cfg.Validate("all")` (or `"worker"`) and `crypto.ValidateKeyConfigured()`; a missing key is a clean startup error (no panic). At runtime `Encrypt`/`Decrypt` return `crypto.ErrKeyNotConfigured` instead of panicking.
    - The deterministic dev key is used **only** inside `go test` binaries (`flag.Lookup("test.v") != nil`, via the overridable `testBinaryDetector`). `ENV=test`/`GO_ENV=test` no longer unlock it.
    - Key derivation implements HKDF-SHA256 with 16-byte cryptographically random salt (`[16-byte Salt][12-byte Nonce][Ciphertext + 16-byte Tag]`), maintaining backward compatibility with legacy unsalted ciphertexts.
    - OAuth tokens in Redis (`token:<userID>`) are AES-256-GCM encrypted.
@@ -369,7 +370,7 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
    - **Stored user data is data, not instructions:** standing instructions, pinned memories, entity profiles and retrieved memories are wrapped with `WrapUserProvidedData` (`<user_provided_data kind=…>`): honoured as preferences/context, but cannot override rules, grant permissions or justify actions on their own. Nothing is labelled "STRICT REQUIREMENT" any more.
    - **Breakout protection:** both wrappers neutralize their own closing tag inside the wrapped content (`neutralizeTag` inserts U+200B), so a payload containing `</untrusted_external_content>` cannot end the block early.
 
-10. **Logging hygiene (*P3-3*, [`internal/logging`](./internal/logging/logging.go)):** user message text is never logged at INFO — `logging.LogMessageText` emits `message_id` + `text_len` (no content hash: short messages are dictionary-reversible) and the text only in a separate DEBUG record (`LOG_LEVEL=debug`). Covers the gateway, Twilio webhook, engine (incl. the Hebrew content-block retry), and the broker's unparseable-payload log (`body_bytes` only). Every Telegram client error is passed through `redactURLError` so the bot token (part of the API URL) never reaches logs. All compose services use the `x-logging` anchor: `json-file`, `max-size: 10m`, `max-file: 5`.
+10. **Logging hygiene (*P3-3*, [`internal/logging`](./internal/logging/logging.go)):** user message text is never logged at INFO — `logging.LogMessageText` emits `message_id` + `text_len` (no content hash: short messages are dictionary-reversible) and the text only in a separate DEBUG record (`LOG_LEVEL=debug`). Covers the ingress, Twilio webhook, engine (incl. the Hebrew content-block retry), and the broker's unparseable-payload log (`body_bytes` only). Every Telegram client error is passed through `redactURLError` so the bot token (part of the API URL) never reaches logs. All compose services use the `x-logging` anchor: `json-file`, `max-size: 10m`, `max-file: 5`.
 
 11. **Backups (*P3-4*, [`internal/db/backup.go`](./internal/db/backup.go)):** Since *V4-43* a backup is a set of files (§3.9); this item describes its database file. `pg_dump` output is piped through `age` encryption (X25519 recipients from `BACKUP_AGE_RECIPIENTS`) straight into a `0600` temp file, fsynced and renamed — no plaintext dump ever touches disk; without recipients the backup is written unencrypted with a warning (a missing backup is worse). Restores decrypt in-stream into `pg_restore`'s stdin using the private key at `BACKUP_AGE_IDENTITY_FILE` (keep it off the server; mount only to restore). The DB password is passed via `PGPASSWORD` in the child environment, never in argv. Retention: `KeepLatest` 3 (protects the file a restore reads next to the same-day safety backup the restore takes first) + 7 daily + 4 weekly. Off-machine copies: not yet (owner decision pending).
 
@@ -389,7 +390,7 @@ Milestone 1A hardens the entire system across ingress, internal execution, stora
 
 ### 3.6 RabbitMQ Enterprise Broker Topology & Resilience (SCALE-04)
 
-The message broker layer ([`internal/broker/`](./internal/broker/)) provides decoupled, thread-safe asynchronous messaging between the API gateway, orchestrator, and background workers:
+The message broker layer ([`internal/broker/`](./internal/broker/)) provides decoupled, thread-safe asynchronous messaging between the app's ingress and worker and the audit worker:
 
 1. **Exchange & Dead Letter Queue (DLQ) Topology ([`topology.go`](./internal/broker/topology.go)):**
    - **Exchanges:** Primary direct exchange `mypa.direct` and dedicated Dead Letter Exchange `mypa.dlx` (both durable, direct).
@@ -421,7 +422,7 @@ One shared set of scenarios is run against every supported channel, in CI (`go t
 - **Scenarios** (`scenarios_test.go`): `plain_reply`, `pairing`, `pairing_lockout`, `approval`, `reminder`, `undo`, `media_photo`, `media_voice`, `media_document`, `long_reply`, `duplicate_delivery`, `doctor` (the `/doctor` report, V4-17). Every scenario runs on every channel in `channels` (`harness_test.go`).
 - **Two layers of assertion.** The outcome in channel-neutral terms (the held tool ran exactly once with the held arguments; the reminder is marked sent; nothing went to another person or platform), and the bytes on the wire as a golden transcript per scenario and channel in `testdata/golden/<scenario>.<channel>.txt`. `long_reply` is asserted by properties instead (every message within the platform limit, valid UTF-8, complete, in order).
 - **Changing a transcript is changing what users see.** Regenerate with `go test ./internal/conformance -update` and review the diff. A transcript that no scenario compares fails the suite.
-- **Not covered here:** the Telegram webhook's secret-token check, which lives in `cmd/gateway` and is pinned by that package's tests.
+- **Not covered here:** the Telegram webhook's secret-token check, which lives in `cmd/mypa` (the ingress) and is pinned by that package's tests.
 
 Behaviour the suite pins today:
 
@@ -432,7 +433,7 @@ Behaviour the suite pins today:
 | Long replies | Split at 4,000 bytes with tags kept balanced (platform limit 4,096) | Split at 1,500 bytes (platform limit 1,600) |
 | Photo | Largest size is downloaded and given to the model; the turn is untrusted | Downloaded with Twilio credentials and given to the model; the turn is untrusted |
 | Voice note | Transcribed, echoed, then answered | Transcribed, echoed, then answered |
-| Document | Dropped at the gateway: nothing reaches the engine and nothing is answered | Text files are inlined as untrusted content, PDFs go to the model, other types get an explanation |
+| Document | Dropped at the ingress: nothing reaches the engine and nothing is answered | Text files are inlined as untrusted content, PDFs go to the model, other types get an explanation |
 | Approval | Typed `CONFIRM <TOOL>`, any letter case | Typed `CONFIRM <TOOL>`, any letter case |
 | Reminder | Sent to the chat the person last wrote from; a person who never wrote gets nothing and the reminder stays due | Same |
 | Duplicate webhook delivery | Answered once (claim scoped by chat ID) | Answered once (claim scoped by user ID) |
@@ -443,7 +444,7 @@ Behaviour the suite pins today:
 
 `/doctor` is an admin chat command that checks the install and, for every problem, says what to do next. A non-admin is refused before any check runs; without a wired reporter the command says it is unavailable. It changes no user data and creates no schema or queue, and the report is not copied into the audit log. Its one possible write is to the Redis cache: reading a member's Google token goes through `state.Store.GetOAuthToken`, which, as on any other read, puts the token back into Redis when it had to be fetched from its Postgres copy or was still stored in the old unencrypted form.
 
-- **Shape.** `doctor.Doctor` runs a list of independent `Check`s concurrently (15 s each; a check that panics or hangs becomes a failed line and never blocks the others) and renders one Markdown report: failures and warnings first, each with a `➡️` next step, then what passed, then notes. The engine knows only the `orchestrator.HealthReporter` port (`WithHealthReporter`); [`cmd/orchestrator/doctor.go`](./cmd/orchestrator/doctor.go) binds each check to the real system. Every check takes its inputs as functions, so each failure is reproduced in tests without infrastructure.
+- **Shape.** `doctor.Doctor` runs a list of independent `Check`s concurrently (15 s each; a check that panics or hangs becomes a failed line and never blocks the others) and renders one Markdown report: failures and warnings first, each with a `➡️` next step, then what passed, then notes. The engine knows only the `orchestrator.HealthReporter` port (`WithHealthReporter`); [`cmd/mypa/doctor.go`](./cmd/mypa/doctor.go) binds each check to the real system. Every check takes its inputs as functions, so each failure is reproduced in tests without infrastructure.
 - **Healthy** means no failed check. Warnings and notes do not make an install unhealthy.
 - **Scope.** Install-level checks are the same for every admin. The Google check covers only the members of the admin's own family group (an admin without one is checked alone), and names a member without a stored name by the last four characters of their ID, never by a phone number.
 
@@ -464,27 +465,27 @@ One mechanism for upgrading from the pre-V4 baseline, moving an install between 
 
 - **Backup set** ([`internal/db/backup_set.go`](./internal/db/backup_set.go)). A backup is three files in `/backups` sharing one timestamp: `backup_<ts>.dump[.age]` (the `pg_dump`, unchanged from P3-4), `backup_<ts>.archives.tar[.age]` (the archive files) and `backup_<ts>.manifest.json` (plain JSON: sizes, SHA-256, schema version, whether the source's queues were drained, what is not carried). The manifest is written last. `db.CreateBackupSet` leaves nothing behind when a step fails; `db.VerifyBackupSet` checks a set against its manifest; `ApplyRetention` prunes whole sets. A backup name is never reused: a second backup in the same second takes the next free name. The nightly backup and `/backup` write sets through `transfer.LiveBackup` (the orchestrator mounts `audit_archives` read-only for this); a set taken from a running app records `drained: false`.
 - **A bare dump still restores.** A `backup_<ts>.dump[.age]` without a manifest (every backup before V4, including the `v3.4.0` baseline) goes through the same import, without archive files.
-- **Tool.** `orchestrator transfer <export|import|verify|export-keys|import-keys>` ([`cmd/orchestrator/transfer.go`](./cmd/orchestrator/transfer.go)), run as the one-shot compose service `transfer` (profile `tools`, never started by `up`): `docker compose --profile tools run --rm transfer export`.
-- **Export** (`transfer.Exporter`): refuses unless both work queues are empty and unconsumed (`broker.InspectQueue`: the orchestrator and the audit worker are stopped and nothing is waiting; a gateway that still runs only publishes and cannot be seen, so stopping it is a runbook step); reports messages left in the dead-letter queues, which do not travel; copies any Google sign-in that exists only in Redis into its encrypted database copy (`transfer.SignInSync`, never overwriting one); refuses to write an unencrypted set unless told to; writes the set and verifies it from disk.
+- **Tool.** `mypa transfer <export|import|verify|export-keys|import-keys>` ([`cmd/mypa/transfer.go`](./cmd/mypa/transfer.go)), run as the one-shot compose service `transfer` (profile `tools`, never started by `up`): `docker compose --profile tools run --rm transfer export`.
+- **Export** (`transfer.Exporter`): refuses unless both work queues are empty and unconsumed (`broker.InspectQueue`: the app (on `v3.4.x`, the orchestrator) and the audit worker are stopped and nothing is waiting; what only accepts messages — the tunnel, a `v3.4.x` gateway, or an app with `--role=ingress` — only publishes and cannot be seen, so stopping it first is a runbook step); reports messages left in the dead-letter queues, which do not travel; copies any Google sign-in that exists only in Redis into its encrypted database copy (`transfer.SignInSync`, never overwriting one); refuses to write an unencrypted set unless told to; writes the set and verifies it from disk.
 - **Import** (`transfer.Importer`), in order: verify the set; require the backup key for encrypted files; read the dump and the archive bundle to their end with that key before anything is changed (`db.CheckDump` decrypts and runs `pg_restore -f -` without a database, `db.CheckArchives` walks the bundle), so a wrong key or a damaged file is refused while the target is untouched; refuse a running target; refuse a database that holds users unless `--replace`, and then take a safety backup first; `db.ResetPublicSchema` and `pg_restore --single-transaction --no-owner --no-privileges` into the empty schema; `db.Migrate` and confirm the schema is current (`--no-migrate` skips this, for rolling back to the release that took the backup); `db.ExtractArchives` (validated entry names, regular files only, an existing different file is never overwritten); check that `ENCRYPTION_KEY` opens the restored secrets; take a first backup set of the restored install (without pruning). Anything left unfinished is listed with `!` and the command exits non-zero.
 - **Why a reset schema.** `pg_restore -c` (used by the chat `/restore` until *BL-21* retired it) drops only the objects the dump knows. Restoring an older dump over a newer schema would keep the newer tables, and the migrations that follow would collide with them.
 - **Keys** ([`internal/transfer/keys.go`](./internal/transfer/keys.go)). `export-keys` writes `ENCRYPTION_KEY` and `BACKUP_AGE_RECIPIENTS` into a file encrypted to the backup key's recipients; `import-keys` opens it with the private backup key (`BACKUP_AGE_IDENTITY_FILE`), which the operator keeps off the machine and brings to a restore anyway. Nothing secret is printed or typed. `--passphrase` locks the file with a generated passphrase (160 bits, age scrypt) instead, for installs without a backup key and for `--with-backup-key`; that passphrase is printed once and is therefore also in the container's log until the container is removed (`run --rm`). `import-keys` reads a passphrase from a file, never from the command line, and writes the settings lines to a `0600` file. A key file is never part of a backup set.
 - **Not carried** (`transfer.NotCarried`, printed by every export and import and written into every manifest): the 24-hour chat window, pending `CONFIRM` approvals, unfinished `/connect` links, pairing lockouts, follow-up tool context and prompt cache, inbound dedup claims, dead-lettered messages, and WhatsApp's own 24-hour window. Google sign-ins are carried through their database copy.
-- **Tests.** The whole procedure runs end to end in `cmd/orchestrator/transfer*_test.go` against a throwaway Postgres of the production version, with the real `pg_dump` and `pg_restore` executed inside that container (`pgtest.ToolRunner`), a real RabbitMQ and the real migrations. `testdata/baseline_v3.4.0.dump` is a dump at the `v3.4.0` schema holding data in all 29 tables (`baseline_v3.4.0.counts.json`): after it is restored and migrated, every row must still be there and the production `/doctor` wiring must report no failure, so every migration added during V4 is exercised against it. Other tests cover a wrong backup key and a truncated dump (nothing is changed), a restore under a different database role, replacing a populated database and getting it back from the safety backup, and rollback without migrating.
+- **Tests.** The whole procedure runs end to end in `cmd/mypa/transfer*_test.go` against a throwaway Postgres of the production version, with the real `pg_dump` and `pg_restore` executed inside that container (`pgtest.ToolRunner`), a real RabbitMQ and the real migrations. `testdata/baseline_v3.4.0.dump` is a dump at the `v3.4.0` schema holding data in all 29 tables (`baseline_v3.4.0.counts.json`): after it is restored and migrated, every row must still be there and the production `/doctor` wiring must report no failure, so every migration added during V4 is exercised against it. Other tests cover a wrong backup key and a truncated dump (nothing is changed), a restore under a different database role, replacing a populated database and getting it back from the safety backup, and rollback without migrating.
 
 ---
 
 ## 4. PostgreSQL + `pgvector` Database Schema Reference
 
 ### 4.1 Migration Registration Mechanism ([`internal/db/migrations.go`](./internal/db/migrations.go))
-- **Schema management (*P4-3*, goose):** production never AutoMigrates. Versioned migrations live in [`internal/db/migrations/`](./internal/db/migrations) (embedded; `00001_baseline.sql` generated from the pre-goose schema) plus Go migrations in [`schema_migrations.go`](./internal/db/schema_migrations.go) (version 2 = P2-4 legacy-memory copy). They run as an **explicit step**: `orchestrator -migrate-only` (the `migrate` compose service, which `orchestrator` and `audit-worker` wait on via `service_completed_successfully`). Both services call `db.EnsureMigrated` at startup and refuse to run with pending migrations. A pre-goose database is **adopted** at version 1 (goose version table created, baseline not executed) the first time `Migrate` runs. A Postgres advisory lock serializes concurrent migrators. `db.NewClientAutoMigrate` (AutoMigrate + `ApplyCustomIndexes` + legacy copy) exists for tests/dev only; `TestMigrations_FreshDatabaseMatchesModels` compares a goose-built and an AutoMigrate-built schema column-by-column and index-by-index, so a model change without a migration fails CI.
+- **Schema management (*P4-3*, goose):** production never AutoMigrates. Versioned migrations live in [`internal/db/migrations/`](./internal/db/migrations) (embedded; `00001_baseline.sql` generated from the pre-goose schema) plus Go migrations in [`schema_migrations.go`](./internal/db/schema_migrations.go) (version 2 = P2-4 legacy-memory copy). They run as an **explicit step**: `mypa -migrate-only` (the `migrate` compose service, which `app` and `audit-worker` wait on via `service_completed_successfully`). Both services call `db.EnsureMigrated` at startup and refuse to run with pending migrations. A pre-goose database is **adopted** at version 1 (goose version table created, baseline not executed) the first time `Migrate` runs. A Postgres advisory lock serializes concurrent migrators. `db.NewClientAutoMigrate` (AutoMigrate + `ApplyCustomIndexes` + legacy copy) exists for tests/dev only; `TestMigrations_FreshDatabaseMatchesModels` compares a goose-built and an AutoMigrate-built schema column-by-column and index-by-index, so a model change without a migration fails CI.
   - **Adding a schema change:** add `internal/db/migrations/000NN_<name>.sql` (`-- +goose Up` / `-- +goose Down`) *and* update the GORM model.
 - **Connection Pool Sizing (SCALE-05 Part B):** Configures production-grade pool limits on `*sql.DB`:
-  - `SetMaxOpenConns(25)`: Prevents exhausting PostgreSQL's `max_connections` (100) across services (`orchestrator` 25 + `audit-worker` 10 + headroom 65).
+  - `SetMaxOpenConns(25)`: Prevents exhausting PostgreSQL's `max_connections` (100) across services (`app` 25 + `audit-worker` 10 + headroom 65).
   - `SetMaxIdleConns(10)`: Maintains warm connections for instantaneous tool queries.
   - `SetConnMaxLifetime(30 * time.Minute)`: Replaces stale connections before infrastructure firewall timeouts.
   - `SetConnMaxIdleTime(5 * time.Minute)`: Reclaims unused idle connections after traffic bursts.
-  - `Ping()` & `Close()`: Startup verifies connectivity via `sqlDB.Ping()`, and `Close()` safely drains the connection pool on orchestrator shutdown.
+  - `Ping()` & `Close()`: Startup verifies connectivity via `sqlDB.Ping()`, and `Close()` safely drains the connection pool on app shutdown.
 - **Multi-Tenant Composite B-Tree Indexes ([`internal/db/migrations.go`](./internal/db/migrations.go)):**
   - `idx_mutation_logs_family_created`: `(family_group, created_at DESC)` on `mutation_logs`
   - `idx_financial_transactions_family_date`: `(family_group, transaction_date DESC)` on `financial_transactions`
@@ -630,11 +631,11 @@ Primary queues are declared with dead-letter exchange bindings ensuring zero mes
 
 | Queue Name | Dead-Letter Queue | Producer | Consumer | Go Payload Struct | JSON Fields |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`inbound.messages`** (renamed from `telegram.inbound`, *BL-5*; name in `broker.InboundMessagesQueue`) | `inbound.messages.dlq` | `cmd/gateway` (`/webhook/telegram` & `/webhook/twilio`) | `cmd/orchestrator` (`Engine.Start`) | [`models.Message`](./internal/models/models.go#L9-L22) | `id`, `user_id`, `chat_id`, `text`, `voice_file_id`, `photo_file_id`, `audio_file_id`, `media_url`, `media_content_type`, `source` (`"telegram"`\|`"whatsapp"`), `timestamp` |
-| **`audit.events`** | `audit.events.dlq` | `cmd/orchestrator` (`Engine.ProcessMessage` defer) | `cmd/audit-worker` | [`models.AuditSession`](./internal/models/models.go#L80-L92) | `id`, `user_id`, `chat_id`, `source`, `user_prompt`, `final_response`, `start_time`, `end_time`, `total_duration_ms`, `total_tokens`, `status` |
+| **`inbound.messages`** (renamed from `telegram.inbound`, *BL-5*; name in `broker.InboundMessagesQueue`) | `inbound.messages.dlq` | `cmd/mypa` ingress (`/webhook/telegram` & `/webhook/twilio`) | `cmd/mypa` worker (`Engine.Start`) | [`models.Message`](./internal/models/models.go#L9-L22) | `id`, `user_id`, `chat_id`, `text`, `voice_file_id`, `photo_file_id`, `audio_file_id`, `media_url`, `media_content_type`, `source` (`"telegram"`\|`"whatsapp"`), `timestamp` |
+| **`audit.events`** | `audit.events.dlq` | `cmd/mypa` worker (`Engine.ProcessMessage` defer) | `cmd/audit-worker` | [`models.AuditSession`](./internal/models/models.go#L80-L92) | `id`, `user_id`, `chat_id`, `source`, `user_prompt`, `final_response`, `start_time`, `end_time`, `total_duration_ms`, `total_tokens`, `status` |
 
 #### SafePublisher: Thread-Safety, Confirms & Auto-Reconnect ([`internal/broker/publisher.go`](./internal/broker/publisher.go))
-All message publishing across the gateway and orchestrator utilizes `SafePublisher` (`broker.NewSafePublisher`):
+All message publishing across the app's ingress and worker utilizes `SafePublisher` (`broker.NewSafePublisher`):
 - **Concurrency Guard:** All channel access is protected by an internal `sync.Mutex`, preventing AMQP race conditions under concurrent webhook ingestion or parallel tool executions.
 - **Publisher Confirms:** AMQP channels are initialized with `ch.Confirm(false)`. Each publish invokes `PublishWithDeferredConfirmWithContext` and awaits broker acknowledgment (`confirmation.Wait()`), ensuring durability before acknowledging upstream webhook clients.
 - **Dual-Listener Auto-Reconnect:** Concurrently monitors `NotifyClose` channels on both `*amqp.Connection` and `*amqp.Channel`. Upon broker restarts or TCP drops, a background supervisor loop re-establishes the connection and channel with exponential backoff while blocking in-flight publishers until recovery.
@@ -821,7 +822,7 @@ Failed syncs are **not retried**; the event stays in MyPA with an empty `externa
 
 ### 7.1 GraphQL Schema ([`internal/graph/schema.graphqls`](./internal/graph/schema.graphqls)) & Resolvers ([`internal/graph/schema.resolvers.go`](./internal/graph/schema.resolvers.go))
 
-- **Endpoint:** `POST /graphql` (proxied via `http://proxy:8000/graphql` to `http://orchestrator:8081/graphql`).
+- **Endpoint:** `POST /graphql` on the app (`http://app:8000/graphql` inside compose, `http://localhost:8000/graphql` on the host; *V4-01*).
 - **Code Generation:** Configured via [`gqlgen.yml`](./gqlgen.yml). Run `go run github.com/99designs/gqlgen generate` after editing `internal/graph/schema.graphqls` (always save files with UTF-8 encoding without BOM).
 - **Resolver Decoupling & Positive Authorization (Milestone 1C):** `graph.Resolver` receives explicit domain repository interfaces (`BabyRepo`, `FinanceRepo`, `HouseRepo`, `ScheduleRepo`, `SharedRepo`, `MemoryRepo`, `AutomationRepo`, `UserRepo`), `durability.RollbackEngine`, and `events.EventBus`. Direct `r.DB.DB` calls are eliminated across domain resolvers.
   - **Safe ID Parsing:** All string entity IDs are strictly validated via [`toolutil.ParseID`](./internal/domains/toolutil/toolutil.go), rejecting empty, non-numeric, or `<= 0` values.
@@ -844,7 +845,7 @@ Failed syncs are **not retried**; the event stays in MyPA with an empty `externa
 ### 7.2 Next.js Dashboard Architecture & Routes ([`dashboard/`](./dashboard/))
 
 - **Decoupled Frontend Tier (Milestone 1C):** Direct `pg.Pool` usage, raw SQL queries, and local database connection strings are 100% eliminated from Next.js. `pg` and `@types/pg` packages are removed from `dashboard/package.json`.
-- **Centralized Typed Client ([`dashboard/src/lib/graphql.ts`](./dashboard/src/lib/graphql.ts)):** Implements `graphqlFetch<TData, TVariables>` with automatic `Authorization: Bearer <DASHBOARD_API_SECRET>` header injection, endpoint discovery via `GRAPHQL_ENDPOINT` / `NEXT_PUBLIC_PROXY_URL`, and complete TypeScript type declarations for all domain entities.
+- **Centralized Typed Client ([`dashboard/src/lib/graphql.ts`](./dashboard/src/lib/graphql.ts)):** Implements `graphqlFetch<TData, TVariables>` with automatic `Authorization: Bearer <DASHBOARD_API_SECRET>` header injection, endpoint discovery via `GRAPHQL_ENDPOINT` / `APP_URL` / `NEXT_PUBLIC_APP_URL` (fallback `http://app:8000/graphql`, *V4-01*), and complete TypeScript type declarations for all domain entities.
 - **Clean Empty States & Zero Mock Data:** Hardcoded mock statistics in `dashboard/src/app/baby/page.tsx` and other life domain consoles are completely removed. All pages render clean empty states when database records are absent.
 - **Client Error Boundary ([`dashboard/src/app/error.tsx`](./dashboard/src/app/error.tsx)):** React client error boundary component catching uncaught rendering errors, displaying user-friendly diagnostics, and providing a clean reset/retry action.
 - **Comprehensive Vitest Component Test Suite:** Automated component testing with Vitest and `@testing-library/react` (5 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`, `settings_page.test.tsx`), verifying typed GraphQL client queries, error boundaries, empty states, and form interactions.
@@ -870,54 +871,54 @@ Failed syncs are **not retried**; the event stays in MyPA with an empty `externa
 
 ### 8.1 Environment Variables ([`internal/config/config.go`](./internal/config/config.go) & [`internal/crypto/aes.go`](./internal/crypto/aes.go))
 
-**Startup validation:** every `cmd/*/main.go` calls `cfg.Validate(<service>)` ([`internal/config/validate.go`](./internal/config/validate.go)) right after `config.Load()` and exits non-zero, listing *all* problems at once (`errors.Join`), if a required key is missing, whitespace-only, or still an `.env.example` placeholder (`your-…` / `<YOUR_…>`).
+**Startup validation:** the app calls `cfg.Validate(<role>)` and the audit worker `cfg.Validate("audit-worker")` ([`internal/config/validate.go`](./internal/config/validate.go)) right after `config.Load()` and exits non-zero, listing *all* problems at once (`errors.Join`), if a required key is missing, whitespace-only, or still an `.env.example` placeholder (`your-…` / `<YOUR_…>`).
 
 | Service | Always required | Conditional |
 | :--- | :--- | :--- |
-| `gateway` | `RABBITMQ_URL` | `TELEGRAM_SECRET_TOKEN` (valid format) if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_URL` set; `TELEGRAM_BOT_TOKEN` if `TELEGRAM_WEBHOOK_URL` set; `TWILIO_AUTH_TOKEN` if `TWILIO_ACCOUNT_SID` set |
-| `orchestrator` | `ENCRYPTION_KEY`, `JWT_SECRET` (≠ `ENCRYPTION_KEY`), `DASHBOARD_API_SECRET`, `DASHBOARD_FAMILY_GROUP`, `DATABASE_URL`, `REDIS_URL`, `RABBITMQ_URL`, `GEMINI_API_KEY` | `TWILIO_AUTH_TOKEN` if `TWILIO_ACCOUNT_SID` set |
-| `proxy` | `GATEWAY_URL`, `ORCHESTRATOR_URL` | — |
+| `ingress` (role) | `RABBITMQ_URL` | `TELEGRAM_SECRET_TOKEN` (valid format) if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_URL` set; `TELEGRAM_BOT_TOKEN` if `TELEGRAM_WEBHOOK_URL` set; `TWILIO_AUTH_TOKEN` if `TWILIO_ACCOUNT_SID` set |
+| `worker` (role) | `ENCRYPTION_KEY`, `JWT_SECRET` (≠ `ENCRYPTION_KEY`), `DASHBOARD_API_SECRET`, `DASHBOARD_FAMILY_GROUP`, `DATABASE_URL`, `REDIS_URL`, `RABBITMQ_URL`, `GEMINI_API_KEY` | `TWILIO_AUTH_TOKEN` if `TWILIO_ACCOUNT_SID` set |
+| `all` (role, the default) | everything `worker` requires | everything conditional for `ingress` and `worker` |
 | `audit-worker` | `DATABASE_URL`, `RABBITMQ_URL` | — |
 
 `TestEnvExampleListsEveryRequiredKey` enforces that `.env.example` documents every key `Validate` can demand.
 
 | Environment Variable | Viper Config Key | Default | Used By | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `ALLOWED_USERS` | `server.allowed_users` | `""` | `orchestrator` | Comma-separated bootstrap users: `"platform_id:Name:Role:FamilyGroup"` |
+| `ALLOWED_USERS` | `server.allowed_users` | `""` | `app` | Comma-separated bootstrap users: `"platform_id:Name:Role:FamilyGroup"` |
 | `LOG_LEVEL` | *(direct `os.Getenv`, `internal/logging`)* | `info` | all Go services | `debug`/`info`/`warn`/`error`. Message content is logged only at `debug` (*P3-3*); at `info` user messages appear as `message_id` + `text_len`. GORM logs through the same JSON handler (`db.newSQLLogger`, *BL-2*): only failed or slow (> 200 ms) statements, as `SQL executed` with `trace.sql` using `$n` placeholders — bound values are never logged — and `record not found` is not logged at all |
-| `DEFAULT_TIMEZONE` | `server.default_timezone` | `"UTC"` | `orchestrator` | Default IANA timezone injected into system prompt |
-| `WEEK_START_DAY` | `server.week_start_day` | `"Sunday"` | `orchestrator` | First day of the household week, stated in the system prompt (*P2-6*); invalid values fall back to the default |
-| `WEEKEND_DAYS` | `server.weekend_days` | `"Friday,Saturday"` | `orchestrator` | Comma-separated weekend days for the system prompt (*P2-6*) |
-| `GATEWAY_URL` | `server.gateway_url` | `http://gateway:8080` | `proxy` | Internal upstream URL for webhook proxy |
-| `ORCHESTRATOR_URL` | `server.orchestrator_url` | `http://orchestrator:8081` | `proxy` | Internal upstream URL for GraphQL/OAuth proxy |
-| `BACKUP_AGE_RECIPIENTS` | *(direct `os.Getenv`, `db.BackupOptionsFromEnv`)* | `""` | `orchestrator`, `transfer` | Comma-separated age public keys (`age1…`) used to encrypt backups; empty → unencrypted backups with a warning (*P3-4*) |
+| `DEFAULT_TIMEZONE` | `server.default_timezone` | `"UTC"` | `app` | Default IANA timezone injected into system prompt |
+| `WEEK_START_DAY` | `server.week_start_day` | `"Sunday"` | `app` | First day of the household week, stated in the system prompt (*P2-6*); invalid values fall back to the default |
+| `WEEKEND_DAYS` | `server.weekend_days` | `"Friday,Saturday"` | `app` | Comma-separated weekend days for the system prompt (*P2-6*) |
+| `HTTP_PORT` | `server.port` | `8000` | `app` | The app's one HTTP port, whatever its role (*V4-01*). `GATEWAY_URL` and `ORCHESTRATOR_URL` were removed with the proxy |
+| `BACKUP_AGE_RECIPIENTS` | *(direct `os.Getenv`, `db.BackupOptionsFromEnv`)* | `""` | `app`, `transfer` | Comma-separated age public keys (`age1…`) used to encrypt backups; empty → unencrypted backups with a warning (*P3-4*) |
 | `BACKUP_AGE_IDENTITY_FILE` | *(direct `os.Getenv`, `db.RestoreOptionsFromEnv`)* | `""` | `transfer` | Path to the age private key; needed only to `transfer import` an encrypted backup or `transfer import-keys` (*P3-4*, *V4-43*; the chat `/restore` no longer reads it, *BL-21*). Set it only while restoring |
-| `DATABASE_URL` | `database.url` | — | `orchestrator`, `audit-worker` | PostgreSQL connection string (`postgres://...`). **Host runs only** (`localhost`): compose sets the container value itself from `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` + host `postgres` and never reads this one (`TestCompose_ContainerURLsTargetServiceNames`) |
-| `REDIS_URL` | `redis.url` | — | `orchestrator` | Redis connection string. **Host runs only** (`redis://localhost:6379/0`); containers always use `redis://redis:6379/0` |
-| `RABBITMQ_URL` | `rabbitmq.url` | — | `gateway`, `orchestrator`, `audit-worker` | AMQP 0-9-1 URL. **Host runs only** (`localhost`); containers get one built from `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` + host `rabbitmq` |
-| `RABBITMQ_PREFETCH` | `rabbitmq.prefetch` | `4` | `orchestrator` | Max concurrent conversation turns; users run in parallel, each user's messages in order (*P2-8*) |
-| `ENCRYPTION_KEY` | `encryption.key` | **Required** (orchestrator) | `orchestrator`, `transfer` (`internal/crypto`) | Primary secret for HKDF-SHA256 salted AES-256-GCM encryption at rest; orchestrator refuses to start if missing/placeholder. Dev fallback key only inside `go test` binaries |
-| `TELEGRAM_SECRET_TOKEN` | `telegram.secret_token` | Required if Telegram configured | `gateway` | Shared webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header using constant-time compare; also sent as `secret_token` in `setWebhook`. 1–256 chars `[A-Za-z0-9_-]`. Gateway refuses to start if missing while `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_URL` is set |
-| `TELEGRAM_WEBHOOK_URL` | `telegram.webhook_url` | `""` | `gateway`, `orchestrator` | Public URL of `/webhook/telegram`; when set, the gateway registers it via `setWebhook` on startup (requires `TELEGRAM_BOT_TOKEN`). The orchestrator only reads it, to compare with the address Telegram reports in `/doctor` |
-| `DASHBOARD_API_SECRET` | `server.dashboard_api_secret` | **Required** (orchestrator) | `orchestrator`, `proxy`, `dashboard` | Secret token used by web dashboard / proxy to authenticate to `/graphql` |
-| `DASHBOARD_FAMILY_GROUP` | `server.dashboard_family_group` | **Required** (orchestrator) | `orchestrator`, `dashboard` | Family group the dashboard secret is bound to (tenant-bound admin, *P3-2*); the dashboard sends it on every query (`getDashboardFamilyGroup`) |
-| `GRAPHQL_ENDPOINT` | *(dashboard env)* | `http://proxy:8000/graphql` | `dashboard` | Upstream GraphQL URL used by Next.js server actions and SSR data fetching |
-| `JWT_SECRET` | `server.jwt_secret` | **Required** (orchestrator); must differ from `ENCRYPTION_KEY` | `orchestrator`, `proxy` | Secret key used for signing and verifying HMAC-SHA256 Bearer JWT claims on `/graphql` |
-| `GEMINI_API_KEY` | `gemini.api_key` | — | `orchestrator` | Google AI Studio API key |
-| `GEMINI_MODEL` | `gemini.model` | `"gemini-3.6-flash"` | `orchestrator` | Primary Gemini chat/tool-calling model. The default is defined in one place, `config.DefaultGeminiModel` (*V4-09*): `config/config.yaml` and `.env.example` do not name a model, and the LLM client falls back to the same constant |
-| `TELEGRAM_BOT_TOKEN` | `telegram.bot_token` | — | `orchestrator`, `gateway` | Telegram Bot token (gateway uses it only for `setWebhook`) |
-| `TWILIO_ACCOUNT_SID` | `twilio.account_sid` | — | `orchestrator`, `gateway` | Twilio Account SID for WhatsApp; when set, the gateway requires `TWILIO_AUTH_TOKEN` at startup |
-| `TWILIO_AUTH_TOKEN` | `twilio.auth_token` | — | `orchestrator`, `gateway` | Twilio Auth Token for WhatsApp; gateway verifies `X-Twilio-Signature` with it and rejects all WhatsApp webhooks when it is empty |
-| `TWILIO_FROM_NUMBER` | `twilio.from_number` | — | `orchestrator` | Twilio WhatsApp sender (`whatsapp:+14155238886`) |
-| `TWILIO_STATUS_CALLBACK_URL` | `twilio.status_callback_url` | `""` | `orchestrator` | Optional (*BL-8*): sent as `StatusCallback` with every outbound WhatsApp message, so Twilio reports delivery to the gateway's `POST /webhook/twilio/status`. Must be an absolute `https` URL (validated at startup). Empty → no delivery reports (an accepted-then-failed reply is invisible) |
-| `GOOGLE_CLIENT_ID` | `google.client_id` | — | `orchestrator` | Google OAuth2 Client ID |
-| `GOOGLE_CLIENT_SECRET` | `google.client_secret` | — | `orchestrator` | Google OAuth2 Client Secret |
-| `GOOGLE_REDIRECT_URL` | `google.redirect_url` | — | `orchestrator` | OAuth2 callback URL (`.../auth/google/callback`) |
-| `GROQ_API_KEY` | `groq.api_key` | — | `orchestrator` | Groq API key for `whisper-large-v3` audio transcription |
-| `TAVILY_API_KEY` | `tavily.api_key` | — | `orchestrator` | Tavily API key for real-time web search |
-| `AUDIT_ARCHIVE_DIR` | *(direct `os.Getenv`)* | `"/app/archives"` | `audit-worker`, `orchestrator`, `transfer` | Directory of the 30-day session archives (the audit worker writes them; the orchestrator, through a read-only mount, and `transfer` read them so that backups include the archive files, *V4-43*), written as gzip JSONL `audit_archive_<unix>.jsonl.gz` via the `ArchiveSink` interface (atomic temp+rename; *P2-9*) (mounted to `audit_archives` volume) |
+| `DATABASE_URL` | `database.url` | — | `app`, `audit-worker` | PostgreSQL connection string (`postgres://...`). **Host runs only** (`localhost`): compose sets the container value itself from `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` + host `postgres` and never reads this one (`TestCompose_ContainerURLsTargetServiceNames`) |
+| `REDIS_URL` | `redis.url` | — | `app` | Redis connection string. **Host runs only** (`redis://localhost:6379/0`); containers always use `redis://redis:6379/0` |
+| `RABBITMQ_URL` | `rabbitmq.url` | — | `app`, `audit-worker` | AMQP 0-9-1 URL. **Host runs only** (`localhost`); containers get one built from `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` + host `rabbitmq` |
+| `RABBITMQ_PREFETCH` | `rabbitmq.prefetch` | `4` | `app` | Max concurrent conversation turns; users run in parallel, each user's messages in order (*P2-8*) |
+| `ENCRYPTION_KEY` | `encryption.key` | **Required** (app) | `app`, `transfer` (`internal/crypto`) | Primary secret for HKDF-SHA256 salted AES-256-GCM encryption at rest; the app refuses to start if missing/placeholder. Dev fallback key only inside `go test` binaries |
+| `TELEGRAM_SECRET_TOKEN` | `telegram.secret_token` | Required if Telegram configured | `app` | Shared webhook secret token verified via `X-Telegram-Bot-Api-Secret-Token` header using constant-time compare; also sent as `secret_token` in `setWebhook`. 1–256 chars `[A-Za-z0-9_-]`. The app refuses to start if it is missing while `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_URL` is set |
+| `TELEGRAM_WEBHOOK_URL` | `telegram.webhook_url` | `""` | `app` | Public URL of `/webhook/telegram`; when set, the app's ingress registers it via `setWebhook` on startup (requires `TELEGRAM_BOT_TOKEN`); the worker reads it to compare with the address Telegram reports in `/doctor` |
+| `DASHBOARD_API_SECRET` | `server.dashboard_api_secret` | **Required** (app) | `app`, `dashboard` | Secret token the web dashboard uses to authenticate to `/graphql` |
+| `DASHBOARD_FAMILY_GROUP` | `server.dashboard_family_group` | **Required** (app) | `app`, `dashboard` | Family group the dashboard secret is bound to (tenant-bound admin, *P3-2*); the dashboard sends it on every query (`getDashboardFamilyGroup`) |
+| `GRAPHQL_ENDPOINT` | *(dashboard env)* | `http://app:8000/graphql` | `dashboard` | Upstream GraphQL URL used by Next.js server actions and SSR data fetching |
+| `NEXT_PUBLIC_APP_URL` | *(dashboard env)* | `http://localhost:8000` | `dashboard` | Base address of the app for browser-side GraphQL requests (`APP_URL` takes precedence; replaced `NEXT_PUBLIC_PROXY_URL`, *V4-01*) |
+| `JWT_SECRET` | `server.jwt_secret` | **Required** (app); must differ from `ENCRYPTION_KEY` | `app` | Secret key used for signing and verifying HMAC-SHA256 Bearer JWT claims on `/graphql` |
+| `GEMINI_API_KEY` | `gemini.api_key` | — | `app` | Google AI Studio API key |
+| `GEMINI_MODEL` | `gemini.model` | `"gemini-3.6-flash"` | `app` | Primary Gemini chat/tool-calling model. The default is defined in one place, `config.DefaultGeminiModel` (*V4-09*): `config/config.yaml` and `.env.example` do not name a model, and the LLM client falls back to the same constant |
+| `TELEGRAM_BOT_TOKEN` | `telegram.bot_token` | — | `app` | Telegram Bot token (the ingress uses it only for `setWebhook`) |
+| `TWILIO_ACCOUNT_SID` | `twilio.account_sid` | — | `app` | Twilio Account SID for WhatsApp; when set, the app requires `TWILIO_AUTH_TOKEN` at startup |
+| `TWILIO_AUTH_TOKEN` | `twilio.auth_token` | — | `app` | Twilio Auth Token for WhatsApp; the ingress verifies `X-Twilio-Signature` with it and rejects all WhatsApp webhooks when it is empty |
+| `TWILIO_FROM_NUMBER` | `twilio.from_number` | — | `app` | Twilio WhatsApp sender (`whatsapp:+14155238886`) |
+| `TWILIO_STATUS_CALLBACK_URL` | `twilio.status_callback_url` | `""` | `app` | Optional (*BL-8*): sent as `StatusCallback` with every outbound WhatsApp message, so Twilio reports delivery to the app's `POST /webhook/twilio/status`. Must be an absolute `https` URL (validated at startup). Empty → no delivery reports (an accepted-then-failed reply is invisible) |
+| `GOOGLE_CLIENT_ID` | `google.client_id` | — | `app` | Google OAuth2 Client ID |
+| `GOOGLE_CLIENT_SECRET` | `google.client_secret` | — | `app` | Google OAuth2 Client Secret |
+| `GOOGLE_REDIRECT_URL` | `google.redirect_url` | — | `app` | OAuth2 callback URL (`.../auth/google/callback`) |
+| `GROQ_API_KEY` | `groq.api_key` | — | `app` | Groq API key for `whisper-large-v3` audio transcription |
+| `TAVILY_API_KEY` | `tavily.api_key` | — | `app` | Tavily API key for real-time web search |
+| `AUDIT_ARCHIVE_DIR` | *(direct `os.Getenv`)* | `"/app/archives"` | `audit-worker`, `app`, `transfer` | Directory of the 30-day session archives (the audit worker writes them; the app, through a read-only mount, and `transfer` read them so that backups include the archive files, *V4-43*), written as gzip JSONL `audit_archive_<unix>.jsonl.gz` via the `ArchiveSink` interface (atomic temp+rename; *P2-9*) (mounted to `audit_archives` volume) |
 | `NGROK_AUTHTOKEN` | *(Docker Compose)* | — | `ngrok` | Ngrok authentication token |
-| `NGROK_DOMAIN` | *(Docker Compose)* | — (required; no default since *P3-5*) | `ngrok` | Static Ngrok domain tunneling to `proxy:8000`. Without it ngrok fails at startup |
+| `NGROK_DOMAIN` | *(Docker Compose)* | — (required; no default since *P3-5*) | `ngrok` | Static Ngrok domain tunneling to `app:8000`. Without it ngrok fails at startup |
 | `PGADMIN_DEFAULT_PASSWORD` | *(Docker Compose)* | — (no default since *P3-5*) | `pgadmin` | pgAdmin login password; pgAdmin refuses to start without it (only used with `--profile tools`) |
 
 ### 8.2 Built-In Cron Schedules ([`internal/scheduler/scheduler.go`](./internal/scheduler/scheduler.go))
@@ -1055,7 +1056,7 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
 
 ### Section 8: Next.js Web Dashboard & Client Verification
 1. **Decoupled GraphQL Frontend (`dashboard/src/lib/graphql.ts`):**
-   - Connect exclusively through the Proxy GraphQL endpoint (`http://proxy:8000/graphql`) with automatic `Authorization: Bearer <DASHBOARD_API_SECRET>` header injection.
+   - Connect exclusively through the app's GraphQL endpoint (`http://app:8000/graphql`, *V4-01*) with automatic `Authorization: Bearer <DASHBOARD_API_SECRET>` header injection.
    - Zero direct `pg.Pool` or local SQL connections; `pg` package completely removed from `dashboard/package.json`.
 2. **Clean Empty States & Zero Mock Data:**
    - Eliminate all hardcoded mock figures and placeholder charts from domain consoles (`/baby`, `/finance`, `/house`, etc.).

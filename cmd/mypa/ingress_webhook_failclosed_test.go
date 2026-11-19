@@ -46,7 +46,7 @@ func signTwilio(authToken, fullURL string, form url.Values) string {
 
 func TestTelegramWebhook_EmptyConfiguredSecret_RejectsEverything(t *testing.T) {
 	pub := new(MockEventPublisher)
-	r := setupRouter(pub, &config.Config{}) // no SecretToken configured
+	r := setupIngressRouter(pub, &config.Config{}) // no SecretToken configured
 
 	payload := []byte(`{"update_id":1,"message":{"message_id":1,"from":{"id":42},"chat":{"id":99},"text":"hi"}}`)
 
@@ -77,7 +77,7 @@ func TestTelegramWebhook_EmptyConfiguredSecret_RejectsEverything(t *testing.T) {
 
 func TestTwilioWebhook_EmptyAuthToken_RejectsEvenEmptyKeySignature(t *testing.T) {
 	pub := new(MockEventPublisher)
-	r := setupRouter(pub, &config.Config{}) // no Twilio AuthToken configured
+	r := setupIngressRouter(pub, &config.Config{}) // no Twilio AuthToken configured
 
 	form := url.Values{"From": {"whatsapp:+15550001"}, "Body": {"forged"}, "MessageSid": {"SM1"}}
 	fullURL := "https://gw.example/webhook/twilio"
@@ -112,7 +112,7 @@ func TestTwilioStatusCallback_RouteIsWiredAndFailsClosed(t *testing.T) {
 			req.Header.Set("X-Forwarded-Host", "gw.example")
 			req.Header.Set("X-Twilio-Signature", signTwilio("", fullURL, form))
 			rr := httptest.NewRecorder()
-			setupRouter(pub, cfg).ServeHTTP(rr, req)
+			setupIngressRouter(pub, cfg).ServeHTTP(rr, req)
 			assert.Equal(t, http.StatusForbidden, rr.Code)
 		})
 	}
@@ -124,7 +124,7 @@ func TestTwilioStatusCallback_RouteIsWiredAndFailsClosed(t *testing.T) {
 		req.Header.Set("X-Forwarded-Host", "gw.example")
 		req.Header.Set("X-Twilio-Signature", signTwilio("real-token", fullURL, form))
 		rr := httptest.NewRecorder()
-		setupRouter(pub, &config.Config{Twilio: config.TwilioConfig{AuthToken: "real-token"}}).ServeHTTP(rr, req)
+		setupIngressRouter(pub, &config.Config{Twilio: config.TwilioConfig{AuthToken: "real-token"}}).ServeHTTP(rr, req)
 		assert.Equal(t, http.StatusOK, rr.Code)
 	})
 	pub.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)

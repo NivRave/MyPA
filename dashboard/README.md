@@ -7,7 +7,7 @@ The **MyPA Web Control Dashboard** is a Next.js 16 (App Router) and React 19 adm
 ## Architecture & Data Layer
 
 - **Framework:** Next.js 16.3 (`Turbopack`), React 19, TypeScript 5, Tailwind CSS v4, Lucide Icons.
-- **Zero Direct Database Access:** The dashboard is completely decoupled from PostgreSQL. All server components, client views, and mutations communicate exclusively with the Orchestrator's `gqlgen` GraphQL API routed through the unified Edge Proxy (`http://proxy:8000/graphql`).
+- **Zero Direct Database Access:** The dashboard is completely decoupled from PostgreSQL. All server components, client views, and mutations communicate exclusively with the app's `gqlgen` GraphQL API, which the dashboard calls directly (`http://app:8000/graphql`, V4-01).
 - **Typed GraphQL Client (`src/lib/graphql.ts`):** Centralizes `graphqlFetch<TData, TVariables>` with automatic `Authorization: Bearer <DASHBOARD_API_SECRET>` header injection, SSR/client endpoint resolution, and full TypeScript domain interfaces.
 - **Resilience & Empty States:** Includes a global React Client Error Boundary (`src/app/error.tsx`) and zero hardcoded mock data—all views render clean onboarding states when records are empty.
 
@@ -38,8 +38,8 @@ The **MyPA Web Control Dashboard** is a Next.js 16 (App Router) and React 19 adm
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
-| `GRAPHQL_ENDPOINT` | Server-side GraphQL URL used by Next.js Server Components | `http://proxy:8000/graphql` |
-| `NEXT_PUBLIC_PROXY_URL` | Client-side base URL for browser GraphQL requests | `http://localhost:8000` |
+| `GRAPHQL_ENDPOINT` | Server-side GraphQL URL used by Next.js Server Components | `http://app:8000/graphql` |
+| `NEXT_PUBLIC_APP_URL` | Client-side base URL of the app for browser GraphQL requests | `http://localhost:8000` |
 | `DASHBOARD_API_SECRET` | Server-side Bearer token for authenticating with `/graphql` | *(from root `.env`)* |
 | `NEXT_PUBLIC_GRAPHQL_API_KEY` | Client-side Bearer token for browser mutations | *(from root `.env`)* |
 

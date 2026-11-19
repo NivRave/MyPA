@@ -562,7 +562,7 @@ func TestTransfer_UsageAndUnknownCommands(t *testing.T) {
 	code, report := i.run("frobnicate")
 	assert.Equal(t, 2, code)
 	assert.Contains(t, report, "unknown command")
-	assert.Contains(t, report, "Usage: orchestrator transfer")
+	assert.Contains(t, report, "Usage: mypa transfer")
 
 	code, report = i.run("import")
 	assert.Equal(t, 1, code)

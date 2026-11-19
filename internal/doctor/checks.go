@@ -46,7 +46,7 @@ type TelegramWebhook struct {
 func (TelegramWebhook) Name() string { return "Telegram webhook" }
 
 func (c TelegramWebhook) Run(ctx context.Context, _ Scope) []Result {
-	const restart = "then restart the gateway, which registers the webhook when it starts."
+	const restart = "then restart the app, which registers the webhook when it starts."
 	res := Result{Check: c.Name()}
 	if !c.Configured {
 		res.Status, res.Detail = StatusInfo, "Telegram is not configured."
@@ -85,12 +85,12 @@ func (c TelegramWebhook) Run(ctx context.Context, _ Scope) []Result {
 		case failing:
 			res.Status = StatusFail
 			res.Detail = fmt.Sprintf("Telegram could not deliver updates: %s (%s). %s.", info.LastErrorMsg, ago(since), waiting)
-			res.NextStep = "Check that the address in `TELEGRAM_WEBHOOK_URL` is reachable from the internet (is the tunnel up?) and that the gateway is running."
+			res.NextStep = "Check that the address in `TELEGRAM_WEBHOOK_URL` is reachable from the internet (is the tunnel up?) and that the app is running."
 			return []Result{res}
 		case since <= webhookErrorIsRelevant:
 			res.Status = StatusWarn
 			res.Detail = fmt.Sprintf("Deliveries work now, but Telegram reported an error %s: %s.", ago(since), info.LastErrorMsg)
-			res.NextStep = "No action if this was a restart. If it repeats, check the tunnel and the gateway log around that time."
+			res.NextStep = "No action if this was a restart. If it repeats, check the tunnel and the app log around that time."
 			return []Result{res}
 		}
 	}
@@ -344,7 +344,7 @@ func (c WhatsApp) Run(context.Context, Scope) []Result {
 			Check:    "WhatsApp delivery reports",
 			Status:   StatusWarn,
 			Detail:   "Delivery failures are not reported back, so a message Twilio accepted but could not deliver goes unnoticed.",
-			NextStep: "Set `TWILIO_STATUS_CALLBACK_URL` to the public address of `/webhook/twilio/status` and restart the orchestrator.",
+			NextStep: "Set `TWILIO_STATUS_CALLBACK_URL` to the public address of `/webhook/twilio/status` and restart the app.",
 		})
 	}
 	if len(results) == 0 {
@@ -393,7 +393,7 @@ func (c Queues) Run(ctx context.Context, _ Scope) []Result {
 		case c.BacklogWarn > 0 && waiting >= c.BacklogWarn:
 			res.Status = StatusWarn
 			res.Detail = fmt.Sprintf("%s waiting, which is more than usual.", plural(waiting, "message is", "messages are"))
-			res.NextStep = "Check that the service reading this queue is running and not stuck (orchestrator for inbound.messages, audit-worker for audit.events)."
+			res.NextStep = "Check that the service reading this queue is running and not stuck (the app for inbound.messages, audit-worker for audit.events)."
 		default:
 			res.Status = StatusOK
 			res.Detail = fmt.Sprintf("%d waiting, none failed.", waiting)
@@ -442,7 +442,7 @@ func (c Backups) Run(context.Context, Scope) []Result {
 	case age > c.MaxAge:
 		res.Status = StatusFail
 		res.Detail = fmt.Sprintf("The newest backup was taken %s (`%s`), so the nightly backup is not running.", ago(age), name)
-		res.NextStep = "Send /backup to take one now, then look for \"Scheduled backup\" in the orchestrator log around 02:00 to see why the nightly run failed."
+		res.NextStep = "Send /backup to take one now, then look for \"Scheduled backup\" in the app log around 02:00 to see why the nightly run failed."
 	case !strings.HasSuffix(name, ".age"):
 		res.Status = StatusWarn
 		res.Detail = fmt.Sprintf("The newest backup was taken %s, but it is not encrypted (`%s`). %s", ago(age), name, localOnly)
@@ -475,7 +475,7 @@ func (c Schema) Run(ctx context.Context, _ Scope) []Result {
 	case current < latest:
 		res.Status = StatusFail
 		res.Detail = fmt.Sprintf("The database is at version %d, but this build expects version %d.", current, latest)
-		res.NextStep = "Run the migrations: `docker compose run --rm migrate` (or `orchestrator -migrate-only`), then restart the orchestrator."
+		res.NextStep = "Run the migrations: `docker compose run --rm migrate` (or `mypa -migrate-only`), then restart the app."
 	case current > latest:
 		res.Status = StatusWarn
 		res.Detail = fmt.Sprintf("The database is at version %d, which is newer than this build (version %d).", current, latest)

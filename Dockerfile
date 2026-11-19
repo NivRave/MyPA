@@ -7,51 +7,22 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
-# ── Gateway ──────────────────────────────────────────────────────
-FROM deps AS build-gateway
+# ── App (V4-01: one binary with roles; replaces gateway, orchestrator and proxy) ──
+# The debian base carries postgresql-client for pg_dump/pg_restore (backups and `mypa transfer`).
+FROM deps AS build-app
 COPY internal/ internal/
 COPY config/  config/
-COPY cmd/gateway/ cmd/gateway/
+COPY cmd/mypa/ cmd/mypa/
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags='-w -s' -o /gateway ./cmd/gateway
+    CGO_ENABLED=0 GOOS=linux go build -ldflags='-w -s' -o /mypa ./cmd/mypa
 
-FROM gcr.io/distroless/static-debian12@sha256:d75cdd72874d4790092fcb1b058493ecf6bb5bf2b2b897045b00ff01d91843f2 AS gateway
-COPY --from=build-gateway /gateway /gateway
-COPY config/config.yaml /config/config.yaml
-EXPOSE 8080
-ENTRYPOINT ["/gateway"]
-
-# ── Orchestrator ─────────────────────────────────────────────────
-FROM deps AS build-orchestrator
-COPY internal/ internal/
-COPY config/  config/
-COPY cmd/orchestrator/ cmd/orchestrator/
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags='-w -s' -o /orchestrator ./cmd/orchestrator
-
-FROM debian:12.15-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS orchestrator
+FROM debian:12.15-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS app
 RUN apt-get update && apt-get install -y postgresql-client ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-orchestrator /orchestrator /usr/local/bin/orchestrator
-COPY config/config.yaml /config/config.yaml
-EXPOSE 8081
-ENTRYPOINT ["/usr/local/bin/orchestrator"]
-
-# ── Proxy ────────────────────────────────────────────────────────
-FROM deps AS build-proxy
-COPY internal/ internal/
-COPY config/  config/
-COPY cmd/proxy/ cmd/proxy/
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags='-w -s' -o /proxy ./cmd/proxy
-
-FROM gcr.io/distroless/static-debian12@sha256:d75cdd72874d4790092fcb1b058493ecf6bb5bf2b2b897045b00ff01d91843f2 AS proxy
-COPY --from=build-proxy /proxy /proxy
+COPY --from=build-app /mypa /usr/local/bin/mypa
 COPY config/config.yaml /config/config.yaml
 EXPOSE 8000
-ENTRYPOINT ["/proxy"]
+ENTRYPOINT ["/usr/local/bin/mypa"]
 
 # ── Audit Worker ───────────────────────────────────────────────────
 FROM deps AS build-audit-worker

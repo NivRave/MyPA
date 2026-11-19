@@ -26,7 +26,7 @@ func TestGatewayTelegram_DoesNotLogMessageText(t *testing.T) {
 	logs := captureLogs(t)
 	pub := new(MockEventPublisher)
 	pub.On("Publish", mock.Anything, mock.Anything).Return(nil)
-	r := setupRouter(pub, &config.Config{Telegram: config.TelegramConfig{SecretToken: testTelegramSecret}})
+	r := setupIngressRouter(pub, &config.Config{Telegram: config.TelegramConfig{SecretToken: testTelegramSecret}})
 
 	body := `{"update_id":1,"message":{"message_id":7,"from":{"id":42},"chat":{"id":42},"text":"my bank PIN is 4321"}}`
 	req := httptest.NewRequest("POST", "/webhook/telegram", bytes.NewBufferString(body))

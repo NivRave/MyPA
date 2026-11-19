@@ -26,7 +26,7 @@ func (m *MockEventPublisher) Publish(ctx context.Context, msg any) error {
 func TestGatewayHealth(t *testing.T) {
 	pub := new(MockEventPublisher)
 	cfg := &config.Config{}
-	r := setupRouter(pub, cfg)
+	r := setupIngressRouter(pub, cfg)
 
 	req := httptest.NewRequest("GET", "/health", nil)
 	rr := httptest.NewRecorder()
@@ -40,7 +40,7 @@ func TestGatewayHealth(t *testing.T) {
 func TestGatewayTelegramWebhook_Success(t *testing.T) {
 	pub := new(MockEventPublisher)
 	cfg := &config.Config{Telegram: config.TelegramConfig{SecretToken: testTelegramSecret}}
-	r := setupRouter(pub, cfg)
+	r := setupIngressRouter(pub, cfg)
 
 	// Valid Telegram Update payload
 	payload := []byte(`{
@@ -84,7 +84,7 @@ func TestGatewayTelegramWebhook_Success(t *testing.T) {
 func TestGatewayTelegramWebhook_InvalidJSON(t *testing.T) {
 	pub := new(MockEventPublisher)
 	cfg := &config.Config{Telegram: config.TelegramConfig{SecretToken: testTelegramSecret}}
-	r := setupRouter(pub, cfg)
+	r := setupIngressRouter(pub, cfg)
 
 	payload := []byte(`{"update_id": 12345, bad json`)
 
@@ -106,7 +106,7 @@ func TestGatewayTelegramWebhook_SecretToken(t *testing.T) {
 			SecretToken: "super-secret-token-123",
 		},
 	}
-	r := setupRouter(pub, cfg)
+	r := setupIngressRouter(pub, cfg)
 
 	payload := []byte(`{"update_id": 12345}`)
 
