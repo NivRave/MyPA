@@ -34,6 +34,7 @@ var NotCarried = []string{
 	"Pairing lockouts and failed-attempt counters: they start from zero.",
 	"Follow-up tool context and cached prompt sections: rebuilt on the next message.",
 	"The memory of already-handled message IDs: a message a platform re-delivers across the move could be answered twice.",
+	"Messages that had failed for good (the dead-letter queues that /doctor reports): they stay in the old broker. Look at them before retiring it.",
 	"WhatsApp's own 24-hour reply window is kept by WhatsApp, not by MyPA: someone who has not written for a day cannot be messaged until they write.",
 }
 
@@ -132,8 +133,19 @@ func (e Exporter) Run(ctx context.Context) (db.Manifest, string, error) {
 				"Stop the gateway first, wait until the queues are empty, then stop the orchestrator and the audit worker, and run the export again",
 				describeBusy(info))
 		}
-		source.Stopped, source.Queues = true, info
-		fmt.Fprintln(out, "✓ The app is stopped and the queues are empty.")
+		source.Drained, source.Queues = true, info
+		fmt.Fprintln(out, "✓ The work queues are empty and nothing is consuming them: the orchestrator and the audit worker are stopped.")
+		fmt.Fprintln(out, "  The gateway only publishes, so the queues cannot show whether it still runs. Make sure it is stopped too (docker compose ps): a message it accepts from now on is not in this backup.")
+		for _, q := range e.Queues {
+			failed, _, err := e.Probe(ctx, q+".dlq")
+			if err != nil {
+				return db.Manifest{}, "", fmt.Errorf("cannot read the dead-letter queue of %s: %w (pass --skip-stop-check if RabbitMQ itself is gone)", q, err)
+			}
+			if failed > 0 {
+				info[q+".dlq"] = db.QueueInfo{Ready: failed}
+				fmt.Fprintf(out, "! %d message(s) that failed for good sit in %s.dlq. They stay in the old broker and are NOT in this backup: look at them before retiring it.\n", failed, q)
+			}
+		}
 	}
 
 	if e.SyncSignIns != nil {
@@ -253,6 +265,9 @@ type Result struct {
 	FromSet bool
 	// SchemaBefore is the version right after the restore; SchemaAfter after the migrations.
 	SchemaBefore, SchemaAfter int64
+	// FirstBackup is the manifest of the backup taken of the restored install; empty when none
+	// was taken (problems, or --no-migrate).
+	FirstBackup string
 	// SafetyBackup is the backup of the replaced database; empty when the target was empty.
 	SafetyBackup                      string
 	ArchivesRestored, ArchivesInPlace int
@@ -279,8 +294,8 @@ func (i Importer) Run(ctx context.Context, path string) (Result, error) {
 	if res.FromSet {
 		fmt.Fprintf(out, "✓ Backup set verified: %s (taken %s, schema version %s).\n",
 			filepath.Base(dumpPath), manifest.CreatedAt.Format("2006-01-02 15:04 MST"), versionText(manifest.SchemaVersion))
-		if manifest.Source != nil && !manifest.Source.Stopped {
-			fmt.Fprintln(out, "! This set was taken without confirming that the source was stopped: messages in flight at that moment are not in it.")
+		if manifest.Source != nil && !manifest.Source.Drained {
+			fmt.Fprintln(out, "! This set was taken from a running app, or without checking its queues: messages in flight at that moment are not in it.")
 		}
 	} else {
 		fmt.Fprintf(out, "✓ Restoring a database dump without a manifest: %s. It carries no archive files.\n", filepath.Base(dumpPath))
@@ -290,6 +305,24 @@ func (i Importer) Run(ctx context.Context, path string) (Result, error) {
 		return res, errors.New("the backup is encrypted: set BACKUP_AGE_IDENTITY_FILE to the age private key (the backup key) and run the import again")
 	}
 
+	// Open the backup completely before anything is changed. A wrong backup key, or a file that
+	// is damaged or cut short, must be found out while the target is still as it was: the next
+	// steps empty the database.
+	if err := db.CheckDump(dumpPath, i.Restore); err != nil {
+		return res, fmt.Errorf("nothing was changed: %w", err)
+	}
+	if archivePath != "" {
+		if _, err := db.CheckArchives(archivePath, i.Restore.Identities); err != nil {
+			return res, fmt.Errorf("nothing was changed: %w", err)
+		}
+	}
+	if encrypted {
+		fmt.Fprintln(out, "✓ The backup key opens the backup, and it reads to its end.")
+	} else {
+		fmt.Fprintln(out, "✓ The backup reads to its end.")
+	}
+
+	targetIdle := false
 	// 2. The target must not be running: two live installs on one Telegram bot or WhatsApp
 	// number would both answer, and a running app would write into the database being replaced.
 	if i.SkipStopCheck {
@@ -302,7 +335,11 @@ func (i Importer) Run(ctx context.Context, path string) (Result, error) {
 		if err != nil {
 			return res, fmt.Errorf("cannot confirm this install is stopped: %w (if RabbitMQ is not running yet, start it, or pass --skip-stop-check)", err)
 		}
+		targetIdle = true
 		for q, s := range info {
+			if s.Ready > 0 {
+				targetIdle = false
+			}
 			if s.Consumers > 0 {
 				return res, fmt.Errorf("this install is running (%s has %d consumer(s)). Stop the gateway, the orchestrator and the audit worker, then run the import again", q, s.Consumers)
 			}
@@ -403,6 +440,25 @@ func (i Importer) Run(ctx context.Context, path string) (Result, error) {
 			fmt.Fprintf(out, "✓ This install's ENCRYPTION_KEY opens the restored secrets (%d checked). Google sign-ins carried over: %d.\n", checked, res.GoogleSignIns)
 		default:
 			fmt.Fprintln(out, "✓ The restored data holds no stored secrets to check.")
+		}
+	}
+
+	// 7. The restored install starts with a backup of its own, taken in this release's schema.
+	// Until the first nightly run, the only backups here would otherwise be the ones brought in.
+	if !i.SkipMigrate && len(res.Problems) == 0 {
+		first := i.Backup
+		first.SkipRetention = true // never prune while the restored set is the only way back
+		_, firstManifest, err := db.CreateBackupSet(i.DatabaseURL, i.BackupDir, first, db.SetOptions{
+			ArchiveDir:    i.ArchiveDir,
+			SchemaVersion: res.SchemaAfter,
+			Source:        &db.SourceInfo{Drained: targetIdle},
+			NotCarried:    NotCarried,
+		})
+		if err != nil {
+			res.Problems = append(res.Problems, fmt.Sprintf("The restore itself is complete, but a first backup of this install could not be taken: %v. Send /backup once the app runs.", err))
+		} else {
+			res.FirstBackup = firstManifest
+			fmt.Fprintf(out, "✓ First backup of this install: %s\n", filepath.Base(firstManifest))
 		}
 	}
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"filippo.io/age"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -118,4 +119,42 @@ func TestKeys_EnvLines(t *testing.T) {
 
 	bare := string(Keys{EncryptionKey: "k"}.EnvLines(""))
 	assert.NotContains(t, bare, "BACKUP_AGE")
+}
+
+// By default the key file is locked with the backup key: it opens with the private backup key
+// the operator already keeps off the machine, and no secret is shown or typed.
+func TestKeys_LockedWithTheBackupKey(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	other, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	keys := Keys{EncryptionKey: testKeys.EncryptionKey, BackupRecipients: identity.Recipient().String()}
+
+	var file bytes.Buffer
+	require.NoError(t, ExportKeysFor(&file, keys, []age.Recipient{identity.Recipient()}))
+	assert.NotContains(t, file.String(), keys.EncryptionKey)
+
+	got, err := ImportKeysWith(bytes.NewReader(file.Bytes()), []age.Identity{identity})
+	require.NoError(t, err)
+	assert.Equal(t, keys.EncryptionKey, got.EncryptionKey)
+	assert.Equal(t, keys.BackupRecipients, got.BackupRecipients)
+
+	_, err = ImportKeysWith(bytes.NewReader(file.Bytes()), []age.Identity{other})
+	require.ErrorContains(t, err, "the backup key does not open this key file")
+	_, err = ImportKeysWith(bytes.NewReader(file.Bytes()), nil)
+	require.ErrorContains(t, err, "BACKUP_AGE_IDENTITY_FILE")
+	_, err = ImportKeys(bytes.NewReader(file.Bytes()), testPassphrase)
+	require.Error(t, err, "a file locked with the backup key does not open with a passphrase")
+}
+
+func TestExportKeysFor_Refusals(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	var buf bytes.Buffer
+
+	require.ErrorContains(t, ExportKeysFor(&buf, testKeys, []age.Recipient{identity.Recipient()}), "cannot be protected with itself",
+		"the private backup key must not be locked with the backup key")
+	require.ErrorContains(t, ExportKeysFor(&buf, Keys{EncryptionKey: "k"}, nil), "no backup key")
+	require.ErrorContains(t, ExportKeysFor(&buf, Keys{}, []age.Recipient{identity.Recipient()}), "no ENCRYPTION_KEY")
+	assert.Zero(t, buf.Len())
 }

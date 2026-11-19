@@ -282,6 +282,40 @@ func RestoreDatabase(databaseURL, backupPath string, opts RestoreOptions) error 
 	return nil
 }
 
+// CheckDump proves that a dump can be opened and read to its end, without touching any database:
+// an encrypted dump is decrypted with the given identities (age authenticates every chunk, so a
+// wrong key and a truncated or altered file both fail here), and the archive is then read in full
+// by `pg_restore -f -`, which converts it to SQL and fails on a damaged or truncated archive. The
+// SQL is discarded. A restore runs this first, so that a backup which cannot be read is found out
+// before the target database is emptied.
+func CheckDump(backupPath string, opts RestoreOptions) error {
+	f, err := os.Open(backupPath)
+	if err != nil {
+		return fmt.Errorf("backup file does not exist: %s", filepath.Base(backupPath))
+	}
+	defer f.Close()
+
+	var in io.Reader = f
+	if strings.HasSuffix(backupPath, encryptedExt) {
+		if len(opts.Identities) == 0 {
+			return fmt.Errorf("backup is encrypted: set BACKUP_AGE_IDENTITY_FILE to the age private key to restore")
+		}
+		dec, err := age.Decrypt(bufio.NewReader(f), opts.Identities...)
+		if err != nil {
+			return fmt.Errorf("the backup key does not open %s (wrong key, or the file is damaged): %w", filepath.Base(backupPath), err)
+		}
+		in = dec
+	}
+	run := opts.Run
+	if run == nil {
+		run = runCommand
+	}
+	if err := run(context.Background(), "pg_restore", []string{"-f", "-"}, nil, in, io.Discard); err != nil {
+		return fmt.Errorf("%s cannot be read to its end (damaged or truncated): %w", filepath.Base(backupPath), err)
+	}
+	return nil
+}
+
 // backupNameTaken reports whether any file in dir already uses base (backup_<time>) as its name:
 // a dump, its archive bundle, its manifest, or one of them still being written.
 func backupNameTaken(dir, base string) bool {

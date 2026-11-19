@@ -81,13 +81,14 @@ func TestExport_WritesAVerifiedSetThatRecordsItsSource(t *testing.T) {
 	assert.Equal(t, int64(2), m.SchemaVersion)
 	assert.Equal(t, 1, m.ArchiveFiles)
 	require.NotNil(t, m.Source)
-	assert.True(t, m.Source.Stopped)
+	assert.True(t, m.Source.Drained)
 	assert.Equal(t, map[string]db.QueueInfo{"inbound.messages": {}, "audit.events": {}}, m.Source.Queues)
 	assert.Equal(t, &db.SignInInfo{InDatabase: 2, CopiedNow: 1}, m.Source.GoogleSignIns)
 	assert.Equal(t, NotCarried, m.NotCarried, "the manifest documents what a restore will not bring back")
 
 	report := out.String()
-	assert.Contains(t, report, "stopped and the queues are empty")
+	assert.Contains(t, report, "work queues are empty and nothing is consuming them")
+	assert.Contains(t, report, "The gateway only publishes", "the report must not claim to have seen what it cannot see")
 	assert.Contains(t, report, "Not carried by a backup")
 	assert.Contains(t, report, "chat window")
 	assert.Contains(t, report, "transfer import "+filepath.Base(manifestPath))
@@ -133,7 +134,7 @@ func TestExport_UnreachableBrokerIsRefusedUnlessSkipped(t *testing.T) {
 	e.Out = out
 	m, _, err := e.Run(context.Background())
 	require.NoError(t, err)
-	assert.False(t, m.Source.Stopped, "a set taken without the check must not claim the source was stopped")
+	assert.False(t, m.Source.Drained, "a set taken without the check must not claim the source was drained")
 	assert.Contains(t, out.String(), "Stop check skipped")
 }
 
@@ -185,9 +186,15 @@ func importerThatMustNotTouchTheDatabase(t *testing.T) Importer {
 		DatabaseURL: testDatabaseURL,
 		BackupDir:   t.TempDir(),
 		ArchiveDir:  t.TempDir(),
-		Restore: db.RestoreOptions{Run: func(context.Context, string, []string, []string, io.Reader, io.Writer) error {
-			t.Fatal("pg_restore must not run")
-			return nil
+		Restore: db.RestoreOptions{Run: func(_ context.Context, name string, args []string, _ []string, stdin io.Reader, _ io.Writer) error {
+			// Reading a dump to its end (`pg_restore -f -`) is allowed; restoring into a database is not.
+			for _, a := range args {
+				if a == "-d" {
+					t.Fatal("pg_restore must not run against the database")
+				}
+			}
+			_, err := io.Copy(io.Discard, stdin)
+			return err
 		}},
 		Queues: []string{"inbound.messages", "audit.events"},
 		Probe:  queues(nil),
@@ -257,7 +264,68 @@ func TestImport_RefusesARunningTarget(t *testing.T) {
 
 func TestNotCarried_NamesWhatTheRoadmapRequires(t *testing.T) {
 	all := strings.ToLower(strings.Join(NotCarried, "\n"))
-	for _, must := range []string{"chat window", "confirm", "24-hour"} {
+	for _, must := range []string{"chat window", "confirm", "24-hour", "dead-letter"} {
 		assert.Contains(t, all, must)
 	}
+}
+
+// Messages that failed for good stay in the old broker. An export says so, with the count, and
+// records it; it does not refuse, because they are not work in flight.
+func TestExport_ReportsDeadLetteredMessagesThatStayBehind(t *testing.T) {
+	e, _, out := newExporter(t)
+	e.Probe = queues(map[string][2]int{"inbound.messages.dlq": {2, 0}})
+
+	m, _, err := e.Run(context.Background())
+	require.NoError(t, err)
+
+	assert.Contains(t, out.String(), "2 message(s) that failed for good sit in inbound.messages.dlq")
+	assert.Contains(t, out.String(), "NOT in this backup")
+	assert.Equal(t, db.QueueInfo{Ready: 2}, m.Source.Queues["inbound.messages.dlq"])
+	assert.True(t, m.Source.Drained, "dead-lettered messages are not work in flight")
+}
+
+// A backup that cannot be opened must be found out before anything on the target is examined or
+// changed: the import later empties the database. Wrong key, and a file cut short.
+func TestImport_ABackupThatDoesNotOpenIsRefusedBeforeAnythingElse(t *testing.T) {
+	e, id, _ := newExporter(t)
+	m, manifestPath, err := e.Run(context.Background())
+	require.NoError(t, err)
+
+	t.Run("wrong backup key", func(t *testing.T) {
+		other, err := age.GenerateX25519Identity()
+		require.NoError(t, err)
+		i := importerThatMustNotTouchTheDatabase(t)
+		i.Restore.Identities = []age.Identity{other}
+		i.Probe = func(context.Context, string) (int, int, error) {
+			t.Fatal("the target must not even be probed when the backup does not open")
+			return 0, 0, nil
+		}
+
+		_, err = i.Run(context.Background(), manifestPath)
+		require.ErrorContains(t, err, "nothing was changed")
+		require.ErrorContains(t, err, "backup key does not open")
+	})
+
+	t.Run("encrypted dump without a manifest, cut short", func(t *testing.T) {
+		dir := t.TempDir()
+		whole, err := os.ReadFile(filepath.Join(e.BackupDir, m.Database.Name))
+		require.NoError(t, err)
+		bare := filepath.Join(dir, "backup_2026-11-18_21-52-46.dump.age")
+		require.NoError(t, os.WriteFile(bare, whole[:len(whole)-7], 0o600))
+		i := importerThatMustNotTouchTheDatabase(t)
+		i.Restore.Identities = []age.Identity{id}
+
+		_, err = i.Run(context.Background(), bare)
+		require.ErrorContains(t, err, "nothing was changed")
+	})
+
+	t.Run("archive bundle written for another key", func(t *testing.T) {
+		other, err := age.GenerateX25519Identity()
+		require.NoError(t, err)
+		_, err = db.CheckArchives(filepath.Join(e.BackupDir, m.Archives.Name), []age.Identity{other})
+		require.ErrorContains(t, err, "decrypt")
+		files, err := db.CheckArchives(filepath.Join(e.BackupDir, m.Archives.Name), []age.Identity{id})
+		require.NoError(t, err)
+		assert.Equal(t, 1, files)
+	})
 }

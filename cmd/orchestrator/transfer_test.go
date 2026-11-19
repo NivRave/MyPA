@@ -100,7 +100,8 @@ func (i *install) run(args ...string) (int, string) {
 }
 
 // seed fills a migrated database with a small household: two members, one Google sign-in copy in
-// the database, a memory with an embedding and a reminder.
+// the database, a memory with an embedding, a reminder, and one row of every other feature's data
+// (seedEveryOtherTable), so that every table holds something.
 func (i *install) seed() {
 	i.t.Helper()
 	require.NoError(i.t, db.Migrate(context.Background(), i.sqlDB))
@@ -122,6 +123,7 @@ func (i *install) seed() {
 		Embedding: pgvector.NewVector(embedding),
 	}).Error)
 	require.NoError(i.t, i.client.SaveReminder(models.ScheduledReminder{UserID: "1002", Message: "Call the plumber", DueTime: time.Now().Add(48 * time.Hour)}))
+	seedEveryOtherTable(i)
 }
 
 func (i *install) userNames() []string {
@@ -260,7 +262,21 @@ func TestTransfer_MoveAnInstall(t *testing.T) {
 	assert.Contains(t, report, "/doctor")
 
 	// The backup itself is unchanged: it remains the rollback.
-	assert.Equal(t, travelled, hashDir(t, target.deps.BackupDir))
+	after := hashDir(t, target.deps.BackupDir)
+	for name, sum := range travelled {
+		assert.Equal(t, sum, after[name], "%s was modified by the import", name)
+	}
+
+	// The restored install starts with a backup of its own, so it is not without one until the
+	// first nightly run. It is a complete, verified set at this release's schema version.
+	first := regexp.MustCompile(`First backup of this install: (backup_\S+\.manifest\.json)`).FindStringSubmatch(report)
+	require.Len(t, first, 2, report)
+	require.NotEqual(t, manifest, first[1])
+	firstSet, err := db.VerifyBackupSet(filepath.Join(target.deps.BackupDir, first[1]))
+	require.NoError(t, err)
+	assert.Equal(t, latest, firstSet.SchemaVersion)
+	assert.Equal(t, 2, firstSet.ArchiveFiles)
+	assert.True(t, firstSet.Encrypted)
 
 	// Importing again into the now populated install is refused.
 	code, report = target.run("import", manifest)
@@ -346,8 +362,9 @@ func TestTransfer_ImportReportsAMissingDataKey(t *testing.T) {
 	assert.JSONEq(t, danaToken, target.googleSignIn("1001"))
 }
 
-// The keys travel through export-keys and import-keys, protected by a generated passphrase.
-func TestTransfer_KeysTravelProtected(t *testing.T) {
+// With --passphrase the keys, including the private backup key, travel in a file locked with a
+// generated passphrase.
+func TestTransfer_KeysTravelProtectedByAPassphrase(t *testing.T) {
 	identity := newIdentity(t)
 	identityFile := filepath.Join(t.TempDir(), "backup-key.txt")
 	require.NoError(t, os.WriteFile(identityFile, []byte(identity.String()+"\n"), 0o600))
@@ -357,8 +374,15 @@ func TestTransfer_KeysTravelProtected(t *testing.T) {
 	source.deps.BackupRecipients = identity.Recipient().String()
 	source.deps.IdentityFile = identityFile
 
+	// The private backup key cannot be locked with itself.
 	code, report := source.run("export-keys", "--with-backup-key")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, report, "needs --passphrase")
+
+	code, report = source.run("export-keys", "--passphrase", "--with-backup-key")
 	require.Zero(t, code, report)
+	assert.Contains(t, report, "container's log", "the report must say where else the passphrase ends up")
+	assert.NotContains(t, report, "stored nowhere")
 	passphrase := regexp.MustCompile(`(?m)^\s+((?:[A-Z2-7]{4}-){7}[A-Z2-7]{4})\s*$`).FindStringSubmatch(report)
 	require.Len(t, passphrase, 2, "the passphrase must be shown:\n%s", report)
 	keyFile := filepath.Join(source.deps.BackupDir, "mypa-keys.age")
@@ -383,9 +407,10 @@ func TestTransfer_KeysTravelProtected(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, report, "does not open this key file")
 
+	// Without a passphrase file the tool tries the backup key, which does not open this file.
 	code, report = target.run("import-keys")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, report, "--passphrase-file")
+	assert.Contains(t, report, "the backup key does not open this key file")
 
 	require.NoError(t, os.WriteFile(passFile, []byte(strings.ToLower(passphrase[1])+"\n"), 0o600))
 	code, report = target.run("import-keys", "--passphrase-file", passFile)
@@ -424,6 +449,9 @@ func TestTransfer_BaselineDumpRestoresAndMigrates(t *testing.T) {
 	// no manifest and no archive files next to it.
 	identity := newIdentity(t)
 	target := newInstall(t, identity)
+	amqpURL := rabbitMQ(t)
+	declareAppQueues(t, amqpURL)
+	target.deps.Probe = queueProbe(amqpURL) // the real stop check, against a real broker
 	name := "backup_2026-11-18_21-52-46.dump.age"
 	var encrypted bytes.Buffer
 	enc, err := age.Encrypt(&encrypted, identity.Recipient())
@@ -451,13 +479,56 @@ func TestTransfer_BaselineDumpRestoresAndMigrates(t *testing.T) {
 	assert.Equal(t, latest, current, "the baseline must be migrated to this build's schema")
 	assert.GreaterOrEqual(t, latest, int64(baselineSchemaVersion))
 
-	// Every feature's data that the baseline held is still there.
+	// Every feature in use is still available: the baseline holds data in every table of the
+	// v3.4.0 schema, and after the restore and the migrations every row is still there.
+	// A migration that deliberately moves or merges baseline rows records the new expectation in
+	// baselineCountChanges, next to the migration that causes it.
+	want := readCounts(t, baselineCounts)
+	require.GreaterOrEqual(t, len(want), 29, "the baseline fixture must cover every table of the v3.4.0 schema")
+	got := tableCounts(t, target.sqlDB)
+	for table, rows := range want {
+		require.Positive(t, rows, "the baseline fixture holds no data in %s", table)
+		if changed, ok := baselineCountChanges[table]; ok {
+			rows = changed
+		}
+		assert.Equal(t, rows, got[table], "rows of %s after restoring and migrating the baseline", table)
+	}
 	assert.Equal(t, []string{"Dana", "Omer"}, target.userNames())
+	var fact string
+	require.NoError(t, target.client.DB.Model(&models.TopicMemory{}).Where("user_id = ?", "1001").Pluck("fact", &fact).Error)
+	assert.Equal(t, "The boiler is serviced every November.", fact)
+	var instructions string
+	require.NoError(t, target.client.DB.Model(&models.UserPreference{}).Where("user_id = ?", "1001").Pluck("standing_instructions", &instructions).Error)
+	assert.Equal(t, "Keep answers short.", instructions)
+
+	// Google sign-ins are intact.
 	assert.JSONEq(t, danaToken, target.googleSignIn("1001"), "Google sign-ins from the baseline stay usable")
-	var facts int64
-	require.NoError(t, target.client.DB.Model(&models.TopicMemory{}).Count(&facts).Error)
-	assert.Equal(t, int64(1), facts)
+
+	// /doctor reports healthy: the production checks, against this install's real database,
+	// cache, queues and backup directory.
+	health := doctorReport(t, target, amqpURL, "1001")
+	t.Log("\n" + health.Markdown())
+	assert.True(t, health.Healthy(), "/doctor must report no failures after restoring the baseline")
+	assert.Zero(t, health.Count(doctor.StatusFail))
+	assert.Zero(t, health.Count(doctor.StatusWarn))
+	passed := map[string]bool{}
+	for _, r := range health.Results {
+		if r.Status == doctor.StatusOK {
+			passed[r.Check] = true
+		}
+	}
+	for _, check := range []string{"Telegram webhook", "Google account: Dana", "WhatsApp", "Queue inbound.messages", "Queue audit.events", "Backups", "Database schema"} {
+		assert.True(t, passed[check], "%s must pass after the restore", check)
+	}
 }
+
+// baselineCounts holds the number of rows per table in testdata/baseline_v3.4.0.dump.
+var baselineCounts = filepath.Join("testdata", "baseline_v3.4.0.counts.json")
+
+// baselineCountChanges records, per table, the row count expected after migrating the baseline
+// when a V4 migration deliberately changes it (for example by moving rows into another table).
+// Empty while no migration does.
+var baselineCountChanges = map[string]int{}
 
 // writeBaselineFixture dumps a seeded database at the v3.4.0 schema. It refuses to run once the
 // schema has moved on: from then on the fixture can only be produced from the v3.4.0 tag.
@@ -478,7 +549,12 @@ func writeBaselineFixture(t *testing.T, path string) {
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, body, 0o644))
-	t.Logf("wrote %s (%d bytes)", path, len(body))
+	counts := tableCounts(t, source.sqlDB)
+	for table, rows := range counts {
+		require.Positive(t, rows, "the seed leaves %s empty: the baseline must hold data of every feature", table)
+	}
+	writeCounts(t, baselineCounts, counts)
+	t.Logf("wrote %s (%d bytes) and %s (%d tables)", path, len(body), baselineCounts, len(counts))
 }
 
 func TestTransfer_UsageAndUnknownCommands(t *testing.T) {

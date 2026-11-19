@@ -57,7 +57,7 @@ func TestCreateBackupSet_DumpArchivesAndManifest(t *testing.T) {
 	m, manifestPath, err := CreateBackupSet(testDBURL, backupDir, opts, SetOptions{
 		ArchiveDir:    archiveDir,
 		SchemaVersion: 2,
-		Source:        &SourceInfo{Stopped: true, Queues: map[string]QueueInfo{"inbound.messages": {}}},
+		Source:        &SourceInfo{Drained: true, Queues: map[string]QueueInfo{"inbound.messages": {}}},
 		NotCarried:    []string{"the 24-hour chat window"},
 	})
 	require.NoError(t, err)
@@ -76,7 +76,7 @@ func TestCreateBackupSet_DumpArchivesAndManifest(t *testing.T) {
 	onDisk, err := VerifyBackupSet(manifestPath)
 	require.NoError(t, err)
 	assert.Equal(t, m, onDisk)
-	assert.True(t, onDisk.Source.Stopped)
+	assert.True(t, onDisk.Source.Drained)
 	assert.Equal(t, []string{"the 24-hour chat window"}, onDisk.NotCarried)
 
 	// The archive files are encrypted at rest and come back intact.
@@ -465,4 +465,86 @@ func TestBackup_SkipRetentionKeepsEveryExistingBackup(t *testing.T) {
 	require.NoError(t, err)
 	_, statErr = os.Stat(filepath.Join(dir, old))
 	assert.True(t, os.IsNotExist(statErr), "without SkipRetention the policy applies")
+}
+
+// CheckDump reads a backup to its end without a database. It is what lets a restore refuse a
+// backup it cannot open before the target is emptied.
+func TestCheckDump(t *testing.T) {
+	runner := useFakeRunner(t)
+	dir := t.TempDir()
+	id, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	other, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	encrypted, err := BackupDatabase(testDBURL, dir, BackupOptions{Retention: DefaultRetention, Recipients: []age.Recipient{id.Recipient()}})
+	require.NoError(t, err)
+
+	t.Run("the right key reads it to the end, without a database", func(t *testing.T) {
+		runner.calls = nil
+		require.NoError(t, CheckDump(encrypted, RestoreOptions{Identities: []age.Identity{id}}))
+		require.Len(t, runner.calls, 1)
+		assert.Equal(t, []string{"pg_restore", "-f", "-"}, runner.calls[0], "the check must not name a database")
+		assert.Equal(t, runner.dumpData, runner.restored, "the whole decrypted dump is read")
+	})
+	t.Run("wrong key", func(t *testing.T) {
+		runner.calls = nil
+		err := CheckDump(encrypted, RestoreOptions{Identities: []age.Identity{other}})
+		require.ErrorContains(t, err, "backup key does not open")
+		assert.Empty(t, runner.calls)
+	})
+	t.Run("no key", func(t *testing.T) {
+		require.ErrorContains(t, CheckDump(encrypted, RestoreOptions{}), "BACKUP_AGE_IDENTITY_FILE")
+	})
+	t.Run("encrypted file cut short", func(t *testing.T) {
+		whole, err := os.ReadFile(encrypted)
+		require.NoError(t, err)
+		short := filepath.Join(t.TempDir(), filepath.Base(encrypted))
+		require.NoError(t, os.WriteFile(short, whole[:len(whole)-4], 0o600))
+		require.Error(t, CheckDump(short, RestoreOptions{Identities: []age.Identity{id}}))
+	})
+	t.Run("archive that pg_restore cannot read", func(t *testing.T) {
+		broken := func(context.Context, string, []string, []string, io.Reader, io.Writer) error {
+			return errors.New("pg_restore: error: could not read from input file: end of file")
+		}
+		err := CheckDump(encrypted, RestoreOptions{Identities: []age.Identity{id}, Run: broken})
+		require.ErrorContains(t, err, "cannot be read to its end")
+	})
+	t.Run("missing file", func(t *testing.T) {
+		require.ErrorContains(t, CheckDump(filepath.Join(dir, "backup_1999-01-01_00-00-00.dump"), RestoreOptions{}), "does not exist")
+	})
+}
+
+// CheckArchives validates a bundle exactly as an extraction would, and writes nothing.
+func TestCheckArchives_ValidatesWithoutWriting(t *testing.T) {
+	useFakeRunner(t)
+	backupDir, archiveDir, id := newSetFixture(t)
+	m, _, err := CreateBackupSet(testDBURL, backupDir, BackupOptions{Retention: DefaultRetention, Recipients: []age.Recipient{id.Recipient()}}, SetOptions{ArchiveDir: archiveDir})
+	require.NoError(t, err)
+	archivePath := filepath.Join(backupDir, m.Archives.Name)
+	before, err := os.ReadDir(backupDir)
+	require.NoError(t, err)
+
+	files, err := CheckArchives(archivePath, []age.Identity{id})
+	require.NoError(t, err)
+	assert.Equal(t, 2, files)
+	after, err := os.ReadDir(backupDir)
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "a check writes nothing")
+
+	other, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	_, err = CheckArchives(archivePath, []age.Identity{other})
+	require.ErrorContains(t, err, "decrypt")
+
+	// A hostile entry is rejected by the check too, before any extraction is attempted.
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "../escape.jsonl.gz", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1}))
+	_, err = tw.Write([]byte("x"))
+	require.NoError(t, err)
+	require.NoError(t, tw.Close())
+	hostile := filepath.Join(t.TempDir(), "backup_2026-11-19_02-00-00.archives.tar")
+	require.NoError(t, os.WriteFile(hostile, buf.Bytes(), 0o600))
+	_, err = CheckArchives(hostile, nil)
+	require.ErrorContains(t, err, "not a plain archive file")
 }

@@ -121,6 +121,41 @@ func NewDatabase(t testing.TB) string {
 	return u.String()
 }
 
+// NewDatabaseOwnedBy creates an isolated, empty database owned by another superuser role (created
+// on first use) and returns a DSN that connects as that role. It stands in for a different
+// machine, where the database role has another name: a dump taken under one role must restore
+// under the other (V4-43).
+func NewDatabaseOwnedBy(t testing.TB, role string) string {
+	t.Helper()
+	if strings.Trim(role, "abcdefghijklmnopqrstuvwxyz_") != "" {
+		t.Fatalf("pgtest: role name %q must be lower-case letters and underscores", role)
+	}
+	name := "testdb_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+
+	mu.Lock()
+	dsn, err := startLocked(context.Background())
+	if err == nil {
+		err = adminDB.Exec("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '" + role + "') THEN " +
+			"CREATE ROLE " + role + " SUPERUSER LOGIN PASSWORD 'password'; END IF; END $$").Error
+	}
+	if err == nil {
+		err = adminDB.Exec("CREATE DATABASE " + name + " OWNER " + role).Error
+	}
+	mu.Unlock()
+	if err != nil {
+		t.Fatalf("pgtest: create database %s owned by %s: %v", name, role, err)
+	}
+	t.Cleanup(func() { _ = drop(name) })
+
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("pgtest: parse admin DSN: %v", err)
+	}
+	u.User = url.UserPassword(role, "password")
+	u.Path = "/" + name
+	return u.String()
+}
+
 // DropDatabase drops a database returned by NewDatabase right away (it is idempotent, so the
 // automatic drop at test end stays harmless). Callers use it to free a database before the test ends.
 func DropDatabase(dsn string) error {

@@ -59,25 +59,36 @@ func ToolRunner() func(ctx context.Context, name string, args, env []string, std
 }
 
 // insideArgs rewrites `-d <url>` for use inside the container: the database is reached over the
-// local socket as the container's superuser, by name.
+// local socket by name, as the role named in the URL (local connections need no password).
+// `pg_restore -f -` (convert the archive to SQL without a database) is rewritten to write to
+// /dev/null, since the caller only wants to know whether the archive reads to its end.
 func insideArgs(args []string) ([]string, error) {
-	out := []string{"-U", "user"}
-	found := false
+	var out []string
+	target := false
 	for i := 0; i < len(args); i++ {
-		if args[i] == "-d" && i+1 < len(args) {
+		switch {
+		case args[i] == "-d" && i+1 < len(args):
 			u, err := url.Parse(args[i+1])
 			if err != nil || strings.Trim(u.Path, "/") == "" {
 				return nil, fmt.Errorf("pgtest.ToolRunner: -d must be a database URL")
 			}
-			out = append(out, "-d", strings.Trim(u.Path, "/"))
-			found = true
+			role := "user"
+			if u.User != nil && u.User.Username() != "" {
+				role = u.User.Username()
+			}
+			out = append(out, "-U", role, "-d", strings.Trim(u.Path, "/"))
+			target = true
 			i++
-			continue
+		case args[i] == "-f" && i+1 < len(args) && args[i+1] == "-":
+			out = append(out, "-f", "/dev/null")
+			target = true
+			i++
+		default:
+			out = append(out, args[i])
 		}
-		out = append(out, args[i])
 	}
-	if !found {
-		return nil, fmt.Errorf("pgtest.ToolRunner: no -d <database URL> argument")
+	if !target {
+		return nil, fmt.Errorf("pgtest.ToolRunner: expected -d <database URL> or -f -")
 	}
 	return out, nil
 }

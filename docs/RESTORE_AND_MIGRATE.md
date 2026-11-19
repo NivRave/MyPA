@@ -28,7 +28,7 @@ A backup is a **set** of files in `backups/` that share one timestamp:
 | :--- | :--- |
 | `backup_<time>.dump.age` | The database (`pg_dump`, custom format), encrypted with the backup key |
 | `backup_<time>.archives.tar.age` | The archive files (audit archives today), encrypted with the backup key |
-| `backup_<time>.manifest.json` | Sizes and SHA-256 of the two files, the schema version, whether the app was stopped, and the list of what is not carried. Not secret |
+| `backup_<time>.manifest.json` | Sizes and SHA-256 of the two files, the schema version, whether the queues were drained, and the list of what is not carried. Not secret |
 
 - The nightly backup (02:00) and `/backup` write sets, taken from the running app.
 - `transfer export` writes the same kind of set from a **stopped** app. Use it for an upgrade or a move.
@@ -49,19 +49,26 @@ The private backup key is kept off the machine (in your password manager) and is
 restoring. The data encryption key lives in `.env` and has to be brought to the new install.
 
 ```
-# old install: write the keys to a passphrase-protected file
+# old install: write the data encryption key to a file locked with the backup key
 docker compose --profile tools run --rm transfer export-keys
-#   -> backups/mypa-keys.age, and a passphrase shown once
+#   -> backups/mypa-keys.age
 
-# new install: turn the file back into settings lines
-docker compose --profile tools run --rm transfer import-keys --passphrase-file /backups/passphrase.txt
-#   -> backups/mypa-keys.env  (copy its lines into .env, then delete it and passphrase.txt)
+# new install: open it with the private backup key and get the settings lines
+docker compose --profile tools run --rm -e BACKUP_AGE_IDENTITY_FILE=/backups/backup-key.txt \
+  transfer import-keys
+#   -> backups/mypa-keys.env  (copy its lines into .env, then delete it)
 ```
 
-- Carry the passphrase separately from the file. Do not put both in one message or on one disk.
-- `export-keys --with-backup-key` also includes the private backup key, if
-  `BACKUP_AGE_IDENTITY_FILE` points at it during the export. Otherwise bring that key from where
-  you keep it.
+- The key file is locked with the backup key (`BACKUP_AGE_RECIPIENTS`). It opens only with the
+  private backup key, which you bring to the restore anyway. Nothing secret is shown or typed.
+- If backups are not encrypted there is no backup key to lock the file with. Use
+  `export-keys --passphrase`: the file is locked with a generated passphrase instead, and opened
+  with `import-keys --passphrase-file FILE`. The passphrase is printed once. Because it is
+  printed, it is also in that container's log until the container is removed, so always run the
+  command with `--rm`, clear the terminal, and carry the passphrase separately from the file.
+- `export-keys --passphrase --with-backup-key` also puts the private backup key into the file
+  (it cannot be locked with itself). `import-keys` then writes it to
+  `backups/mypa-backup-key.txt`. Use this only if you have no other way to carry that key.
 - A key file is never part of a backup set.
 - `import` checks the data encryption key after restoring. If it does not open the stored
   secrets it says so and exits with an error. Fix `.env` and start the app; there is no need to
@@ -79,6 +86,8 @@ and is not in a backup. Every export and import prints this list:
 - Follow-up tool context and cached prompt sections (rebuilt on the next message).
 - The memory of already-handled message IDs: a message a platform re-delivers across the move
   could be answered twice.
+- Messages that had failed for good (the dead-letter queues that `/doctor` reports) stay in the
+  old broker. `export` says how many there are. Look at them before retiring the old install.
 - WhatsApp's own 24-hour reply window is kept by WhatsApp: someone who has not written for a day
   cannot be messaged until they write.
 
@@ -90,14 +99,16 @@ empty.
 
 ## Only one install is ever live
 
-Two installs on the same Telegram bot and WhatsApp number would both answer. The tool enforces
-the order:
+Two installs on the same Telegram bot and WhatsApp number would both answer. The tool checks
+what the queues can show:
 
-- `export` refuses unless both work queues are **empty** and have **no consumer**, meaning the
-  app is stopped and nothing was in flight.
+- `export` refuses unless both work queues are **empty** and have **no consumer**: the
+  orchestrator and the audit worker are stopped and nothing is waiting.
 - `import` refuses while anything is consuming the target's queues.
 
-Stop the old install in this order, so the queue drains before the app goes away:
+It cannot see the gateway, which only publishes. A gateway left running keeps accepting messages
+that then sit in the old broker and are lost to the new install. Stopping it is your step, and it
+comes first:
 
 ```
 docker compose stop proxy gateway        # nothing new comes in
@@ -105,8 +116,10 @@ docker compose stop proxy gateway        # nothing new comes in
 docker compose stop orchestrator audit-worker dashboard
 ```
 
-Leave `postgres`, `rabbitmq` and `redis` running: the tool needs them. If `export` says a queue
-still holds messages, start the orchestrator again until it is empty.
+The order lets the queue drain before the app goes away. Check with `docker compose ps` that
+none of the five is still running. Leave `postgres`, `rabbitmq` and `redis` running: the tool
+needs them. If `export` says a queue still holds messages, start the orchestrator again until it
+is empty.
 
 While the app is stopped, Telegram keeps messages and delivers them when a webhook is registered
 again. Twilio does not hold them for later: WhatsApp messages sent during the move are lost. Tell
@@ -142,24 +155,27 @@ docker compose up -d --build
 On the old machine:
 
 1. Stop the app (see above).
-2. `transfer export` (with V4), then `transfer export-keys`.
+2. `transfer export` (with V4), then `transfer export-keys`. Read what the export prints: it
+   reports Google sign-ins it could not carry and failed messages left in the old broker.
    If the old machine still runs `v3.4.x` and you only have its nightly or baseline backup, skip
    the export: a bare `backup_<time>.dump.age` restores too, without archive files.
-3. Copy the files of the set, and `mypa-keys.age`, to the new machine's `backups/` folder. Carry
-   the passphrase separately.
+3. Copy the files of the set, and `mypa-keys.age`, to the new machine's `backups/` folder.
 
 On the new machine, with V4 checked out and a `.env` prepared:
 
 4. Start only the infrastructure: `docker compose up -d postgres rabbitmq redis`.
-5. Bring the keys: `transfer import-keys ...`, copy the lines into `.env`.
-6. Put the private backup key in `backups/backup-key.txt` for the duration of the restore.
+5. Put the private backup key in `backups/backup-key.txt` for the duration of the restore.
+6. Bring the data encryption key: `transfer import-keys` (see "The two keys"), then copy the
+   lines of `backups/mypa-keys.env` into `.env`.
 7. Restore and migrate:
    ```
    docker compose --profile tools run --rm -e BACKUP_AGE_IDENTITY_FILE=/backups/backup-key.txt \
      transfer import backup_<time>.manifest.json
    ```
    For a bare dump, name the `.dump.age` file instead.
-8. Delete `backups/backup-key.txt`, `mypa-keys.age`, `mypa-keys.env` and the passphrase file.
+8. Delete every key file from `backups/`: `backup-key.txt`, `mypa-keys.age`, `mypa-keys.env`,
+   and, if you used a passphrase, `mypa-backup-key.txt` and the passphrase file. The private
+   backup key goes back to being kept off the machine only.
 9. `docker compose up -d --build`, then `/doctor`.
 10. The old install stays stopped. Keep it until the new one has proven itself; its database is
     untouched.
@@ -185,24 +201,32 @@ address changes.
 
 If RabbitMQ or Redis themselves are gone, the checks that need them can be turned off explicitly:
 `--skip-stop-check`, and for an export `--skip-sign-in-check`. The manifest then records that the
-source was not confirmed stopped.
+queues of the source were not confirmed drained.
 
 Backups are stored on this machine only. Losing the machine loses them (OP-11).
 
 ## What `import` does, in order
 
-1. Verifies the set against its manifest (sizes and checksums). Nothing is touched if it fails.
+Steps 1 to 5 change nothing. If any of them fails, the install is exactly as it was.
+
+1. Verifies the set against its manifest (sizes and checksums).
 2. Requires the backup key if the files are encrypted.
-3. Refuses if this install is running.
-4. Refuses if the database already holds users, unless `--replace`; then takes a safety backup.
-5. Empties the database schema and restores the dump into it, as one transaction.
-6. Runs the migrations and confirms the schema is at this release's version (skipped with
+3. Opens the backup with that key and reads the dump and the archive bundle to their end. A wrong
+   key, or a file that is damaged or was cut short in a copy, stops here. (A bare dump has no
+   manifest, so this read is its only integrity check.)
+4. Refuses if this install is running.
+5. Refuses if the database already holds users, unless `--replace`; then takes a safety backup,
+   and stops if that backup fails.
+6. Empties the database schema and restores the dump into it, as one transaction.
+7. Runs the migrations and confirms the schema is at this release's version (skipped with
    `--no-migrate`).
-7. Restores the archive files. A file that already exists with the same content is left alone;
+8. Restores the archive files. A file that already exists with the same content is left alone;
    one that exists with different content stops the step and is never overwritten.
-8. Checks that `ENCRYPTION_KEY` opens the restored secrets, and counts the Google sign-ins.
-9. Prints what was not carried and what to do next. Any line starting with `!` means the restore
-   is not finished, and the command exits with an error.
+9. Checks that `ENCRYPTION_KEY` opens the restored secrets, and counts the Google sign-ins.
+10. Takes a first backup of the restored install, so it is not without one of its own until the
+    next nightly run (not with `--no-migrate`, and not if a step above left a problem).
+11. Prints what was not carried and what to do next. Any line starting with `!` means the restore
+    is not finished, and the command exits with an error.
 
 The older chat command `/restore` is unchanged: it restores the newest dump into the running
 install without resetting the schema or migrating. Use it only to undo recent damage on the same
@@ -215,8 +239,8 @@ release, not for an upgrade or a move (BL-21).
 | `transfer export` | Final backup set of a stopped install. Flags: `--allow-unencrypted`, `--skip-stop-check`, `--skip-sign-in-check` |
 | `transfer import FILE` | Restore a set (`…manifest.json`) or a dump (`….dump[.age]`) and migrate. Flags: `--replace`, `--no-migrate`, `--skip-stop-check` |
 | `transfer verify FILE` | Check a set against its manifest |
-| `transfer export-keys` | Write the keys to a passphrase-protected file. Flags: `--out FILE`, `--with-backup-key` |
-| `transfer import-keys` | Write the settings lines from a key file. Flags: `--in FILE`, `--passphrase-file FILE`, `--out FILE` |
+| `transfer export-keys` | Write the data encryption key to a file locked with the backup key. Flags: `--out FILE`, `--passphrase` (lock with a generated passphrase instead), `--with-backup-key` (needs `--passphrase`) |
+| `transfer import-keys` | Write the settings lines from a key file, opened with the private backup key. Flags: `--in FILE`, `--passphrase-file FILE`, `--out FILE` |
 
 `FILE` may be a name inside the backup directory.
 

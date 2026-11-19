@@ -39,11 +39,15 @@ const transferUsage = `Usage: orchestrator transfer <command>
                                         release that took the backup)
                   --skip-stop-check     do not require unconsumed queues
   verify FILE   Check a backup set against its manifest without restoring anything.
-  export-keys   Write the data encryption key (and optionally the backup key) to a
-                passphrase-protected file. The passphrase is generated and shown once.
+  export-keys   Write the data encryption key to a protected file. By default the file is
+                locked with the backup key (BACKUP_AGE_RECIPIENTS) and opens with the private
+                backup key you already keep off this machine.
                   --out FILE            where to write it (default: <backup dir>/mypa-keys.age)
-                  --with-backup-key     include the private backup key (BACKUP_AGE_IDENTITY_FILE)
-  import-keys   Read such a file and write the settings lines to put into .env.
+                  --passphrase          lock it with a generated passphrase instead
+                  --with-backup-key     also include the private backup key
+                                        (BACKUP_AGE_IDENTITY_FILE); needs --passphrase
+  import-keys   Read such a file and write the settings lines to put into .env. Opens it with
+                the private backup key (BACKUP_AGE_IDENTITY_FILE) unless a passphrase is given.
                   --in FILE             the key file (default: <backup dir>/mypa-keys.age)
                   --passphrase-file F   a file holding the passphrase
                   --out FILE            where to write the lines (default: <backup dir>/mypa-keys.env)
@@ -195,10 +199,11 @@ func runTransfer(ctx context.Context, args []string, deps transferDeps) int {
 	case "export-keys":
 		outFile := flags.String("out", filepath.Join(deps.BackupDir, "mypa-keys.age"), "")
 		withBackupKey := flags.Bool("with-backup-key", false, "")
+		usePassphrase := flags.Bool("passphrase", false, "")
 		if err := flags.Parse(rest); err != nil {
 			return 2
 		}
-		if err := transferExportKeys(deps, *outFile, *withBackupKey); err != nil {
+		if err := transferExportKeys(deps, *outFile, *usePassphrase, *withBackupKey); err != nil {
 			return fail(err)
 		}
 		return 0
@@ -390,13 +395,16 @@ func checkDataKey(ctx context.Context, sqlDB *sql.DB) (checked, failed int, err 
 	return checked, failed, nil
 }
 
-func transferExportKeys(deps transferDeps, outFile string, withBackupKey bool) error {
+func transferExportKeys(deps transferDeps, outFile string, usePassphrase, withBackupKey bool) error {
 	out := deps.Out
 	if deps.EncryptionKey == "" {
 		return errors.New("ENCRYPTION_KEY is not set for this install, so there is no data encryption key to export")
 	}
 	keys := transfer.Keys{EncryptionKey: deps.EncryptionKey, BackupRecipients: deps.BackupRecipients}
 	if withBackupKey {
+		if !usePassphrase {
+			return errors.New("--with-backup-key needs --passphrase: the private backup key cannot be locked with itself")
+		}
 		if deps.IdentityFile == "" {
 			return errors.New("--with-backup-key needs BACKUP_AGE_IDENTITY_FILE to name the private backup key file")
 		}
@@ -406,10 +414,18 @@ func transferExportKeys(deps transferDeps, outFile string, withBackupKey bool) e
 		}
 		keys.BackupIdentity = string(identity)
 	}
-	passphrase, err := transfer.GeneratePassphrase()
-	if err != nil {
-		return err
+	if !usePassphrase && len(deps.Backup.Recipients) == 0 {
+		return errors.New("BACKUP_AGE_RECIPIENTS is not set, so there is no backup key to lock the key file with. " +
+			"Pass --passphrase to lock it with a generated passphrase instead")
 	}
+	passphrase := ""
+	if usePassphrase {
+		var err error
+		if passphrase, err = transfer.GeneratePassphrase(); err != nil {
+			return err
+		}
+	}
+
 	// Never overwrite: an existing key file may be the only copy of an older export.
 	f, err := os.OpenFile(outFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -418,7 +434,12 @@ func transferExportKeys(deps transferDeps, outFile string, withBackupKey bool) e
 		}
 		return fmt.Errorf("cannot create the key file: %w", err)
 	}
-	if err := transfer.ExportKeys(f, keys, passphrase); err != nil {
+	if usePassphrase {
+		err = transfer.ExportKeys(f, keys, passphrase)
+	} else {
+		err = transfer.ExportKeysFor(f, keys, deps.Backup.Recipients)
+	}
+	if err != nil {
 		_ = f.Close()
 		_ = os.Remove(outFile)
 		return err
@@ -433,11 +454,18 @@ func transferExportKeys(deps transferDeps, outFile string, withBackupKey bool) e
 		fmt.Fprint(out, ", private backup key")
 	}
 	fmt.Fprintln(out, ").")
-	fmt.Fprintln(out, "  The file opens only with this passphrase. It is shown once and stored nowhere:")
+	if !usePassphrase {
+		fmt.Fprintln(out, "  The file is locked with the backup key. It opens only with the private backup key, the one you keep off this machine.")
+		fmt.Fprintln(out, "  On the new install: set BACKUP_AGE_IDENTITY_FILE to that key and run: transfer import-keys. Delete the key file once the new install works.")
+		return nil
+	}
+	fmt.Fprintln(out, "  The file opens only with this passphrase. MyPA does not store it:")
 	fmt.Fprintf(out, "\n      %s\n\n", passphrase)
+	fmt.Fprintln(out, "  It was printed to this terminal, so it is also in this container's log until the container is removed:")
+	fmt.Fprintln(out, "  run this command with docker compose run --rm (as documented) and clear the terminal afterwards.")
 	fmt.Fprintln(out, "  Carry the passphrase separately from the file (write it down; do not put both in one message or on one disk).")
 	if keys.BackupIdentity == "" {
-		fmt.Fprintln(out, "  The private backup key is not in this file. Bring it from where you keep it (your password manager): the import needs it to open the backup.")
+		fmt.Fprintln(out, "  The private backup key is not in this file. Bring it from where you keep it: the import needs it to open the backup.")
 	}
 	fmt.Fprintln(out, "  On the new install: transfer import-keys --passphrase-file <file holding the passphrase>. Delete the key file once the new install works.")
 	return nil
@@ -445,21 +473,30 @@ func transferExportKeys(deps transferDeps, outFile string, withBackupKey bool) e
 
 func transferImportKeys(deps transferDeps, inFile, passFile, outFile string) error {
 	out := deps.Out
-	if passFile == "" {
-		return errors.New("name a file that holds the passphrase with --passphrase-file (it is not taken on the command line, where it would be visible to other processes)")
-	}
-	passphrase, err := os.ReadFile(passFile)
-	if err != nil {
-		return fmt.Errorf("cannot read the passphrase file: %w", err)
-	}
 	f, err := os.Open(inFile)
 	if err != nil {
 		return fmt.Errorf("cannot open the key file: %w", err)
 	}
 	defer f.Close()
-	keys, err := transfer.ImportKeys(f, string(passphrase))
-	if err != nil {
-		return err
+
+	var keys transfer.Keys
+	if passFile != "" {
+		// From a file, never from the command line, where other processes could read it.
+		passphrase, err := os.ReadFile(passFile)
+		if err != nil {
+			return fmt.Errorf("cannot read the passphrase file: %w", err)
+		}
+		if keys, err = transfer.ImportKeys(f, string(passphrase)); err != nil {
+			return err
+		}
+	} else {
+		if len(deps.Restore.Identities) == 0 {
+			return errors.New("set BACKUP_AGE_IDENTITY_FILE to the private backup key to open the key file, " +
+				"or, if the file was exported with --passphrase, name a file holding the passphrase with --passphrase-file")
+		}
+		if keys, err = transfer.ImportKeysWith(f, deps.Restore.Identities); err != nil {
+			return err
+		}
 	}
 
 	identityFile := ""
@@ -476,7 +513,7 @@ func transferImportKeys(deps transferDeps, inFile, passFile, outFile string) err
 	if identityFile != "" {
 		fmt.Fprintf(out, "✓ Private backup key written to %s.\n", identityFile)
 	}
-	fmt.Fprintln(out, "  Copy the lines into this install's .env, then delete these files and the passphrase file.")
+	fmt.Fprintln(out, "  Copy the lines into this install's .env, then delete the files written here, the key file and any passphrase file.")
 	if deps.EncryptionKey != "" && deps.EncryptionKey != keys.EncryptionKey {
 		fmt.Fprintln(out, "! This install currently has a different ENCRYPTION_KEY. Restored secrets open only with the imported one.")
 	}

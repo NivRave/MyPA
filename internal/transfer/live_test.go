@@ -29,7 +29,7 @@ func TestLiveBackup_WritesASetThatSaysTheAppWasRunning(t *testing.T) {
 	assert.Equal(t, 1, m.ArchiveFiles)
 	assert.Equal(t, int64(-1), m.SchemaVersion)
 	require.NotNil(t, m.Source)
-	assert.False(t, m.Source.Stopped)
+	assert.False(t, m.Source.Drained)
 	assert.Equal(t, NotCarried, m.NotCarried)
 }
 

@@ -16,8 +16,10 @@ import (
 
 // Two keys have to travel with a backup (V4-43): the data encryption key, without which the
 // secrets inside the restored database cannot be opened, and the backup key, without which the
-// backup itself cannot. They are exported explicitly, into a file protected by a passphrase, and
-// never as part of a backup set: a set and the keys that open it must not sit in one file.
+// backup itself cannot. The private backup key is kept off the machine by the operator. The data
+// encryption key is exported explicitly into a protected file: locked with the backup key by
+// default, or with a generated passphrase. It is never part of a backup set: a set and the keys
+// that open it must not sit in one file.
 
 // KeyFileFormat is the version of the exported key file's layout.
 const KeyFileFormat = 1
@@ -60,14 +62,39 @@ func NormalizePassphrase(p string) string {
 	return strings.ToUpper(strings.Join(strings.Fields(p), ""))
 }
 
-// ExportKeys writes keys to w, encrypted with the passphrase (age, scrypt).
-func ExportKeys(w io.Writer, keys Keys, passphrase string) error {
-	if strings.TrimSpace(keys.EncryptionKey) == "" {
-		return errors.New("there is no ENCRYPTION_KEY to export")
+// ExportKeysFor writes keys to w, encrypted to the backup key (its public half, the age
+// recipients in BACKUP_AGE_RECIPIENTS). The file then opens with the private backup key, which
+// the operator already keeps off the machine and has to bring to a restore anyway: nothing new
+// has to be carried, and no secret is shown or typed. The private backup key itself cannot be
+// exported this way (it would be locked with itself).
+func ExportKeysFor(w io.Writer, keys Keys, recipients []age.Recipient) error {
+	if len(recipients) == 0 {
+		return errors.New("there is no backup key to protect the key file with")
 	}
+	if keys.BackupIdentity != "" {
+		return errors.New("the private backup key cannot be protected with itself; export it with a passphrase instead")
+	}
+	return writeKeys(w, keys, recipients...)
+}
+
+// ExportKeys writes keys to w, encrypted with a passphrase (age, scrypt). It is the way to
+// protect the file when there is no backup key, or when the private backup key itself travels.
+func ExportKeys(w io.Writer, keys Keys, passphrase string) error {
 	passphrase = NormalizePassphrase(passphrase)
 	if len(passphrase) < 16 {
 		return errors.New("the passphrase is too short to protect the keys")
+	}
+	recipient, err := age.NewScryptRecipient(passphrase)
+	if err != nil {
+		return fmt.Errorf("cannot use the passphrase: %w", err)
+	}
+	recipient.SetWorkFactor(scryptWorkFactor)
+	return writeKeys(w, keys, recipient)
+}
+
+func writeKeys(w io.Writer, keys Keys, recipients ...age.Recipient) error {
+	if strings.TrimSpace(keys.EncryptionKey) == "" {
+		return errors.New("there is no ENCRYPTION_KEY to export")
 	}
 	keys.Format = KeyFileFormat
 	if keys.CreatedAt.IsZero() {
@@ -77,12 +104,7 @@ func ExportKeys(w io.Writer, keys Keys, passphrase string) error {
 	if err != nil {
 		return err
 	}
-	recipient, err := age.NewScryptRecipient(passphrase)
-	if err != nil {
-		return fmt.Errorf("cannot use the passphrase: %w", err)
-	}
-	recipient.SetWorkFactor(scryptWorkFactor)
-	enc, err := age.Encrypt(w, recipient)
+	enc, err := age.Encrypt(w, recipients...)
 	if err != nil {
 		return fmt.Errorf("cannot start encrypting the keys: %w", err)
 	}
@@ -95,20 +117,43 @@ func ExportKeys(w io.Writer, keys Keys, passphrase string) error {
 	return nil
 }
 
-// ImportKeys reads a key file written by ExportKeys. A wrong passphrase and a damaged file give
-// the same error: the file cannot be told apart from noise without the passphrase.
+// errKeyFileNotOpened is returned for a wrong secret and for a damaged file alike: without the
+// right secret the file cannot be told apart from noise.
+var errKeyFileNotOpened = errors.New("does not open this key file, or the file is damaged")
+
+// ImportKeys reads a key file written by ExportKeys, with its passphrase.
 func ImportKeys(r io.Reader, passphrase string) (Keys, error) {
 	identity, err := age.NewScryptIdentity(NormalizePassphrase(passphrase))
 	if err != nil {
-		return Keys{}, errors.New("the passphrase does not open this key file, or the file is damaged")
+		return Keys{}, fmt.Errorf("the passphrase %w", errKeyFileNotOpened)
 	}
-	plain, err := age.Decrypt(r, identity)
+	keys, err := readKeys(r, identity)
+	if errors.Is(err, errKeyFileNotOpened) {
+		return Keys{}, fmt.Errorf("the passphrase %w", err)
+	}
+	return keys, err
+}
+
+// ImportKeysWith reads a key file written by ExportKeysFor, with the private backup key.
+func ImportKeysWith(r io.Reader, identities []age.Identity) (Keys, error) {
+	if len(identities) == 0 {
+		return Keys{}, errors.New("the key file is protected with the backup key: set BACKUP_AGE_IDENTITY_FILE to the private backup key")
+	}
+	keys, err := readKeys(r, identities...)
+	if errors.Is(err, errKeyFileNotOpened) {
+		return Keys{}, fmt.Errorf("the backup key %w", err)
+	}
+	return keys, err
+}
+
+func readKeys(r io.Reader, identities ...age.Identity) (Keys, error) {
+	plain, err := age.Decrypt(r, identities...)
 	if err != nil {
-		return Keys{}, errors.New("the passphrase does not open this key file, or the file is damaged")
+		return Keys{}, errKeyFileNotOpened
 	}
 	body, err := io.ReadAll(io.LimitReader(plain, 1<<20))
 	if err != nil {
-		return Keys{}, errors.New("the passphrase does not open this key file, or the file is damaged")
+		return Keys{}, errKeyFileNotOpened
 	}
 	var keys Keys
 	if err := json.Unmarshal(body, &keys); err != nil {

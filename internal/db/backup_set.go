@@ -72,9 +72,10 @@ type SignInInfo struct {
 
 // SourceInfo records the state of the install the backup was taken from.
 type SourceInfo struct {
-	// Stopped is true when the queues were empty and nothing was consuming them: the app was
-	// stopped and no message was in flight.
-	Stopped       bool                 `json:"stopped"`
+	// Drained is true when the work queues were empty and nothing was consuming them: the
+	// orchestrator and the audit worker were stopped and no message was waiting. It says nothing
+	// about the gateway, which only publishes and cannot be seen from the queues.
+	Drained       bool                 `json:"drained"`
 	Queues        map[string]QueueInfo `json:"queues,omitempty"`
 	GoogleSignIns *SignInInfo          `json:"google_sign_ins,omitempty"`
 }
@@ -385,6 +386,19 @@ func VerifyBackupSet(manifestPath string) (Manifest, error) {
 // because an archive is never overwritten. Entry names are validated: nothing can be written
 // outside destDir, and only regular files are accepted.
 func ExtractArchives(archivePath, destDir string, identities []age.Identity) (restored, alreadyThere int, err error) {
+	return walkArchives(archivePath, destDir, identities, false)
+}
+
+// CheckArchives reads an archive bundle to its end and validates every entry, exactly as
+// ExtractArchives would, but writes nothing. It returns the number of archive files. A restore
+// runs it first: a bundle that cannot be opened (wrong key) or is damaged is found out before
+// anything is changed.
+func CheckArchives(archivePath string, identities []age.Identity) (files int, err error) {
+	files, _, err = walkArchives(archivePath, "", identities, true)
+	return files, err
+}
+
+func walkArchives(archivePath, destDir string, identities []age.Identity, checkOnly bool) (restored, alreadyThere int, err error) {
 	f, err := os.Open(archivePath)
 	if err != nil {
 		return 0, 0, fmt.Errorf("cannot open the archive bundle: %w", err)
@@ -400,8 +414,10 @@ func ExtractArchives(archivePath, destDir string, identities []age.Identity) (re
 			return 0, 0, fmt.Errorf("failed to decrypt the archive bundle: %w", err)
 		}
 	}
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		return 0, 0, fmt.Errorf("failed to create the archive directory: %w", err)
+	if !checkOnly {
+		if err := os.MkdirAll(destDir, 0o755); err != nil {
+			return 0, 0, fmt.Errorf("failed to create the archive directory: %w", err)
+		}
 	}
 
 	tr := tar.NewReader(in)
@@ -419,6 +435,13 @@ func ExtractArchives(archivePath, destDir string, identities []age.Identity) (re
 		}
 		if header.Size < 0 || header.Size > maxArchived {
 			return restored, alreadyThere, fmt.Errorf("the archive bundle contains an implausibly large file: %q", name)
+		}
+		if checkOnly {
+			if _, err := io.CopyN(io.Discard, tr, header.Size); err != nil {
+				return restored, alreadyThere, fmt.Errorf("the archive bundle is damaged: %w", err)
+			}
+			restored++
+			continue
 		}
 		wrote, err := extractOne(tr, header.Size, filepath.Join(destDir, name))
 		if err != nil {

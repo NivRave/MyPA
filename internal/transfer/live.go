@@ -34,7 +34,7 @@ func LiveBackup(databaseURL, backupDir string, opts db.BackupOptions) (string, e
 	m, manifestPath, err := db.CreateBackupSet(databaseURL, backupDir, opts, db.SetOptions{
 		ArchiveDir:    ArchiveDirFromEnv(),
 		SchemaVersion: liveSchemaVersion(databaseURL),
-		Source:        &db.SourceInfo{Stopped: false},
+		Source:        &db.SourceInfo{Drained: false},
 		NotCarried:    NotCarried,
 	})
 	if err != nil {
