@@ -382,7 +382,7 @@ func validateHouseholdSettings(name, language, timeZone, currency *string) (db.H
 	if language != nil {
 		l := strings.TrimSpace(*language)
 		if len(l) > 35 || strings.IndexFunc(l, func(r rune) bool {
-			return !(r == '-' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
+			return r != '-' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
 		}) >= 0 {
 			return in, fmt.Errorf("invalid language %q: use a language tag such as \"he\" or \"en-US\"", l)
 		}
