@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
@@ -30,8 +31,11 @@ func TestProcessMessage_InjectsTopicMemoriesIntoPrompt(t *testing.T) {
 		})
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
-	require.NoError(t, engine.ProcessMessage(context.Background(), models.Message{
-		UserID: "user-mem", ChatID: "c", Text: "what should I cook?", Source: "telegram",
+	require.NoError(t, engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:       "user-mem",
+		Conversation: channel.Conversation{ID: "c"},
+		Text:         "what should I cook?",
+		Channel:      "telegram",
 	}))
 	assert.Contains(t, systemPrompt, "- Allergic to peanuts")
 	assert.Contains(t, systemPrompt, "- Family dinner is on Fridays (Family Shared)")

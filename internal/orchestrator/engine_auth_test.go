@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -24,11 +25,11 @@ func TestProcessMessage_PreAuthGate_DisallowsBackupAndRestore(t *testing.T) {
 		return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
 	})).Return(nil)
 
-	err := engine.ProcessMessage(context.Background(), models.Message{
-		UserID: unauthUserID,
-		ChatID: "chat-999",
-		Text:   "/backup",
-		Source: "telegram",
+	err := engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:       unauthUserID,
+		Conversation: channel.Conversation{ID: "chat-999"},
+		Text:         "/backup",
+		Channel:      "telegram",
 	})
 	require.NoError(t, err)
 
@@ -39,11 +40,11 @@ func TestProcessMessage_PreAuthGate_DisallowsBackupAndRestore(t *testing.T) {
 		return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
 	})).Return(nil)
 
-	err = engine.ProcessMessage(context.Background(), models.Message{
-		UserID: unauthUserID,
-		ChatID: "chat-999",
-		Text:   "/restore",
-		Source: "telegram",
+	err = engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:       unauthUserID,
+		Conversation: channel.Conversation{ID: "chat-999"},
+		Text:         "/restore",
+		Channel:      "telegram",
 	})
 	require.NoError(t, err)
 }
@@ -60,11 +61,11 @@ func TestProcessMessage_PreAuthGate_DisallowsMediaDownloads(t *testing.T) {
 		return ok && strings.Contains(s, "Unauthorized access")
 	})).Return(nil)
 
-	err := engine.ProcessMessage(context.Background(), models.Message{
-		UserID:      unauthUserID,
-		ChatID:      "chat-media",
-		PhotoFileID: "malicious-photo-file-id",
-		Source:      "telegram",
+	err := engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:       unauthUserID,
+		Conversation: channel.Conversation{ID: "chat-media"},
+		Attachments:  []channel.AttachmentRef{{ID: "malicious-photo-file-id", Kind: channel.KindImage, ContentType: "image/jpeg", Label: "telegram_photo"}},
+		Channel:      "telegram",
 	})
 	require.NoError(t, err)
 }
@@ -87,11 +88,11 @@ func TestProcessMessage_AdminRBAC_FamilyRoleRejected(t *testing.T) {
 		return ok && strings.Contains(s, "Permission denied: administrative privileges required")
 	})).Return(nil)
 
-	err := engine.ProcessMessage(context.Background(), models.Message{
-		UserID: familyUserID,
-		ChatID: "chat-123",
-		Text:   "/backup",
-		Source: "telegram",
+	err := engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:       familyUserID,
+		Conversation: channel.Conversation{ID: "chat-123"},
+		Text:         "/backup",
+		Channel:      "telegram",
 	})
 	require.NoError(t, err)
 
@@ -102,11 +103,11 @@ func TestProcessMessage_AdminRBAC_FamilyRoleRejected(t *testing.T) {
 		return ok && strings.Contains(s, "Permission denied: administrative privileges required")
 	})).Return(nil)
 
-	err = engine.ProcessMessage(context.Background(), models.Message{
-		UserID: familyUserID,
-		ChatID: "chat-123",
-		Text:   "/restore",
-		Source: "telegram",
+	err = engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:       familyUserID,
+		Conversation: channel.Conversation{ID: "chat-123"},
+		Text:         "/restore",
+		Channel:      "telegram",
 	})
 	require.NoError(t, err)
 }

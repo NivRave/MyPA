@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,8 +37,8 @@ func doctorEngine(t *testing.T, user models.User) (*Engine, *[]string, func()) {
 	return engine, sent, cleanup
 }
 
-func doctorMessage(userID string) models.Message {
-	return models.Message{ID: "m-1", UserID: userID, ChatID: "chat-1", Text: "/doctor", Source: "telegram"}
+func doctorMessage(userID string) channel.Inbound {
+	return channel.Inbound{MessageID: "m-1", Sender: userID, Conversation: channel.Conversation{ID: "chat-1"}, Text: "/doctor", Channel: "telegram"}
 }
 
 // V4-17: /doctor is an admin command and sends the health report.

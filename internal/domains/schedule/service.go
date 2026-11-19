@@ -34,7 +34,7 @@ func (m *Module) resolveCalendarClient(ctx context.Context, callCtx orchestrator
 		}
 	}
 	if activeUserID == "" {
-		activeUserID = callCtx.Message.UserID
+		activeUserID = callCtx.Message.Sender
 	}
 
 	if userID == activeUserID {

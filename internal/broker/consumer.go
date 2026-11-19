@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/channel"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -127,17 +127,17 @@ func (c *Consumer) connect() error {
 	return nil
 }
 
-// Consume starts consuming models.Message items with supervision and auto-reconnect.
-func (c *Consumer) Consume(handler func(models.Message) error) error {
-	return c.ConsumeWithInfo(func(msg models.Message, _ DeliveryInfo) error { return handler(msg) })
+// Consume starts consuming channel.Inbound items with supervision and auto-reconnect.
+func (c *Consumer) Consume(handler func(channel.Inbound) error) error {
+	return c.ConsumeWithInfo(func(msg channel.Inbound, _ DeliveryInfo) error { return handler(msg) })
 }
 
 // ConsumeWithInfo is like Consume but also tells the handler which delivery attempt it is
 // processing, so it can e.g. stay silent on intermediate retryable failures.
 // Handler errors wrapping ErrNonRetryable are acked (never redelivered).
-func (c *Consumer) ConsumeWithInfo(handler func(models.Message, DeliveryInfo) error) error {
+func (c *Consumer) ConsumeWithInfo(handler func(channel.Inbound, DeliveryInfo) error) error {
 	return c.consumeLoop(func(d amqp.Delivery) (string, func()) {
-		var msg models.Message
+		var msg channel.Inbound
 		if err := json.Unmarshal(d.Body, &msg); err != nil {
 			return "", func() {
 				// P3-3: never log the payload (it carries user messages); size is enough to debug.
@@ -147,7 +147,7 @@ func (c *Consumer) ConsumeWithInfo(handler func(models.Message, DeliveryInfo) er
 			}
 		}
 		// One serial lane per sender: parallel across users, ordered within a user.
-		return deliveryKey(msg.Source, msg.UserID), func() {
+		return deliveryKey(msg.Channel, msg.Sender), func() {
 			err := callContained(func() error {
 				return handler(msg, deliveryInfo(getRetryCount(d.Headers), c.maxRetries))
 			})

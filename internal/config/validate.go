@@ -3,10 +3,10 @@ package config
 import (
 	"errors"
 	"fmt"
-	"net/url"
-	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/nivik/mypa/internal/channel/adapters"
 )
 
 // Names accepted by Validate. The app is one binary with roles (V4-01, `mypa --role=<role>`), and
@@ -39,8 +39,9 @@ var requiredKeys = map[string][]string{
 	ServiceAuditWorker: {"DATABASE_URL", "RABBITMQ_URL"},
 }
 
-// conditionalKeys are required only when a related feature is configured.
-var conditionalKeys = []string{"TELEGRAM_SECRET_TOKEN", "TELEGRAM_BOT_TOKEN", "TWILIO_AUTH_TOKEN"}
+// conditionalKeys are required only when a related feature is configured: the channel adapters'
+// settings (V4-31), which the adapters validate themselves.
+var conditionalKeys = adapters.ConditionalEnvKeys()
 
 // RequiredEnvKeys returns every env var Validate may demand for any service (sorted, de-duplicated).
 func RequiredEnvKeys() []string {
@@ -60,9 +61,6 @@ func RequiredEnvKeys() []string {
 	sort.Strings(out)
 	return out
 }
-
-// telegramSecretPattern: Telegram's secret_token allows 1-256 characters from A-Z, a-z, 0-9, _ and -.
-var telegramSecretPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
 
 // isPlaceholder detects values copied verbatim from .env.example.
 func isPlaceholder(v string) bool {
@@ -90,62 +88,20 @@ func (c *Config) Validate(service string) error {
 		}
 	}
 
-	if service == RoleAll || service == RoleIngress {
-		errs = append(errs, c.validateTelegramIngress()...)
-	}
-	if service == RoleAll || service == RoleWorker {
+	servesIngress := service == RoleAll || service == RoleIngress
+	runsWorker := service == RoleAll || service == RoleWorker
+	if runsWorker {
 		if c.Server.JWTSecret != "" && strings.TrimSpace(c.Server.JWTSecret) == strings.TrimSpace(c.Encryption.Key) {
 			errs = append(errs, errors.New("JWT_SECRET must differ from ENCRYPTION_KEY"))
 		}
-		errs = append(errs, c.validateTwilioStatusCallback()...)
 	}
-	if service != ServiceAuditWorker {
-		errs = append(errs, c.validateTwilio()...)
-	}
+	// The audit worker runs no channel, so it does not check their settings.
+	errs = append(errs, c.Channels.Validate(servesIngress, runsWorker)...)
 
 	if len(errs) == 0 {
 		return nil
 	}
 	return fmt.Errorf("invalid %s configuration: %w", service, errors.Join(errs...))
-}
-
-func (c *Config) validateTelegramIngress() []error {
-	var errs []error
-	tg := c.Telegram
-	if (tg.BotToken != "" || tg.WebhookURL != "") && tg.SecretToken == "" {
-		errs = append(errs, errors.New("TELEGRAM_SECRET_TOKEN is required when Telegram is configured (TELEGRAM_BOT_TOKEN/TELEGRAM_WEBHOOK_URL set)"))
-	}
-	if tg.SecretToken != "" && !telegramSecretPattern.MatchString(tg.SecretToken) {
-		errs = append(errs, errors.New("TELEGRAM_SECRET_TOKEN must be 1-256 characters of A-Z, a-z, 0-9, '_' or '-'"))
-	}
-	if tg.WebhookURL != "" && tg.BotToken == "" {
-		errs = append(errs, errors.New("TELEGRAM_BOT_TOKEN is required to register TELEGRAM_WEBHOOK_URL"))
-	}
-	return errs
-}
-
-func (c *Config) validateTwilio() []error {
-	if c.Twilio.AccountSID != "" && c.Twilio.AuthToken == "" {
-		return []error{errors.New("TWILIO_AUTH_TOKEN is required when TWILIO_ACCOUNT_SID is set (webhook signatures cannot be verified)")}
-	}
-	return nil
-}
-
-// validateTwilioStatusCallback: optional (BL-8), but if set Twilio must be able to call it — an
-// absolute https URL, not an .env.example placeholder.
-func (c *Config) validateTwilioStatusCallback() []error {
-	raw := strings.TrimSpace(c.Twilio.StatusCallbackURL)
-	if raw == "" {
-		return nil
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Host == "" {
-		return []error{errors.New("TWILIO_STATUS_CALLBACK_URL must be an absolute https URL (e.g. https://<public-host>/webhook/twilio/status)")}
-	}
-	if strings.Contains(strings.ToLower(raw), "your-") || strings.Contains(raw, "<YOUR_") {
-		return []error{errors.New("TWILIO_STATUS_CALLBACK_URL still contains the .env.example placeholder value")}
-	}
-	return nil
 }
 
 // valueFor maps a required env var name to its loaded config value.

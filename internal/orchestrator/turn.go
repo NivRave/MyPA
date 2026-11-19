@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
@@ -20,9 +21,9 @@ import (
 // runTurn runs the LLM part of a turn (P4-1): history, tool selection, memory retrieval, prompt
 // assembly, the model call (with the Hebrew content-block retry), the tool loop, the reply and
 // history persistence. It returns the final response text (recorded in the audit session).
-func (e *Engine) runTurn(ctx context.Context, user *models.User, msg models.Message, media mediaAttachment, effects *turnEffects) (response string, err error) {
+func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inbound, media mediaAttachment, effects *turnEffects) (response string, err error) {
 	// 2. Fetch conversation history
-	history, err := e.store.GetChatHistory(ctx, msg.UserID)
+	history, err := e.store.GetChatHistory(ctx, msg.Sender)
 	if err != nil {
 		return response, fmt.Errorf("failed to get chat history: %w", err)
 	}
@@ -37,7 +38,7 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg models.Mess
 		if e.intentMatcher != nil {
 			matchedDomains = e.intentMatcher.MatchDomains(msg.Text)
 		}
-		selected := unionDomains(matchedDomains, e.loadStickyDomains(ctx, msg.UserID))
+		selected := unionDomains(matchedDomains, e.loadStickyDomains(ctx, msg.Sender))
 		activeTools := e.toolRegistry.SelectDeclarations(selected, false)
 		ctx = llm.WithActiveTools(ctx, activeTools)
 		activeToolNames = make(map[string]bool, len(activeTools))
@@ -56,9 +57,9 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg models.Mess
 	if err == nil && len(embedding) > 0 {
 		// P2-4: single memory store. Visibility (own personal + family-shared) is enforced by
 		// the repository's tenant filter, so no per-member user ID list is needed.
-		memories, searchErr := e.db.SearchSimilarMemories(ctx, msg.UserID, user.FamilyGroup, pgvector.NewVector(embedding), 5)
+		memories, searchErr := e.db.SearchSimilarMemories(ctx, msg.Sender, user.FamilyGroup, pgvector.NewVector(embedding), 5)
 		if searchErr != nil {
-			slog.Warn("memory retrieval failed; continuing without memories", "user_id", msg.UserID, "error", searchErr)
+			slog.Warn("memory retrieval failed; continuing without memories", "user_id", msg.Sender, "error", searchErr)
 		}
 		for _, m := range memories {
 			scopeTag := ""
@@ -97,7 +98,7 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg models.Mess
 		if errors.As(err, &blockedErr) {
 			normalized := NormalizeHebrewPrepositionNumbers(promptText)
 			if normalized != promptText {
-				slog.Info("retrying LLM chat with normalized prompt after content block", "message_id", msg.ID, "text_len", len([]rune(promptText)), "reason", blockedErr.BlockReason) // P3-3: no content
+				slog.Info("retrying LLM chat with normalized prompt after content block", "message_id", msg.MessageID, "text_len", len([]rune(promptText)), "reason", blockedErr.BlockReason) // P3-3: no content
 				resp, err = e.llm.Chat(ctx, systemPrompt, history, normalized, media.Data, media.MimeType)
 			}
 		}
@@ -105,7 +106,7 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg models.Mess
 	if err != nil {
 		var blockedErr *llm.ContentBlockedError
 		if errors.As(err, &blockedErr) {
-			slog.Warn("llm prompt blocked by safety filter", "user_id", msg.UserID, "reason", blockedErr.BlockReason)
+			slog.Warn("llm prompt blocked by safety filter", "user_id", msg.Sender, "reason", blockedErr.BlockReason)
 			replyText := "⚠️ The AI safety filter flagged this request (likely a false positive). Please try phrasing it slightly differently, for example by adding a hyphen (e.g. 'ב-18:00') or using full time/date words."
 			response = replyText
 			_ = e.sendMessage(ctx, msg, replyText)
@@ -136,9 +137,9 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg models.Mess
 	}
 
 	// Remember what this turn used so a short follow-up ("yes, the second one") keeps its tools.
-	e.saveStickyDomains(ctx, msg.UserID, matchedDomains, effects.calledTools())
+	e.saveStickyDomains(ctx, msg.Sender, matchedDomains, effects.calledTools())
 
-	// 6. Send reply to Telegram
+	// 6. Send the reply on the channel the message came from
 	if strings.TrimSpace(replyText) == "" {
 		replyText = "⚠️ Sorry, I didn't get a response from the AI. Please try again."
 	}
@@ -160,16 +161,16 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg models.Mess
 		}
 	}
 
-	_ = e.store.AppendChatHistory(ctx, msg.UserID, models.ChatMessage{
+	_ = e.store.AppendChatHistory(ctx, msg.Sender, models.ChatMessage{
 		Role:    "user",
 		Content: persistedContent,
 	})
 	// P2-9: keep the turn's tool calls and (truncated) results, so a follow-up such as
 	// "delete that event" can refer to IDs created in this turn.
 	for _, m := range effects.historyMessages() {
-		_ = e.store.AppendChatHistory(ctx, msg.UserID, m)
+		_ = e.store.AppendChatHistory(ctx, msg.Sender, m)
 	}
-	_ = e.store.AppendChatHistory(ctx, msg.UserID, models.ChatMessage{Role: "assistant", Content: replyText})
+	_ = e.store.AppendChatHistory(ctx, msg.Sender, models.ChatMessage{Role: "assistant", Content: replyText})
 
 	return response, nil
 }
@@ -197,7 +198,7 @@ const maxToolIterations = MaxToolRecursionDepth
 // It guarantees deterministic indexing, context cancellation, panic recovery, and bounded concurrency.
 func (e *Engine) executeToolsConcurrently(
 	ctx context.Context,
-	msg models.Message,
+	msg channel.Inbound,
 	history []models.ChatMessage,
 	systemPrompt string,
 	toolCalls []*genai.FunctionCall,
@@ -222,7 +223,7 @@ func (e *Engine) executeToolsConcurrently(
 					slog.Error("panic recovered during single tool execution",
 						"tool", tc.Name,
 						"panic", r,
-						"user_id", msg.UserID,
+						"user_id", msg.Sender,
 					)
 					funcResponses[0] = models.FunctionResponse{
 						Name: tc.Name,
@@ -253,7 +254,7 @@ func (e *Engine) executeToolsConcurrently(
 					slog.Error("panic recovered during concurrent tool execution",
 						"tool", call.Name,
 						"panic", r,
-						"user_id", msg.UserID,
+						"user_id", msg.Sender,
 					)
 					funcResponses[idx] = models.FunctionResponse{
 						Name: call.Name,
@@ -279,7 +280,7 @@ func (e *Engine) executeToolsConcurrently(
 
 func (e *Engine) handleToolCalls(
 	ctx context.Context,
-	msg models.Message,
+	msg channel.Inbound,
 	history []models.ChatMessage,
 	systemPrompt string,
 	toolCalls []*genai.FunctionCall,
@@ -306,7 +307,7 @@ func (e *Engine) handleToolCalls(
 	// Check iteration limit (SCALE-03: bound to 8 iterations)
 	if iteration >= maxToolIterations {
 		slog.Warn("max tool recursion reached, requesting terminal summary without tools",
-			"user_id", msg.UserID, "iteration", iteration)
+			"user_id", msg.Sender, "iteration", iteration)
 
 		// Force no-tools call to guarantee conversational termination
 		summaryResp, err := e.llm.Chat(llm.WithNoTools(ctx), systemPrompt, extendedHistory, toolLimitSummaryPrompt, nil, "")
@@ -342,7 +343,7 @@ func (e *Engine) handleToolCalls(
 	return "", nil
 }
 
-func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) string {
+func (e *Engine) executeSingleTool(ctx context.Context, msg channel.Inbound, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) string {
 	slog.Info("llm requested tool call", "tool", toolCall.Name)
 
 	// P3-1: one list of sensitive tools (security.go) instead of four hard-coded meta tools.
@@ -355,10 +356,10 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 					stageData := state.PendingMetaToolAction{
 						ToolName:  toolCall.Name,
 						Args:      toolCall.Args,
-						UserID:    msg.UserID,
+						UserID:    msg.Sender,
 						CreatedAt: time.Now(),
 					}
-					_ = e.store.StagePendingMetaTool(ctx, msg.UserID, stageData, 5*time.Minute)
+					_ = e.store.StagePendingMetaTool(ctx, msg.Sender, stageData, 5*time.Minute)
 				}
 
 				sourceDesc := "external untrusted content"
@@ -383,7 +384,7 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg models.Message, hist
 		// outside a turn (direct invocations, tests).
 		user := turnUser(ctx)
 		if user == nil && e.db != nil {
-			user, _ = e.db.GetUser(msg.UserID)
+			user, _ = e.db.GetUser(msg.Sender)
 		}
 		callCtx := e.buildCallContext(ctx, user, msg)
 		res, handled, err := e.toolRegistry.Execute(ctx, callCtx, toolCall.Name, toolCall.Args)

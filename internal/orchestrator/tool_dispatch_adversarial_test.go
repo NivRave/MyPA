@@ -5,8 +5,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
 	"github.com/alicebob/miniredis/v2"
-	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,7 +62,7 @@ func TestToolDynamicDispatch(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	msg := models.Message{UserID: "actor-123"}
+	msg := channel.Inbound{Sender: "actor-123"}
 
 	t.Run("Successful Dispatch to Registered Tool", func(t *testing.T) {
 		call := &genai.FunctionCall{
@@ -156,7 +157,7 @@ func TestSEC09_InteractiveGate_UntrustedTurn(t *testing.T) {
 		toolRegistry: reg,
 	}
 
-	msg := models.Message{UserID: "target-victim"}
+	msg := channel.Inbound{Sender: "target-victim"}
 
 	for _, tc := range metaTools {
 		t.Run("Intercept_"+tc.name, func(t *testing.T) {

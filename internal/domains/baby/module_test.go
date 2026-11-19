@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/domains/baby"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
@@ -358,8 +359,8 @@ func createTestCallContext(bus *events.EventBus) orchestrator.CallContext {
 			ID:          "user-101",
 			FamilyGroup: "family-smith",
 		},
-		Message: models.Message{
-			UserID: "user-101",
+		Message: channel.Inbound{
+			Sender: "user-101",
 		},
 		EventBus: bus,
 	}

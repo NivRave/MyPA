@@ -5,6 +5,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/domains/baby"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -33,7 +34,7 @@ func TestSEC04_CrossTenant_BabyProfileAndCareLogs_Isolation(t *testing.T) {
 
 	// 1. Family Alpha creates baby profile "Leo"
 	userAlpha := &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
-	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: models.Message{UserID: "user_alpha"}}
+	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}}
 
 	resp, err := mod.Execute(ctx, callCtxAlpha, "upsert_baby_profile", map[string]interface{}{
 		"name":          "Leo",
@@ -59,7 +60,7 @@ func TestSEC04_CrossTenant_BabyProfileAndCareLogs_Isolation(t *testing.T) {
 
 	// 3. Family Beta attempts IDOR attacks
 	userBeta := &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"}
-	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: models.Message{UserID: "user_beta"}}
+	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}}
 
 	// Attack A: Try to update Leo's profile using his baby_id
 	_, err = mod.Execute(ctx, callCtxBeta, "upsert_baby_profile", map[string]interface{}{
@@ -110,7 +111,7 @@ func TestSEC04_CrossTenant_BabyProfileAndCareLogs_Isolation(t *testing.T) {
 
 	// 4. Test users with empty family_group
 	userSolo1 := &models.User{ID: "u_solo1", PlatformID: "solo_1", FamilyGroup: ""}
-	callCtxSolo1 := orchestrator.CallContext{User: userSolo1, Message: models.Message{UserID: "solo_1"}}
+	callCtxSolo1 := orchestrator.CallContext{User: userSolo1, Message: channel.Inbound{Sender: "solo_1"}}
 
 	_, err = mod.Execute(ctx, callCtxSolo1, "upsert_baby_profile", map[string]interface{}{
 		"name":          "SoloBaby",
@@ -124,7 +125,7 @@ func TestSEC04_CrossTenant_BabyProfileAndCareLogs_Isolation(t *testing.T) {
 	soloBabyID := solo1Profiles[0].ID
 
 	userSolo2 := &models.User{ID: "u_solo2", PlatformID: "solo_2", FamilyGroup: ""}
-	callCtxSolo2 := orchestrator.CallContext{User: userSolo2, Message: models.Message{UserID: "solo_2"}}
+	callCtxSolo2 := orchestrator.CallContext{User: userSolo2, Message: channel.Inbound{Sender: "solo_2"}}
 
 	// Solo 2 attempts to query Solo 1's baby
 	solo2Resp, err := mod.Execute(ctx, callCtxSolo2, "query_baby_logs_and_trends", map[string]interface{}{

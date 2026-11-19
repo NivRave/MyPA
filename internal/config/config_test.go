@@ -124,11 +124,11 @@ func TestLoad_EnvVars(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
-	assert.Equal(t, "https://example.com/webhook/twilio/status", cfg.Twilio.StatusCallbackURL)
+	assert.Equal(t, "https://example.com/webhook/twilio/status", cfg.Channels.WhatsApp.StatusCallbackURL)
 	assert.Equal(t, "America/New_York", cfg.Server.DefaultTimezone)
 	assert.Equal(t, 9001, cfg.Server.Port)
-	assert.Equal(t, "test-token", cfg.Telegram.BotToken)
-	assert.Equal(t, "https://example.com/webhook", cfg.Telegram.WebhookURL)
+	assert.Equal(t, "test-token", cfg.Channels.Telegram.BotToken)
+	assert.Equal(t, "https://example.com/webhook", cfg.Channels.Telegram.WebhookURL)
 	assert.Equal(t, "amqp://user:pass@localhost:5672/", cfg.RabbitMQ.URL)
 	assert.Equal(t, "redis://localhost:6379/0", cfg.Redis.URL)
 	assert.Equal(t, "postgres://user:pass@localhost:5432/db", cfg.Database.URL)
@@ -138,9 +138,9 @@ func TestLoad_EnvVars(t *testing.T) {
 	assert.Equal(t, "google-client-secret", cfg.Google.ClientSecret)
 	assert.Equal(t, "http://localhost/callback", cfg.Google.RedirectURL)
 	assert.Equal(t, "groq-key", cfg.Groq.APIKey)
-	assert.Equal(t, "twilio-sid", cfg.Twilio.AccountSID)
-	assert.Equal(t, "twilio-token", cfg.Twilio.AuthToken)
-	assert.Equal(t, "whatsapp:+1234567890", cfg.Twilio.FromNumber)
+	assert.Equal(t, "twilio-sid", cfg.Channels.WhatsApp.AccountSID)
+	assert.Equal(t, "twilio-token", cfg.Channels.WhatsApp.AuthToken)
+	assert.Equal(t, "whatsapp:+1234567890", cfg.Channels.WhatsApp.FromNumber)
 	assert.Equal(t, "tavily-key", cfg.Tavily.APIKey)
 }
 

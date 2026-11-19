@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/nivik/mypa/internal/markdown"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +19,7 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // TestDoubleEscaping_TelegramPipeline simulates the full engine.sendMessage pipeline
-// where markdown text is converted by markdown.ToTelegramHTML and then sent to tgClient.SendMessage.
+// where markdown text is converted by ToTelegramHTML and then sent to tgClient.SendMessage.
 func TestDoubleEscaping_TelegramPipeline(t *testing.T) {
 	var capturedPayload SendMessageRequest
 
@@ -39,13 +38,13 @@ func TestDoubleEscaping_TelegramPipeline(t *testing.T) {
 	client.httpClient.Transport = mockTransport
 
 	// In engine.sendMessage:
-	// 1. Text is converted to Telegram HTML via markdown.ToTelegramHTML
+	// 1. Text is converted to Telegram HTML via ToTelegramHTML
 	rawText := "Check boundaries: 5 < 10 and 20 > 15"
-	formatted := markdown.ToTelegramHTML(rawText)
+	formatted := ToTelegramHTML(rawText)
 	require.Equal(t, "Check boundaries: 5 &lt; 10 and 20 &gt; 15", formatted)
 
 	// 2. Chunks are generated
-	chunks := markdown.SafeChunkTelegramHTML(formatted, 4000)
+	chunks := SafeChunkTelegramHTML(formatted, 4000)
 	require.Len(t, chunks, 1)
 
 	// 3. tgClient.SendMessage is called with each chunk

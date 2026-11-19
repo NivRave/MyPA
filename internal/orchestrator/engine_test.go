@@ -4,27 +4,44 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/nivik/mypa/internal/calendar"
+	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/channel/adapters/adapterstest"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator/mocks"
 	"github.com/nivik/mypa/internal/state"
+	tgmocks "github.com/nivik/mypa/internal/telegram/mocks"
+	"github.com/nivik/mypa/internal/twilio"
+	wamocks "github.com/nivik/mypa/internal/twilio/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/genai"
 )
 
-func setupTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.MockLLMClient, *mocks.MockDBClient, func()) {
+// whatsAppMocks remembers the WhatsApp API mock behind each test engine: the engine holds only the
+// channel registry (V4-31), so tests that script WhatsApp look the mock up here.
+var whatsAppMocks sync.Map
+
+func whatsAppMockOf(t *testing.T, e *Engine) *wamocks.MockAPI {
+	t.Helper()
+	m, ok := whatsAppMocks.Load(e)
+	require.True(t, ok, "engine was not built by setupTestEngine")
+	return m.(*wamocks.MockAPI)
+}
+
+func setupTestEngine(t *testing.T) (*Engine, *tgmocks.MockAPI, *mocks.MockLLMClient, *mocks.MockDBClient, func()) {
 	ctrl := gomock.NewController(t)
 	
-	tgMock := mocks.NewMockTelegramClient(ctrl)
-	twMock := mocks.NewMockTwilioClient(ctrl)
+	tgMock := tgmocks.NewMockAPI(ctrl)
+	twMock := wamocks.NewMockAPI(ctrl)
 	audioMock := mocks.NewMockAudioClient(ctrl)
 	llmMock := mocks.NewMockLLMClient(ctrl)
 	gmailMock := mocks.NewMockGmailClient(ctrl)
@@ -54,8 +71,7 @@ func setupTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.M
 		store,
 		dbMock,
 		llmMock,
-		tgMock,
-		twMock,
+		adapterstest.Registry(tgMock, twMock),
 		oauthCfg,
 		gmailMock,
 		tasksMock,
@@ -65,6 +81,8 @@ func setupTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.M
 		eventPublisherMock,
 		"UTC",
 	)
+	whatsAppMocks.Store(engine, twMock)
+	t.Cleanup(func() { whatsAppMocks.Delete(engine) })
 
 	reg := NewRegistry()
 	reg.Register(&testBaseToolsModule{engine: engine})
@@ -168,13 +186,13 @@ func TestProcessMessage_ConnectCommand(t *testing.T) {
 	engine, tgMock, _, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
-	msg := models.Message{
-		ID:        "msg-1",
-		UserID:    "user-1",
-		ChatID:    "chat-1",
-		Text:      "/connect",
-		Source:    "telegram",
-		Timestamp: time.Now(),
+	msg := channel.Inbound{
+		MessageID:    "msg-1",
+		Sender:       "user-1",
+		Conversation: channel.Conversation{ID: "chat-1"},
+		Text:         "/connect",
+		Channel:      "telegram",
+		SentAt:       time.Now(),
 	}
 
 	// We expect the bot to reply with a connection link
@@ -195,13 +213,13 @@ func TestProcessMessage_TextMessage(t *testing.T) {
 	engine, tgMock, llmMock, dbMock, cleanup := setupTestEngine(t)
 	defer cleanup()
 
-	msg := models.Message{
-		ID:        "msg-2",
-		UserID:    "user-1",
-		ChatID:    "chat-1",
-		Text:      "Hello, bot!",
-		Source:    "telegram",
-		Timestamp: time.Now(),
+	msg := channel.Inbound{
+		MessageID:    "msg-2",
+		Sender:       "user-1",
+		Conversation: channel.Conversation{ID: "chat-1"},
+		Text:         "Hello, bot!",
+		Channel:      "telegram",
+		SentAt:       time.Now(),
 	}
 
 	// Mock DB calls for history and memories
@@ -223,17 +241,16 @@ func TestProcessMessage_WhatsApp_TextDocument(t *testing.T) {
 	engine, _, llmMock, dbMock, cleanup := setupTestEngine(t)
 	defer cleanup()
 
-	twMock := engine.twClient.(*mocks.MockTwilioClient)
+	twMock := whatsAppMockOf(t, engine)
 
-	msg := models.Message{
-		ID:               "wa-msg-1",
-		UserID:           "+1234567890",
-		ChatID:           "+1234567890",
-		Text:             "Please setup my daily checklist:",
-		Source:           "whatsapp",
-		MediaURL:         "https://api.twilio.com/media/doc123",
-		MediaContentType: "text/plain",
-		Timestamp:        time.Now(),
+	msg := channel.Inbound{
+		MessageID:    "wa-msg-1",
+		Sender:       "+1234567890",
+		Conversation: channel.Conversation{ID: "+1234567890"},
+		Text:         "Please setup my daily checklist:",
+		Channel:      "whatsapp",
+		Attachments:  []channel.AttachmentRef{twilio.MediaRef("https://api.twilio.com/media/doc123", "text/plain")},
+		SentAt:       time.Now(),
 	}
 
 	docContent := "Habit 1: Drink water\nHabit 2: Stretch"
@@ -263,17 +280,16 @@ func TestProcessMessage_WhatsApp_PDFDocument(t *testing.T) {
 	engine, _, llmMock, dbMock, cleanup := setupTestEngine(t)
 	defer cleanup()
 
-	twMock := engine.twClient.(*mocks.MockTwilioClient)
+	twMock := whatsAppMockOf(t, engine)
 
-	msg := models.Message{
-		ID:               "wa-msg-2",
-		UserID:           "+1234567890",
-		ChatID:           "+1234567890",
-		Text:             "",
-		Source:           "whatsapp",
-		MediaURL:         "https://api.twilio.com/media/pdf123",
-		MediaContentType: "application/pdf",
-		Timestamp:        time.Now(),
+	msg := channel.Inbound{
+		MessageID:    "wa-msg-2",
+		Sender:       "+1234567890",
+		Conversation: channel.Conversation{ID: "+1234567890"},
+		Text:         "",
+		Channel:      "whatsapp",
+		Attachments:  []channel.AttachmentRef{twilio.MediaRef("https://api.twilio.com/media/pdf123", "application/pdf")},
+		SentAt:       time.Now(),
 	}
 
 	pdfBytes := []byte("%PDF-1.4 mock content")
@@ -298,17 +314,16 @@ func TestProcessMessage_WhatsApp_UnsupportedMedia(t *testing.T) {
 	engine, _, _, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
-	twMock := engine.twClient.(*mocks.MockTwilioClient)
+	twMock := whatsAppMockOf(t, engine)
 
-	msg := models.Message{
-		ID:               "wa-msg-3",
-		UserID:           "+1234567890",
-		ChatID:           "+1234567890",
-		Text:             "",
-		Source:           "whatsapp",
-		MediaURL:         "https://api.twilio.com/media/vid123",
-		MediaContentType: "video/mp4",
-		Timestamp:        time.Now(),
+	msg := channel.Inbound{
+		MessageID:    "wa-msg-3",
+		Sender:       "+1234567890",
+		Conversation: channel.Conversation{ID: "+1234567890"},
+		Text:         "",
+		Channel:      "whatsapp",
+		Attachments:  []channel.AttachmentRef{twilio.MediaRef("https://api.twilio.com/media/vid123", "video/mp4")},
+		SentAt:       time.Now(),
 	}
 
 	twMock.EXPECT().SendMessage(gomock.Any(), "+1234567890", gomock.Any()).
@@ -370,15 +385,15 @@ func TestProcessMessage_ContentBlocked_RetrySuccess(t *testing.T) {
 	engine, _, llmMock, dbMock, cleanup := setupTestEngine(t)
 	defer cleanup()
 
-	twMock := engine.twClient.(*mocks.MockTwilioClient)
+	twMock := whatsAppMockOf(t, engine)
 
-	msg := models.Message{
-		ID:        "wa-blocked-1",
-		UserID:    "+1234567890",
-		ChatID:    "+1234567890",
-		Text:      "תזכיר לי ב18 לנקות את השואב",
-		Source:    "whatsapp",
-		Timestamp: time.Now(),
+	msg := channel.Inbound{
+		MessageID:    "wa-blocked-1",
+		Sender:       "+1234567890",
+		Conversation: channel.Conversation{ID: "+1234567890"},
+		Text:         "תזכיר לי ב18 לנקות את השואב",
+		Channel:      "whatsapp",
+		SentAt:       time.Now(),
 	}
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
@@ -405,15 +420,15 @@ func TestProcessMessage_ContentBlocked_PersistentError(t *testing.T) {
 	engine, _, llmMock, dbMock, cleanup := setupTestEngine(t)
 	defer cleanup()
 
-	twMock := engine.twClient.(*mocks.MockTwilioClient)
+	twMock := whatsAppMockOf(t, engine)
 
-	msg := models.Message{
-		ID:        "wa-blocked-2",
-		UserID:    "+1234567890",
-		ChatID:    "+1234567890",
-		Text:      "some blocked text without numbers",
-		Source:    "whatsapp",
-		Timestamp: time.Now(),
+	msg := channel.Inbound{
+		MessageID:    "wa-blocked-2",
+		Sender:       "+1234567890",
+		Conversation: channel.Conversation{ID: "+1234567890"},
+		Text:         "some blocked text without numbers",
+		Channel:      "whatsapp",
+		SentAt:       time.Now(),
 	}
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
@@ -456,7 +471,7 @@ func TestEngine_HandleToolCall_RegistryDelegation(t *testing.T) {
 
 	dbMock.EXPECT().GetUser("user-1").Return(&models.User{PlatformID: "user-1", Name: "User One"}, nil).AnyTimes()
 
-	msg := models.Message{UserID: "user-1", Text: "run custom tool"}
+	msg := channel.Inbound{Sender: "user-1", Text: "run custom tool"}
 	tc := &genai.FunctionCall{
 		Name: "custom_registry_tool",
 		Args: map[string]interface{}{"greeting": "hello"},
@@ -474,11 +489,11 @@ func TestEngine_HandleToolCall_RegistryDelegation(t *testing.T) {
 	assert.Equal(t, "⚠️ LLM tried to call an unknown tool.", resUnknown)
 }
 
-func setupUnauthTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.MockDBClient, func()) {
+func setupUnauthTestEngine(t *testing.T) (*Engine, *tgmocks.MockAPI, *mocks.MockDBClient, func()) {
 	ctrl := gomock.NewController(t)
 
-	tgMock := mocks.NewMockTelegramClient(ctrl)
-	twMock := mocks.NewMockTwilioClient(ctrl)
+	tgMock := tgmocks.NewMockAPI(ctrl)
+	twMock := wamocks.NewMockAPI(ctrl)
 	audioMock := mocks.NewMockAudioClient(ctrl)
 	llmMock := mocks.NewMockLLMClient(ctrl)
 	gmailMock := mocks.NewMockGmailClient(ctrl)
@@ -504,8 +519,7 @@ func setupUnauthTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *m
 		store,
 		dbMock,
 		llmMock,
-		tgMock,
-		twMock,
+		adapterstest.Registry(tgMock, twMock),
 		oauthCfg,
 		gmailMock,
 		tasksMock,
@@ -515,6 +529,8 @@ func setupUnauthTestEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *m
 		eventPublisherMock,
 		"UTC",
 	)
+	whatsAppMocks.Store(engine, twMock)
+	t.Cleanup(func() { whatsAppMocks.Delete(engine) })
 
 	cleanup := func() {
 		engine.Wait()
@@ -542,7 +558,7 @@ func TestProcessMessage_PairingRateLimitAndLockout(t *testing.T) {
 			return ok && strings.Contains(str, fmt.Sprintf("%d attempts remaining", expectedRemaining))
 		})).Return(nil).Times(1)
 
-		msg := models.Message{UserID: "unauth-user", Text: "000000", Source: "telegram"}
+		msg := channel.Inbound{Sender: "unauth-user", Text: "000000", Channel: "telegram"}
 		err := engine.ProcessMessage(context.Background(), msg)
 		assert.NoError(t, err)
 	}
@@ -553,7 +569,7 @@ func TestProcessMessage_PairingRateLimitAndLockout(t *testing.T) {
 		return ok && strings.Contains(str, "locked for 1 hour")
 	})).Return(nil).Times(1)
 
-	msg := models.Message{UserID: "unauth-user", Text: "000000", Source: "telegram"}
+	msg := channel.Inbound{Sender: "unauth-user", Text: "000000", Channel: "telegram"}
 	err := engine.ProcessMessage(context.Background(), msg)
 	assert.NoError(t, err)
 
@@ -563,7 +579,7 @@ func TestProcessMessage_PairingRateLimitAndLockout(t *testing.T) {
 		return ok && strings.Contains(str, "temporarily locked out")
 	})).Return(nil).Times(1)
 
-	msg = models.Message{UserID: "unauth-user", Text: "any text", Source: "telegram"}
+	msg = channel.Inbound{Sender: "unauth-user", Text: "any text", Channel: "telegram"}
 	err = engine.ProcessMessage(context.Background(), msg)
 	assert.NoError(t, err)
 }
@@ -603,7 +619,7 @@ func TestProcessMessage_UndoCommand(t *testing.T) {
 		return ok && strings.Contains(str, "Successfully Undone") && strings.Contains(str, "Reverted test action")
 	})).Return(nil).Times(1)
 
-	msg := models.Message{UserID: "user-1", Text: "/undo mut-123", Source: "telegram"}
+	msg := channel.Inbound{Sender: "user-1", Text: "/undo mut-123", Channel: "telegram"}
 	err := engine.ProcessMessage(context.Background(), msg)
 	assert.NoError(t, err)
 	assert.Equal(t, "user-1", rbMod.lastActorID)
@@ -666,12 +682,12 @@ func TestProcessMessage_PhotoDataStrippedFromRedis(t *testing.T) {
 		"image/jpeg",
 	).Return(&llm.Response{Text: "Receipt processed."}, nil)
 
-	msg := models.Message{
-		UserID:      userID,
-		ChatID:      "chat-photo",
-		Text:        "Here is my receipt",
-		Source:      "telegram",
-		PhotoFileID: "photo-123",
+	msg := channel.Inbound{
+		Sender:       userID,
+		Conversation: channel.Conversation{ID: "chat-photo"},
+		Text:         "Here is my receipt",
+		Channel:      "telegram",
+		Attachments:  []channel.AttachmentRef{{ID: "photo-123", Kind: channel.KindImage, ContentType: "image/jpeg", Label: "telegram_photo"}},
 	}
 
 	err := engine.ProcessMessage(ctx, msg)
@@ -694,7 +710,7 @@ func TestHandleToolCalls_BoundedRecursion(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	msg := models.Message{UserID: "user-loop", Text: "do recursive actions"}
+	msg := channel.Inbound{Sender: "user-loop", Text: "do recursive actions"}
 
 	reg := NewRegistry()
 	mockMod := &mockToolModule{
@@ -752,7 +768,7 @@ func TestHandleToolCalls_ConcurrentExecution(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	msg := models.Message{UserID: "user-parallel", Text: "parallel actions"}
+	msg := channel.Inbound{Sender: "user-parallel", Text: "parallel actions"}
 
 	// Register 3 custom tools that take 50ms each
 	reg := NewRegistry()
@@ -868,11 +884,11 @@ func TestProcessMessage_TwoTierToolScoping(t *testing.T) {
 		"",
 	).Return(&llm.Response{Text: "Logged baby feeding."}, nil).Times(1)
 
-	msg := models.Message{
-		UserID: "user-baby-1",
-		ChatID: "chat-1",
-		Text:   "Liam ate 120ml of formula",
-		Source: "telegram",
+	msg := channel.Inbound{
+		Sender:       "user-baby-1",
+		Conversation: channel.Conversation{ID: "chat-1"},
+		Text:         "Liam ate 120ml of formula",
+		Channel:      "telegram",
 	}
 
 	err := engine.ProcessMessage(ctx, msg)
@@ -884,7 +900,7 @@ func TestExecuteToolsConcurrently_PanicRecovery(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	msg := models.Message{UserID: "user-panic-test"}
+	msg := channel.Inbound{Sender: "user-panic-test"}
 
 	reg := NewRegistry()
 	testMod := &mockToolModule{
@@ -927,7 +943,7 @@ func TestExecuteToolsConcurrently_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Pre-cancel context
 
-	msg := models.Message{UserID: "user-cancel-test"}
+	msg := channel.Inbound{Sender: "user-cancel-test"}
 	toolCalls := []*genai.FunctionCall{
 		{Name: "tool_1"},
 		{Name: "tool_2"},

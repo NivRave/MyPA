@@ -7,9 +7,12 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/channel/adapters/adapterstest"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator/mocks"
 	"github.com/nivik/mypa/internal/state"
+	wamocks "github.com/nivik/mypa/internal/twilio/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -73,7 +76,7 @@ func TestSEC09_AllMetaTools_GatedDuringUntrustedTurn(t *testing.T) {
 			secState.MarkUntrusted("webpage:https://compromised-site.com/exploit.html")
 			ctx := WithTurnSecurityState(context.Background(), secState)
 
-			msg := models.Message{UserID: "target-user"}
+			msg := channel.Inbound{Sender: "target-user"}
 			call := &genai.FunctionCall{
 				Name: tc.name,
 				Args: tc.args,
@@ -108,7 +111,9 @@ func TestSEC09_ConfirmMismatch_RefusesExecution(t *testing.T) {
 	defer ctrl.Finish()
 
 	dbMock := mocks.NewMockDBClient(ctrl)
-	tgMock := mocks.NewMockTelegramClient(ctrl)
+	// WhatsApp: its adapter hands the reply text to the API client unconverted, so the
+	// assertions below see exactly what the engine wrote.
+	waMock := wamocks.NewMockAPI(ctrl)
 
 	user := &models.User{
 		PlatformID: "user-victim",
@@ -127,7 +132,7 @@ func TestSEC09_ConfirmMismatch_RefusesExecution(t *testing.T) {
 	require.NoError(t, err)
 
 	var sentMessage string
-	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+	waMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, chatID string, text string) error {
 			sentMessage = text
 			return nil
@@ -137,13 +142,14 @@ func TestSEC09_ConfirmMismatch_RefusesExecution(t *testing.T) {
 	eng := &Engine{
 		store:    store,
 		db:       dbMock,
-		tgClient: tgMock,
+		channels: adapterstest.Registry(nil, waMock),
 	}
 
 	// User replies with CONFIRM for the WRONG tool
-	mismatchMsg := models.Message{
-		UserID: "user-victim",
-		Text:   "CONFIRM UPDATE_USER_PREFERENCES",
+	mismatchMsg := channel.Inbound{
+		Channel: "whatsapp", // a message without a channel used to fall through to the default client; the registry refuses it
+		Sender:  "user-victim",
+		Text:    "CONFIRM UPDATE_USER_PREFERENCES",
 	}
 
 	err = eng.ProcessMessage(context.Background(), mismatchMsg)

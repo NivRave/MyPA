@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/crypto"
 	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/models"
@@ -231,7 +232,7 @@ func TestSEC04_CrossTenant_AutomationRules_Isolation(t *testing.T) {
 
 	// Family Alpha creates rule
 	userAlpha := &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
-	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: models.Message{UserID: "user_alpha"}}
+	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}}
 
 	resp, err := mod.Execute(ctx, callCtxAlpha, "create_automation_rule", map[string]interface{}{
 		"name":               "Alpha Baby Rule",
@@ -245,7 +246,7 @@ func TestSEC04_CrossTenant_AutomationRules_Isolation(t *testing.T) {
 
 	// Family Beta attempts to delete Alpha's rule (rule_id: 1)
 	userBeta := &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"}
-	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: models.Message{UserID: "user_beta"}}
+	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}}
 
 	_, err = mod.Execute(ctx, callCtxBeta, "delete_automation_rule", map[string]interface{}{
 		"rule_id": 1,
@@ -266,7 +267,7 @@ func TestSEC04_CrossTenant_APIConnectors_Isolation(t *testing.T) {
 
 	// Family Alpha registers connector
 	userAlpha := &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
-	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: models.Message{UserID: "user_alpha"}}
+	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}}
 
 	_, err := mod.Execute(ctx, callCtxAlpha, "register_external_api", map[string]interface{}{
 		"name":         "alpha_secret_api",
@@ -277,7 +278,7 @@ func TestSEC04_CrossTenant_APIConnectors_Isolation(t *testing.T) {
 
 	// Family Beta attempts to list connectors
 	userBeta := &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"}
-	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: models.Message{UserID: "user_beta"}}
+	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}}
 
 	listResp, err := mod.Execute(ctx, callCtxBeta, "list_external_apis", map[string]interface{}{})
 	require.NoError(t, err)
@@ -304,7 +305,7 @@ func TestSEC04_EmptyFamilyGroup_ConnectorAndRule_Isolation(t *testing.T) {
 
 	// Solo 1 creates rule
 	userSolo1 := &models.User{ID: "u_solo1", PlatformID: "solo_1", FamilyGroup: ""}
-	callCtxSolo1 := orchestrator.CallContext{User: userSolo1, Message: models.Message{UserID: "solo_1"}}
+	callCtxSolo1 := orchestrator.CallContext{User: userSolo1, Message: channel.Inbound{Sender: "solo_1"}}
 
 	_, err := mod.Execute(ctx, callCtxSolo1, "create_automation_rule", map[string]interface{}{
 		"name":               "Solo1 Rule",
@@ -317,7 +318,7 @@ func TestSEC04_EmptyFamilyGroup_ConnectorAndRule_Isolation(t *testing.T) {
 
 	// Solo 2 attempts to delete Solo 1's rule
 	userSolo2 := &models.User{ID: "u_solo2", PlatformID: "solo_2", FamilyGroup: ""}
-	callCtxSolo2 := orchestrator.CallContext{User: userSolo2, Message: models.Message{UserID: "solo_2"}}
+	callCtxSolo2 := orchestrator.CallContext{User: userSolo2, Message: channel.Inbound{Sender: "solo_2"}}
 
 	_, err = mod.Execute(ctx, callCtxSolo2, "delete_automation_rule", map[string]interface{}{
 		"rule_id": 1,
@@ -350,7 +351,7 @@ func TestSEC04_LegacyEmptyFamilyGroup_IDOR_Vulnerability(t *testing.T) {
 
 	// Attacker user with UserID="user_attacker", FamilyGroup="attacker_family"
 	userAttacker := &models.User{ID: "u_att", PlatformID: "user_attacker", FamilyGroup: "attacker_family"}
-	callCtxAttacker := orchestrator.CallContext{User: userAttacker, Message: models.Message{UserID: "user_attacker"}}
+	callCtxAttacker := orchestrator.CallContext{User: userAttacker, Message: channel.Inbound{Sender: "user_attacker"}}
 
 	// Attacker calls victim's connector using connector_id: 1
 	// Look at line 507 of module.go:
@@ -376,7 +377,7 @@ func TestSEC04_CrossTenant_PersonalCRM_Overwrite_Blocked(t *testing.T) {
 
 	// 1. Family Alpha creates a CRM contact
 	userAlpha := &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
-	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: models.Message{UserID: "user_alpha"}}
+	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}}
 
 	respAlpha, err := mod.Execute(ctx, callCtxAlpha, "upsert_personal_crm", map[string]interface{}{
 		"person_name":  "Grandma Alice",
@@ -394,7 +395,7 @@ func TestSEC04_CrossTenant_PersonalCRM_Overwrite_Blocked(t *testing.T) {
 
 	// 2. Family Beta attempts to overwrite Family Alpha's contact via ID: 1
 	userBeta := &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"}
-	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: models.Message{UserID: "user_beta"}}
+	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}}
 
 	_, errBeta := mod.Execute(ctx, callCtxBeta, "upsert_personal_crm", map[string]interface{}{
 		"id":           1,
@@ -425,14 +426,14 @@ func TestSEC04_CrossTenant_PersonalCRM_Overwrite_Blocked(t *testing.T) {
 
 	// 4. Solo user isolation (empty FamilyGroup)
 	userSolo1 := &models.User{ID: "u_solo1", PlatformID: "solo1", FamilyGroup: ""}
-	callCtxSolo1 := orchestrator.CallContext{User: userSolo1, Message: models.Message{UserID: "solo1"}}
+	callCtxSolo1 := orchestrator.CallContext{User: userSolo1, Message: channel.Inbound{Sender: "solo1"}}
 	_, err = mod.Execute(ctx, callCtxSolo1, "upsert_personal_crm", map[string]interface{}{
 		"person_name": "Solo Contact",
 	})
 	require.NoError(t, err)
 
 	userSolo2 := &models.User{ID: "u_solo2", PlatformID: "solo2", FamilyGroup: ""}
-	callCtxSolo2 := orchestrator.CallContext{User: userSolo2, Message: models.Message{UserID: "solo2"}}
+	callCtxSolo2 := orchestrator.CallContext{User: userSolo2, Message: channel.Inbound{Sender: "solo2"}}
 	_, errSolo2 := mod.Execute(ctx, callCtxSolo2, "upsert_personal_crm", map[string]interface{}{
 		"id":          2,
 		"person_name": "Stolen Contact",
@@ -440,4 +441,3 @@ func TestSEC04_CrossTenant_PersonalCRM_Overwrite_Blocked(t *testing.T) {
 	assert.Error(t, errSolo2, "Solo2 must NOT be able to overwrite Solo1's contact")
 	assert.Contains(t, errSolo2.Error(), "permission denied")
 }
-

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/domains/memory"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
@@ -48,7 +49,7 @@ func TestMemory_AntiSpoofing(t *testing.T) {
 
 	callCtx := orchestrator.CallContext{
 		User:     legitUser,
-		Message:  models.Message{UserID: "mem_canonical_actor"},
+		Message:  channel.Inbound{Sender: "mem_canonical_actor"},
 		DB:       dbMock,
 		LLM:      llmMock,
 		EventBus: bus,

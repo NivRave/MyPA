@@ -11,7 +11,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/config"
+	"github.com/nivik/mypa/internal/telegram"
+	"github.com/nivik/mypa/internal/twilio"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -19,11 +22,11 @@ import (
 func TestAdversarial_SEC03_TelegramWebhookSecretVerification(t *testing.T) {
 	pub := new(MockEventPublisher)
 	cfg := &config.Config{
-		Telegram: config.TelegramConfig{
+		Channels: adapters.Config{Telegram: telegram.Config{
 			SecretToken: "correct-secret-token-abcdef123456",
-		},
+		}},
 	}
-	r := setupIngressRouter(pub, cfg)
+	r := setupIngressRouter(pub, testChannels(t, cfg))
 
 	validPayload := []byte(`{
 		"update_id": 9999,
@@ -84,11 +87,11 @@ func TestAdversarial_SEC03_TwilioWebhookHMACVerification(t *testing.T) {
 	pub := new(MockEventPublisher)
 	authToken := "twilio-secret-auth-token-xyz"
 	cfg := &config.Config{
-		Twilio: config.TwilioConfig{
+		Channels: adapters.Config{WhatsApp: twilio.Config{
 			AuthToken: authToken,
-		},
+		}},
 	}
-	r := setupIngressRouter(pub, cfg)
+	r := setupIngressRouter(pub, testChannels(t, cfg))
 
 	data := url.Values{}
 	data.Set("Body", "Adversarial Twilio Test")

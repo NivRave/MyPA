@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/events"
@@ -199,12 +200,12 @@ func executeWorkflowMessage(engine *orchestrator.Engine, dbClient *db.Client, us
 		return
 	}
 
-	msg := models.Message{
-		ID:     msgID,
-		ChatID: log.ChatID,
-		UserID: userID,
-		Text:   instruction,
-		Source: log.Source,
+	msg := channel.Inbound{
+		MessageID:    msgID,
+		Conversation: channel.Conversation{ID: log.ChatID},
+		Sender:       userID,
+		Text:         instruction,
+		Channel:      log.Source,
 	}
 
 	go func() {

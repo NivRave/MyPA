@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/channel"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
 )
@@ -41,10 +41,10 @@ func TestSafePublisher_Stress_50ConcurrentGoroutines(t *testing.T) {
 			<-startSignal
 
 			for m := 0; m < msgsPerGoroutine; m++ {
-				msg := models.Message{
-					ID:        fmt.Sprintf("msg-stress-%d-%d", routineID, m),
+				msg := channel.Inbound{
+					MessageID: fmt.Sprintf("msg-stress-%d-%d", routineID, m),
 					Text:      "payload-50-goroutines-stress",
-					Timestamp: time.Now(),
+					SentAt:    time.Now(),
 				}
 				if err := pub.Publish(ctx, msg); err != nil {
 					t.Errorf("routine %d publish failed: %v", routineID, err)
@@ -67,7 +67,7 @@ func TestSafePublisher_Stress_50ConcurrentGoroutines(t *testing.T) {
 	defer subCancel()
 
 	go func() {
-		_ = sub.Consume(func(m models.Message) error {
+		_ = sub.Consume(func(m channel.Inbound) error {
 			countMu.Lock()
 			receivedCount++
 			cur := receivedCount
@@ -121,7 +121,7 @@ func TestConsumer_Stress_MalformedJSON_BatchReject(t *testing.T) {
 
 	var handlerCalls int
 	go func() {
-		_ = sub.Consume(func(m models.Message) error {
+		_ = sub.Consume(func(m channel.Inbound) error {
 			handlerCalls++
 			return nil
 		})

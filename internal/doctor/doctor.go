@@ -2,7 +2,7 @@
 // checks, each of which reports what it found and, for every problem, what to do next.
 //
 // The package knows nothing about where its facts come from. Every check takes its inputs as
-// small functions, bound to Telegram, Redis, RabbitMQ and Postgres in cmd/mypa, so each
+// small functions, bound to the channel adapters, Redis, RabbitMQ and Postgres in cmd/mypa, so each
 // way an install breaks can be reproduced in a test without any of them running.
 package doctor
 
@@ -33,7 +33,7 @@ const (
 
 // Result is one line of the report.
 type Result struct {
-	Check  string // what was checked, e.g. "Telegram webhook"
+	Check  string // what was checked, e.g. "Google accounts"
 	Status Status
 	Detail string // what was found; never a secret, a token or a full phone number
 	// NextStep says what the admin should do. Every StatusWarn and StatusFail has one.
@@ -259,3 +259,21 @@ func ago(d time.Duration) string {
 		return plural(int(d/(24*time.Hour)), "day", "days") + " ago"
 	}
 }
+
+// Text helpers for checks that live outside this package (the channel adapters' own checks,
+// V4-31), so every check words durations, counts, hosts and IDs the same way.
+
+// Reason renders an error for a sentence that ends with its own full stop.
+func Reason(err error) string { return reason(err) }
+
+// HostOf shortens a URL to its host for display.
+func HostOf(raw string) string { return hostOf(raw) }
+
+// Plural renders a count with the singular or plural form, e.g. "1 update is", "3 updates are".
+func Plural(n int, one, many string) string { return plural(n, one, many) }
+
+// Ago renders how long ago something happened.
+func Ago(d time.Duration) string { return ago(d) }
+
+// MaskTail shows only the last digits of an ID or phone number.
+func MaskTail(id string) string { return maskTail(id) }

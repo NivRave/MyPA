@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/channel"
 )
 
 // mediaAttachment is binary media handed to the multimodal LLM call (image or PDF).
@@ -15,111 +15,95 @@ type mediaAttachment struct {
 	MimeType string
 }
 
-// ingestMedia normalizes an inbound attachment (P4-1): Telegram photos and voice notes, WhatsApp
-// images, PDFs, text documents and voice notes. It may rewrite msg.Text (voice transcription,
-// inlined document text) and marks the turn untrusted for attacker-controllable media (P3-1).
+// isTextDocument reports whether a document's content type can be read as text and inlined.
+func isTextDocument(contentType string) bool {
+	switch {
+	case strings.HasPrefix(contentType, "text/"):
+		return true
+	case contentType == "application/json", contentType == "application/xml", contentType == "application/csv",
+		contentType == "application/x-yaml", contentType == "text/yaml":
+		return true
+	}
+	return false
+}
+
+// ingestMedia normalizes an inbound attachment (P4-1): images, voice notes, PDFs and text
+// documents, on whichever channel they arrived; the adapter fetches the file (V4-31). It may
+// rewrite msg.Text (voice transcription, inlined document text) and marks the turn untrusted for
+// attacker-controllable media (P3-1), under the label the adapter gave the attachment.
 // stop=true ends the turn with err (nil after an "unsupported format" notice to the user).
-func (e *Engine) ingestMedia(ctx context.Context, msg *models.Message, secState *TurnSecurityState) (media mediaAttachment, stop bool, err error) {
-	// 0. Intercept and transcribe Voice Messages and Photos
-	if msg.PhotoFileID != "" {
-		filePath, err := e.tgClient.GetFile(ctx, msg.PhotoFileID)
-		if err != nil {
-			_ = e.sendMessage(ctx, *msg, "❌ Failed to retrieve photo metadata.")
-			return media, true, fmt.Errorf("failed to get photo path: %w", err)
+func (e *Engine) ingestMedia(ctx context.Context, msg *channel.Inbound, secState *TurnSecurityState) (media mediaAttachment, stop bool, err error) {
+	if len(msg.Attachments) == 0 {
+		return media, false, nil
+	}
+	// One attachment per turn, as before: the first one the adapter reported.
+	ref := msg.Attachments[0]
+	contentType := strings.ToLower(ref.ContentType)
+	slog.Info("inbound attachment received", "channel", msg.Channel, "kind", ref.Kind, "content_type", contentType)
+
+	fetch := func(failure string) ([]byte, error) {
+		if e.channels == nil {
+			return nil, fmt.Errorf("no channels configured: cannot fetch from %q", msg.Channel)
 		}
-		media.Data, err = e.tgClient.DownloadFile(ctx, filePath)
+		data, err := e.channels.FetchAll(ctx, msg.Channel, ref)
 		if err != nil {
-			_ = e.sendMessage(ctx, *msg, "❌ Failed to download photo.")
+			_ = e.sendMessage(ctx, *msg, failure)
+			return nil, err
+		}
+		return data, nil
+	}
+
+	switch {
+	case ref.Kind == channel.KindImage:
+		data, err := fetch("❌ Failed to download photo.")
+		if err != nil {
 			return media, true, fmt.Errorf("failed to download photo: %w", err)
 		}
-		media.MimeType = "image/jpeg"
+		media.Data, media.MimeType = data, ref.ContentType
 		// P3-1: images can carry instructions (screenshots, flyers, QR text).
-		secState.MarkUntrusted("telegram_photo")
-	} else if msg.VoiceFileID != "" {
-		filePath, err := e.tgClient.GetFile(ctx, msg.VoiceFileID)
-		if err != nil {
-			_ = e.sendMessage(ctx, *msg, "❌ Failed to retrieve voice message metadata.")
-			return media, true, fmt.Errorf("failed to get file path: %w", err)
-		}
+		secState.MarkUntrusted(ref.Label)
 
-		audioData, err := e.tgClient.DownloadFile(ctx, filePath)
+	case ref.Kind == channel.KindAudio:
+		audioData, err := fetch("❌ Failed to download voice message.")
 		if err != nil {
-			_ = e.sendMessage(ctx, *msg, "❌ Failed to download voice message.")
 			return media, true, fmt.Errorf("failed to download audio: %w", err)
 		}
-
 		transcribedText, err := e.audioClient.TranscribeAudio(ctx, audioData, "voice.ogg")
 		if err != nil {
 			_ = e.sendMessage(ctx, *msg, "❌ Failed to transcribe audio.")
 			return media, true, fmt.Errorf("failed to transcribe: %w", err)
 		}
-
 		// Notify user of transcription
 		_ = e.sendMessage(ctx, *msg, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
 		msg.Text = transcribedText
-	} else if msg.Source == "whatsapp" && msg.MediaURL != "" {
-		mediaType := strings.ToLower(msg.MediaContentType)
-		slog.Info("WhatsApp media received", "media_url", msg.MediaURL, "content_type", mediaType)
 
-		isTextDoc := strings.HasPrefix(mediaType, "text/") ||
-			mediaType == "application/json" ||
-			mediaType == "application/xml" ||
-			mediaType == "application/csv" ||
-			mediaType == "application/x-yaml" ||
-			mediaType == "text/yaml"
-
-		if strings.HasPrefix(mediaType, "image/") {
-			media.Data, err = e.twClient.DownloadMedia(ctx, msg.MediaURL)
-			if err != nil {
-				_ = e.sendMessage(ctx, *msg, "❌ Failed to download WhatsApp photo.")
-				return media, true, fmt.Errorf("failed to download twilio photo: %w", err)
-			}
-			media.MimeType = msg.MediaContentType
-			secState.MarkUntrusted("whatsapp_image") // P3-1
-		} else if isTextDoc {
-			docData, err := e.twClient.DownloadMedia(ctx, msg.MediaURL)
-			if err != nil {
-				_ = e.sendMessage(ctx, *msg, "❌ Failed to download WhatsApp document.")
-				return media, true, fmt.Errorf("failed to download twilio document: %w", err)
-			}
-			docText := WrapUntrustedContent("whatsapp_document", msg.MediaURL, string(docData))
-			secState.MarkUntrusted("whatsapp_document:" + msg.MediaURL)
-			if strings.TrimSpace(msg.Text) != "" {
-				msg.Text = fmt.Sprintf("%s\n\n[Attached Document Content]:\n%s", strings.TrimSpace(msg.Text), docText)
-			} else {
-				msg.Text = docText
-			}
-		} else if mediaType == "application/pdf" {
-			media.Data, err = e.twClient.DownloadMedia(ctx, msg.MediaURL)
-			if err != nil {
-				_ = e.sendMessage(ctx, *msg, "❌ Failed to download WhatsApp PDF.")
-				return media, true, fmt.Errorf("failed to download twilio pdf: %w", err)
-			}
-			media.MimeType = "application/pdf"
-			secState.MarkUntrusted("whatsapp_pdf") // P3-1
-			if strings.TrimSpace(msg.Text) == "" {
-				msg.Text = "Please process and analyze the attached document."
-			}
-		} else if strings.HasPrefix(mediaType, "audio/") || mediaType == "application/ogg" {
-			// Handle Twilio Voice Messages
-			audioData, err := e.twClient.DownloadMedia(ctx, msg.MediaURL)
-			if err != nil {
-				_ = e.sendMessage(ctx, *msg, "❌ Failed to download WhatsApp voice message.")
-				return media, true, fmt.Errorf("failed to download twilio media: %w", err)
-			}
-
-			transcribedText, err := e.audioClient.TranscribeAudio(ctx, audioData, "voice.ogg")
-			if err != nil {
-				_ = e.sendMessage(ctx, *msg, "❌ Failed to transcribe WhatsApp audio.")
-				return media, true, fmt.Errorf("failed to transcribe twilio media: %w", err)
-			}
-
-			_ = e.sendMessage(ctx, *msg, fmt.Sprintf("🗣️ *Transcribed:* %s", transcribedText))
-			msg.Text = transcribedText
-		} else {
-			_ = e.sendMessage(ctx, *msg, fmt.Sprintf("⚠️ Unsupported attachment format (%s). Please send a text file (.txt, .md, .csv), PDF, image, or voice note.", msg.MediaContentType))
-			return media, true, nil
+	case ref.Kind == channel.KindDocument && isTextDocument(contentType):
+		docData, err := fetch("❌ Failed to download document.")
+		if err != nil {
+			return media, true, fmt.Errorf("failed to download document: %w", err)
 		}
+		docText := WrapUntrustedContent(ref.Label, ref.ID, string(docData))
+		secState.MarkUntrusted(ref.Label + ":" + ref.ID)
+		if strings.TrimSpace(msg.Text) != "" {
+			msg.Text = fmt.Sprintf("%s\n\n[Attached Document Content]:\n%s", strings.TrimSpace(msg.Text), docText)
+		} else {
+			msg.Text = docText
+		}
+
+	case ref.Kind == channel.KindDocument && contentType == "application/pdf":
+		data, err := fetch("❌ Failed to download PDF.")
+		if err != nil {
+			return media, true, fmt.Errorf("failed to download pdf: %w", err)
+		}
+		media.Data, media.MimeType = data, "application/pdf"
+		secState.MarkUntrusted(ref.Label) // P3-1
+		if strings.TrimSpace(msg.Text) == "" {
+			msg.Text = "Please process and analyze the attached document."
+		}
+
+	default:
+		_ = e.sendMessage(ctx, *msg, fmt.Sprintf("⚠️ Unsupported attachment format (%s). Please send a text file (.txt, .md, .csv), PDF, image, or voice note.", ref.ContentType))
+		return media, true, nil
 	}
 	return media, false, nil
 }

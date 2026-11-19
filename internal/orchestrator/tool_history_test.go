@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
@@ -121,7 +122,7 @@ func TestProcessMessage_PersistsToolContextInHistory(t *testing.T) {
 		}).AnyTimes()
 
 	ctx := context.Background()
-	require.NoError(t, engine.ProcessMessage(ctx, models.Message{ID: "h1", UserID: "u-hist", ChatID: "c", Text: "add dentist tomorrow", Source: "telegram"}))
+	require.NoError(t, engine.ProcessMessage(ctx, channel.Inbound{MessageID: "h1", Sender: "u-hist", Conversation: channel.Conversation{ID: "c"}, Text: "add dentist tomorrow", Channel: "telegram"}))
 
 	stored, err := engine.store.GetChatHistory(ctx, "u-hist")
 	require.NoError(t, err)
@@ -133,7 +134,7 @@ func TestProcessMessage_PersistsToolContextInHistory(t *testing.T) {
 	assert.LessOrEqual(t, len(res), maxToolResultChars+len("…"), "tool results are truncated in history")
 	assert.Equal(t, "Added the dentist.", stored[3].Content)
 
-	require.NoError(t, engine.ProcessMessage(ctx, models.Message{ID: "h2", UserID: "u-hist", ChatID: "c", Text: "delete that event", Source: "telegram"}))
+	require.NoError(t, engine.ProcessMessage(ctx, channel.Inbound{MessageID: "h2", Sender: "u-hist", Conversation: channel.Conversation{ID: "c"}, Text: "delete that event", Channel: "telegram"}))
 	require.True(t, validPairing(secondTurnHistory))
 	var sawResult bool
 	for _, m := range secondTurnHistory {
@@ -203,7 +204,7 @@ func TestProcessMessage_AuditSessionCarriesToolSummary(t *testing.T) {
 			return &llm.Response{Text: "ok"}, nil
 		}).AnyTimes()
 
-	require.NoError(t, engine.ProcessMessage(context.Background(), models.Message{ID: "s1", UserID: "u-sum", ChatID: "c", Text: "add it", Source: "telegram"}))
+	require.NoError(t, engine.ProcessMessage(context.Background(), channel.Inbound{MessageID: "s1", Sender: "u-sum", Conversation: channel.Conversation{ID: "c"}, Text: "add it", Channel: "telegram"}))
 	engine.Wait() // telemetry is published asynchronously
 
 	pub.mu.Lock()

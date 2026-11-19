@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/logging"
 )
@@ -135,11 +136,18 @@ func run(cfg *config.Config, r role, wait func(serverErr <-chan error) error) in
 		return 1
 	}
 
+	// Every channel adapter, built once and shared by the ingress and the worker (V4-31).
+	channels, err := adapters.Build(cfg.Channels)
+	if err != nil {
+		slog.Error("refusing to start", "error", err)
+		return 1
+	}
+
 	var w *worker
 	var app http.Handler
 	if r.runsWorker() {
 		var err error
-		if w, err = startWorker(cfg); err != nil {
+		if w, err = startWorker(cfg, channels); err != nil {
 			slog.Error("worker failed to start", "error", err)
 			return 1
 		}
@@ -150,7 +158,7 @@ func run(cfg *config.Config, r role, wait func(serverErr <-chan error) error) in
 	var ingressHandler http.Handler
 	if r.servesIngress() {
 		var err error
-		if in, err = startIngress(cfg); err != nil {
+		if in, err = startIngress(cfg, channels); err != nil {
 			slog.Error("ingress failed to start", "error", err)
 			if w != nil {
 				w.stop()

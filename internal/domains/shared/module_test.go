@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -660,7 +661,7 @@ func TestSEC04_CrossTenant_SharedReminders_Blocked(t *testing.T) {
 	// 1. Family Alpha creates a shared reminder
 	callCtxAlpha := orchestrator.CallContext{
 		User:    &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha", Name: "Alpha User"},
-		Message: models.Message{UserID: "user_alpha"},
+		Message: channel.Inbound{Sender: "user_alpha"},
 	}
 
 	createResp, err := mod.Execute(ctx, callCtxAlpha, "create_shared_reminder", map[string]interface{}{
@@ -680,7 +681,7 @@ func TestSEC04_CrossTenant_SharedReminders_Blocked(t *testing.T) {
 	// 2. Family Beta attempts to complete Family Alpha's reminder (id: 1)
 	callCtxBeta := orchestrator.CallContext{
 		User:    &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta", Name: "Beta Attacker"},
-		Message: models.Message{UserID: "user_beta"},
+		Message: channel.Inbound{Sender: "user_beta"},
 	}
 
 	_, completeBetaErr := mod.Execute(ctx, callCtxBeta, "complete_shared_reminder", map[string]interface{}{

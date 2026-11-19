@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/crypto"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
@@ -343,7 +344,7 @@ func (m *Module) executeRollbackInternal(ctx context.Context, actorID, familyGro
 	if handler, exists := m.getUndoHandler(log.EntityType); exists {
 		callCtx := orchestrator.CallContext{
 			User:     &models.User{PlatformID: actorID, FamilyGroup: familyGroup},
-			Message:  models.Message{UserID: actorID},
+			Message:  channel.Inbound{Sender: actorID},
 			EventBus: m.bus,
 		}
 		customDetail, err := handler(ctx, *log, callCtx)

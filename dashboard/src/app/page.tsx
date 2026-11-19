@@ -64,7 +64,7 @@ export default function Home() {
     },
     {
       title: "Users & Pairing",
-      desc: "Manage telegram/whatsapp users, family groups, and active 6-digit pairing codes.",
+      desc: "Manage chat users, family groups, and active 6-digit pairing codes.",
       href: "/users",
       icon: Users,
       color: "text-cyan-600 bg-cyan-50",

@@ -2,11 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
-	"errors"
 	"fmt"
-	"github.com/nivik/mypa/internal/logging"
-	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -14,15 +10,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/nivik/mypa/internal/broker"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/config"
-	"github.com/nivik/mypa/internal/telegram"
-	"github.com/nivik/mypa/internal/twilio"
 )
 
-// The ingress (formerly cmd/gateway, V4-01): it verifies and normalises the Telegram and Twilio
-// webhooks and publishes each message to the durable inbound.messages queue. It never processes a
-// message itself, so a webhook returns fast and a crash in a turn cannot lose an accepted message.
-// It runs in the roles `all` and `ingress`.
+// The ingress (formerly cmd/gateway, V4-01): it serves the webhook routes of every channel adapter
+// (V4-31), each of which verifies and normalises its own platform's requests, and publishes each
+// message to the durable inbound.messages queue. It never processes a message itself, so a webhook
+// returns fast and a crash in a turn cannot lose an accepted message. It runs in the roles `all`
+// and `ingress`.
 
 // ingress is what the ingress side of the app holds while it runs.
 type ingress struct {
@@ -32,9 +28,9 @@ type ingress struct {
 }
 
 // startIngress connects the publisher (with retry, as the gateway did), builds the webhook router
-// and registers the Telegram webhook in the background. Network failures of the registration are
-// retried with backoff and never stop the app.
-func startIngress(cfg *config.Config) (*ingress, error) {
+// and starts, in the background, what each adapter needs to receive: registering its webhook with
+// the platform, or its own outward connection. Those never stop the app.
+func startIngress(cfg *config.Config, channels *channel.Registry) (*ingress, error) {
 	var pub *broker.Publisher
 	var err error
 	for i := 0; i < 5; i++ {
@@ -50,20 +46,23 @@ func startIngress(cfg *config.Config) (*ingress, error) {
 	}
 
 	regCtx, cancelReg := context.WithCancel(context.Background())
-	if cfg.Telegram.WebhookURL != "" {
-		go func() {
-			client := telegram.NewClient(cfg.Telegram.BotToken)
-			err := registerWebhookWithRetry(regCtx, client, cfg.Telegram.WebhookURL, cfg.Telegram.SecretToken,
-				webhookRegisterMaxAttempts, webhookRegisterBaseDelay)
-			if err != nil && !errors.Is(err, context.Canceled) {
-				slog.Error("giving up on telegram setWebhook; updates may be rejected until it is registered", "error", err)
-			}
-		}()
-	} else {
-		slog.Warn("TELEGRAM_WEBHOOK_URL not set; skipping setWebhook — the webhook must already be registered with the secret token")
+	sink := publishSink(pub)
+	for _, a := range channels.All() {
+		in := a.Ingress()
+		slog.Info("channel ingress", "channel", a.Name(), "mode", in.Mode())
+		switch {
+		case in.Webhook != nil && in.Webhook.Register != nil:
+			go in.Webhook.Register(regCtx)
+		case in.Outward != nil:
+			go func(name string, run func(context.Context, channel.Sink) error) {
+				if err := run(regCtx, sink); err != nil && regCtx.Err() == nil {
+					slog.Error("channel connection stopped", "channel", name, "error", err)
+				}
+			}(a.Name(), in.Outward.Run)
+		}
 	}
 
-	return &ingress{router: setupIngressRouter(pub, cfg), pub: pub, stopRegs: cancelReg}, nil
+	return &ingress{router: setupIngressRouter(pub, channels), pub: pub, stopRegs: cancelReg}, nil
 }
 
 // stop cancels a webhook registration still in progress and closes the publisher. Call it after
@@ -79,7 +78,12 @@ type EventPublisher interface {
 	Publish(ctx context.Context, msg any) error
 }
 
-func setupIngressRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
+// publishSink hands every normalised message to the inbound queue.
+func publishSink(pub EventPublisher) channel.Sink {
+	return func(ctx context.Context, in channel.Inbound) error { return pub.Publish(ctx, in) }
+}
+
+func setupIngressRouter(pub EventPublisher, channels *channel.Registry) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
@@ -96,102 +100,14 @@ func setupIngressRouter(pub EventPublisher, cfg *config.Config) *chi.Mux {
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	twHandler := twilio.NewHandler(pub, cfg.Twilio.AuthToken)
-	r.Post("/webhook/twilio", twHandler.HandleWebhook)
-	r.Post("/webhook/twilio/status", twHandler.HandleStatusCallback) // BL-8 delivery reports
-
-	r.Post("/webhook/telegram", func(w http.ResponseWriter, r *http.Request) {
-		if !telegramSecretValid(cfg.Telegram.SecretToken, r.Header.Get("X-Telegram-Bot-Api-Secret-Token")) {
-			slog.Warn("unauthorized telegram webhook attempt", "remote_addr", r.RemoteAddr)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
+	// Every adapter's webhook routes, each verifying its own requests (fail closed).
+	sink := publishSink(pub)
+	for _, a := range channels.All() {
+		if wh := a.Ingress().Webhook; wh != nil {
+			for _, rt := range wh.Routes {
+				r.Method(rt.Method, rt.Path, rt.Handler(sink))
+			}
 		}
-
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			slog.Error("failed to read request body", "error", err)
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		defer r.Body.Close()
-
-		msg, err := telegram.ParseUpdate(body)
-		if err != nil {
-			slog.Error("failed to parse telegram update", "error", err)
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		if msg == nil {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		// Enqueue regardless of authorization
-		// (the worker handles unauthorized pairing flows)
-
-		// P3-3: never log message content at INFO (length + message_id only).
-		logging.LogMessageText(r.Context(), nil, "received message", msg.Text, "user_id", msg.UserID, "message_id", msg.ID)
-
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		if err := pub.Publish(ctx, *msg); err != nil {
-			slog.Error("failed to publish message to broker", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-	})
-
+	}
 	return r
-}
-
-// telegramSecretValid fails closed: an empty configured secret never matches.
-// (subtle.ConstantTimeCompare("", "") returns 1, so the explicit empty check is required.)
-func telegramSecretValid(configured, provided string) bool {
-	if configured == "" {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(provided), []byte(configured)) == 1
-}
-
-const (
-	webhookRegisterMaxAttempts = 8
-	webhookRegisterBaseDelay   = 2 * time.Second
-	webhookRegisterMaxDelay    = 2 * time.Minute
-)
-
-// webhookRegistrar is satisfied by *telegram.Client.
-type webhookRegistrar interface {
-	SetWebhook(ctx context.Context, webhookURL, secretToken string) error
-}
-
-// registerWebhookWithRetry calls SetWebhook until it succeeds, maxAttempts is reached, or ctx is
-// cancelled. Delays grow exponentially from baseDelay, capped at webhookRegisterMaxDelay.
-func registerWebhookWithRetry(ctx context.Context, reg webhookRegistrar, webhookURL, secretToken string, maxAttempts int, baseDelay time.Duration) error {
-	delay := baseDelay
-	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		lastErr = reg.SetWebhook(ctx, webhookURL, secretToken)
-		if lastErr == nil {
-			slog.Info("telegram webhook registered with secret token", "url", webhookURL, "attempt", attempt)
-			return nil
-		}
-		slog.Warn("telegram setWebhook failed", "attempt", attempt, "max_attempts", maxAttempts, "error", lastErr)
-		if attempt == maxAttempts {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(delay):
-		}
-		delay = min(delay*2, webhookRegisterMaxDelay)
-	}
-	return fmt.Errorf("telegram setWebhook failed after %d attempts: %w", maxAttempts, lastErr)
 }

@@ -6,17 +6,18 @@ import (
 	"crypto/sha1"
 	"crypto/subtle"
 	"encoding/base64"
-	"github.com/nivik/mypa/internal/logging"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
 
-	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/logging"
 )
 
-// EventPublisher handles publishing events to a broker.
+// EventPublisher receives each normalised message (a channel.Inbound). In the app it is the
+// adapter's sink, which publishes to the inbound queue.
 type EventPublisher interface {
 	Publish(ctx context.Context, v any) error
 }
@@ -63,25 +64,26 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	mediaContentType := r.FormValue("MediaContentType0")
 	messageID := r.FormValue("MessageSid")
 
-	// Strip "whatsapp:" prefix if present for uniform UserID storage, or keep it?
-	// It's probably best to keep it so we can just send it back out exactly as is.
+	// The number without the "whatsapp:" prefix is the person's ID; a reply is sent to it.
 	userID := strings.TrimPrefix(from, "whatsapp:")
 
-	// Forward to orchestrator regardless of authorization
-	// (Orchestrator handles unauthorized pairing flows)
-
-	msg := models.Message{
-		ID:               messageID,
-		UserID:           userID,
-		Text:             body,
-		Source:           "whatsapp",
-		MediaURL:         mediaURL,
-		MediaContentType: mediaContentType,
+	// Forwarded regardless of authorization: the worker handles unauthorized pairing flows.
+	msg := channel.Inbound{
+		Channel:   Name,
+		MessageID: messageID,
+		Sender:    userID,
+		// WhatsApp over Twilio has direct chats only (DE-8); replies go to the number, so the
+		// conversation has no ID of its own.
+		Conversation: channel.Conversation{Kind: channel.Direct, Addressed: true},
+		Text:         body,
+	}
+	if mediaURL != "" {
+		msg.Attachments = []channel.AttachmentRef{MediaRef(mediaURL, mediaContentType)}
 	}
 
 	// P3-3: never log message content at INFO (length + message_id only).
 	logging.LogMessageText(r.Context(), nil, "received twilio message", msg.Text,
-		"user_id", msg.UserID, "message_id", msg.ID, "has_media", mediaURL != "", "content_type", mediaContentType)
+		"user_id", msg.Sender, "message_id", msg.MessageID, "has_media", mediaURL != "", "content_type", mediaContentType)
 
 	err = h.publisher.Publish(context.Background(), msg)
 	if err != nil {
@@ -91,6 +93,33 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// Labels for the untrusted-content marks of attachments (P3-1). They appear in confirmation
+// prompts and are pinned by the conformance transcripts.
+const (
+	imageLabel    = "whatsapp_image"
+	audioLabel    = "whatsapp_audio"
+	pdfLabel      = "whatsapp_pdf"
+	documentLabel = "whatsapp_document"
+)
+
+// MediaRef classifies the first media item of a message. The media URL is the reference the
+// adapter fetches later. Exported so tests that build inbound messages by hand classify media
+// exactly as the webhook does.
+func MediaRef(mediaURL, contentType string) channel.AttachmentRef {
+	ref := channel.AttachmentRef{ID: mediaURL, ContentType: contentType}
+	switch ct := strings.ToLower(contentType); {
+	case strings.HasPrefix(ct, "image/"):
+		ref.Kind, ref.Label = channel.KindImage, imageLabel
+	case strings.HasPrefix(ct, "audio/"), ct == "application/ogg":
+		ref.Kind, ref.Label = channel.KindAudio, audioLabel
+	case ct == "application/pdf":
+		ref.Kind, ref.Label = channel.KindDocument, pdfLabel
+	default:
+		ref.Kind, ref.Label = channel.KindDocument, documentLabel
+	}
+	return ref
 }
 
 // authenticated verifies the X-Twilio-Signature of a parsed request and writes 403 when it fails.

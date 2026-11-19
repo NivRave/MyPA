@@ -2,9 +2,11 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/joho/godotenv"
+	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/spf13/viper"
 )
@@ -12,16 +14,17 @@ import (
 // Config holds all configuration for the application.
 type Config struct {
 	Server     ServerConfig     `mapstructure:"server"`
-	Telegram   TelegramConfig   `mapstructure:"telegram"`
 	RabbitMQ   RabbitMQConfig   `mapstructure:"rabbitmq"`
 	Redis      RedisConfig      `mapstructure:"redis"`
 	Database   DatabaseConfig   `mapstructure:"database"`
 	Gemini     GeminiConfig     `mapstructure:"gemini"`
 	Google     GoogleConfig     `mapstructure:"google"`
 	Groq       GroqConfig       `mapstructure:"groq"`
-	Twilio     TwilioConfig     `mapstructure:"twilio"`
 	Tavily     TavilyConfig     `mapstructure:"tavily"`
 	Encryption EncryptionConfig `mapstructure:"encryption"`
+	// Channels holds the channel adapters' own settings (V4-31). Each adapter reads and checks its
+	// settings itself, so this package does not know which channels exist.
+	Channels adapters.Config `mapstructure:"-"`
 }
 
 // EncryptionConfig holds cryptographic encryption settings.
@@ -41,13 +44,6 @@ type ServerConfig struct {
 	JWTSecret            string `mapstructure:"jwt_secret"`
 	WeekStartDay         string `mapstructure:"week_start_day"` // e.g. "Sunday" (default) or "Monday"
 	WeekendDays          string `mapstructure:"weekend_days"`   // e.g. "Friday,Saturday" (default)
-}
-
-// TelegramConfig holds Telegram Bot API settings.
-type TelegramConfig struct {
-	BotToken    string `mapstructure:"bot_token"`
-	WebhookURL  string `mapstructure:"webhook_url"`
-	SecretToken string `mapstructure:"secret_token"`
 }
 
 // RabbitMQConfig holds RabbitMQ connection settings.
@@ -86,16 +82,6 @@ type TavilyConfig struct {
 // GroqConfig holds Groq API settings.
 type GroqConfig struct {
 	APIKey string `mapstructure:"api_key"`
-}
-
-// TwilioConfig holds Twilio WhatsApp API settings.
-type TwilioConfig struct {
-	AccountSID string `mapstructure:"account_sid"`
-	AuthToken  string `mapstructure:"auth_token"`
-	FromNumber string `mapstructure:"from_number"` // e.g., "whatsapp:+14155238886"
-	// StatusCallbackURL (optional, BL-8) is sent with every outbound message so Twilio reports
-	// delivery results to the app's /webhook/twilio/status. Empty = no delivery reports.
-	StatusCallbackURL string `mapstructure:"status_callback_url"`
 }
 
 // DefaultGeminiModel is the chat model an install uses when GEMINI_MODEL is not set. It is the
@@ -141,33 +127,26 @@ func Load() (*Config, error) {
 
 	// Explicit env var bindings (maps FLAT env vars to nested config keys)
 	envBindings := map[string]string{
-		"DEFAULT_TIMEZONE":           "server.default_timezone",
-		"ALLOWED_USERS":              "server.allowed_users",
-		"HTTP_PORT":                  "server.port",
-		"TELEGRAM_BOT_TOKEN":         "telegram.bot_token",
-		"TELEGRAM_WEBHOOK_URL":       "telegram.webhook_url",
-		"RABBITMQ_URL":               "rabbitmq.url",
-		"RABBITMQ_PREFETCH":          "rabbitmq.prefetch",
-		"REDIS_URL":                  "redis.url",
-		"DATABASE_URL":               "database.url",
-		"GEMINI_API_KEY":             "gemini.api_key",
-		"GEMINI_MODEL":               "gemini.model",
-		"GOOGLE_CLIENT_ID":           "google.client_id",
-		"GOOGLE_CLIENT_SECRET":       "google.client_secret",
-		"GOOGLE_REDIRECT_URL":        "google.redirect_url",
-		"GROQ_API_KEY":               "groq.api_key",
-		"TWILIO_ACCOUNT_SID":         "twilio.account_sid",
-		"TWILIO_AUTH_TOKEN":          "twilio.auth_token",
-		"TWILIO_FROM_NUMBER":         "twilio.from_number",
-		"TWILIO_STATUS_CALLBACK_URL": "twilio.status_callback_url",
-		"TAVILY_API_KEY":             "tavily.api_key",
-		"ENCRYPTION_KEY":             "encryption.key",
-		"TELEGRAM_SECRET_TOKEN":      "telegram.secret_token",
-		"DASHBOARD_API_SECRET":       "server.dashboard_api_secret",
-		"DASHBOARD_FAMILY_GROUP":     "server.dashboard_family_group",
-		"JWT_SECRET":                 "server.jwt_secret",
-		"WEEK_START_DAY":             "server.week_start_day",
-		"WEEKEND_DAYS":               "server.weekend_days",
+		"DEFAULT_TIMEZONE":       "server.default_timezone",
+		"ALLOWED_USERS":          "server.allowed_users",
+		"HTTP_PORT":              "server.port",
+		"RABBITMQ_URL":           "rabbitmq.url",
+		"RABBITMQ_PREFETCH":      "rabbitmq.prefetch",
+		"REDIS_URL":              "redis.url",
+		"DATABASE_URL":           "database.url",
+		"GEMINI_API_KEY":         "gemini.api_key",
+		"GEMINI_MODEL":           "gemini.model",
+		"GOOGLE_CLIENT_ID":       "google.client_id",
+		"GOOGLE_CLIENT_SECRET":   "google.client_secret",
+		"GOOGLE_REDIRECT_URL":    "google.redirect_url",
+		"GROQ_API_KEY":           "groq.api_key",
+		"TAVILY_API_KEY":         "tavily.api_key",
+		"ENCRYPTION_KEY":         "encryption.key",
+		"DASHBOARD_API_SECRET":   "server.dashboard_api_secret",
+		"DASHBOARD_FAMILY_GROUP": "server.dashboard_family_group",
+		"JWT_SECRET":             "server.jwt_secret",
+		"WEEK_START_DAY":         "server.week_start_day",
+		"WEEKEND_DAYS":           "server.weekend_days",
 	}
 
 	for envKey, configKey := range envBindings {
@@ -180,6 +159,8 @@ func Load() (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshaling config: %w", err)
 	}
+	// The adapters read their own settings from the environment, which now includes .env.
+	cfg.Channels = adapters.LoadConfig(os.Getenv)
 
 	return &cfg, nil
 }

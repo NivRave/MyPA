@@ -414,7 +414,7 @@ export default async function AutomationsPage() {
               {rules.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-6 py-8 text-center text-neutral-500">
-                    No active automation rules. Example: *&quot;When a baby feeding is logged, notify partner on Telegram&quot;*.
+                    No active automation rules. Example: *&quot;When a baby feeding is logged, notify my partner in chat&quot;*.
                   </td>
                 </tr>
               )}

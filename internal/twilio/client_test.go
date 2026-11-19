@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nivik/mypa/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +31,7 @@ func TestClient_SendMessage(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := config.TwilioConfig{
+	cfg := Config{
 		AccountSID: "test-sid",
 		AuthToken:  "test-token",
 		FromNumber: "whatsapp:+0987654321",
@@ -54,7 +53,7 @@ func TestClient_SendMessage_Chunking(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := config.TwilioConfig{
+	cfg := Config{
 		AccountSID: "test-sid",
 		AuthToken:  "test-token",
 		FromNumber: "whatsapp:+0987654321",
@@ -100,7 +99,7 @@ func TestClient_DownloadMedia(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := config.TwilioConfig{
+	cfg := Config{
 		AccountSID: "test-sid",
 		AuthToken:  "test-token",
 	}
@@ -114,7 +113,7 @@ func TestClient_DownloadMedia(t *testing.T) {
 }
 
 func TestClient_DownloadMedia_InsecureScheme(t *testing.T) {
-	cfg := config.TwilioConfig{
+	cfg := Config{
 		AccountSID: "test-sid",
 		AuthToken:  "test-token",
 	}
@@ -126,7 +125,7 @@ func TestClient_DownloadMedia_InsecureScheme(t *testing.T) {
 }
 
 func TestClient_DownloadMedia_UntrustedHost(t *testing.T) {
-	cfg := config.TwilioConfig{
+	cfg := Config{
 		AccountSID: "test-sid",
 		AuthToken:  "test-token",
 	}

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/channel/adapters/adapterstest"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/testutil"
 	"github.com/nivik/mypa/internal/domains/durability"
@@ -370,29 +372,28 @@ func TestAdversarial_EngineProcessMessageUndo(t *testing.T) {
 
 	// Setup Engine with durability module in registry
 	engine := orchestrator.NewEngine(
-		nil,    // consumer
-		nil,    // store
-		client, // db
-		nil,    // llm
-		mockTg, // tgClient
-		nil,    // twClient
-		nil,    // oauth
-		nil,    // gmail
-		nil,    // tasks
-		nil,    // contacts
-		nil,    // tavily
-		nil,    // audio
-		nil,    // publisher
+		nil,                                // consumer
+		nil,                                // store
+		client,                             // db
+		nil,                                // llm
+		adapterstest.Registry(mockTg, nil), // channels
+		nil,                                // oauth
+		nil,                                // gmail
+		nil,                                // tasks
+		nil,                                // contacts
+		nil,                                // tavily
+		nil,                                // audio
+		nil,                                // publisher
 		"UTC",
 	)
 	engine.SetToolRegistry(reg)
 
 	// Execute /undo
-	msg := models.Message{
-		UserID: testUser,
-		ChatID: "chat-test-123",
-		Source: "telegram",
-		Text:   "/undo",
+	msg := channel.Inbound{
+		Sender:       testUser,
+		Conversation: channel.Conversation{ID: "chat-test-123"},
+		Channel:      "telegram",
+		Text:         "/undo",
 	}
 
 	err = engine.ProcessMessage(context.Background(), msg)

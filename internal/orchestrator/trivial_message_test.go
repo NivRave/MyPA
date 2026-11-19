@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/llm"
-	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -48,8 +48,11 @@ func TestProcessMessage_TrivialMessageSkipsEmbeddingAndRetrieval(t *testing.T) {
 		Return(&llm.Response{Text: "You're welcome!"}, nil)
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
-	require.NoError(t, engine.ProcessMessage(context.Background(), models.Message{
-		UserID: "user-triv", ChatID: "c", Text: "thanks! 🙏", Source: "telegram",
+	require.NoError(t, engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:       "user-triv",
+		Conversation: channel.Conversation{ID: "c"},
+		Text:         "thanks! 🙏",
+		Channel:      "telegram",
 	}))
 }
 
@@ -63,7 +66,10 @@ func TestProcessMessage_SubstantiveMessageStillRetrievesMemories(t *testing.T) {
 		Return(&llm.Response{Text: "Sure"}, nil)
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
-	require.NoError(t, engine.ProcessMessage(context.Background(), models.Message{
-		UserID: "user-sub", ChatID: "c", Text: "remind me tomorrow", Source: "telegram",
+	require.NoError(t, engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:       "user-sub",
+		Conversation: channel.Conversation{ID: "c"},
+		Text:         "remind me tomorrow",
+		Channel:      "telegram",
 	}))
 }

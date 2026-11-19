@@ -10,8 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"time"
-
-	"github.com/nivik/mypa/internal/markdown"
 )
 
 // Client interacts with the Telegram Bot API.
@@ -60,10 +58,10 @@ func (c *Client) SendMessage(ctx context.Context, chatID, text string) error {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", c.token)
 
 	var htmlText string
-	if markdown.IsTelegramHTML(text) {
+	if IsTelegramHTML(text) {
 		htmlText = text
 	} else {
-		htmlText = markdown.ToTelegramHTML(text)
+		htmlText = ToTelegramHTML(text)
 	}
 
 	reqBody := SendMessageRequest{

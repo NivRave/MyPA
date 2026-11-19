@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator/mocks"
@@ -55,8 +56,12 @@ func TestProcessMessage_ResolvesUserOncePerTurn(t *testing.T) {
 			return &llm.Response{Text: "done"}, nil
 		}).AnyTimes()
 
-	require.NoError(t, engine.ProcessMessage(context.Background(), models.Message{
-		ID: "m-once", UserID: "user-once", ChatID: "c", Text: "do three things", Source: "telegram",
+	require.NoError(t, engine.ProcessMessage(context.Background(), channel.Inbound{
+		MessageID:    "m-once",
+		Sender:       "user-once",
+		Conversation: channel.Conversation{ID: "c"},
+		Text:         "do three things",
+		Channel:      "telegram",
 	}))
 	assert.Equal(t, int64(1), atomic.LoadInt64(&lookups), "GetUser must be called once per turn, not per tool")
 	assert.Equal(t, []string{"fam", "fam", "fam"}, seenFamily, "every tool still gets the caller's identity")
@@ -81,7 +86,7 @@ func TestExecuteSingleTool_UsesTurnUserWithoutLookup(t *testing.T) {
 
 	user := &models.User{PlatformID: "u-turn", FamilyGroup: "fam-turn", Role: "admin"}
 	ctx := withTurnUser(context.Background(), user)
-	res := engine.executeSingleTool(ctx, models.Message{UserID: "u-turn"}, nil, "", &genai.FunctionCall{Name: "probe_tool"})
+	res := engine.executeSingleTool(ctx, channel.Inbound{Sender: "u-turn"}, nil, "", &genai.FunctionCall{Name: "probe_tool"})
 	require.Equal(t, "ok", res)
 	assert.Equal(t, "fam-turn", got.TenantFamilyGroup())
 	assert.Equal(t, "admin", got.User.Role)
@@ -105,6 +110,6 @@ func TestExecuteSingleTool_FallsBackToLookupWithoutTurnUser(t *testing.T) {
 	})
 	engine.SetToolRegistry(reg)
 
-	engine.executeSingleTool(context.Background(), models.Message{UserID: "u-direct"}, nil, "", &genai.FunctionCall{Name: "probe_tool"})
+	engine.executeSingleTool(context.Background(), channel.Inbound{Sender: "u-direct"}, nil, "", &genai.FunctionCall{Name: "probe_tool"})
 	assert.Equal(t, "fam-direct", got.TenantFamilyGroup())
 }

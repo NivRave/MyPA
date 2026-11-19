@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/domains/memory"
@@ -348,7 +349,7 @@ func TestARCH01_28Tools_ModularizationAndDynamicDispatch(t *testing.T) {
 				PlatformID:  "canonical_user_42",
 				FamilyGroup: "canonical_family_1",
 			},
-			Message:  models.Message{UserID: "canonical_user_42"},
+			Message:  channel.Inbound{Sender: "canonical_user_42"},
 			DB:       mockDB,
 			LLM:      mockLLM,
 			EventBus: eventBus,
@@ -424,7 +425,7 @@ func TestARCH01_28Tools_ModularizationAndDynamicDispatch(t *testing.T) {
 
 	t.Run("Unknown Tool Returns Handled=false Without Crashing", func(t *testing.T) {
 		callCtx := orchestrator.CallContext{
-			Message: models.Message{UserID: "user-1"},
+			Message: channel.Inbound{Sender: "user-1"},
 		}
 		res, handled, err := reg.Execute(context.Background(), callCtx, "system_format_drive", map[string]interface{}{})
 		require.NoError(t, err)
@@ -475,7 +476,7 @@ func TestARCH04_All28Tools_AntiIDOR_IdentitySpoofingStress(t *testing.T) {
 
 	callCtx := orchestrator.CallContext{
 		User:     legitUser,
-		Message:  models.Message{UserID: "canonical_victim_platform_id"},
+		Message:  channel.Inbound{Sender: "canonical_victim_platform_id"},
 		DB:       mockDB,
 		LLM:      mockLLM,
 		EventBus: eventBus,
@@ -611,7 +612,7 @@ func TestSEC09_AllFourMetaTools_GatedAndInteractiveConfirmation(t *testing.T) {
 			ctx := orchestrator.WithTurnSecurityState(context.Background(), secState)
 
 			callCtx := orchestrator.CallContext{
-				Message:             models.Message{UserID: "target_user_123"},
+				Message:             channel.Inbound{Sender: "target_user_123"},
 				HasUntrustedContent: true,
 				UntrustedSources:    []string{"untrusted_source_payload"},
 			}

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,10 +43,10 @@ func TestAdversarial_SafePublisher_50Goroutines(t *testing.T) {
 			defer wg.Done()
 			<-startGate
 			for m := 0; m < msgsPerGoroutine; m++ {
-				msg := models.Message{
-					ID:        fmt.Sprintf("adv-msg-%d-%d", routineID, m),
+				msg := channel.Inbound{
+					MessageID: fmt.Sprintf("adv-msg-%d-%d", routineID, m),
 					Text:      "adversarial stress payload",
-					Timestamp: time.Now(),
+					SentAt:    time.Now(),
 				}
 				if err := pub.Publish(ctx, msg); err != nil {
 					failCount.Add(1)
@@ -74,7 +74,7 @@ func TestAdversarial_SafePublisher_50Goroutines(t *testing.T) {
 	defer subCancel()
 
 	go func() {
-		_ = sub.Consume(func(m models.Message) error {
+		_ = sub.Consume(func(m channel.Inbound) error {
 			if receivedCount.Add(1) == int64(totalExpected) {
 				subCancel()
 			}
@@ -101,7 +101,7 @@ func TestAdversarial_SafePublisher_ConcurrentReconnectStress(t *testing.T) {
 	defer cancel()
 
 	// Initial publish
-	err = pub.Publish(ctx, models.Message{ID: "pre-drop-msg"})
+	err = pub.Publish(ctx, channel.Inbound{MessageID: "pre-drop-msg"})
 	require.NoError(t, err)
 
 	// Simulate connection severed
@@ -122,9 +122,9 @@ func TestAdversarial_SafePublisher_ConcurrentReconnectStress(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 5; j++ {
 				// Reconnect might take up to a few seconds
-				err := pub.Publish(ctx, models.Message{
-					ID:   fmt.Sprintf("post-drop-%d-%d", id, j),
-					Text: "reconnected payload",
+				err := pub.Publish(ctx, channel.Inbound{
+					MessageID: fmt.Sprintf("post-drop-%d-%d", id, j),
+					Text:      "reconnected payload",
 				})
 				if err == nil {
 					successCount.Add(1)

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,15 +31,15 @@ func TestConsumer_ParallelAcrossUsers_OrderedPerUser(t *testing.T) {
 	allDone := make(chan struct{})
 
 	go func() {
-		_ = sub.Consume(func(msg models.Message) error {
-			if msg.ID == "a1" {
+		_ = sub.Consume(func(msg channel.Inbound) error {
+			if msg.MessageID == "a1" {
 				time.Sleep(2 * time.Second) // user A's slow turn
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			finished[msg.ID] = time.Now()
-			if msg.UserID == "user-a" {
-				orderA = append(orderA, msg.ID)
+			finished[msg.MessageID] = time.Now()
+			if msg.Sender == "user-a" {
+				orderA = append(orderA, msg.MessageID)
 			}
 			if len(finished) == 3 {
 				close(allDone)
@@ -51,10 +51,10 @@ func TestConsumer_ParallelAcrossUsers_OrderedPerUser(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	for _, m := range []models.Message{
-		{ID: "a1", UserID: "user-a", Source: "telegram", Text: "slow"},
-		{ID: "a2", UserID: "user-a", Source: "telegram", Text: "second"},
-		{ID: "b1", UserID: "user-b", Source: "telegram", Text: "fast"},
+	for _, m := range []channel.Inbound{
+		{MessageID: "a1", Sender: "user-a", Channel: "telegram", Text: "slow"},
+		{MessageID: "a2", Sender: "user-a", Channel: "telegram", Text: "second"},
+		{MessageID: "b1", Sender: "user-b", Channel: "telegram", Text: "fast"},
 	} {
 		require.NoError(t, pub.Publish(ctx, m))
 	}

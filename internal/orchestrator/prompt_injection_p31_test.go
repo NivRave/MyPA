@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
@@ -75,8 +76,12 @@ func call(name string) *llm.Response {
 // staged for confirmation, not saved.
 func TestP31_EmailInstructionToRememberIsStagedNotSaved(t *testing.T) {
 	h := newInjectionHarness(t, call("search_emails"), call("save_topic_memory"))
-	require.NoError(t, h.engine.ProcessMessage(context.Background(), models.Message{
-		ID: "p31-1", UserID: "u-inj", ChatID: "c", Text: "check my email", Source: "telegram",
+	require.NoError(t, h.engine.ProcessMessage(context.Background(), channel.Inbound{
+		MessageID:    "p31-1",
+		Sender:       "u-inj",
+		Conversation: channel.Conversation{ID: "c"},
+		Text:         "check my email",
+		Channel:      "telegram",
 	}))
 
 	assert.Equal(t, int64(1), atomic.LoadInt64(h.ran["search_emails"]))
@@ -92,8 +97,12 @@ func TestP31_AllSensitiveToolsGatedAfterUntrustedContent(t *testing.T) {
 	for tool := range confirmationRequiredWhenUntrusted {
 		t.Run(tool, func(t *testing.T) {
 			h := newInjectionHarness(t, call("search_emails"), call(tool))
-			require.NoError(t, h.engine.ProcessMessage(context.Background(), models.Message{
-				ID: "p31-" + tool, UserID: "u-" + tool, ChatID: "c", Text: "check my email", Source: "telegram",
+			require.NoError(t, h.engine.ProcessMessage(context.Background(), channel.Inbound{
+				MessageID:    "p31-" + tool,
+				Sender:       "u-" + tool,
+				Conversation: channel.Conversation{ID: "c"},
+				Text:         "check my email",
+				Channel:      "telegram",
 			}))
 			assert.Equal(t, int64(0), atomic.LoadInt64(h.ran[tool]), "%s must require confirmation", tool)
 		})
@@ -103,14 +112,22 @@ func TestP31_AllSensitiveToolsGatedAfterUntrustedContent(t *testing.T) {
 // Without untrusted content, sensitive tools run normally; non-sensitive tools always run.
 func TestP31_GateOnlyAppliesToUntrustedTurns(t *testing.T) {
 	h := newInjectionHarness(t, call("save_topic_memory"))
-	require.NoError(t, h.engine.ProcessMessage(context.Background(), models.Message{
-		ID: "p31-t", UserID: "u-t", ChatID: "c", Text: "remember I like tea", Source: "telegram",
+	require.NoError(t, h.engine.ProcessMessage(context.Background(), channel.Inbound{
+		MessageID:    "p31-t",
+		Sender:       "u-t",
+		Conversation: channel.Conversation{ID: "c"},
+		Text:         "remember I like tea",
+		Channel:      "telegram",
 	}))
 	assert.Equal(t, int64(1), atomic.LoadInt64(h.ran["save_topic_memory"]))
 
 	h2 := newInjectionHarness(t, call("search_emails"), call("list_tasks"))
-	require.NoError(t, h2.engine.ProcessMessage(context.Background(), models.Message{
-		ID: "p31-u", UserID: "u-u", ChatID: "c", Text: "email then tasks", Source: "telegram",
+	require.NoError(t, h2.engine.ProcessMessage(context.Background(), channel.Inbound{
+		MessageID:    "p31-u",
+		Sender:       "u-u",
+		Conversation: channel.Conversation{ID: "c"},
+		Text:         "email then tasks",
+		Channel:      "telegram",
 	}))
 	assert.Equal(t, int64(1), atomic.LoadInt64(h2.ran["list_tasks"]), "read-only tools are not gated")
 }
@@ -127,7 +144,7 @@ func TestP31_UntrustedToolOutputIsWrapped(t *testing.T) {
 
 	sec := &TurnSecurityState{}
 	ctx := WithTurnSecurityState(context.Background(), sec)
-	out := engine.executeSingleTool(ctx, models.Message{UserID: "u"}, nil, "", &genai.FunctionCall{Name: "search_emails"})
+	out := engine.executeSingleTool(ctx, channel.Inbound{Sender: "u"}, nil, "", &genai.FunctionCall{Name: "search_emails"})
 	assert.Contains(t, out, "<untrusted_external_content")
 	untrusted, sources := sec.IsUntrusted()
 	assert.True(t, untrusted)
@@ -180,8 +197,13 @@ func TestP31_ImageTurnIsUntrusted(t *testing.T) {
 			return &llm.Response{Text: "ok"}, nil
 		}).AnyTimes()
 
-	require.NoError(t, engine.ProcessMessage(context.Background(), models.Message{
-		ID: "p31-img", UserID: "u-img", ChatID: "c", PhotoFileID: "photo-1", Text: "what's this?", Source: "telegram",
+	require.NoError(t, engine.ProcessMessage(context.Background(), channel.Inbound{
+		MessageID:    "p31-img",
+		Sender:       "u-img",
+		Conversation: channel.Conversation{ID: "c"},
+		Attachments:  []channel.AttachmentRef{{ID: "photo-1", Kind: channel.KindImage, ContentType: "image/jpeg", Label: "telegram_photo"}},
+		Text:         "what's this?",
+		Channel:      "telegram",
 	}))
 	assert.Equal(t, int64(0), atomic.LoadInt64(&ran), "a sensitive write triggered by an image turn must be confirmed first")
 }

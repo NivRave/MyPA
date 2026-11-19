@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/nivik/mypa/internal/broker"
-	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/modules/rabbitmq"
@@ -51,21 +51,21 @@ func TestE2E_RabbitMQIntegration(t *testing.T) {
 	defer consumer.Close()
 
 	// 5. Create a test message
-	testMsg := models.Message{
-		ID:        "e2e-msg-1",
-		UserID:    "e2e-user",
-		ChatID:    "e2e-chat",
-		Text:      "Test E2E message",
-		Source:    "telegram",
-		Timestamp: time.Now(),
+	testMsg := channel.Inbound{
+		MessageID:    "e2e-msg-1",
+		Sender:       "e2e-user",
+		Conversation: channel.Conversation{ID: "e2e-chat"},
+		Text:         "Test E2E message",
+		Channel:      "telegram",
+		SentAt:       time.Now(),
 	}
 
 	// 6. Start the consumer in a separate goroutine
-	msgChan := make(chan models.Message, 1)
+	msgChan := make(chan channel.Inbound, 1)
 	errChan := make(chan error, 1)
 
 	go func() {
-		err := consumer.Consume(func(msg models.Message) error {
+		err := consumer.Consume(func(msg channel.Inbound) error {
 			msgChan <- msg
 			return nil
 		})
@@ -84,9 +84,9 @@ func TestE2E_RabbitMQIntegration(t *testing.T) {
 	// 8. Assert message was received
 	select {
 	case receivedMsg := <-msgChan:
-		assert.Equal(t, testMsg.ID, receivedMsg.ID)
+		assert.Equal(t, testMsg.MessageID, receivedMsg.MessageID)
 		assert.Equal(t, testMsg.Text, receivedMsg.Text)
-		assert.Equal(t, testMsg.UserID, receivedMsg.UserID)
+		assert.Equal(t, testMsg.Sender, receivedMsg.Sender)
 	case err := <-errChan:
 		t.Fatalf("Consumer returned error: %v", err)
 	case <-time.After(5 * time.Second):

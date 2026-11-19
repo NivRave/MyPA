@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/transfer"
@@ -68,7 +69,7 @@ func (b backupOps) withDefaults() backupOps {
 
 // handleRestoreCommand replies with the steps to restore the newest backup with the restore tool.
 // It changes nothing: no backup is taken, nothing is staged and nothing is restored.
-func (e *Engine) handleRestoreCommand(ctx context.Context, user *models.User, msg models.Message) error {
+func (e *Engine) handleRestoreCommand(ctx context.Context, user *models.User, msg channel.Inbound) error {
 	if user.Role != "admin" {
 		slog.Warn("unauthorized restore command attempt", "user_id", user.PlatformID, "role", user.Role)
 		return e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")

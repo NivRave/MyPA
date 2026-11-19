@@ -4,13 +4,14 @@ import (
 	"context"
 	"strings"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/models"
 	"google.golang.org/genai"
 )
 
 // handleToolCall is a legacy single-tool entry point kept only for tests (moved out of production
 // code in P4-1). Production turns use handleToolCalls via runTurn.
-func (e *Engine) handleToolCall(ctx context.Context, msg models.Message, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) (string, error) {
+func (e *Engine) handleToolCall(ctx context.Context, msg channel.Inbound, history []models.ChatMessage, systemPrompt string, toolCall *genai.FunctionCall) (string, error) {
 	if toolCall.Name == "schedule_reminder" || toolCall.Name == "unknown_tool" || toolCall.Name == "fetch_webpage" {
 		return e.executeSingleTool(ctx, msg, history, systemPrompt, toolCall), nil
 	}

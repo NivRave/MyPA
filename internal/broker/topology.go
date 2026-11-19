@@ -8,8 +8,8 @@ import (
 
 // Queue names, shared by every publisher and consumer (BL-5). Each queue gets "<name>.dlq".
 const (
-	// InboundMessagesQueue carries normalized user messages from every channel (Telegram, WhatsApp)
-	// from the gateway to the orchestrator. Was "telegram.inbound" before it also carried WhatsApp.
+	// InboundMessagesQueue carries the neutral inbound messages (channel.Inbound) of every channel
+	// from the ingress to the worker. It had a channel-specific name before it carried more than one.
 	InboundMessagesQueue = "inbound.messages"
 	// AuditEventsQueue carries audit telemetry from the orchestrator to the audit-worker.
 	AuditEventsQueue = "audit.events"

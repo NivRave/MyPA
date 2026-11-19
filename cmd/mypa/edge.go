@@ -5,13 +5,15 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/nivik/mypa/internal/channel"
 )
 
 // Body limits at the edge. The ingress router and the GraphQL handler apply their own as well;
 // the edge applies them first, as the proxy did, so an oversized body is cut off before any
 // handler reads it.
 const (
-	webhookBodyLimit = 10 << 20 // 10 MB: Telegram and Twilio webhooks
+	webhookBodyLimit = 10 << 20 // 10 MB: the channel adapters' webhooks
 	appBodyLimit     = 1 << 20  // 1 MB: /graphql and the Google sign-in callback
 )
 
@@ -20,7 +22,7 @@ const (
 // answers, and hands each request to the in-process ingress or app handler instead of forwarding
 // it over the network:
 //
-//   - /webhook/telegram*, /webhook/twilio*  → ingress (10 MB)
+//   - /webhook/*                            → ingress (10 MB): every channel adapter's webhooks
 //   - /auth/google*                         → app (1 MB)
 //   - /graphql*                             → app (1 MB), only with an Authorization header
 //   - /favicon.ico                          → 204, quietly (BL-6)
@@ -40,7 +42,7 @@ func newEdgeRouter(ingress, app http.Handler) (http.Handler, error) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
-		case strings.HasPrefix(path, "/webhook/telegram"), strings.HasPrefix(path, "/webhook/twilio"):
+		case strings.HasPrefix(path, channel.WebhookPrefix):
 			r.Body = http.MaxBytesReader(w, r.Body, webhookBodyLimit)
 			ingress.ServeHTTP(w, r)
 

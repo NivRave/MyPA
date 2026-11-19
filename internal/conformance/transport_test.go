@@ -15,8 +15,10 @@ import (
 // stopped authenticating (or sent the wrong secret) fails the suite.
 const (
 	telegramBotToken = "conformance-bot-token"
-	twilioAccountSID = "ACconformance"
-	twilioAuthToken  = "conformance-auth-token"
+	// telegramSecretToken is what Telegram sends with every update; the adapter rejects others.
+	telegramSecretToken = "conformance-secret-token"
+	twilioAccountSID    = "ACconformance"
+	twilioAuthToken     = "conformance-auth-token"
 	// twilioSender is the configured WhatsApp sender. A fictional number (reserved 555-01xx block).
 	twilioSender = "whatsapp:+12025550199"
 )

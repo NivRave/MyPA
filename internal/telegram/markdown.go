@@ -1,4 +1,4 @@
-package markdown
+package telegram
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	htmlTagRegex            = regexp.MustCompile(`^</?([a-zA-Z0-9]+)(\s+[^>]*)?>`)
+	htmlTagRegex = regexp.MustCompile(`^</?([a-zA-Z0-9]+)(\s+[^>]*)?>`)
 	// htmlEntityRegex is handled via telegramHTMLEntityRegex below
 	telegramHTMLTagRegex    = regexp.MustCompile(`(?i)</?(?:b|strong|i|em|u|ins|s|strike|del|code|pre|blockquote|tg-spoiler|tg-emoji|span|a)(?:\s+[^>]*)?>`)
 	telegramHTMLEntityRegex = regexp.MustCompile(`&(?:[a-zA-Z]+|#[0-9]+|#x[0-9a-fA-F]+);`)

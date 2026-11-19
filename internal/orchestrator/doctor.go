@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/models"
 )
 
@@ -25,7 +26,7 @@ func (e *Engine) WithHealthReporter(h HealthReporter) *Engine {
 // cmdDoctor answers `/doctor`. Admins only: the report describes the install and names the
 // members of the admin's family. It only reads, so it marks no side effect, and nothing is
 // recorded as the turn's final response (the report is not copied into the audit log).
-func (e *Engine) cmdDoctor(ctx context.Context, user *models.User, msg models.Message) (string, error) {
+func (e *Engine) cmdDoctor(ctx context.Context, user *models.User, msg channel.Inbound) (string, error) {
 	if user.Role != "admin" {
 		slog.Warn("unauthorized doctor command attempt", "user_id", user.PlatformID, "role", user.Role)
 		return "", e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")

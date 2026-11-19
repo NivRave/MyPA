@@ -1,4 +1,4 @@
-package markdown
+package telegram
 
 import (
 	"fmt"
@@ -292,4 +292,3 @@ func min(a, b int) int {
 	}
 	return b
 }
-

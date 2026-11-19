@@ -16,6 +16,7 @@ import (
 	"github.com/nivik/mypa/internal/audio"
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/contacts"
 	"github.com/nivik/mypa/internal/crypto"
@@ -42,8 +43,6 @@ import (
 	"github.com/nivik/mypa/internal/state"
 	"github.com/nivik/mypa/internal/tasks"
 	"github.com/nivik/mypa/internal/tavily"
-	"github.com/nivik/mypa/internal/telegram"
-	"github.com/nivik/mypa/internal/twilio"
 )
 
 // The worker (formerly the orchestrator's main, V4-01): it consumes inbound.messages, runs the
@@ -62,7 +61,7 @@ type worker struct {
 
 // startWorker connects every dependency, starts the engine and the scheduler, and returns the app
 // router. On an error, whatever was already started is stopped again.
-func startWorker(cfg *config.Config) (w *worker, err error) {
+func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err error) {
 	authCfg = cfg.Server
 
 	if err := crypto.ValidateKeyConfigured(); err != nil {
@@ -110,9 +109,6 @@ func startWorker(cfg *config.Config) (w *worker, err error) {
 	}
 	w.onStop(func() { _ = consumer.Close() })
 
-	// 3. Initialize Telegram Client
-	tgClient := telegram.NewClient(cfg.Telegram.BotToken)
-
 	// 4. Initialize Gemini LLM Client
 	llmClient, err := llm.NewClient(ctx, cfg.Gemini.APIKey, cfg.Gemini.Model)
 	if err != nil {
@@ -158,9 +154,6 @@ func startWorker(cfg *config.Config) (w *worker, err error) {
 		return w, err
 	}
 
-	// 8. Initialize Twilio Client
-	twilioClient := twilio.NewClient(cfg.Twilio)
-
 	gmailClient := gmail.NewClient(oauthCfg, store)
 	tasksClient := tasks.NewClient(oauthCfg, store)
 	contactsClient := contacts.NewClient(oauthCfg, store)
@@ -202,18 +195,11 @@ func startWorker(cfg *config.Config) (w *worker, err error) {
 	memoryRepo := db.NewMemoryV2Repo(dbClient.DB)
 	memoryModule := memory.NewModule(memoryRepo)
 
-	// Proactive Notification Sender for Shared Spaces and Automations
-	notificationSender := func(notifyCtx context.Context, recipientID, text string) error {
-		if strings.HasPrefix(recipientID, "+") || strings.HasPrefix(recipientID, "whatsapp:") {
-			if twilioClient != nil {
-				return twilioClient.SendMessage(notifyCtx, recipientID, text)
-			}
-		}
-		if tgClient != nil {
-			return tgClient.SendMessage(notifyCtx, recipientID, text)
-		}
-		return nil
-	}
+	// Proactive Notification Sender for Shared Spaces and Automations: these callers hold only the
+	// recipient's ID, so the adapter that recognizes it sends (V4-31; V4-32 replaces the guess with
+	// the person's linked channel accounts).
+	notifier := channelNotifier{channels: channels}
+	notificationSender := notifier.SendMessage
 
 	// Track 1C: Shared Spaces & Partner Sync Notifier
 	sharedNotifier := shared.NewNotifier(dbClient, notificationSender)
@@ -263,11 +249,11 @@ func startWorker(cfg *config.Config) (w *worker, err error) {
 	llmClient.AddFunctionDeclarations(registry.AllDeclarations()...)
 
 	// 9. Initialize Engine with ToolRegistry and EventBus
-	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, tgClient, twilioClient, oauthCfg, gmailClient, tasksClient, contactsClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone).
+	engine := orchestrator.NewEngine(consumer, store, dbClient, llmClient, channels, oauthCfg, gmailClient, tasksClient, contactsClient, tavilyClient, audioClient, telemetryPublisher, cfg.Server.DefaultTimezone).
 		WithToolRegistry(registry).
 		WithEventBus(eventBus).
 		WithCalendarConventions(orchestrator.ParseCalendarConventions(cfg.Server.WeekStartDay, cfg.Server.WeekendDays)).
-		WithHealthReporter(newHealthReporter(cfg, tgClient, store, dbClient, oauthCfg, doctorBackupDir)) // /doctor (V4-17)
+		WithHealthReporter(newHealthReporter(cfg, channels, store, dbClient, oauthCfg, doctorBackupDir)) // /doctor (V4-17)
 
 	// Start Cron jobs
 	c := scheduler.StartCronJobs(engine, dbClient, automationRunner, cfg.Server.DefaultTimezone)
@@ -287,7 +273,7 @@ func startWorker(cfg *config.Config) (w *worker, err error) {
 	}()
 
 	// HTTP routes for the OAuth callback and GraphQL
-	w.router = setupAppRouter(oauthCfg, store, tgClient, dbClient, durabilityModule, eventBus)
+	w.router = setupAppRouter(oauthCfg, store, notifier, dbClient, durabilityModule, eventBus)
 	return w, nil
 }
 
@@ -315,20 +301,35 @@ func (w *worker) stop() {
 	w.runCleanup()
 }
 
-type AuthTelegramClient interface {
-	SendMessage(ctx context.Context, chatID string, text string) error
+// AuthNotifier tells a person in chat that their Google sign-in finished.
+type AuthNotifier interface {
+	SendMessage(ctx context.Context, userID string, text string) error
+}
+
+// channelNotifier sends to a person known only by their ID, on the channel whose adapter
+// recognizes it.
+type channelNotifier struct {
+	channels *channel.Registry
+}
+
+func (n channelNotifier) SendMessage(ctx context.Context, recipientID, text string) error {
+	to, ok := n.channels.Recognize(recipientID)
+	if !ok {
+		return fmt.Errorf("no channel recognizes the recipient %q", recipientID)
+	}
+	return n.channels.SendText(ctx, to, text)
 }
 
 type CredentialFallbackSaver interface {
 	SaveCredentialFallback(ctx context.Context, userID, provider string, tokenData []byte, passphrase ...string) error
 }
 
-func setupAuthRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient, fallbackSaver ...CredentialFallbackSaver) *http.ServeMux {
+func setupAuthRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifier AuthNotifier, fallbackSaver ...CredentialFallbackSaver) *http.ServeMux {
 	var saver CredentialFallbackSaver
 	if len(fallbackSaver) > 0 {
 		saver = fallbackSaver[0]
 	}
-	return setupAppRouter(oauthCfg, store, tgClient, nil, saver)
+	return setupAppRouter(oauthCfg, store, notifier, nil, saver)
 }
 
 // runMigrations applies all pending schema migrations and returns the process exit code.
@@ -370,7 +371,7 @@ func runMigrations(databaseURL string) int {
 // no dashboard secret or JWT is accepted (e.g. in tests that build the router directly).
 var authCfg config.ServerConfig
 
-func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient AuthTelegramClient, dbClient *db.Client, fallbackSaver CredentialFallbackSaver, eventBus ...*events.EventBus) *http.ServeMux {
+func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifier AuthNotifier, dbClient *db.Client, fallbackSaver CredentialFallbackSaver, eventBus ...*events.EventBus) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// GraphQL Server
@@ -473,14 +474,14 @@ func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, tgClient
 			}
 		}
 
-		// Notify user on Telegram
-		if tgClient != nil {
-			_ = tgClient.SendMessage(r.Context(), targetUserID, "✅ Successfully connected to Google Calendar! You can now ask me to schedule events.")
+		// Tell the person in chat, on their channel
+		if notifier != nil {
+			_ = notifier.SendMessage(r.Context(), targetUserID, "✅ Successfully connected to Google Calendar! You can now ask me to schedule events.")
 		}
 
 		// Tell the browser they can close the window
 		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte("<h1>Success!</h1><p>Google Calendar connected. You can close this window and return to Telegram.</p>"))
+		_, _ = w.Write([]byte("<h1>Success!</h1><p>Google Calendar connected. You can close this window and return to the chat.</p>"))
 	})
 	return mux
 }

@@ -3,12 +3,13 @@ package schedule
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
-	"strings"
-	"time"
 )
 
 // CalendarFactory is a function that produces a CalendarClient for a given user ID.
@@ -96,7 +97,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 		familyGroup = callCtx.User.FamilyGroup
 	}
 	if userID == "" {
-		userID = callCtx.Message.UserID
+		userID = callCtx.Message.Sender
 	}
 
 	repo, err := m.resolveRepo(callCtx)

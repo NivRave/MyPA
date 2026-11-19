@@ -8,10 +8,13 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"go.uber.org/mock/gomock"
 	"github.com/nivik/mypa/internal/calendar"
+	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/channel/adapters/adapterstest"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator/mocks"
 	"github.com/nivik/mypa/internal/state"
+	tgmocks "github.com/nivik/mypa/internal/telegram/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +25,7 @@ func TestAdversarial_Engine_LockoutBlocksValidCode(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	tgMock := mocks.NewMockTelegramClient(ctrl)
+	tgMock := tgmocks.NewMockAPI(ctrl)
 	dbMock := mocks.NewMockDBClient(ctrl)
 	eventPublisherMock := mocks.NewMockEventPublisher(ctrl)
 	eventPublisherMock.EXPECT().Publish(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -46,8 +49,7 @@ func TestAdversarial_Engine_LockoutBlocksValidCode(t *testing.T) {
 		store,
 		dbMock,
 		nil,
-		tgMock,
-		nil,
+		adapterstest.Registry(tgMock, nil),
 		oauthCfg,
 		nil,
 		nil,
@@ -73,10 +75,10 @@ func TestAdversarial_Engine_LockoutBlocksValidCode(t *testing.T) {
 			return ok && strings.Contains(str, "attempts remaining")
 		})).Return(nil).Times(1)
 
-		err := engine.ProcessMessage(context.Background(), models.Message{
-			UserID: userID,
-			Text:   "000000",
-			Source: "telegram",
+		err := engine.ProcessMessage(context.Background(), channel.Inbound{
+			Sender:  userID,
+			Text:    "000000",
+			Channel: "telegram",
 		})
 		require.NoError(t, err)
 	}
@@ -87,10 +89,10 @@ func TestAdversarial_Engine_LockoutBlocksValidCode(t *testing.T) {
 		return ok && strings.Contains(str, "locked for 1 hour")
 	})).Return(nil).Times(1)
 
-	err = engine.ProcessMessage(context.Background(), models.Message{
-		UserID: userID,
-		Text:   "000000",
-		Source: "telegram",
+	err = engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:  userID,
+		Text:    "000000",
+		Channel: "telegram",
 	})
 	require.NoError(t, err)
 
@@ -103,10 +105,10 @@ func TestAdversarial_Engine_LockoutBlocksValidCode(t *testing.T) {
 
 	// Note: We do NOT set an expectation on GetPairingCode("123456") or RedeemPairingCode!
 	// If the engine attempted to call them, gomock would fail!
-	err = engine.ProcessMessage(context.Background(), models.Message{
-		UserID: userID,
-		Text:   "123456", // valid code submitted while locked out
-		Source: "telegram",
+	err = engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:  userID,
+		Text:    "123456",
+		Channel: "telegram",
 	})
 	require.NoError(t, err)
 }
@@ -118,7 +120,7 @@ func TestAdversarial_Engine_SuccessfulPairingResetsCounter(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	tgMock := mocks.NewMockTelegramClient(ctrl)
+	tgMock := tgmocks.NewMockAPI(ctrl)
 	dbMock := mocks.NewMockDBClient(ctrl)
 	eventPublisherMock := mocks.NewMockEventPublisher(ctrl)
 	eventPublisherMock.EXPECT().Publish(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -142,8 +144,7 @@ func TestAdversarial_Engine_SuccessfulPairingResetsCounter(t *testing.T) {
 		store,
 		dbMock,
 		nil,
-		tgMock,
-		nil,
+		adapterstest.Registry(tgMock, nil),
 		oauthCfg,
 		nil,
 		nil,
@@ -169,10 +170,10 @@ func TestAdversarial_Engine_SuccessfulPairingResetsCounter(t *testing.T) {
 			return ok && strings.Contains(str, "attempts remaining")
 		})).Return(nil).Times(1)
 
-		err := engine.ProcessMessage(context.Background(), models.Message{
-			UserID: userID,
-			Text:   "000000",
-			Source: "telegram",
+		err := engine.ProcessMessage(context.Background(), channel.Inbound{
+			Sender:  userID,
+			Text:    "000000",
+			Channel: "telegram",
 		})
 		require.NoError(t, err)
 	}
@@ -198,10 +199,10 @@ func TestAdversarial_Engine_SuccessfulPairingResetsCounter(t *testing.T) {
 	})).Return(nil).Times(1)
 
 	// Attempt 4: valid code
-	err = engine.ProcessMessage(context.Background(), models.Message{
-		UserID: userID,
-		Text:   "/start 999888",
-		Source: "telegram",
+	err = engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:  userID,
+		Text:    "/start 999888",
+		Channel: "telegram",
 	})
 	require.NoError(t, err)
 

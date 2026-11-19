@@ -18,5 +18,5 @@ tavily:
 encryption:
   key: "" # Supplied via ENCRYPTION_KEY environment variable
 
-telegram:
-  secret_token: "" # Supplied via TELEGRAM_SECRET_TOKEN environment variable
+# Channel settings are read by the channel adapters from the environment only (V4-31);
+# see .env.example.

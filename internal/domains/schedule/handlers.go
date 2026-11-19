@@ -4,14 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/events"
-	"github.com/nivik/mypa/internal/models"
-	"github.com/nivik/mypa/internal/orchestrator"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/orchestrator"
 )
 
 // Execute dispatches and runs tools provided by the schedule module.
@@ -83,7 +84,7 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 		familyGroup = callCtx.User.FamilyGroup
 	}
 	if userID == "" {
-		userID = callCtx.Message.UserID
+		userID = callCtx.Message.Sender
 	}
 
 	// Topic configuration lookup
@@ -301,7 +302,7 @@ func (m *Module) executeListTopicSchedule(ctx context.Context, callCtx orchestra
 		familyGroup = callCtx.User.FamilyGroup
 	}
 	if userID == "" {
-		userID = callCtx.Message.UserID
+		userID = callCtx.Message.Sender
 	}
 
 	eventsList, err := repo.ListScheduleEvents(userID, familyGroup, topic, startTime, endTime)
@@ -446,7 +447,7 @@ func (m *Module) executeConfigureTopicCalendar(ctx context.Context, callCtx orch
 		}
 	}
 	if userID == "" {
-		userID = callCtx.Message.UserID
+		userID = callCtx.Message.Sender
 	}
 
 	cfg, _ := repo.GetTopicCalendarConfig(userID, topic)

@@ -14,7 +14,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nivik/mypa/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -139,7 +138,7 @@ func TestClient_SendMessage_StatusCallback(t *testing.T) {
 				w.WriteHeader(http.StatusCreated)
 			}))
 			defer ts.Close()
-			client := NewClient(config.TwilioConfig{AccountSID: "sid", AuthToken: "tok", FromNumber: "whatsapp:+1", StatusCallbackURL: tc.configured})
+			client := NewClient(Config{AccountSID: "sid", AuthToken: "tok", FromNumber: "whatsapp:+1", StatusCallbackURL: tc.configured})
 			client.httpClient.Transport = &rewriteTransport{URL: ts.URL}
 			require.NoError(t, client.SendMessage(context.Background(), "+2", "hi"))
 			assert.Equal(t, tc.configured != "", seen)
