@@ -11,14 +11,12 @@ export default function SettingsPage() {
       <div className="bg-white rounded-xl shadow-sm border border-neutral-200 divide-y divide-neutral-200 max-w-4xl">
         <div className="p-6 flex items-center justify-between">
           <div>
-            <h3 className="font-medium text-neutral-900">LLM Provider</h3>
-            <p className="text-sm text-neutral-500">Select the primary model used for orchestrator reasoning.</p>
+            <h3 className="font-medium text-neutral-900">Chat model</h3>
+            <p className="text-sm text-neutral-500">
+              Set on the server with <code className="font-mono text-neutral-700">GEMINI_MODEL</code>. When it is not set, the built-in default applies.
+            </p>
           </div>
-          <select className="border border-neutral-300 rounded-md text-sm py-1.5 px-3 bg-white text-neutral-900 font-medium">
-            <option>Gemini 2.5 Flash</option>
-            <option>Gemini 2.5 Pro</option>
-            <option>Local (Ollama)</option>
-          </select>
+          <span className="text-sm text-neutral-500">Not changeable here</span>
         </div>
         
         <div className="p-6 flex items-center justify-between">

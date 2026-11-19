@@ -104,8 +104,8 @@ type TwilioConfig struct {
 // DefaultGeminiModel is the chat model an install uses when GEMINI_MODEL is not set. It is the
 // one place the default is defined (V4-09): the settings file shipped in the image, the settings
 // template and the LLM client's own fallback all defer to it. Change the default here and nowhere
-// else; TestDefaultChatModelIsDefinedInOnePlace fails if a model name appears anywhere else in
-// code or configuration.
+// else; TestDefaultChatModelIsDefinedInOnePlace fails if a chat model is named anywhere else in
+// production code, configuration or the dashboard, by its API name or its display name.
 const DefaultGeminiModel = "gemini-3.6-flash"
 
 // Load reads configuration from config file and environment variables.

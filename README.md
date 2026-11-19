@@ -121,7 +121,7 @@ go test -v -race ./internal/...
 # 2. Run database repository and GraphQL resolver integration tests
 go test -v ./internal/db/... ./internal/graph/...
 
-# 3. Run Next.js Dashboard Vitest component tests (33 tests across 4 test suites)
+# 3. Run Next.js Dashboard Vitest component tests (36 tests across 5 test suites)
 npm test --prefix dashboard
 
 # 4. Verify full multi-stage container build

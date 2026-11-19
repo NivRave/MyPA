@@ -12,9 +12,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// chatModelName matches a Gemini chat model name such as gemini-2.5-flash. Embedding models
-// (gemini-embedding-001) do not match: they are a separate setting (V4-03).
-var chatModelName = regexp.MustCompile(`gemini-[0-9][A-Za-z0-9.\-]*`)
+// chatModelName finds a Gemini chat model named in any spelling a person might write it in: the
+// API name (gemini-2.5-flash) and the display name (Gemini 2.5 Flash), in any letter case. The
+// name must be followed by a version digit, so the setting (GEMINI_MODEL), identifiers
+// (DefaultGeminiModel) and embedding models (gemini-embedding-001, a separate setting, V4-03) do
+// not match.
+var chatModelName = regexp.MustCompile(`(?i)\bgemini[- ]?[0-9][0-9A-Za-z.\-]*`)
+
+// apiModelName is the form the constant itself must have: what the API accepts.
+var apiModelName = regexp.MustCompile(`^gemini-[0-9][0-9a-z.\-]*$`)
+
+func TestChatModelNamePattern(t *testing.T) {
+	for text, want := range map[string]string{
+		`model = "gemini-2.5-flash"`:        "gemini-2.5-flash",
+		`<option>Gemini 2.5 Flash</option>`: "Gemini 2.5",
+		`GEMINI-3.6-FLASH`:                  "GEMINI-3.6-FLASH",
+		`uses gemini2.5 by default`:         "gemini2.5",
+	} {
+		assert.Equal(t, want, chatModelName.FindString(text), text)
+	}
+	for _, text := range []string{
+		"GEMINI_MODEL=", "gemini.model", "DefaultGeminiModel", "cfg.Gemini.Model", "GEMINI_API_KEY",
+		"gemini-embedding-001", "Primary Gemini chat/tool-calling model", "Google Gemini", "NewGeminiClient(3)",
+	} {
+		assert.Empty(t, chatModelName.FindString(text), "%q is not a chat model name", text)
+	}
+}
 
 // skippedDirs are never searched: version control, dependencies, build output, agent notes,
 // local data and documentation. None of them can decide which model an install uses.
@@ -29,7 +52,8 @@ var skippedDirs = map[string]bool{
 func decidesTheDefault(name string) bool {
 	base := name[strings.LastIndex(name, "/")+1:]
 	switch {
-	case strings.HasSuffix(name, "_test.go"), strings.HasSuffix(name, ".md"):
+	case strings.HasSuffix(name, "_test.go"), strings.HasSuffix(name, ".md"),
+		strings.HasSuffix(name, ".test.ts"), strings.HasSuffix(name, ".test.tsx"), strings.Contains(name, "/__tests__/"):
 		return false
 	case base == ".env.example", strings.HasPrefix(base, "Dockerfile"),
 		strings.HasSuffix(name, ".go"), strings.HasSuffix(name, ".yaml"), strings.HasSuffix(name, ".yml"),
@@ -89,7 +113,7 @@ func TestDefaultChatModelIsDefinedInOnePlace(t *testing.T) {
 	require.Len(t, found, 1, "a chat model must be named in exactly one place (DefaultGeminiModel in internal/config/config.go); found:\n  %s", strings.Join(found, "\n  "))
 	assert.True(t, strings.HasPrefix(found[0], "internal/config/config.go:"), "the one definition must be DefaultGeminiModel, found %s", found[0])
 	assert.True(t, strings.HasSuffix(found[0], " "+DefaultGeminiModel), "the one definition must be DefaultGeminiModel, found %s", found[0])
-	assert.Regexp(t, "^"+chatModelName.String()+"$", DefaultGeminiModel)
+	assert.Regexp(t, apiModelName, DefaultGeminiModel, "the default must be an API model name")
 }
 
 // The files the guard has to cover are covered, and the ones it must leave alone are left alone.
@@ -97,13 +121,14 @@ func TestDecidesTheDefault(t *testing.T) {
 	for _, name := range []string{
 		"internal/config/config.go", "internal/llm/client.go", "cmd/orchestrator/main.go",
 		"config/config.yaml", "docker-compose.yml", ".env.example", "Dockerfile", "dashboard/Dockerfile",
-		"dashboard/src/app/page.tsx", "dashboard/package.json",
+		"dashboard/src/app/page.tsx", "dashboard/src/app/settings/page.tsx", "dashboard/package.json",
 	} {
 		assert.True(t, decidesTheDefault(name), "%s can decide the default and must be searched", name)
 	}
 	for _, name := range []string{
 		"internal/config/config_test.go", "internal/llm/llm_test.go", "README.md", "SYSTEM.md",
 		".env", "dashboard/package-lock.json", "go.sum",
+		"dashboard/src/__tests__/settings_page.test.tsx", "dashboard/src/lib/client.test.ts",
 	} {
 		assert.False(t, decidesTheDefault(name), "%s must not be searched", name)
 	}
