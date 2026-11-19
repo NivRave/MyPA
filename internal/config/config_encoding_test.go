@@ -64,8 +64,11 @@ func TestConfigYamlAndEnvExample(t *testing.T) {
 	v.SetConfigType("yaml")
 	err = v.ReadConfig(bytes.NewReader(data))
 	require.NoError(t, err, "config/config.yaml must be valid YAML")
-	redirectURL := v.GetString("google.redirect_url")
-	assert.Equal(t, "http://localhost:8000/auth/google/callback", redirectURL, "redirect_url must point to the app port 8000 (V4-01)")
+	// V4-40: the Google redirect is derived (PUBLIC_URL, or the app's port without one), so the
+	// shipped settings must not hold one that nothing reads. The shipped port is 8000 (V4-01), so
+	// the local redirect is http://localhost:8000/auth/google/callback (TestLoad_LocalInstallHasNoPublicAddress).
+	assert.False(t, v.IsSet("google.redirect_url"), "config/config.yaml must not set google.redirect_url: PUBLIC_URL replaced it")
+	assert.Equal(t, 8000, v.GetInt("server.port"), "the app port the local Google redirect uses (V4-01)")
 
 	// Verify .env.example
 	envPath := filepath.Join(repoRoot, ".env.example")

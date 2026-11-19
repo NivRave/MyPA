@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -166,20 +168,38 @@ func TestRun_TelegramOnlyInstallRunsWithNoTunnel(t *testing.T) {
 }
 
 // ADR 0003 §6: a configured channel that needs a public address stops an install that has none,
-// before it connects to anything, with a message naming the channel.
+// before it connects to anything, with a message naming the channel. The broker address is a
+// listener that records every connection attempt, so the refusal must come before the ingress
+// tries to reach RabbitMQ, not from that attempt failing.
 func TestRun_RefusesAWebhookChannelWithoutAPublicAddress(t *testing.T) {
+	broker, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer broker.Close()
+	var attempts atomic.Int32
+	go func() {
+		for {
+			conn, err := broker.Accept()
+			if err != nil {
+				return
+			}
+			attempts.Add(1)
+			_ = conn.Close()
+		}
+	}()
+
 	env := map[string]string{"TWILIO_ACCOUNT_SID": "AC1", "TWILIO_AUTH_TOKEN": "tok", "TWILIO_FROM_NUMBER": "whatsapp:+12025550199"}
 	getenv := func(k string) string { return env[k] }
 	cfg := &config.Config{
-		RabbitMQ: config.RabbitMQConfig{URL: "amqp://nobody@127.0.0.1:1/"},
+		RabbitMQ: config.RabbitMQConfig{URL: "amqp://nobody:x@" + broker.Addr().String() + "/"},
 		Channels: adapters.LoadConfig(getenv),
 		Deploy:   deploy.Load(getenv),
 	}
 	waited := false
 	assert.Equal(t, 1, run(cfg, roleIngress, func(<-chan error) error { waited = true; return nil }))
 	assert.False(t, waited, "nothing may be served")
+	assert.Zero(t, attempts.Load(), "run must refuse before it connects to the broker")
 
-	err := checkReachable(cfg.Deploy, testChannels(t, cfg))
+	err = checkReachable(cfg.Deploy, testChannels(t, cfg))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "whatsapp")
 	assert.Contains(t, err.Error(), "INGRESS")

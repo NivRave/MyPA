@@ -213,7 +213,8 @@ func (e *env) poll(update []byte, updateID int64) (layer.Inbound, bool) {
 		"the poller must fetch and confirm update %d", updateID)
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		require.ErrorIs(e.t, err, context.Canceled, "the poller runs until it is stopped")
 	case <-time.After(10 * time.Second):
 		e.t.Fatal("the poller did not stop")
 	}

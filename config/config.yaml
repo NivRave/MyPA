@@ -7,7 +7,7 @@ server:
 google:
   client_id: ""
   client_secret: ""
-  redirect_url: "http://localhost:8000/auth/google/callback"
+  # No redirect_url: it is derived from PUBLIC_URL (V4-40), or the app's local port without one.
 
 tavily:
   api_key: ""
