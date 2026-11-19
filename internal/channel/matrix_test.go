@@ -45,6 +45,8 @@ func TestMatrix_RendersEveryCapabilityPerAdapterInOrder(t *testing.T) {
 	assert.Contains(t, row("Files sent"), "| none | audio |")
 	assert.Contains(t, row("Longest message"), "| 1,000 bytes | 12,345 bytes |")
 	assert.Contains(t, row("Formatting"), "| plain text | HTML |")
+	assert.Equal(t, "light markup (`*bold*`, `_italic_`, triple backticks)", markupName(LightMarkup),
+		"the matrix claims only the emphasis the light-markup converter writes (no strikethrough)")
 	assert.Contains(t, row("Unprompted messages"), `| always | within a day \| or a template |`, "a pipe in a declared value is escaped")
 	assert.Contains(t, row("Buttons"), "numbered list", "each row names its documented fallback")
 }

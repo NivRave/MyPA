@@ -98,7 +98,7 @@ func markupName(m Markup) string {
 	case HTML:
 		return "HTML"
 	case LightMarkup:
-		return "light markup (`*bold*`, `_italic_`, `~strike~`, triple backticks)"
+		return "light markup (`*bold*`, `_italic_`, triple backticks)"
 	case PlainText:
 		return "plain text"
 	}

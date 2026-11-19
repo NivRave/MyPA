@@ -47,9 +47,9 @@ func TestAdaptersReachTheAppOnlyThroughBuild(t *testing.T) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, "internal/channel/") && !strings.HasPrefix(rel, "internal/channel/adapters/") {
-			return nil // the channel package itself defines NewRegistry
-		}
+		// No file is exempt. Package channel itself calls NewRegistry without importing itself, so
+		// newRegistryCalls finds nothing there; any other package under internal/channel/ (a future
+		// adapter, say) is held to the same rule as the rest of the tree.
 		files++
 		calls, err := newRegistryCalls(path)
 		if err != nil {

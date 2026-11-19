@@ -433,6 +433,7 @@ What the adapters declare is the generated matrix in §3.10. Behaviour the suite
 | | Telegram | WhatsApp (Twilio) |
 | :--- | :--- | :--- |
 | Person is identified by | Telegram user ID; replies go to the chat ID | Phone number (the `whatsapp:` prefix is stripped on the way in and added on the way out) |
+| Formatting written | `<b>`, `<i>`, `<code>`, `<a href>` (`parse_mode=HTML`) | `*bold*`, `_italic_`, triple backticks; a link becomes `text (url)` |
 | Photo | Largest size is downloaded and given to the model; the turn is untrusted | Downloaded with Twilio credentials and given to the model; the turn is untrusted |
 | Document | Not declared: dropped by the adapter | Text files are inlined as untrusted content, PDFs go to the model, other types get an explanation |
 | Duplicate webhook delivery | Answered once (claim scoped by chat ID) | Answered once (claim scoped by user ID) |
@@ -495,7 +496,7 @@ One adapter per messaging platform behind one interface. Nothing outside the ada
 | Files received (`AttachmentsIn`) | image, audio | image, audio, document | the adapter drops the message: nothing is downloaded or answered |
 | Files sent (`AttachmentsOut`) | none | none | a line saying the file could not be sent here |
 | Longest message (`MaxTextLen`) | 4,000 bytes | 1,500 bytes | longer text is split by the adapter |
-| Formatting (`Markup`) | HTML | light markup (`*bold*`, `_italic_`, `~strike~`, triple backticks) | — |
+| Formatting (`Markup`) | HTML | light markup (`*bold*`, `_italic_`, triple backticks) | — |
 | Unprompted messages (`Proactive`) | always | within 24 hours of the person's last message; outside it only an approved template (V4-33) | — |
 <!-- END GENERATED: channel-matrix -->
 
