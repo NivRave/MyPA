@@ -90,7 +90,7 @@ type webhookRegistrar interface {
 // failures are retried with backoff and never stop the app.
 func registerWebhook(ctx context.Context, reg webhookRegistrar, cfg Config) {
 	if cfg.WebhookURL == "" {
-		slog.Warn("TELEGRAM_WEBHOOK_URL not set; skipping setWebhook — the webhook must already be registered with the secret token")
+		slog.Warn("no Telegram webhook address (PUBLIC_URL not set); skipping setWebhook — the webhook must already be registered with the secret token")
 		return
 	}
 	err := registerWebhookWithRetry(ctx, reg, cfg.WebhookURL, cfg.SecretToken, webhookRegisterMaxAttempts, webhookRegisterBaseDelay)

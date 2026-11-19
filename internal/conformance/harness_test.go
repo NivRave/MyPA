@@ -184,7 +184,45 @@ func receiveTelegram(e *env, in inbound) (layer.Inbound, bool) {
 	req := httptest.NewRequest(http.MethodPost, "https://mypa.example"+telegram.WebhookPath, strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", telegramSecretToken)
-	return e.post(req)
+	msg, ok := e.post(req)
+
+	// V4-40: an install with no public address polls instead. The same update, fetched with
+	// getUpdates, must give the engine exactly the same message, so every scenario holds for both.
+	polled, polledOK := e.poll(body, int64(500000+messageID))
+	require.Equal(e.t, ok, polledOK, "polling and the webhook must agree on whether this update carries a message")
+	require.Equal(e.t, msg, polled, "polling must hand the engine the message the webhook does")
+	return msg, ok
+}
+
+// poll holds the update on the fake Bot API, runs the polling adapter's outward ingress until it
+// has confirmed that update, and returns what it handed to the inbound queue. The poller confirms
+// an update only after the sink took its message, so the queue is complete at that point.
+func (e *env) poll(update []byte, updateID int64) (layer.Inbound, bool) {
+	e.t.Helper()
+	adapter, ok := e.polling.Get(e.ch.name)
+	require.True(e.t, ok, "adapter %q is not registered", e.ch.name)
+	outward := adapter.Ingress().Outward
+	require.NotNil(e.t, outward, "adapter %q does not poll without a public address", e.ch.name)
+
+	e.wire.queueTelegramUpdate(update)
+	queue := &capturedQueue{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- outward.Run(ctx, queue.sink) }()
+	require.Eventually(e.t, func() bool { return e.wire.telegramConfirmed(updateID) }, 10*time.Second, time.Millisecond,
+		"the poller must fetch and confirm update %d", updateID)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		e.t.Fatal("the poller did not stop")
+	}
+	published := queue.messages()
+	if len(published) == 0 {
+		return layer.Inbound{}, false
+	}
+	require.Len(e.t, published, 1)
+	return published[0], true
 }
 
 // receiveWhatsApp builds the form Twilio posts for an inbound WhatsApp message, signs it as Twilio
@@ -216,9 +254,9 @@ func receiveWhatsApp(e *env, in inbound) (layer.Inbound, bool) {
 }
 
 // post serves req with the webhook route of the scenario's adapter, taken from the production
-// registry, and returns what the adapter handed to the inbound queue. (A fixture for an adapter
-// with an outward ingress, V4-40, hands its forged payload to the fake transport and runs
-// Outward.Run with the same sink instead.)
+// registry, and returns what the adapter handed to the inbound queue. (An adapter with an outward
+// ingress hands its forged payload to the fake transport and runs Outward.Run with the same sink
+// instead: see poll, which Telegram also goes through.)
 func (e *env) post(req *http.Request) (layer.Inbound, bool) {
 	e.t.Helper()
 	adapter, ok := e.channels.Get(e.ch.name)
@@ -291,6 +329,9 @@ type env struct {
 	t        *testing.T
 	ch       channel
 	channels *layer.Registry
+	// polling is the registry of an install with no public address (V4-40), on the same fake
+	// transport: there Telegram is polled instead of calling the webhook.
+	polling  *layer.Registry
 	engine   *orchestrator.Engine
 	wire     *fakePlatforms
 	redis    *miniredis.Miniredis
@@ -335,6 +376,10 @@ func newEnv(t *testing.T, ch channel) *env {
 	e.channels, err = adapters.Build(adapters.Config{
 		Telegram: telegram.Config{BotToken: telegramBotToken, SecretToken: telegramSecretToken},
 		WhatsApp: twilio.Config{AccountSID: twilioAccountSID, AuthToken: twilioAuthToken, FromNumber: twilioSender},
+	}, adapters.WithHTTPClient(httpClient))
+	require.NoError(t, err)
+	e.polling, err = adapters.Build(adapters.Config{
+		Telegram: telegram.Config{BotToken: telegramBotToken, Polling: true},
 	}, adapters.WithHTTPClient(httpClient))
 	require.NoError(t, err)
 

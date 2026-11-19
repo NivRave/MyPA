@@ -32,6 +32,13 @@ type Recognizer interface {
 	Recognizes(person string) bool
 }
 
+// Configurable is implemented by an adapter that is registered whether or not it has settings
+// (an unconfigured one rejects every request). It reports whether it has them: only a configured
+// adapter must be reachable (Registry.NeedPublicAddress).
+type Configurable interface {
+	Configured() bool
+}
+
 // Sink receives the messages an adapter's ingress produced. In the app it publishes to the durable
 // inbound queue, so a webhook can answer at once and the turn follows from the queue.
 type Sink func(ctx context.Context, in Inbound) error
@@ -57,7 +64,7 @@ type Webhook struct {
 }
 
 // Outward is an ingress that needs no public address: the adapter connects to the platform itself
-// (polling or a socket) and runs until ctx ends. The first one is built with V4-40.
+// (polling or a socket) and runs until ctx ends. The first was built with V4-40.
 type Outward struct {
 	Run func(ctx context.Context, sink Sink) error
 }

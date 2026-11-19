@@ -163,7 +163,12 @@ func TestRestore_AdminGetsInstructionsAndNothingIsRestored(t *testing.T) {
 			assert.Contains(t, reply, "BACKUP_AGE_IDENTITY_FILE", "an encrypted backup needs the private key")
 			assert.Contains(t, reply, "docs/RESTORE_AND_MIGRATE.md")
 			// V4-01: the app is one container; the tunnel goes first so nothing new comes in.
+			// V4-40: whichever ingress the install uses.
 			assert.Contains(t, reply, "docker compose stop ngrok")
+			assert.Contains(t, reply, "INGRESS")
+			for _, ingress := range []string{"cloudflare", "tailscale", "caddy"} {
+				assert.Contains(t, reply, ingress)
+			}
 			assert.Contains(t, reply, "docker compose stop app audit-worker dashboard")
 			assert.NotContains(t, reply, "CONFIRM RESTORE", "there is nothing to confirm any more")
 			h.assertNoPrivateDetail(t, reply)

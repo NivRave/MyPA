@@ -215,3 +215,26 @@ func TestSeal_RefusesLaterRegistrations(t *testing.T) {
 	assert.False(t, ok)
 	assert.Equal(t, []string{WebhookPrefix + "one"}, r.WebhookPaths(), "nor are its routes")
 }
+
+type configurableAdapter struct {
+	*fakeAdapter
+	configured bool
+}
+
+func (c configurableAdapter) Configured() bool { return c.configured }
+
+// V4-40 (ADR 0003 §6): the configured adapters that receive through webhooks are the ones an
+// install without a public address cannot run. An outward adapter and an unconfigured one are not
+// in the list; an adapter that cannot say whether it is configured is assumed to be.
+func TestRegistry_NeedPublicAddressListsConfiguredWebhookAdapters(t *testing.T) {
+	outward := newFake("outward")
+	outward.ingress = Ingress{Outward: &Outward{Run: func(context.Context, Sink) error { return nil }}}
+
+	r := NewRegistry()
+	require.NoError(t, r.Register(configurableAdapter{newFake("hooked"), true}))
+	require.NoError(t, r.Register(configurableAdapter{newFake("unset"), false}))
+	require.NoError(t, r.Register(outward))
+	require.NoError(t, r.Register(newFake("plain")))
+
+	assert.Equal(t, []string{"hooked", "plain"}, r.NeedPublicAddress())
+}

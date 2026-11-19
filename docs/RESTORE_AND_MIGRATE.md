@@ -115,12 +115,22 @@ what the queues can show:
 
 It cannot see what only accepts messages, because that publishes without consuming. Whatever
 lets messages in must stop first, so the queue can drain before the app goes away. On V4 (one
-`app` container, V4-01) that is the tunnel:
+`app` container, V4-01) that is the tunnel or proxy your `INGRESS` names (V4-40): the service of
+the same name, `ngrok`, `cloudflare`, `tailscale` or `caddy`. With `INGRESS=proxy`, stop your
+own proxy instead.
 
 ```
-docker compose stop ngrok                         # nothing new comes in
+docker compose stop ngrok                         # or cloudflare, tailscale, caddy: nothing new comes in
 # wait a few seconds: the app finishes what is queued
 docker compose stop app audit-worker dashboard
+```
+
+With `INGRESS=none` there is nothing in front: the app fetches Telegram messages itself, and
+stopping it stops both. If `export` then says the inbound queue still holds messages, drain it
+with a worker that fetches nothing new, and stop it with Ctrl+C once the queue is empty:
+
+```
+docker compose run --rm app --role=worker
 ```
 
 On the baseline (`v3.4.x`, before the upgrade in section A), the same steps name its services:
@@ -137,14 +147,15 @@ Check with `docker compose ps` that none of them is still running (an app starte
 messages, start the app (on `v3.4.x`, the orchestrator) again, leaving what lets messages in
 stopped, until it is empty.
 
-While the app is stopped, Telegram keeps messages and delivers them when a webhook is registered
-again. Twilio does not hold them for later: WhatsApp messages sent during the move are lost. Tell
+While the app is stopped, Telegram keeps messages (for up to 24 hours) and delivers them when a
+webhook is registered again or the app polls again. Twilio does not hold them for later: WhatsApp messages sent during the move are lost. Tell
 the family first.
 
 ## A. Upgrade from the baseline (`v3.4.x`) on the same machine
 
 1. Stop the app with the baseline's commands (see above).
-2. Check out the V4 release. Do **not** run `up` yet.
+2. Check out the V4 release. Do **not** run `up` yet. Change `.env` for the one public address
+   (V4-40, section D): the app refuses to start while an old address setting is still there.
 3. Take the final backup of the baseline. This is the rollback point:
    ```
    docker compose --profile tools build transfer
@@ -199,9 +210,8 @@ On the new machine, with V4 checked out and a `.env` prepared:
 10. The old install stays stopped. Keep it until the new one has proven itself; its database is
     untouched.
 
-Public addresses (Telegram webhook, Twilio callback, Google redirect) are settings of the new
-install. Until V4-40 gives them one shared setting they have to be updated by hand when the
-address changes.
+Public addresses (Telegram webhook, Twilio callback, Google redirect) all come from `PUBLIC_URL`
+(V4-40). Moving between a home PC and a server is section D.
 
 ## C. Data lost or damaged on a working machine
 
@@ -223,6 +233,47 @@ If RabbitMQ or Redis themselves are gone, the checks that need them can be turne
 queues of the source were not confirmed drained.
 
 Backups are stored on this machine only. Losing the machine loses them (OP-11).
+
+## D. Move between local and a server (V4-40)
+
+The same release runs at home and on a server. A move is section B plus a change of how the
+install is reached, in `.env`; no file is edited.
+
+| Mode | `INGRESS` | `PUBLIC_URL` | `COMPOSE_PROFILES` |
+| :--- | :--- | :--- | :--- |
+| Home PC, Telegram only, no tunnel | `none` | *(empty)* | *(empty)* |
+| Home PC with a tunnel | `cloudflare`, `tailscale` or `ngrok` | the tunnel's address | the same word |
+| Server with your own domain (Linux; DNS pointing at it, ports 80 and 443 open) | `caddy` | `https://<your domain>` | `caddy` |
+| Server behind your own reverse proxy, forwarding to `127.0.0.1:8000` | `proxy` | your proxy's address | *(empty)* |
+
+**Keep the address.** On a domain you control, `PUBLIC_URL` stays the same in both modes. Only
+the place it points at changes: the DNS record (for `caddy`), or the Cloudflare tunnel's
+connector (for `cloudflare`, the same tunnel token on the new machine). Then nothing changes at
+Twilio or Google, and Telegram's webhook is registered again at start. An ngrok or Tailscale
+address belongs to that account and node, so with those the address moves with the tunnel; if it
+changes, update the webhook in the Twilio console and the redirect URI at Google.
+
+**From home to a server, and back.** The direction does not matter:
+
+1. On the old machine, stop what lets messages in, then the app (see "Only one install is ever
+   live"), and run `transfer export` and `transfer export-keys` (section B, steps 1 to 3).
+2. Copy the set and `mypa-keys.age` to the new machine. Check out the same release there.
+3. Prepare the new machine's `.env` from the old one, changing only `INGRESS`, `PUBLIC_URL` and
+   `COMPOSE_PROFILES` for the new mode (and the tunnel's token, if the mode has one).
+4. Restore (section B, steps 4 to 8).
+5. For `caddy`, point the domain's DNS at the new machine now. For `none`, nothing reaches the
+   install and Telegram polls; WhatsApp needs a public address and the app refuses to start with
+   it configured, so remove the Twilio settings or choose another mode.
+6. `docker compose up -d --build`, then `/doctor`. The Telegram line says whether Telegram
+   delivers here: by polling with `none`, at `PUBLIC_URL` otherwise.
+7. Send a message on every channel in use. Keep the old install stopped.
+
+What is not carried across a move is the same as for any restore ("What is not carried").
+
+**Upgrading the `.env` of a `v3.4.x` install.** Remove `TELEGRAM_WEBHOOK_URL`,
+`TWILIO_STATUS_CALLBACK_URL`, `GOOGLE_REDIRECT_URL` and `NGROK_DOMAIN`. For the ngrok setup the
+baseline used, set `INGRESS=ngrok`, `PUBLIC_URL=https://<NGROK_DOMAIN>` and
+`COMPOSE_PROFILES=ngrok`. The addresses Telegram, Twilio and Google know stay the same.
 
 ## What `import` does, in order
 
@@ -272,6 +323,17 @@ says so; `/backup` takes one.
 | `transfer import-keys` | Write the settings lines from a key file, opened with the private backup key. Flags: `--in FILE`, `--passphrase-file FILE`, `--out FILE` |
 
 `FILE` may be a name inside the backup directory.
+
+## Checks before V4-40 is marked done (owner)
+
+- [ ] One install is moved from the home PC to a server (section D) and back, and after each
+      move every feature in use still works and nothing is lost except what "What is not carried"
+      lists.
+- [ ] On a domain you control, the move changed nothing at Twilio or Google.
+- [ ] A Telegram-only install with `INGRESS=none` and no tunnel receives and answers messages,
+      and `/doctor` reports Telegram polling.
+- [ ] Each ingress you intend to use (`caddy`, `cloudflare`, `tailscale`, `ngrok`) reaches the
+      app once: Telegram's `/doctor` line is healthy and a WhatsApp message is answered.
 
 ## Checks before V4-43 is marked done (owner, at the V4.0 release)
 

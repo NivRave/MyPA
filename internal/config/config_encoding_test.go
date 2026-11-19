@@ -81,7 +81,8 @@ func TestConfigYamlAndEnvExample(t *testing.T) {
 	}
 
 	assert.Contains(t, envContent, "ENCRYPTION_KEY=", ".env.example must contain ENCRYPTION_KEY definition")
-	assert.Contains(t, envContent, "GOOGLE_REDIRECT_URL=http://localhost:8000/auth/google/callback", ".env.example must point the Google redirect at the app port (V4-01)")
+	assert.Contains(t, envContent, "http://localhost:8000/auth/google/callback", ".env.example must name the local Google redirect at the app port (V4-01)")
+	assert.Contains(t, envContent, "PUBLIC_URL/auth/google/callback", ".env.example must name the public Google redirect, derived from PUBLIC_URL (V4-40)")
 	for _, gone := range []string{"GATEWAY_URL=", "ORCHESTRATOR_URL="} {
 		assert.NotContains(t, envContent, gone, "V4-01 removed the proxy that read %s", gone)
 	}

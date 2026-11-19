@@ -40,7 +40,7 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 - [Docker & Docker Compose](https://docs.docker.com/get-docker/)
 - Gemini API key ([Google AI Studio](https://aistudio.google.com/))
 - Telegram bot token ([@BotFather](https://t.me/BotFather)) and/or Twilio account (WhatsApp)
-- Optional: ngrok account (webhook ingress), Google Cloud OAuth credentials (Workspace tools), Groq (voice), Tavily (web search)
+- Optional: a way to be reached from the internet, needed for WhatsApp but not for Telegram (a domain for a server with Caddy, Cloudflare Tunnel, Tailscale Funnel, your own reverse proxy, or ngrok), Google Cloud OAuth credentials (Workspace tools), Groq (voice), Tavily (web search)
 
 ---
 
@@ -53,23 +53,34 @@ An event-driven, multi-tenant personal and family AI operating system accessible
    cp .env.example .env
    # Edit .env with your API keys, OAuth credentials, and security secrets
    ```
-   Required: `ENCRYPTION_KEY` and `JWT_SECRET` (two *different* `openssl rand -hex 32` values), `DASHBOARD_API_SECRET`, `DASHBOARD_FAMILY_GROUP`, `GEMINI_API_KEY`, and the infrastructure credentials `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` and `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`; plus `TELEGRAM_SECRET_TOKEN` when Telegram is configured and `TWILIO_AUTH_TOKEN` when `TWILIO_ACCOUNT_SID` is set. Recommended: `BACKUP_AGE_RECIPIENTS`. The app and the audit worker validate their keys at startup and list anything missing. Full reference: [SYSTEM.md §8.1](./SYSTEM.md#81-environment-variables-internalconfigconfiggo--internalcryptoaesgo).
+   Required: `ENCRYPTION_KEY` and `JWT_SECRET` (two *different* `openssl rand -hex 32` values), `DASHBOARD_API_SECRET`, `DASHBOARD_FAMILY_GROUP`, `GEMINI_API_KEY`, and the infrastructure credentials `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` and `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`; plus `TELEGRAM_SECRET_TOKEN` when Telegram receives webhooks and `TWILIO_AUTH_TOKEN` when `TWILIO_ACCOUNT_SID` is set. Recommended: `BACKUP_AGE_RECIPIENTS`. The app and the audit worker validate their keys at startup and list anything missing. Full reference: [SYSTEM.md §8.1](./SYSTEM.md#81-environment-variables-internalconfigconfiggo--internalcryptoaesgo).
 
-   Docker builds each container's broker/Redis/database URL from those credentials and the service names (`rabbitmq`, `redis`, `postgres`); the `RABBITMQ_URL`, `REDIS_URL` and `DATABASE_URL` keys in `.env` are **ignored by Docker** and only used when you run a service on the host (below).
+   Docker builds each container's broker/Redis/database URL from those credentials and the service names (`rabbitmq`, `redis`, `postgres`); the `RABBITMQ_URL`, `REDIS_URL` and `DATABASE_URL` keys in `.env` are **ignored by Docker** and only used when you run a service on the host (below). To use managed services instead, set `EXTERNAL_DATABASE_URL`, `EXTERNAL_REDIS_URL` and `EXTERNAL_RABBITMQ_URL`.
 
-2. **Build and start all services (including containerized ngrok):**
+   **Choose how MyPA is reached** (V4-40). The same files run on a home PC or a server; only `.env` changes:
+
+   | You run | `INGRESS` | `PUBLIC_URL` | `COMPOSE_PROFILES` |
+   | :--- | :--- | :--- | :--- |
+   | Telegram only, at home, no tunnel | `none` (default) | *(empty)* | *(empty)* |
+   | A server with your own domain (DNS pointing at it, ports 80 and 443 open) | `caddy` | `https://mypa.example.com` | `caddy` |
+   | A Cloudflare Tunnel (`CLOUDFLARE_TUNNEL_TOKEN`; hostname and `http://app:8000` set in Cloudflare) | `cloudflare` | the tunnel's hostname | `cloudflare` |
+   | Tailscale Funnel (`TAILSCALE_AUTHKEY`) | `tailscale` | `https://<TAILSCALE_HOSTNAME>.<tailnet>.ts.net` | `tailscale` |
+   | Your own reverse proxy, forwarding to `127.0.0.1:8000` | `proxy` | your proxy's address | *(empty)* |
+   | ngrok (`NGROK_AUTHTOKEN`) | `ngrok` | your reserved ngrok domain | `ngrok` |
+
+   With `INGRESS=none` Telegram fetches messages itself (polling), and WhatsApp, which needs a public address, refuses to start. `PUBLIC_URL` is the one public address: the Telegram webhook, the WhatsApp webhooks and the Google sign-in redirect are all derived from it. On a domain you control it stays the same when you move between a home PC and a server, so nothing changes at Twilio or Google. The dashboard is never behind any of these.
+
+2. **Build and start all services:**
    ```bash
    docker-compose up -d --build
    ```
    *(this starts one `app` container — webhooks, conversation turns, `/graphql` and the Google sign-in on port 8000 — plus the `audit-worker`, the `dashboard` and the infrastructure; the one-shot `migrate` service applies database migrations first, and the app and audit-worker start only after it succeeds)*
-   *(ngrok starts automatically inside Docker using `NGROK_AUTHTOKEN` and `NGROK_DOMAIN` from `.env`, exposing the tunnel inspection UI at `http://localhost:4040` and the Web Dashboard at `http://localhost:3030`)*
+   *(the tunnel or proxy of your `INGRESS` starts with it, through `COMPOSE_PROFILES`; with ngrok its inspection UI is at `http://localhost:4040`. The Web Dashboard is at `http://localhost:3030`)*
 
 3. **Set Webhooks:**
-   - **Telegram:** Automatic. When `TELEGRAM_WEBHOOK_URL` is set, the app calls `setWebhook` with `TELEGRAM_SECRET_TOKEN` on startup (look for `telegram webhook registered with secret token` in `docker-compose logs app`). To register manually instead:
-     ```bash
-     curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=<NGROK_URL>/webhook/telegram&secret_token=<TELEGRAM_SECRET_TOKEN>"
-     ```
-   - **WhatsApp:** Set `<NGROK_URL>/webhook/twilio` (e.g., `https://your-domain.ngrok-free.dev/webhook/twilio`) in your Twilio WhatsApp Sandbox settings. Also set `TWILIO_STATUS_CALLBACK_URL=<NGROK_URL>/webhook/twilio/status` in `.env`, so replies Twilio accepts but cannot deliver show up in `docker-compose logs app` as `whatsapp message not delivered` (with the error code and a hint, e.g. 63015 = re-join the sandbox).
+   - **Telegram:** Automatic. With `INGRESS=none` the app polls (look for `telegram polling for updates` in `docker compose logs app`). With a public address it calls `setWebhook` for `PUBLIC_URL/webhook/telegram` with `TELEGRAM_SECRET_TOKEN` on startup (look for `telegram webhook registered with secret token`).
+   - **WhatsApp:** Set `PUBLIC_URL/webhook/twilio` (e.g. `https://mypa.example.com/webhook/twilio`) in your Twilio WhatsApp Sandbox settings. Delivery reports go to `PUBLIC_URL/webhook/twilio/status` automatically, so replies Twilio accepts but cannot deliver show up in `docker compose logs app` as `whatsapp message not delivered` (with the error code and a hint, e.g. 63015 = re-join the sandbox).
+   - **Google:** register `PUBLIC_URL/auth/google/callback` as the OAuth redirect URI (or `http://localhost:8000/auth/google/callback` with no public address, which only works in a browser on the same machine).
 
 ### Running Locally (Development)
 
@@ -97,7 +108,11 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 
 ### Upgrade note: one app container (V4-01)
 
-`proxy`, `gateway` and `orchestrator` are now one `app` service (`cmd/mypa`), on the old proxy port 8000, so the public webhook and sign-in addresses do not change. When upgrading, follow [docs/RESTORE_AND_MIGRATE.md](./docs/RESTORE_AND_MIGRATE.md) section A: it stops the old services and starts V4 with `--remove-orphans`, so the old containers do not linger. In `.env`, `GATEWAY_URL` and `ORCHESTRATOR_URL` are no longer read and can be removed, and a `GOOGLE_REDIRECT_URL` that points at port `8081` must move to `8000` (or to the public address). Logs are now `docker compose logs app`.
+`proxy`, `gateway` and `orchestrator` are now one `app` service (`cmd/mypa`), on the old proxy port 8000, so the public webhook and sign-in addresses do not change. When upgrading, follow [docs/RESTORE_AND_MIGRATE.md](./docs/RESTORE_AND_MIGRATE.md) section A: it stops the old services and starts V4 with `--remove-orphans`, so the old containers do not linger. In `.env`, `GATEWAY_URL` and `ORCHESTRATOR_URL` are no longer read and can be removed. Logs are now `docker compose logs app`.
+
+### Upgrade note: one public address (V4-40)
+
+`TELEGRAM_WEBHOOK_URL`, `TWILIO_STATUS_CALLBACK_URL`, `GOOGLE_REDIRECT_URL` and `NGROK_DOMAIN` are replaced by `INGRESS` and `PUBLIC_URL`, and the app refuses to start while one of them is still in `.env`. For an install that used ngrok: remove the four, and set `INGRESS=ngrok`, `PUBLIC_URL=https://<your ngrok domain>` and `COMPOSE_PROFILES=ngrok` (ngrok no longer starts without its profile). The addresses Telegram, Twilio and Google know do not change. Details: [docs/RESTORE_AND_MIGRATE.md](./docs/RESTORE_AND_MIGRATE.md) section D.
 
 ### Upgrade note: RabbitMQ 3.13 → 4.3 (P5-4)
 

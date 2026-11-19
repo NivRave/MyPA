@@ -26,6 +26,7 @@ type EventPublisher interface {
 type Handler struct {
 	publisher EventPublisher
 	authToken string
+	publicURL string
 }
 
 // NewHandler creates a new Twilio Webhook handler.
@@ -38,6 +39,14 @@ func NewHandler(publisher EventPublisher, authToken ...string) *Handler {
 		publisher: publisher,
 		authToken: token,
 	}
+}
+
+// WithPublicURL makes the handler verify signatures against the install's public address
+// (PUBLIC_URL, V4-40) instead of rebuilding it from the request and its forwarded headers. Twilio
+// signs the address it calls, which is the public one; an empty base keeps the request's own.
+func (h *Handler) WithPublicURL(base string) *Handler {
+	h.publicURL = strings.TrimSuffix(base, "/")
+	return h
 }
 
 // HandleWebhook processes the incoming Twilio webhook POST request.
@@ -186,19 +195,7 @@ func (h *Handler) HandleStatusCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) validateSignature(r *http.Request, form url.Values, signature string) bool {
-	scheme := r.Header.Get("X-Forwarded-Proto")
-	if scheme == "" {
-		if r.TLS != nil {
-			scheme = "https"
-		} else {
-			scheme = "http"
-		}
-	}
-	host := r.Header.Get("X-Forwarded-Host")
-	if host == "" {
-		host = r.Host
-	}
-	fullURL := scheme + "://" + host + r.URL.RequestURI()
+	fullURL := h.signedURL(r)
 
 	var keys []string
 	for k := range form {
@@ -221,4 +218,25 @@ func (h *Handler) validateSignature(r *http.Request, form url.Values, signature 
 	expectedSig := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 
 	return subtle.ConstantTimeCompare([]byte(signature), []byte(expectedSig)) == 1
+}
+
+// signedURL is the address Twilio signed: the public address when it is known, otherwise the one
+// the request reached, as the proxy in front reports it.
+func (h *Handler) signedURL(r *http.Request) string {
+	if h.publicURL != "" {
+		return h.publicURL + r.URL.RequestURI()
+	}
+	scheme := r.Header.Get("X-Forwarded-Proto")
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	return scheme + "://" + host + r.URL.RequestURI()
 }

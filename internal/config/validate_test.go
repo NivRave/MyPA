@@ -97,15 +97,15 @@ func TestValidate(t *testing.T) {
 			mutate: func(c *Config) { c.Channels.WhatsApp.StatusCallbackURL = "https://gw.example/webhook/twilio/status" }},
 		{name: "Worker_StatusCallbackNotHTTPS", service: RoleWorker, base: workerOK,
 			mutate:  func(c *Config) { c.Channels.WhatsApp.StatusCallbackURL = "http://gw.example/webhook/twilio/status" },
-			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
+			wantErr: []string{"delivery-report address"}},
 		{name: "Worker_StatusCallbackRelative", service: RoleWorker, base: workerOK,
 			mutate:  func(c *Config) { c.Channels.WhatsApp.StatusCallbackURL = "/webhook/twilio/status" },
-			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
+			wantErr: []string{"delivery-report address"}},
 		{name: "Worker_StatusCallbackPlaceholder", service: RoleWorker, base: workerOK,
 			mutate: func(c *Config) {
 				c.Channels.WhatsApp.StatusCallbackURL = "https://your-ngrok-url.ngrok-free.dev/webhook/twilio/status"
 			},
-			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
+			wantErr: []string{"delivery-report address"}},
 
 		// --- all (V4-01: ingress and worker in one process, the default role) ---
 		// It needs everything the worker needs, and the ingress checks run too: one process now
@@ -132,7 +132,7 @@ func TestValidate(t *testing.T) {
 			mutate: func(c *Config) { c.Channels.WhatsApp.AccountSID = "AC1" }, wantErr: []string{"TWILIO_AUTH_TOKEN"}},
 		{name: "All_StatusCallbackNotHTTPS", service: RoleAll, base: workerOK,
 			mutate:  func(c *Config) { c.Channels.WhatsApp.StatusCallbackURL = "http://gw.example/webhook/twilio/status" },
-			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
+			wantErr: []string{"delivery-report address"}},
 
 		// --- the services V4-01 removed are no longer accepted ---
 		{name: "Removed_Proxy", service: "proxy", base: workerOK, wantErr: []string{"unknown service"}},

@@ -33,9 +33,11 @@ func Regions() (map[string]string, error) {
 }
 
 // ChannelMatrix renders the capabilities of the adapters the app registers, in registration
-// order, as an unconfigured install declares them.
+// order, as an unconfigured install declares them: its settings loaded from an empty environment,
+// so it has no public address (INGRESS=none, V4-40) and an adapter that can receive without one
+// shows that mode.
 func ChannelMatrix() (string, error) {
-	reg, err := adapters.Build(adapters.Config{})
+	reg, err := adapters.Build(adapters.LoadConfig(func(string) string { return "" }))
 	if err != nil {
 		return "", err
 	}

@@ -176,6 +176,23 @@ func (r *Registry) FetchAll(ctx context.Context, channelName string, ref Attachm
 	return buf.Bytes(), nil
 }
 
+// NeedPublicAddress returns, in registration order, the configured adapters whose ingress is a
+// webhook. An install without a public address cannot run them: the app refuses to start rather
+// than run a channel that can send but never receives (ADR 0003 §6, V4-40). An adapter that does
+// not implement Configurable counts as configured.
+func (r *Registry) NeedPublicAddress() []string {
+	var names []string
+	for _, a := range r.All() {
+		if c, ok := a.(Configurable); ok && !c.Configured() {
+			continue
+		}
+		if a.Ingress().NeedsPublicAddress() {
+			names = append(names, a.Name())
+		}
+	}
+	return names
+}
+
 // WebhookPaths returns every webhook path served by the registered adapters.
 func (r *Registry) WebhookPaths() []string {
 	if r == nil {

@@ -9,6 +9,8 @@
 bin/
 coverage
 scripts/
+# V4-40: bundled ingress configuration, bind-mounted by compose, never part of an image.
+deploy/
 .env
 .env.*
 !.env.example

@@ -90,6 +90,13 @@ func (c *Config) Validate(service string) error {
 
 	servesIngress := service == RoleAll || service == RoleIngress
 	runsWorker := service == RoleAll || service == RoleWorker
+	if servesIngress || runsWorker {
+		// How the install is reached (V4-40). The audit worker receives nothing and is not checked.
+		errs = append(errs, c.Deploy.Validate()...)
+		for _, k := range c.replaced {
+			errs = append(errs, fmt.Errorf("%s is no longer read: PUBLIC_URL replaced it (V4-40). Set INGRESS and PUBLIC_URL instead and remove %s", k, k))
+		}
+	}
 	if runsWorker {
 		if c.Server.JWTSecret != "" && strings.TrimSpace(c.Server.JWTSecret) == strings.TrimSpace(c.Encryption.Key) {
 			errs = append(errs, errors.New("JWT_SECRET must differ from ENCRYPTION_KEY"))

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Credentials the fake platforms accept. They are checked on every request, so a client that
@@ -42,6 +43,10 @@ type fakePlatforms struct {
 	telegramFiles map[string][]byte // Telegram file_id -> content
 	twilioMedia   map[string][]byte // Twilio media URL path -> content
 	downloads     []string          // what was fetched, in order
+	// Telegram polling (V4-40): the updates the Bot API holds for getUpdates, and the highest
+	// offset a getUpdates call has confirmed.
+	telegramUpdates []json.RawMessage
+	confirmed       int64
 }
 
 func newFakePlatforms(t *testing.T) *fakePlatforms {
@@ -56,6 +61,23 @@ func (f *fakePlatforms) addTelegramFile(fileID string, data []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.telegramFiles[fileID] = data
+}
+
+// queueTelegramUpdate holds an update for the next getUpdates call. Each poll is a fresh poller
+// starting from offset 0, so nothing is confirmed yet: an update queued again with the same ID is
+// what a restart before the confirmation delivers (the polling form of duplicate_delivery).
+func (f *fakePlatforms) queueTelegramUpdate(update []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.telegramUpdates = append(f.telegramUpdates, json.RawMessage(update))
+	f.confirmed = 0
+}
+
+// telegramConfirmed reports whether a getUpdates call has confirmed the update with this ID.
+func (f *fakePlatforms) telegramConfirmed(updateID int64) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.confirmed > updateID
 }
 
 func (f *fakePlatforms) addTwilioMedia(urlPath string, data []byte) {
@@ -119,6 +141,41 @@ func (f *fakePlatforms) telegram(req *http.Request) (*http.Response, error) {
 		}
 		f.record(wireMessage{Platform: "telegram", To: body.ChatID, Meta: meta, Text: body.Text})
 		return respond(req, http.StatusOK, `{"ok":true,"result":{}}`), nil
+
+	case req.Method == http.MethodPost && path == botPrefix+"deleteWebhook":
+		return respond(req, http.StatusOK, `{"ok":true,"result":true}`), nil
+
+	case req.Method == http.MethodPost && path == botPrefix+"getUpdates":
+		var body struct {
+			Offset int64 `json:"offset"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			return respond(req, http.StatusBadRequest, `{"ok":false,"description":"Bad Request: cannot parse body"}`), nil
+		}
+		f.mu.Lock()
+		if body.Offset > f.confirmed {
+			f.confirmed = body.Offset
+		}
+		var held []json.RawMessage
+		for _, u := range f.telegramUpdates {
+			var id struct {
+				UpdateID int64 `json:"update_id"`
+			}
+			_ = json.Unmarshal(u, &id)
+			if id.UpdateID >= body.Offset {
+				held = append(held, u)
+			}
+		}
+		f.telegramUpdates = held
+		f.mu.Unlock()
+		if len(held) == 0 {
+			time.Sleep(time.Millisecond) // a long poll with nothing waiting
+		}
+		result, err := json.Marshal(held)
+		if err != nil || len(held) == 0 {
+			result = []byte("[]")
+		}
+		return respond(req, http.StatusOK, `{"ok":true,"result":`+string(result)+`}`), nil
 
 	case req.Method == http.MethodGet && path == botPrefix+"getFile":
 		fileID := req.URL.Query().Get("file_id")

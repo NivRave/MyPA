@@ -111,3 +111,39 @@ func TestTelegramWebhook_NotConfigured(t *testing.T) {
 	}}
 	assert.Equal(t, doctor.StatusInfo, one(t, c, adminScope).Status)
 }
+
+// V4-40: a polling install expects no webhook. Telegram holds the updates until the app fetches
+// them, so a webhook registered by anything else means this install receives nothing; the likely
+// cause is a second install live on the same bot.
+func TestTelegramWebhook_Polling(t *testing.T) {
+	polling := func(info WebhookHealth) WebhookCheck {
+		c := webhookCheck(info, nil)
+		c.Polling, c.WantURL = true, ""
+		return c
+	}
+	t.Run("no webhook is healthy", func(t *testing.T) {
+		r := one(t, polling(WebhookHealth{Pending: 2}), adminScope)
+		assert.Equal(t, doctor.StatusOK, r.Status)
+		assert.Contains(t, r.Detail, "polls")
+		assert.Contains(t, r.Detail, "2 updates are waiting")
+		assert.Empty(t, r.NextStep)
+	})
+	t.Run("a webhook set by someone else", func(t *testing.T) {
+		r := one(t, polling(WebhookHealth{URL: "https://old-install.example/webhook/telegram"}), adminScope)
+		requireProblem(t, r, doctor.StatusFail, "old-install.example")
+		assert.Contains(t, r.NextStep, "only one install")
+	})
+}
+
+// The next steps name the setting that exists now: PUBLIC_URL replaced TELEGRAM_WEBHOOK_URL.
+func TestTelegramWebhook_NextStepsNameThePublicAddressSetting(t *testing.T) {
+	for _, info := range []WebhookHealth{
+		{URL: ""},
+		{URL: "https://old-tunnel.example/webhook/telegram"},
+		{URL: "https://mypa.example/webhook/telegram", Pending: 1, LastErrorAt: testNow.Add(-time.Minute), LastErrorMsg: "x"},
+	} {
+		r := one(t, webhookCheck(info, nil), adminScope)
+		assert.Contains(t, r.NextStep, "PUBLIC_URL", "%+v", info)
+		assert.NotContains(t, r.NextStep, "TELEGRAM_WEBHOOK_URL")
+	}
+}

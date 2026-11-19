@@ -421,7 +421,7 @@ func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifier
 		}
 	}
 
-	mux.HandleFunc("/auth/google/callback", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(config.GoogleCallbackPath, func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		stateParam := r.URL.Query().Get("state")
 
