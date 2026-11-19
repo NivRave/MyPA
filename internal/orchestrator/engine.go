@@ -45,6 +45,7 @@ type Engine struct {
 	eventBus           *events.EventBus
 	intentMatcher      IntentMatcher
 	calendar           CalendarConventions // week start / weekend for the system prompt (P2-6)
+	health             HealthReporter      // the /doctor report (V4-17); nil when not wired
 }
 
 var hebrewPrepositionRegex = regexp.MustCompile(`(^|[^\p{Hebrew}\w])([בלמכ])(\d+)`)

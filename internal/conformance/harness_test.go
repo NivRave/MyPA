@@ -303,6 +303,7 @@ func newEnv(t *testing.T, ch channel) *env {
 	registry.Register(e.tools)
 	registry.Register(e.undo)
 	e.engine.SetToolRegistry(registry)
+	e.engine.WithHealthReporter(scenarioDoctor())
 
 	t.Cleanup(func() {
 		e.engine.Wait()

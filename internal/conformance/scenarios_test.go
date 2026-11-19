@@ -21,6 +21,7 @@ type scenario struct {
 
 // scenarios is the shared set. The six named in ROADMAP V4-34 are pairing, approval, reminder,
 // undo, media and long reply; plain_reply and duplicate_delivery pin the baseline around them.
+// Features added since join the set: doctor (V4-17).
 var scenarios = []scenario{
 	{"plain_reply", plainReply},
 	{"pairing", pairing},
@@ -33,6 +34,7 @@ var scenarios = []scenario{
 	{"media_document", mediaDocument},
 	{"long_reply", longReply},
 	{"duplicate_delivery", duplicateDelivery},
+	{"doctor", doctorReport},
 }
 
 // TestConformance runs every scenario on every channel.
@@ -420,4 +422,41 @@ func duplicateDelivery(t *testing.T, e *env) {
 	require.Len(t, e.wire.messages(), 1)
 	e.requireAllSentTo(p)
 	e.golden("duplicate_delivery")
+}
+
+// doctorReport: an admin asks for the health report (V4-17) and can read it on this channel: the
+// problems first, each with what to do next, formatted with the channel's own markup. Anyone who
+// is not an admin is refused.
+func doctorReport(t *testing.T, e *env) {
+	admin := e.member(1, "admin", "Levi")
+	member := e.member(2, "family", "Levi")
+
+	e.says(member, "/doctor")
+	require.Len(t, e.wire.messages(), 1)
+	assert.Contains(t, e.lastText(), "Permission denied")
+	assert.NotContains(t, e.lastText(), "health check", "a non-admin learns nothing about the install")
+
+	e.says(admin, "/doctor")
+	texts := e.texts()[1:]
+	require.NotEmpty(t, texts)
+	report := strings.Join(texts, "\n")
+
+	// It reads correctly: no raw Markdown reaches the person, and every message fits the platform.
+	assert.NotContains(t, report, "**", "bold must be rendered in the channel's markup, not sent as raw Markdown")
+	for i, text := range texts {
+		assert.LessOrEqual(t, utf8.RuneCountInString(text), e.ch.hardLimit, "report message %d exceeds what %s accepts", i+1, e.ch.name)
+	}
+	// The three problems of the fixture are there, each with a next step, ahead of what passed.
+	for _, problem := range []string{"Telegram webhook", "Google account: Omer", "WhatsApp sender"} {
+		assert.Contains(t, report, problem)
+	}
+	assert.Contains(t, report, "Connection refused")
+	assert.Contains(t, report, "Ask Omer to send /connect")
+	assert.Equal(t, 3, strings.Count(report, "➡️"), "one next step per problem")
+	assert.Less(t, strings.Index(report, "Telegram webhook"), strings.Index(report, "Database schema"), "problems come before what passed")
+	assert.Contains(t, report, "2 problems, 1 warning")
+
+	assert.Empty(t, e.model.requests(), "the health check is handled without the model")
+	e.requireAllSentTo(admin, member)
+	e.golden("doctor")
 }
