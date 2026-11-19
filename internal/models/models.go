@@ -12,8 +12,8 @@ import (
 type CalendarEvent struct {
 	ID          string   `json:"id,omitempty"`
 	Title       string   `json:"title"`
-	StartTime   string   `json:"start_time"` // ISO 8601
-	EndTime     string   `json:"end_time"`   // ISO 8601
+	StartTime   string   `json:"start_time"`   // ISO 8601
+	EndTime     string   `json:"end_time"`     // ISO 8601
 	Description string   `json:"description,omitempty"`
 	Timezone    string   `json:"timezone"`
 	Recurrence  []string `json:"recurrence,omitempty"`
@@ -26,7 +26,6 @@ type Contact struct {
 	Email        string `json:"email,omitempty"`
 	Phone        string `json:"phone,omitempty"`
 }
-
 // ChatMessage represents a single message in conversation history.
 type ChatMessage struct {
 	Role          string             `json:"role"` // "user", "assistant", or "function"

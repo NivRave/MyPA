@@ -158,7 +158,6 @@ func (fx *turnEffects) any() bool { return fx != nil && fx.happened.Load() }
 var readOnlyBuiltinTools = map[string]bool{
 	"get_current_time": true,
 }
-
 // turnUserKey carries the user resolved once at the start of a turn (P2-7), so tool calls don't
 // each re-query the database for the same row.
 type turnUserKey struct{}

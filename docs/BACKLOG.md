@@ -45,7 +45,6 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-32 | Low | A pairing code can be redeemed by two senders at the same moment | open: ADR 0002 requires a one-statement claim for every code |
 | BL-33 | Low | WhatsApp and Telegram message splitting counts bytes, not characters, so non-Latin text is split at about half the allowed length | open: fix after the channel port (V4-31), not during it |
 | BL-34 | Low | The dashboard home page still shows the label "Orchestrator V3 • Active" | open |
-| BL-35 | Low | Dashboard pages name Telegram and WhatsApp in fixed copy; the channel layer's guard covers Go code only | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -489,19 +488,6 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** with the dashboard reorganisation (V4-37), or on its own: show the app and its version, taken
   from the app instead of hard-coded (for example from `/doctor`'s data once V4-37 gives it a page), or
   drop the label. Test: the home page does not contain "Orchestrator".
-
-### BL-35 — Dashboard copy names the platforms (Low)
-- **Found:** 2026-11-19, while building V4-31.
-- **Evidence:** fixed strings in `dashboard/src/app/page.tsx:67` ("Manage telegram/whatsapp users"),
-  `dashboard/src/app/shared/page.tsx:198-233` (example IDs `telegram:12345678`, "Instant Push
-  (Telegram/WA)"), `dashboard/src/app/automations/page.tsx:417` and `dashboard/src/app/finance/page.tsx:443`.
-  V4-31's guard (`TestNoPlatformNamedOutsideAdapters`) covers production Go code, where the "done when"
-  applies; the dashboard is outside it.
-- **Impact:** cosmetic today. A channel added later (Discord, V4-39) would not appear in that copy, and the
-  `telegram:12345678` examples show an ID format MyPA does not use.
-- **Fix:** with the dashboard reorganisation (V4-37): name channels from data (the adapters' names, through
-  GraphQL) or in neutral words, and extend the guard to `dashboard/src`. Test: the guard fails on a
-  platform name in dashboard sources.
 
 ## Operations (owner)
 

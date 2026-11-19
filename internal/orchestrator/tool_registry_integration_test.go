@@ -2,14 +2,14 @@ package orchestrator_test
 
 import (
 	"context"
-	"strings"
 	"sync"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/nivik/mypa/internal/channel"
-	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/domains/automation"
+	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/domains/memory"
 	"github.com/nivik/mypa/internal/domains/shared"
 	"github.com/nivik/mypa/internal/domains/web_research"
@@ -181,7 +181,7 @@ func (m *mockDBClient) SaveReminder(reminder models.ScheduledReminder) error {
 	return nil
 }
 func (m *mockDBClient) GetDueReminders() ([]models.ScheduledReminder, error) { return nil, nil }
-func (m *mockDBClient) MarkReminderSent(id uint) error                       { return nil }
+func (m *mockDBClient) MarkReminderSent(id uint) error                      { return nil }
 func (m *mockDBClient) GetDueSharedReminders() ([]models.SharedTaskReminder, error) {
 	return nil, nil
 }
@@ -189,8 +189,8 @@ func (m *mockDBClient) MarkSharedReminderSent(id uint) error { return nil }
 func (m *mockDBClient) GetUser(platformID string) (*models.User, error) {
 	return &models.User{ID: "uuid-1", PlatformID: platformID, FamilyGroup: "fam-canonical"}, nil
 }
-func (m *mockDBClient) UpsertUser(u models.User) error                { return nil }
-func (m *mockDBClient) CreatePairingCode(pc models.PairingCode) error { return nil }
+func (m *mockDBClient) UpsertUser(u models.User) error                 { return nil }
+func (m *mockDBClient) CreatePairingCode(pc models.PairingCode) error  { return nil }
 func (m *mockDBClient) GetPairingCode(code string) (*models.PairingCode, error) {
 	return nil, nil
 }

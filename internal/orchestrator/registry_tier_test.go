@@ -347,3 +347,4 @@ func TestRegistry_SelectDeclarations_NoNestedLockDeadlock(t *testing.T) {
 		t.Fatal("Deadlock detected in SelectDeclarations with concurrent Register calls")
 	}
 }
+

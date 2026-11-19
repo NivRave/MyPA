@@ -12,8 +12,8 @@ type ConversationKind string
 const (
 	// Direct is a one-to-one chat between a person and the assistant. An empty kind means Direct.
 	Direct ConversationKind = "direct"
-	// Group is a chat with several people. Group handling is V4-16; adapters do not report groups
-	// before then.
+	// Group is a chat with several people. An adapter reports it as soon as it can tell; what the
+	// assistant does in a group, and when it counts as addressed, is V4-16.
 	Group ConversationKind = "group"
 )
 

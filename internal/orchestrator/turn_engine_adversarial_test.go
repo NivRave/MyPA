@@ -280,9 +280,9 @@ func TestPhotoData_Stripping_DirectRedisInspection(t *testing.T) {
 }
 
 // TestPhotoData_MultimodalActiveTurnPreservation verifies that:
-//  1. During an active conversational turn with tool calling, the in-memory loopHistory
-//     strictly preserves PhotoData and PhotoMimeType across all recursive tool iterations.
-//  2. Only upon final persistence to Redis chat history is PhotoData stripped.
+// 1. During an active conversational turn with tool calling, the in-memory loopHistory
+//    strictly preserves PhotoData and PhotoMimeType across all recursive tool iterations.
+// 2. Only upon final persistence to Redis chat history is PhotoData stripped.
 func TestPhotoData_MultimodalActiveTurnPreservation(t *testing.T) {
 	engine, tgMock, llmMock, dbMock, cleanup := setupTestEngine(t)
 	defer cleanup()
@@ -386,10 +386,10 @@ func TestPhotoData_MultimodalActiveTurnPreservation(t *testing.T) {
 }
 
 // TestBoundedRecursion_Ceiling8_And_WithNoTools verifies SCALE-03:
-//   - Tool recursion strictly stops at iteration 8.
-//   - Iteration 8 executes with llm.WithNoTools(ctx) and a terminal summary prompt.
-//   - Even if an adversarial mock LLM returns another ToolCall on iteration 8,
-//     the engine guarantees termination and does NOT loop to iteration 9.
+// - Tool recursion strictly stops at iteration 8.
+// - Iteration 8 executes with llm.WithNoTools(ctx) and a terminal summary prompt.
+// - Even if an adversarial mock LLM returns another ToolCall on iteration 8,
+//   the engine guarantees termination and does NOT loop to iteration 9.
 func TestBoundedRecursion_Ceiling8_And_WithNoTools(t *testing.T) {
 	engine, _, llmMock, _, cleanup := setupTestEngine(t)
 	defer cleanup()
@@ -463,11 +463,11 @@ func TestBoundedRecursion_Ceiling8_And_WithNoTools(t *testing.T) {
 }
 
 // TestConcurrentTools_4Calls_StrictOrderingAndParallelism verifies SCALE-03:
-//   - 4 tool calls with staggered durations (80ms, 20ms, 60ms, 30ms) execute concurrently.
-//   - Total runtime is bounded near max(duration) (~80ms-110ms), NOT sequential sum (190ms).
-//   - Function calls and function responses maintain exact 1:1 order alignment regardless
-//     of which goroutine finished first.
-//   - Panic in one of the tools is safely caught without terminating the turn or process.
+// - 4 tool calls with staggered durations (80ms, 20ms, 60ms, 30ms) execute concurrently.
+// - Total runtime is bounded near max(duration) (~80ms-110ms), NOT sequential sum (190ms).
+// - Function calls and function responses maintain exact 1:1 order alignment regardless
+//   of which goroutine finished first.
+// - Panic in one of the tools is safely caught without terminating the turn or process.
 func TestConcurrentTools_4Calls_StrictOrderingAndParallelism(t *testing.T) {
 	engine, _, llmMock, _, cleanup := setupTestEngine(t)
 	defer cleanup()
@@ -729,7 +729,7 @@ func TestRegistry_SelectDeclarations_AdversarialCombinations(t *testing.T) {
 	dirtyMod := &mockToolModule{
 		name: "shared",
 		declarations: []*genai.FunctionDeclaration{
-			nil,        // Nil declaration edge case
+			nil, // Nil declaration edge case
 			{Name: ""}, // Empty name edge case
 			{Name: "manage_shared_space"},
 		},

@@ -14,18 +14,18 @@ func TestClient_SendMessage(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/bottest-token/sendMessage", r.URL.Path)
 		assert.Equal(t, "POST", r.Method)
-
+		
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok": true}`))
 	}))
 	defer ts.Close()
 
 	client := NewClient("test-token")
-
-	// Override the URL directly since it's constructed in the method.
+	
+	// Override the URL directly since it's constructed in the method. 
 	// Wait, the URL is hardcoded in the method as "https://api.telegram.org/...".
 	// We should allow injecting a base URL or override http.RoundTripper.
-
+	
 	// Since we can't easily override the URL without changing the code, let's use a custom Transport.
 	client.httpClient.Transport = &rewriteTransport{URL: ts.URL}
 
@@ -59,7 +59,7 @@ func TestClient_GetFile(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/bottest-token/getFile", r.URL.Path)
 		assert.Equal(t, "file_id=12345", r.URL.RawQuery)
-
+		
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok": true, "result": {"file_path": "music/file.ogg"}}`))
 	}))
@@ -76,7 +76,7 @@ func TestClient_GetFile(t *testing.T) {
 func TestClient_DownloadFile(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/file/bottest-token/music/file.ogg", r.URL.Path)
-
+		
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`file-content`))
 	}))

@@ -139,9 +139,7 @@ func TestP31_UntrustedToolOutputIsWrapped(t *testing.T) {
 	_ = dbMock
 	reg := NewRegistry()
 	reg.Register(&mockToolModule{name: "workspace_gmail", declarations: []*genai.FunctionDeclaration{{Name: "search_emails"}},
-		executeFunc: func(context.Context, CallContext, string, map[string]interface{}) (string, error) {
-			return injectedEmail, nil
-		}})
+		executeFunc: func(context.Context, CallContext, string, map[string]interface{}) (string, error) { return injectedEmail, nil }})
 	engine.SetToolRegistry(reg)
 
 	sec := &TurnSecurityState{}

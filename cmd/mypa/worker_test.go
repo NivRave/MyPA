@@ -41,7 +41,7 @@ func TestAuthRouter(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 		_ = r.ParseForm()
 		assert.Equal(t, "my-test-code", r.Form.Get("code"))
-
+		
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"access_token": "dummy-token",
@@ -98,7 +98,7 @@ func TestAuthRouter(t *testing.T) {
 	// Verify
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Body.String(), "Success!")
-
+	
 	// Verify token was saved in Redis
 	tokenBytes, err := store.GetOAuthToken(context.Background(), "user-123")
 	require.NoError(t, err)

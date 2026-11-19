@@ -149,10 +149,10 @@ func (t *testRewriteTransport) RoundTrip(req *http.Request) (*http.Response, err
 }
 
 // TestLLMChat_WithActiveTools_BypassesStaticTools verifies that:
-//  1. When WithActiveTools is set in context, Client.Chat passes ONLY the scoped tools to Gemini,
-//     bypassing the static 28-tool CalendarEventTool.
-//  2. When WithNoTools is set in context, Client.Chat passes tools: nil.
-//  3. When neither is set, Client.Chat falls back to the static tools.
+// 1. When WithActiveTools is set in context, Client.Chat passes ONLY the scoped tools to Gemini,
+//    bypassing the static 28-tool CalendarEventTool.
+// 2. When WithNoTools is set in context, Client.Chat passes tools: nil.
+// 3. When neither is set, Client.Chat falls back to the static tools.
 func TestLLMChat_WithActiveTools_BypassesStaticTools(t *testing.T) {
 	var lastCapturedReq capturedRequest
 

@@ -195,17 +195,17 @@ export default async function SharedSpacesPage() {
               </div>
             </div>
             <p className="text-xs text-neutral-500 mb-4">
-              Events, baby routines, and house tasks are synchronized between connected Telegram/WhatsApp accounts.
+              Events, baby routines, and house tasks are synchronized between the connected chat accounts.
             </p>
           </div>
           <div className="bg-neutral-50 rounded-lg p-3 text-xs space-y-1.5 border border-neutral-100">
             <div className="flex justify-between">
               <span className="text-neutral-500">Primary Partner:</span>
-              <span className="font-medium text-neutral-800">telegram:12345678 (Admin)</span>
+              <span className="font-medium text-neutral-800">Dana (Admin)</span>
             </div>
             <div className="flex justify-between">
               <span className="text-neutral-500">Secondary Partner:</span>
-              <span className="font-medium text-neutral-800">telegram:87654321 (Family)</span>
+              <span className="font-medium text-neutral-800">Omer (Family)</span>
             </div>
           </div>
         </div>
@@ -230,7 +230,7 @@ export default async function SharedSpacesPage() {
             <div>
               <label className="block text-xs font-medium text-neutral-700 mb-1">Notification Mode</label>
               <select name="notifyMode" className="w-full border border-neutral-300 rounded-md p-2 text-sm bg-white">
-                <option value="instant">Instant Push (Telegram/WA)</option>
+                <option value="instant">Instant Push (in chat)</option>
                 <option value="digest">Smart Daily Digest</option>
                 <option value="silent">Silent Sync (Query Only)</option>
               </select>

@@ -17,10 +17,10 @@ type Update struct {
 
 // Message represents a Telegram Message object.
 type Message struct {
-	MessageID int         `json:"message_id"`
-	From      *User       `json:"from,omitempty"`
-	Chat      *Chat       `json:"chat,omitempty"`
-	Date      int64       `json:"date"`
+	MessageID int    `json:"message_id"`
+	From      *User  `json:"from,omitempty"`
+	Chat      *Chat  `json:"chat,omitempty"`
+	Date      int64  `json:"date"`
 	Text      string      `json:"text,omitempty"`
 	Caption   string      `json:"caption,omitempty"`
 	Voice     *Voice      `json:"voice,omitempty"`

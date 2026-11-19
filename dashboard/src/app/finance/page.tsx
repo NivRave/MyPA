@@ -440,7 +440,7 @@ export default async function FinancePage() {
               {transactions.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-6 py-8 text-center text-neutral-500">
-                    No transactions recorded. Log expenses via chat, Telegram receipt photos, or the form above.
+                    No transactions recorded. Log expenses in chat (a photo of a receipt works too) or with the form above.
                   </td>
                 </tr>
               )}

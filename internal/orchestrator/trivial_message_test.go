@@ -24,8 +24,8 @@ func TestIsTrivialMessage(t *testing.T) {
 	}
 
 	substantive := []string{
-		"remind me tomorrow",         // 3 tokens, but content words
-		"yes, delete the second one", // starts with filler, has content
+		"remind me tomorrow",          // 3 tokens, but content words
+		"yes, delete the second one",  // starts with filler, has content
 		"thanks, also book the dentist",
 		"no meat tonight",
 		"what's on my calendar",

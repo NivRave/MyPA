@@ -19,13 +19,13 @@ import (
 
 // mockBabyRepo is a thread-safe, in-memory implementation of db.BabyRepository.
 type mockBabyRepo struct {
-	mu         sync.RWMutex
-	profiles   map[uint]*models.BabyProfile
-	careLogs   map[uint]*models.BabyCareLog
-	inventory  map[uint]*models.BabyInventoryItem
-	nextProfID uint
-	nextLogID  uint
-	nextInvID  uint
+	mu           sync.RWMutex
+	profiles     map[uint]*models.BabyProfile
+	careLogs     map[uint]*models.BabyCareLog
+	inventory    map[uint]*models.BabyInventoryItem
+	nextProfID   uint
+	nextLogID    uint
+	nextInvID    uint
 }
 
 func newMockBabyRepo() *mockBabyRepo {

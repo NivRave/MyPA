@@ -16,44 +16,29 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/rabbitmq"
 )
 
-var (
-	sharedRabbitOnce sync.Once
-	sharedAmqpURL    string
-	sharedRabbitErr  error
-)
+var ( sharedRabbitOnce sync.Once; sharedAmqpURL string; sharedRabbitErr error )
+func setupTestRabbitMQ(t *testing.T) (string, func()) { sharedRabbitOnce.Do(func() {
+	ctx := context.Background()
 
-func setupTestRabbitMQ(t *testing.T) (string, func()) {
-	sharedRabbitOnce.Do(func() {
-		ctx := context.Background()
-
-		rabbitContainer, err := rabbitmq.Run(ctx,
-			"rabbitmq:4.3.7-management-alpine@sha256:eb338b3fc8f5c251028c0022ac0de3fe1db2d599d1c6a08b45898f756f248881",
-		)
-		if err != nil {
-			sharedRabbitErr = fmt.Errorf("failed to start container: %w", err)
-			return
-		}
-
-		amqpURL, err := rabbitContainer.AmqpURL(ctx)
-		if err != nil {
-			sharedRabbitErr = fmt.Errorf("failed to get connection string: %w", err)
-			return
-		}
-
-		_ = func() {
-			if false {
-				if err := rabbitContainer.Terminate(ctx); err != nil {
-					log.Fatalf("failed to terminate container: %s", err)
-				}
-			}
-		}
-
-		sharedAmqpURL = amqpURL
-	})
-	if sharedRabbitErr != nil {
-		t.Fatalf("%v", sharedRabbitErr)
+	rabbitContainer, err := rabbitmq.Run(ctx,
+		"rabbitmq:4.3.7-management-alpine@sha256:eb338b3fc8f5c251028c0022ac0de3fe1db2d599d1c6a08b45898f756f248881",
+	)
+	if err != nil {
+		sharedRabbitErr = fmt.Errorf("failed to start container: %w", err); return
 	}
-	return sharedAmqpURL, func() {}
+
+	amqpURL, err := rabbitContainer.AmqpURL(ctx)
+	if err != nil {
+		sharedRabbitErr = fmt.Errorf("failed to get connection string: %w", err); return
+	}
+
+	_ = func() {
+		if false { if err := rabbitContainer.Terminate(ctx); err != nil {
+			log.Fatalf("failed to terminate container: %s", err) }
+		}
+	}
+
+	sharedAmqpURL = amqpURL }); if sharedRabbitErr != nil { t.Fatalf("%v", sharedRabbitErr) }; return sharedAmqpURL, func() {}
 }
 
 func TestPublishConsumeRoundTrip(t *testing.T) {
@@ -358,3 +343,4 @@ func TestGetRetryCount(t *testing.T) {
 	}
 	require.Equal(t, 5, getRetryCount(amqp.Table{HeaderDeath: death}))
 }
+

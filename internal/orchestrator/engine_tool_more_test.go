@@ -24,7 +24,7 @@ type testToolModule struct {
 	exec  func(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error)
 }
 
-func (m *testToolModule) Name() string                               { return m.name }
+func (m *testToolModule) Name() string { return m.name }
 func (m *testToolModule) Declarations() []*genai.FunctionDeclaration { return m.decls }
 func (m *testToolModule) Execute(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
 	if m.exec != nil {
@@ -32,9 +32,7 @@ func (m *testToolModule) Execute(ctx context.Context, callCtx CallContext, toolN
 	}
 	return "", nil
 }
-func (m *testToolModule) SystemPromptSection(ctx context.Context, callCtx CallContext) string {
-	return ""
-}
+func (m *testToolModule) SystemPromptSection(ctx context.Context, callCtx CallContext) string { return "" }
 
 func TestEngine_HandleToolCall_SaveTopicMemory(t *testing.T) {
 	engine, _, llmMock, _, cleanup := setupTestEngine(t)

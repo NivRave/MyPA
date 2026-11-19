@@ -56,16 +56,16 @@ func TestMemory_AntiSpoofing(t *testing.T) {
 	}
 
 	adversarialArgs := map[string]interface{}{
-		"topic":              "health",
-		"fact":               "Allergic to penicillin",
-		"scope":              "family",
-		"entity_type":        "person",
-		"entity_name":        "VictimPerson",
-		"attributes":         map[string]interface{}{"blood_type": "O+"},
-		"user_id":            "hacker_attacker_666",
-		"family_group":       "evil_family_hacker",
-		"created_by_user_id": "hacker_attacker_666",
-		"actor_user_id":      "hacker_attacker_666",
+		"topic":               "health",
+		"fact":                "Allergic to penicillin",
+		"scope":               "family",
+		"entity_type":         "person",
+		"entity_name":         "VictimPerson",
+		"attributes":          map[string]interface{}{"blood_type": "O+"},
+		"user_id":             "hacker_attacker_666",
+		"family_group":        "evil_family_hacker",
+		"created_by_user_id":  "hacker_attacker_666",
+		"actor_user_id":       "hacker_attacker_666",
 	}
 
 	// One sub-test now carries every assertion the remember_fact sub-test made before the tool was

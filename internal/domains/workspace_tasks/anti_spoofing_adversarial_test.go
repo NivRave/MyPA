@@ -14,12 +14,12 @@ import (
 )
 
 type recordingTasksClient struct {
-	lastListUser       string
+	lastListUser     string
 	lastCreateListUser string
-	lastListTasksUser  string
+	lastListTasksUser string
 	lastCreateTaskUser string
-	lastCompleteUser   string
-	lastDeleteUser     string
+	lastCompleteUser  string
+	lastDeleteUser    string
 }
 
 func (r *recordingTasksClient) ListTaskLists(ctx context.Context, userID string) ([]*tasksapi.TaskList, error) {

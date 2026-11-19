@@ -39,7 +39,7 @@ func whatsAppMockOf(t *testing.T, e *Engine) *wamocks.MockAPI {
 
 func setupTestEngine(t *testing.T) (*Engine, *tgmocks.MockAPI, *mocks.MockLLMClient, *mocks.MockDBClient, func()) {
 	ctrl := gomock.NewController(t)
-
+	
 	tgMock := tgmocks.NewMockAPI(ctrl)
 	twMock := wamocks.NewMockAPI(ctrl)
 	audioMock := mocks.NewMockAudioClient(ctrl)
@@ -50,7 +50,7 @@ func setupTestEngine(t *testing.T) (*Engine, *tgmocks.MockAPI, *mocks.MockLLMCli
 	dbMock := mocks.NewMockDBClient(ctrl)
 	eventPublisherMock := mocks.NewMockEventPublisher(ctrl)
 	eventPublisherMock.EXPECT().Publish(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-
+	
 	// Setup in-memory Redis
 	mr, err := miniredis.Run()
 	assert.NoError(t, err)
@@ -204,6 +204,7 @@ func TestProcessMessage_ConnectCommand(t *testing.T) {
 		}).
 		Times(1)
 
+
 	err := engine.ProcessMessage(context.Background(), msg)
 	assert.NoError(t, err)
 }
@@ -224,7 +225,7 @@ func TestProcessMessage_TextMessage(t *testing.T) {
 	// Mock DB calls for history and memories
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
 	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
-
+	
 	llmResponse := &llm.Response{
 		Text: "Hello there!",
 	}
@@ -588,14 +589,10 @@ type testRollbackModule struct {
 	lastMutationID string
 }
 
-func (m *testRollbackModule) Name() string                               { return "durability" }
+func (m *testRollbackModule) Name() string { return "durability" }
 func (m *testRollbackModule) Declarations() []*genai.FunctionDeclaration { return nil }
-func (m *testRollbackModule) Execute(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
-	return "", nil
-}
-func (m *testRollbackModule) SystemPromptSection(ctx context.Context, callCtx CallContext) string {
-	return ""
-}
+func (m *testRollbackModule) Execute(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) { return "", nil }
+func (m *testRollbackModule) SystemPromptSection(ctx context.Context, callCtx CallContext) string { return "" }
 func (m *testRollbackModule) Rollback(ctx context.Context, actorID, familyGroup, mutationID string, reason ...string) (*models.RollbackResult, error) {
 	m.lastActorID = actorID
 	m.lastMutationID = mutationID
@@ -956,3 +953,8 @@ func TestExecuteToolsConcurrently_ContextCancellation(t *testing.T) {
 	require.Len(t, funcCalls, 2)
 	require.Len(t, funcResponses, 2)
 }
+
+
+
+
+

@@ -19,9 +19,9 @@ import (
 // inMemorySharedRepo implements Repository for unit testing.
 type inMemorySharedRepo struct {
 	mu        sync.RWMutex
-	spaces    map[string]*models.SharedSpace // key: familyGroup + ":" + topic
+	spaces    map[string]*models.SharedSpace         // key: familyGroup + ":" + topic
 	reminders map[uint]*models.SharedTaskReminder
-	users     map[string][]models.User // key: familyGroup
+	users     map[string][]models.User               // key: familyGroup
 	nextRemID uint
 }
 
@@ -750,3 +750,5 @@ func TestScheduleReminder_Execution(t *testing.T) {
 	assert.Equal(t, "Pick up dry cleaning", dbMock.savedReminders[0].Message)
 	assert.False(t, dbMock.savedReminders[0].IsSent)
 }
+
+

@@ -30,7 +30,7 @@ func TestEngine_HandleToolCall_CalendarCreate(t *testing.T) {
 	toolCall := &genai.FunctionCall{
 		Name: "create_calendar_event",
 		Args: map[string]any{
-			"title":      "Meeting",
+			"title": "Meeting",
 			"start_time": "2030-01-01T10:00:00Z",
 		},
 	}
@@ -60,7 +60,7 @@ func TestEngine_HandleToolCall_TasksCreate(t *testing.T) {
 		Name: "create_task",
 		Args: map[string]any{
 			"list_id": "list1",
-			"title":   "Buy milk",
+			"title": "Buy milk",
 		},
 	}
 
@@ -134,7 +134,7 @@ func TestEngine_HandleToolCall_ScheduleReminder(t *testing.T) {
 	toolCall := &genai.FunctionCall{
 		Name: "schedule_reminder",
 		Args: map[string]any{
-			"message":  "Drink water",
+			"message": "Drink water",
 			"due_time": dueTime,
 		},
 	}

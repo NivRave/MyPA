@@ -79,7 +79,7 @@ func (s *Store) AppendChatHistory(ctx context.Context, userID string, msg models
 	}
 
 	key := fmt.Sprintf("chat:%s", userID)
-
+	
 	bytes, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal chat message: %w", err)
@@ -477,3 +477,6 @@ func (s *Store) InvalidateFamilyPromptSections(ctx context.Context, scope string
 	n, err := s.client.Del(ctx, toDelete...).Result()
 	return int(n), err
 }
+
+
+
