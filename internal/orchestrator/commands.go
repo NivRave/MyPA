@@ -28,6 +28,7 @@ var commands = map[string]commandHandler{
 	"/backup":  (*Engine).cmdBackup,
 	"/restore": (*Engine).cmdRestore,
 	"/undo":    (*Engine).cmdUndo,
+	"/doctor":  (*Engine).cmdDoctor,
 }
 
 // dispatchCommand runs the slash command in msg, if any. handled=false means msg is not a command.
@@ -98,6 +99,7 @@ func (e *Engine) cmdHelp(ctx context.Context, _ *models.User, msg models.Message
 	sb.WriteString("• `/backup` - Create a manual database backup\n")
 	sb.WriteString("• `/restore` - Restore the database from the latest backup (asks for `CONFIRM RESTORE`; takes a safety backup first)\n")
 	sb.WriteString("• `/undo` - Revert your most recent action or specify mutation ID\n")
+	sb.WriteString("• `/doctor` - Check the health of this install: webhook, Google sign-ins, WhatsApp, queues, backups, database (admins only)\n")
 	sb.WriteString("• `/help` - Show this help message\n\n")
 	sb.WriteString("*AI Capabilities:*\n")
 	sb.WriteString("I am an AI assistant. You can speak to me naturally. Here are my underlying capabilities:\n\n")

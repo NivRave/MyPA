@@ -9,10 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nivik/mypa/internal/doctor"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"github.com/pgvector/pgvector-go"
+	"golang.org/x/oauth2"
 	"google.golang.org/genai"
 )
 
@@ -421,4 +423,61 @@ func (f *fakeDurability) requests() []rollbackCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]rollbackCall(nil), f.calls...)
+}
+
+// scenarioDoctor is the real /doctor (internal/doctor) looking at a fixed, partly broken install:
+// Telegram deliveries are failing, one member's Google sign-in was revoked, WhatsApp runs on the
+// sandbox, and the rest is fine. Its clock is fixed, so the report is the same on every run.
+func scenarioDoctor() *doctor.Doctor {
+	now := time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	tokens := map[string]string{
+		"Dana": `{"access_token":"dana","refresh_token":"good","token_type":"Bearer"}`,
+		"Omer": `{"access_token":"omer","refresh_token":"revoked","token_type":"Bearer"}`,
+	}
+	return doctor.New(
+		doctor.TelegramWebhook{
+			Configured: true,
+			WantURL:    "https://mypa.example/webhook/telegram",
+			Now:        clock,
+			Info: func(context.Context) (doctor.WebhookInfo, error) {
+				return doctor.WebhookInfo{
+					URL:          "https://mypa.example/webhook/telegram",
+					Pending:      3,
+					LastErrorAt:  now.Add(-12 * time.Minute),
+					LastErrorMsg: "Connection refused",
+				}, nil
+			},
+		},
+		doctor.GoogleAccounts{
+			Configured: true,
+			FamilyMembers: func(string) ([]models.User, error) {
+				return []models.User{{PlatformID: "a", Name: "Dana"}, {PlatformID: "b", Name: "Omer"}, {PlatformID: "c", Name: "Noa"}}, nil
+			},
+			Token: func(_ context.Context, userID string) ([]byte, error) {
+				name := map[string]string{"a": "Dana", "b": "Omer"}[userID]
+				return []byte(tokens[name]), nil
+			},
+			Refresh: func(_ context.Context, tok *oauth2.Token) error {
+				if tok.RefreshToken != "good" {
+					return fmt.Errorf("%w (invalid_grant)", doctor.ErrSignInRefused)
+				}
+				return nil
+			},
+		},
+		doctor.WhatsApp{Configured: true, Sender: doctor.TwilioSandboxSender, StatusCallbackURL: "https://mypa.example/webhook/twilio/status"},
+		doctor.Queues{
+			Names:       []string{"inbound.messages", "audit.events"},
+			BacklogWarn: 20,
+			Depth:       func(context.Context, string) (int, error) { return 0, nil },
+		},
+		doctor.Backups{
+			MaxAge: 26 * time.Hour,
+			Now:    clock,
+			Latest: func() (string, time.Time, error) {
+				return "backup_2026-11-19_02-00-00.dump.age", now.Add(-7 * time.Hour), nil
+			},
+		},
+		doctor.Schema{Version: func(context.Context) (int64, int64, error) { return 2, 2, nil }},
+	)
 }

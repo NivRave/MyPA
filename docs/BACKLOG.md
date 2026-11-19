@@ -30,6 +30,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-17 | Low | WhatsApp message splitter cuts by bytes and can split a character in unbroken non-Latin text | open |
 | BL-18 | Low | A document sent on Telegram gets no answer at all | open — the channel layer (V4-31) is the natural place |
 | BL-19 | Low | Reminder and transcription labels render as italics, probably meant as bold | open |
+| BL-20 | Low | `/doctor` shows the same host twice when the webhook addresses differ only in path | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -214,6 +215,16 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   meant bold.
 - **Fix:** if bold is intended, use `**…**` and regenerate the transcripts
   (`go test ./internal/conformance -update`).
+
+### BL-20 — `/doctor` webhook mismatch can print the same host twice (Low)
+- **Found:** 2026-11-19, in the review of V4-17 (non-blocking, after the item passed).
+- **Evidence:** `TelegramWebhook.Run` (`internal/doctor/checks.go`) reports a mismatch as "a different address
+  (X) than the configured one (Y)" and shortens both with `hostOf`. When Telegram's registered address and
+  `TELEGRAM_WEBHOOK_URL` share a host and differ only in path, X and Y are identical.
+- **Impact:** cosmetic. The failure is still detected and the next step is still right; the line just does not
+  show what differs.
+- **Fix:** when the hosts are equal, show host and path. Test: a mismatch in path only prints two different
+  strings. The pinned `doctor` transcripts are not affected (their fixture has matching addresses).
 
 ## Operations (owner)
 

@@ -12,6 +12,7 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 - **Life domains:** baby care (with medication-cooldown guardrails), house contracts and maintenance, vehicles, finance and budgets, a personal CRM, topic-scoped memory and entity profiles, shared family spaces with partner notifications.
 - **Automations:** event-driven rules, scheduled natural-language workflows, and runtime-registered external APIs behind SSRF protection.
 - **Durability:** every tool write is snapshotted for `/undo` and dashboard rollback; encrypted, age-protected nightly backups; versioned schema migrations.
+- **Health check:** an admin sends `/doctor` in chat and gets the state of the Telegram webhook, each family member's Google sign-in, WhatsApp, the queues, the newest backup and the database schema, with a next step for every problem.
 - **Security:** fail-closed webhook verification, tenant isolation, prompt-injection boundaries with confirmation for sensitive tools, AES-256-GCM encryption at rest.
 
 ## Documentation
