@@ -19,5 +19,6 @@ Check, and cite file and line for every finding:
 8. Schema changes are versioned migrations, and existing data is carried over.
 9. SYSTEM.md, README and the ROADMAP status match the change.
 10. Nothing outside the item's scope was changed.
+11. The diff does not touch .githooks/, .claude/, AGENTS.md, CLAUDE.md, .github/workflows/, .gitignore or any .env file, unless the item's text in the roadmap says it must. Any such change is a FAIL.
 
 Answer with PASS or FAIL on the first line, then numbered findings. Do not suggest improvements that are not defects.
