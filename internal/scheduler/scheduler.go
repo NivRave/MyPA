@@ -13,6 +13,7 @@ import (
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/transfer"
 	"github.com/robfig/cron/v3"
 )
 
@@ -51,7 +52,8 @@ func StartCronJobs(engine *orchestrator.Engine, dbClient *db.Client, runner *aut
 			slog.Error("Scheduled backup skipped: invalid backup configuration", "error", err)
 			return
 		}
-		path, err := db.BackupDatabase(databaseURL, backupDir, opts)
+		// A backup set (V4-43): the dump plus the archive files and a manifest.
+		path, err := transfer.LiveBackup(databaseURL, backupDir, opts)
 		if err != nil {
 			slog.Error("Scheduled backup failed", "error", err)
 			return

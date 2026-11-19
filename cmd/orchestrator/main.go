@@ -50,6 +50,13 @@ import (
 )
 
 func main() {
+	// `orchestrator transfer <command>`: the restore-and-migrate tool (V4-43). A one-shot process
+	// run next to a stopped app; it never starts the engine.
+	if len(os.Args) > 1 && os.Args[1] == "transfer" {
+		logging.Setup()
+		os.Exit(transferMain(os.Args[2:]))
+	}
+
 	migrateOnly := flag.Bool("migrate-only", false, "apply database schema migrations and exit (P4-3)")
 	flag.Parse()
 

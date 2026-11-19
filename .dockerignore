@@ -29,3 +29,5 @@ Thumbs.db
 rabbitmq_data/
 redis_data/
 postgres_data/
+# Test fixtures (for example the baseline database dump) are not needed to build an image.
+**/testdata/
