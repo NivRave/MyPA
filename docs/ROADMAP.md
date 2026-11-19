@@ -53,7 +53,7 @@ V4.0 comes first because its building blocks (one binary, the channel layer, hou
 
 **Build order after V4.0**
 
-- **V4.1:** V4-39, V4-10, V4-11, V4-24, V4-36, V4-37, V4-38, then the state-store ADR, then V4-12, V4-13, V4-14, V4-15, V4-16, V4-18, V4-28.
+- **V4.1:** V4-39, V4-10, V4-11, V4-24, V4-36, V4-37, V4-38, V4-44, then the state-store ADR, then V4-12, V4-13, V4-14, V4-15, V4-16, V4-18, V4-28.
 - **V4.2:** V4-23, V4-26, V4-29, then the MCP ADR, then V4-19, V4-20, V4-25, V4-21, V4-22.
 
 **Before V4.0 starts**
@@ -109,6 +109,7 @@ V4.0 comes first because its building blocks (one binary, the channel layer, hou
 | V4-37 | **Dashboard reorganisation** | Two areas instead of one. Household admin: members, invitations, packs, sharing, connected accounts, data export. System admin: health, usage and cost, logs, backups, model provider. Pages for disabled packs are hidden. **Done when** a household owner never sees system pages unless they are also the operator. Requires V4-27 and V4-35. | Planning session (2026-11-18) | M | Planned |
 | V4-38 | **Admin actions in chat** | Inviting a member, enabling a pack and changing a role can be done from chat by the owner, confirmed through V4-10, because most people will not open the dashboard. **Done when** each of the three works on every supported channel and is refused for anyone who is not the owner. | Planning session (2026-11-18) | M | Planned |
 | V4-39 | **Discord adapter** | The first new channel, built only on the channel layer (V4-31), as the proof that the layer works. Discord bots connect outward, so no public address should be needed (V4-40); confirm this when building. **Done when** it passes V4-34 without changes to the engine. | Planning session (2026-11-18) | M | Planned |
+| V4-44 | **Drop the old identity columns** | The contract step of ADR 0002 (Decision 2, step 7): drop `family_group`, the old person columns, `users` and `pairing_codes`. Why: through V4.0 every write goes to both the old and the new keys, and the old columns are what the new ones are checked against, so they go only once real use has confirmed the new ones. **Done when** one release of V4.0 has been in use; a comparison report on the live data shows the old and new keys agree on every row (each label maps to its household, each old person key to its person, and the only rows without a person are the ones Migration B counted); a versioned migration drops the columns and tables, with the tenant-isolation tests passing; and the release notes and [`RESTORE_AND_MIGRATE.md`](./RESTORE_AND_MIGRATE.md) state that the rollback point moves to the backup taken before that release. Requires V4-30, V4-32 and V4-36. | ADR 0002 (2026-11-19) | M | Planned |
 
 ---
 
@@ -151,8 +152,8 @@ An ADR is written only for a decision that is hard to undo and touches data or s
 
 | ADR | Covers | Needed before |
 | :--- | :--- | :--- |
-| Identity and access | Households, people, linking channel accounts, roles, the dashboard sign-in link, invite links | Stage 2 of V4.0: V4-30, V4-32, V4-35, V4-36 |
-| Channel layer (short) | The adapter interface, capability declaration, proactive delivery, group chats | Stage 2 of V4.0: V4-31, V4-33, V4-16 |
+| [Identity and access](./adr/0002-identity-and-access.md) (ADR 0002, accepted 2026-11-19) | Households, people, linking channel accounts, roles, the dashboard sign-in link, invite links | Stage 2 of V4.0: V4-30, V4-32, V4-35, V4-36 |
+| [Channel layer (short)](./adr/0003-channel-layer.md) (ADR 0003, accepted 2026-11-19) | The adapter interface, capability declaration, proactive delivery, group chats | Stage 2 of V4.0: V4-31, V4-33, V4-16 |
 | State store | Moving the queue and every Redis key into Postgres: the per-user ordering guard, the dead-letter replacement, duplicate protection, single-use nonces and expiry | V4-23; write it during V4.1, because it informs V4-12 and V4-43 |
 
 Model providers (V4-02, V4-03) and deployment and ingress (V4-40) do not need an ADR: their choices are easy to change and are recorded in [`DECISIONS_LOG.md`](./DECISIONS_LOG.md) as the items are built. The MCP client (V4-19) runs third-party tools, so it gets an ADR under the rule in §1 when V4.2 is planned.
