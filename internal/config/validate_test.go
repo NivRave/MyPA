@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel/adapters"
+	"github.com/nivik/mypa/internal/telegram"
+	"github.com/nivik/mypa/internal/twilio"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,31 +48,31 @@ func TestValidate(t *testing.T) {
 			base: func() Config { return Config{} }, wantErr: []string{"RABBITMQ_URL"}},
 		{name: "Ingress_TelegramWithoutSecret", service: RoleIngress,
 			base: func() Config {
-				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Telegram: TelegramConfig{BotToken: "1:a"}}
+				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Channels: adapters.Config{Telegram: telegram.Config{BotToken: "1:a"}}}
 			}, wantErr: []string{"TELEGRAM_SECRET_TOKEN"}},
 		{name: "Ingress_TelegramWithSecretOK", service: RoleIngress,
 			base: func() Config {
-				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Telegram: TelegramConfig{BotToken: "1:a", SecretToken: validTGSecret}}
+				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Channels: adapters.Config{Telegram: telegram.Config{BotToken: "1:a", SecretToken: validTGSecret}}}
 			}},
 		{name: "Ingress_TelegramSecretBadChars", service: RoleIngress,
 			base: func() Config {
-				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Telegram: TelegramConfig{BotToken: "1:a", SecretToken: "has spaces!"}}
+				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Channels: adapters.Config{Telegram: telegram.Config{BotToken: "1:a", SecretToken: "has spaces!"}}}
 			}, wantErr: []string{"TELEGRAM_SECRET_TOKEN"}},
 		{name: "Ingress_TelegramSecretTooLong", service: RoleIngress,
 			base: func() Config {
-				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Telegram: TelegramConfig{BotToken: "1:a", SecretToken: strings.Repeat("a", 257)}}
+				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Channels: adapters.Config{Telegram: telegram.Config{BotToken: "1:a", SecretToken: strings.Repeat("a", 257)}}}
 			}, wantErr: []string{"TELEGRAM_SECRET_TOKEN"}},
 		{name: "Ingress_WebhookURLWithoutBotToken", service: RoleIngress,
 			base: func() Config {
-				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Telegram: TelegramConfig{WebhookURL: "https://x/webhook/telegram", SecretToken: validTGSecret}}
+				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Channels: adapters.Config{Telegram: telegram.Config{WebhookURL: "https://x/webhook/telegram", SecretToken: validTGSecret}}}
 			}, wantErr: []string{"TELEGRAM_BOT_TOKEN"}},
 		{name: "Ingress_TwilioSIDWithoutToken", service: RoleIngress,
 			base: func() Config {
-				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Twilio: TwilioConfig{AccountSID: "AC1"}}
+				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Channels: adapters.Config{WhatsApp: twilio.Config{AccountSID: "AC1"}}}
 			}, wantErr: []string{"TWILIO_AUTH_TOKEN"}},
 		{name: "Ingress_TwilioOK", service: RoleIngress,
 			base: func() Config {
-				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Twilio: TwilioConfig{AccountSID: "AC1", AuthToken: "t"}}
+				return Config{RabbitMQ: RabbitMQConfig{URL: "amqp://x"}, Channels: adapters.Config{WhatsApp: twilio.Config{AccountSID: "AC1", AuthToken: "t"}}}
 			}},
 
 		// --- worker (the old orchestrator) ---
@@ -88,19 +91,19 @@ func TestValidate(t *testing.T) {
 				c.Database.URL = "postgres://<YOUR_DB_USER>:<YOUR_DB_PASSWORD>@postgres:5432/<YOUR_DB_NAME>"
 			}, wantErr: []string{"DATABASE_URL", "placeholder"}},
 		{name: "Worker_TwilioSIDWithoutToken", service: RoleWorker, base: workerOK,
-			mutate: func(c *Config) { c.Twilio.AccountSID = "AC1" }, wantErr: []string{"TWILIO_AUTH_TOKEN"}},
+			mutate: func(c *Config) { c.Channels.WhatsApp.AccountSID = "AC1" }, wantErr: []string{"TWILIO_AUTH_TOKEN"}},
 		// BL-8: optional, but if set it must be an absolute https URL Twilio can call back.
 		{name: "Worker_StatusCallbackHTTPSOK", service: RoleWorker, base: workerOK,
-			mutate: func(c *Config) { c.Twilio.StatusCallbackURL = "https://gw.example/webhook/twilio/status" }},
+			mutate: func(c *Config) { c.Channels.WhatsApp.StatusCallbackURL = "https://gw.example/webhook/twilio/status" }},
 		{name: "Worker_StatusCallbackNotHTTPS", service: RoleWorker, base: workerOK,
-			mutate:  func(c *Config) { c.Twilio.StatusCallbackURL = "http://gw.example/webhook/twilio/status" },
+			mutate:  func(c *Config) { c.Channels.WhatsApp.StatusCallbackURL = "http://gw.example/webhook/twilio/status" },
 			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
 		{name: "Worker_StatusCallbackRelative", service: RoleWorker, base: workerOK,
-			mutate:  func(c *Config) { c.Twilio.StatusCallbackURL = "/webhook/twilio/status" },
+			mutate:  func(c *Config) { c.Channels.WhatsApp.StatusCallbackURL = "/webhook/twilio/status" },
 			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
 		{name: "Worker_StatusCallbackPlaceholder", service: RoleWorker, base: workerOK,
 			mutate: func(c *Config) {
-				c.Twilio.StatusCallbackURL = "https://your-ngrok-url.ngrok-free.dev/webhook/twilio/status"
+				c.Channels.WhatsApp.StatusCallbackURL = "https://your-ngrok-url.ngrok-free.dev/webhook/twilio/status"
 			},
 			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
 
@@ -112,23 +115,23 @@ func TestValidate(t *testing.T) {
 			base:    func() Config { return Config{} },
 			wantErr: []string{"ENCRYPTION_KEY", "JWT_SECRET", "DASHBOARD_API_SECRET", "DASHBOARD_FAMILY_GROUP", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"}},
 		{name: "All_TelegramWithoutSecret", service: RoleAll, base: workerOK,
-			mutate: func(c *Config) { c.Telegram.BotToken = "1:a" }, wantErr: []string{"TELEGRAM_SECRET_TOKEN"}},
+			mutate: func(c *Config) { c.Channels.Telegram.BotToken = "1:a" }, wantErr: []string{"TELEGRAM_SECRET_TOKEN"}},
 		{name: "All_TelegramWithSecretOK", service: RoleAll, base: workerOK,
-			mutate: func(c *Config) { c.Telegram.BotToken = "1:a"; c.Telegram.SecretToken = validTGSecret }},
+			mutate: func(c *Config) { c.Channels.Telegram.BotToken = "1:a"; c.Channels.Telegram.SecretToken = validTGSecret }},
 		{name: "All_TelegramSecretBadChars", service: RoleAll, base: workerOK,
-			mutate:  func(c *Config) { c.Telegram.BotToken = "1:a"; c.Telegram.SecretToken = "has spaces!" },
+			mutate:  func(c *Config) { c.Channels.Telegram.BotToken = "1:a"; c.Channels.Telegram.SecretToken = "has spaces!" },
 			wantErr: []string{"TELEGRAM_SECRET_TOKEN"}},
 		{name: "All_WebhookURLWithoutBotToken", service: RoleAll, base: workerOK,
 			mutate: func(c *Config) {
-				c.Telegram.WebhookURL = "https://x/webhook/telegram"
-				c.Telegram.SecretToken = validTGSecret
+				c.Channels.Telegram.WebhookURL = "https://x/webhook/telegram"
+				c.Channels.Telegram.SecretToken = validTGSecret
 			}, wantErr: []string{"TELEGRAM_BOT_TOKEN"}},
 		{name: "All_JWTEqualsEncryptionKey", service: RoleAll, base: workerOK,
 			mutate: func(c *Config) { c.Server.JWTSecret = c.Encryption.Key }, wantErr: []string{"JWT_SECRET must differ"}},
 		{name: "All_TwilioSIDWithoutToken", service: RoleAll, base: workerOK,
-			mutate: func(c *Config) { c.Twilio.AccountSID = "AC1" }, wantErr: []string{"TWILIO_AUTH_TOKEN"}},
+			mutate: func(c *Config) { c.Channels.WhatsApp.AccountSID = "AC1" }, wantErr: []string{"TWILIO_AUTH_TOKEN"}},
 		{name: "All_StatusCallbackNotHTTPS", service: RoleAll, base: workerOK,
-			mutate:  func(c *Config) { c.Twilio.StatusCallbackURL = "http://gw.example/webhook/twilio/status" },
+			mutate:  func(c *Config) { c.Channels.WhatsApp.StatusCallbackURL = "http://gw.example/webhook/twilio/status" },
 			wantErr: []string{"TWILIO_STATUS_CALLBACK_URL"}},
 
 		// --- the services V4-01 removed are no longer accepted ---

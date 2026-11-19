@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
@@ -279,9 +280,9 @@ func TestPhotoData_Stripping_DirectRedisInspection(t *testing.T) {
 }
 
 // TestPhotoData_MultimodalActiveTurnPreservation verifies that:
-// 1. During an active conversational turn with tool calling, the in-memory loopHistory
-//    strictly preserves PhotoData and PhotoMimeType across all recursive tool iterations.
-// 2. Only upon final persistence to Redis chat history is PhotoData stripped.
+//  1. During an active conversational turn with tool calling, the in-memory loopHistory
+//     strictly preserves PhotoData and PhotoMimeType across all recursive tool iterations.
+//  2. Only upon final persistence to Redis chat history is PhotoData stripped.
 func TestPhotoData_MultimodalActiveTurnPreservation(t *testing.T) {
 	engine, tgMock, llmMock, dbMock, cleanup := setupTestEngine(t)
 	defer cleanup()
@@ -359,12 +360,12 @@ func TestPhotoData_MultimodalActiveTurnPreservation(t *testing.T) {
 		Text: "Image analyzed successfully: tool completed.",
 	}, nil).Times(1)
 
-	msg := models.Message{
-		UserID:      userID,
-		ChatID:      "chat-adv-photo",
-		Text:        "Analyze this image and run tool",
-		PhotoFileID: "photo-adv-123",
-		Source:      "telegram",
+	msg := channel.Inbound{
+		Sender:       userID,
+		Conversation: channel.Conversation{ID: "chat-adv-photo"},
+		Text:         "Analyze this image and run tool",
+		Attachments:  []channel.AttachmentRef{{ID: "photo-adv-123", Kind: channel.KindImage, ContentType: "image/jpeg", Label: "telegram_photo"}},
+		Channel:      "telegram",
 	}
 
 	err := engine.ProcessMessage(ctx, msg)
@@ -385,16 +386,16 @@ func TestPhotoData_MultimodalActiveTurnPreservation(t *testing.T) {
 }
 
 // TestBoundedRecursion_Ceiling8_And_WithNoTools verifies SCALE-03:
-// - Tool recursion strictly stops at iteration 8.
-// - Iteration 8 executes with llm.WithNoTools(ctx) and a terminal summary prompt.
-// - Even if an adversarial mock LLM returns another ToolCall on iteration 8,
-//   the engine guarantees termination and does NOT loop to iteration 9.
+//   - Tool recursion strictly stops at iteration 8.
+//   - Iteration 8 executes with llm.WithNoTools(ctx) and a terminal summary prompt.
+//   - Even if an adversarial mock LLM returns another ToolCall on iteration 8,
+//     the engine guarantees termination and does NOT loop to iteration 9.
 func TestBoundedRecursion_Ceiling8_And_WithNoTools(t *testing.T) {
 	engine, _, llmMock, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	msg := models.Message{UserID: "adv-loop-user", Text: "infinite tool recursion"}
+	msg := channel.Inbound{Sender: "adv-loop-user", Text: "infinite tool recursion"}
 
 	reg := NewRegistry()
 	mockMod := &mockToolModule{
@@ -462,17 +463,17 @@ func TestBoundedRecursion_Ceiling8_And_WithNoTools(t *testing.T) {
 }
 
 // TestConcurrentTools_4Calls_StrictOrderingAndParallelism verifies SCALE-03:
-// - 4 tool calls with staggered durations (80ms, 20ms, 60ms, 30ms) execute concurrently.
-// - Total runtime is bounded near max(duration) (~80ms-110ms), NOT sequential sum (190ms).
-// - Function calls and function responses maintain exact 1:1 order alignment regardless
-//   of which goroutine finished first.
-// - Panic in one of the tools is safely caught without terminating the turn or process.
+//   - 4 tool calls with staggered durations (80ms, 20ms, 60ms, 30ms) execute concurrently.
+//   - Total runtime is bounded near max(duration) (~80ms-110ms), NOT sequential sum (190ms).
+//   - Function calls and function responses maintain exact 1:1 order alignment regardless
+//     of which goroutine finished first.
+//   - Panic in one of the tools is safely caught without terminating the turn or process.
 func TestConcurrentTools_4Calls_StrictOrderingAndParallelism(t *testing.T) {
 	engine, _, llmMock, _, cleanup := setupTestEngine(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	msg := models.Message{UserID: "adv-concurrent-user", Text: "run 4 tools in parallel"}
+	msg := channel.Inbound{Sender: "adv-concurrent-user", Text: "run 4 tools in parallel"}
 
 	// Staggered execution durations
 	toolDurations := map[string]time.Duration{
@@ -728,7 +729,7 @@ func TestRegistry_SelectDeclarations_AdversarialCombinations(t *testing.T) {
 	dirtyMod := &mockToolModule{
 		name: "shared",
 		declarations: []*genai.FunctionDeclaration{
-			nil, // Nil declaration edge case
+			nil,        // Nil declaration edge case
 			{Name: ""}, // Empty name edge case
 			{Name: "manage_shared_space"},
 		},
@@ -967,12 +968,12 @@ func TestPhotoData_5MB_10MB_StressPayloads(t *testing.T) {
 			"",
 		).Return(&llm.Response{Text: "5MB invoice processed successfully."}, nil).Times(1)
 
-		userMsg := models.Message{
-			UserID:      userID,
-			ChatID:      "chat-adv-5mb-engine",
-			Text:        "Analyze this 5MB invoice",
-			PhotoFileID: "photo-5mb-tg",
-			Source:      "telegram",
+		userMsg := channel.Inbound{
+			Sender:       userID,
+			Conversation: channel.Conversation{ID: "chat-adv-5mb-engine"},
+			Text:         "Analyze this 5MB invoice",
+			Attachments:  []channel.AttachmentRef{{ID: "photo-5mb-tg", Kind: channel.KindImage, ContentType: "image/jpeg", Label: "telegram_photo"}},
+			Channel:      "telegram",
 		}
 
 		err = engine.ProcessMessage(context.Background(), userMsg)

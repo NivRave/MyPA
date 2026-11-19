@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/netguard"
@@ -23,7 +24,7 @@ type testToolModule struct {
 	exec  func(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error)
 }
 
-func (m *testToolModule) Name() string { return m.name }
+func (m *testToolModule) Name() string                               { return m.name }
 func (m *testToolModule) Declarations() []*genai.FunctionDeclaration { return m.decls }
 func (m *testToolModule) Execute(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
 	if m.exec != nil {
@@ -31,7 +32,9 @@ func (m *testToolModule) Execute(ctx context.Context, callCtx CallContext, toolN
 	}
 	return "", nil
 }
-func (m *testToolModule) SystemPromptSection(ctx context.Context, callCtx CallContext) string { return "" }
+func (m *testToolModule) SystemPromptSection(ctx context.Context, callCtx CallContext) string {
+	return ""
+}
 
 func TestEngine_HandleToolCall_SaveTopicMemory(t *testing.T) {
 	engine, _, llmMock, _, cleanup := setupTestEngine(t)
@@ -51,7 +54,7 @@ func TestEngine_HandleToolCall_SaveTopicMemory(t *testing.T) {
 	})
 	engine.SetToolRegistry(reg)
 
-	msg := models.Message{UserID: "user1", Text: "remember this"}
+	msg := channel.Inbound{Sender: "user1", Text: "remember this"}
 	toolCall := &genai.FunctionCall{
 		Name: "save_topic_memory",
 		Args: map[string]any{"fact": "I like cats"},
@@ -94,7 +97,7 @@ func TestEngine_HandleToolCall_ReadEmail(t *testing.T) {
 	gmailMock.EXPECT().ReadEmail(gomock.Any(), "user1", "msg-123").Return("Hello world", nil)
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Email read."}, nil)
 
-	res, err := engine.handleToolCall(context.Background(), models.Message{UserID: "user1"}, nil, "system", toolCall)
+	res, err := engine.handleToolCall(context.Background(), channel.Inbound{Sender: "user1"}, nil, "system", toolCall)
 	require.NoError(t, err)
 	assert.Equal(t, "Email read.", res)
 }
@@ -127,7 +130,7 @@ func TestEngine_HandleToolCall_DraftReply(t *testing.T) {
 	gmailMock.EXPECT().DraftReply(gomock.Any(), "user1", "msg-123", "Hi").Return(nil)
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Draft created."}, nil)
 
-	res, err := engine.handleToolCall(context.Background(), models.Message{UserID: "user1"}, nil, "system", toolCall)
+	res, err := engine.handleToolCall(context.Background(), channel.Inbound{Sender: "user1"}, nil, "system", toolCall)
 	require.NoError(t, err)
 	assert.Equal(t, "Draft created.", res)
 }
@@ -162,7 +165,7 @@ func TestEngine_HandleToolCall_ArchiveEmail(t *testing.T) {
 	gmailMock.EXPECT().ArchiveEmail(gomock.Any(), "user1", "msg-2").Return(nil)
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Archived."}, nil)
 
-	res, err := engine.handleToolCall(context.Background(), models.Message{UserID: "user1"}, nil, "system", toolCall)
+	res, err := engine.handleToolCall(context.Background(), channel.Inbound{Sender: "user1"}, nil, "system", toolCall)
 	require.NoError(t, err)
 	assert.Equal(t, "Archived.", res)
 }
@@ -197,7 +200,7 @@ func TestEngine_HandleToolCall_SoftDeleteEmail(t *testing.T) {
 	gmailMock.EXPECT().SoftDeleteEmail(gomock.Any(), "user1", "msg-2").Return(nil)
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Deleted."}, nil)
 
-	res, err := engine.handleToolCall(context.Background(), models.Message{UserID: "user1"}, nil, "system", toolCall)
+	res, err := engine.handleToolCall(context.Background(), channel.Inbound{Sender: "user1"}, nil, "system", toolCall)
 	require.NoError(t, err)
 	assert.Equal(t, "Deleted.", res)
 }
@@ -234,7 +237,7 @@ func TestEngine_HandleToolCall_FetchWebpage(t *testing.T) {
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "Read webpage"}, nil)
 
-	res, err := engine.handleToolCall(context.Background(), models.Message{UserID: "user1"}, nil, "system", toolCall)
+	res, err := engine.handleToolCall(context.Background(), channel.Inbound{Sender: "user1"}, nil, "system", toolCall)
 	require.NoError(t, err)
 	assert.Contains(t, res, "Read webpage")
 	assert.Contains(t, res, "<untrusted_external_content", "external web content is wrapped (P3-1)")

@@ -12,19 +12,6 @@ import (
 	tasksapi "google.golang.org/api/tasks/v1"
 )
 
-// TelegramClient defines the interface for interacting with Telegram.
-type TelegramClient interface {
-	SendMessage(ctx context.Context, chatID, text string) error
-	GetFile(ctx context.Context, fileID string) (string, error)
-	DownloadFile(ctx context.Context, filePath string) ([]byte, error)
-}
-
-// TwilioClient defines the interface for interacting with Twilio/WhatsApp.
-type TwilioClient interface {
-	SendMessage(ctx context.Context, to, body string) error
-	DownloadMedia(ctx context.Context, mediaURL string) ([]byte, error)
-}
-
 // AudioClient defines the interface for transcribing audio.
 type AudioClient interface {
 	TranscribeAudio(ctx context.Context, audioData []byte, filename string) (string, error)

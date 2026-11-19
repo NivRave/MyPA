@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/config"
+	"github.com/nivik/mypa/internal/telegram"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -26,7 +28,7 @@ func TestGatewayTelegram_DoesNotLogMessageText(t *testing.T) {
 	logs := captureLogs(t)
 	pub := new(MockEventPublisher)
 	pub.On("Publish", mock.Anything, mock.Anything).Return(nil)
-	r := setupIngressRouter(pub, &config.Config{Telegram: config.TelegramConfig{SecretToken: testTelegramSecret}})
+	r := setupIngressRouter(pub, testChannels(t, &config.Config{Channels: adapters.Config{Telegram: telegram.Config{SecretToken: testTelegramSecret}}}))
 
 	body := `{"update_id":1,"message":{"message_id":7,"from":{"id":42},"chat":{"id":42},"text":"my bank PIN is 4321"}}`
 	req := httptest.NewRequest("POST", "/webhook/telegram", bytes.NewBufferString(body))

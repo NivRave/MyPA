@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/domains/memory"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
@@ -48,23 +49,23 @@ func TestMemory_AntiSpoofing(t *testing.T) {
 
 	callCtx := orchestrator.CallContext{
 		User:     legitUser,
-		Message:  models.Message{UserID: "mem_canonical_actor"},
+		Message:  channel.Inbound{Sender: "mem_canonical_actor"},
 		DB:       dbMock,
 		LLM:      llmMock,
 		EventBus: bus,
 	}
 
 	adversarialArgs := map[string]interface{}{
-		"topic":               "health",
-		"fact":                "Allergic to penicillin",
-		"scope":               "family",
-		"entity_type":         "person",
-		"entity_name":         "VictimPerson",
-		"attributes":          map[string]interface{}{"blood_type": "O+"},
-		"user_id":             "hacker_attacker_666",
-		"family_group":        "evil_family_hacker",
-		"created_by_user_id":  "hacker_attacker_666",
-		"actor_user_id":       "hacker_attacker_666",
+		"topic":              "health",
+		"fact":               "Allergic to penicillin",
+		"scope":              "family",
+		"entity_type":        "person",
+		"entity_name":        "VictimPerson",
+		"attributes":         map[string]interface{}{"blood_type": "O+"},
+		"user_id":            "hacker_attacker_666",
+		"family_group":       "evil_family_hacker",
+		"created_by_user_id": "hacker_attacker_666",
+		"actor_user_id":      "hacker_attacker_666",
 	}
 
 	// One sub-test now carries every assertion the remember_fact sub-test made before the tool was

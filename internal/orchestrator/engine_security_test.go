@@ -7,9 +7,12 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/channel/adapters/adapterstest"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator/mocks"
 	"github.com/nivik/mypa/internal/state"
+	wamocks "github.com/nivik/mypa/internal/twilio/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -55,7 +58,7 @@ func TestEngine_ReadEmail_WrapsUntrustedContent(t *testing.T) {
 		Name: "read_email",
 		Args: map[string]interface{}{"message_id": "msg-123"},
 	}
-	msg := models.Message{UserID: "user-1"}
+	msg := channel.Inbound{Sender: "user-1"}
 
 	secState := &TurnSecurityState{}
 	ctx := WithTurnSecurityState(context.Background(), secState)
@@ -86,7 +89,7 @@ func TestEngine_MetaToolGate_BlocksAndStagesPendingAction(t *testing.T) {
 	secState.MarkUntrusted("email:attack-payload-1")
 	ctx := WithTurnSecurityState(context.Background(), secState)
 
-	msg := models.Message{UserID: "victim-user"}
+	msg := channel.Inbound{Sender: "victim-user"}
 	call := &genai.FunctionCall{
 		Name: "update_user_preferences",
 		Args: map[string]interface{}{
@@ -120,7 +123,9 @@ func TestEngine_ConfirmCommand_RedeemsStagedMetaTool(t *testing.T) {
 	defer ctrl.Finish()
 
 	dbMock := mocks.NewMockDBClient(ctrl)
-	tgMock := mocks.NewMockTelegramClient(ctrl)
+	// WhatsApp: its adapter hands the reply text to the API client unconverted, so the
+	// assertions below see exactly what the engine wrote.
+	waMock := wamocks.NewMockAPI(ctrl)
 
 	user := &models.User{
 		PlatformID: "user-alice",
@@ -144,7 +149,7 @@ func TestEngine_ConfirmCommand_RedeemsStagedMetaTool(t *testing.T) {
 	require.NoError(t, err)
 
 	var sentMessage string
-	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+	waMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, chatID string, text string) error {
 			sentMessage = text
 			return nil
@@ -154,7 +159,7 @@ func TestEngine_ConfirmCommand_RedeemsStagedMetaTool(t *testing.T) {
 	eng := &Engine{
 		store:    store,
 		db:       dbMock,
-		tgClient: tgMock,
+		channels: adapterstest.Registry(nil, waMock),
 	}
 
 	reg := NewRegistry()
@@ -176,9 +181,10 @@ func TestEngine_ConfirmCommand_RedeemsStagedMetaTool(t *testing.T) {
 	})
 	eng.SetToolRegistry(reg)
 
-	confirmMsg := models.Message{
-		UserID: "user-alice",
-		Text:   "CONFIRM SCHEDULE_WORKFLOW",
+	confirmMsg := channel.Inbound{
+		Channel: "whatsapp", // a message without a channel used to fall through to the default client; the registry refuses it
+		Sender:  "user-alice",
+		Text:    "CONFIRM SCHEDULE_WORKFLOW",
 	}
 
 	err = eng.ProcessMessage(context.Background(), confirmMsg)

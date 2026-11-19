@@ -8,14 +8,11 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/nivik/mypa/internal/config"
-	"github.com/nivik/mypa/internal/markdown"
 )
 
 // Client handles outgoing API requests to Twilio.
 type Client struct {
-	cfg        config.TwilioConfig
+	cfg        Config
 	httpClient *http.Client
 }
 
@@ -34,7 +31,7 @@ func WithHTTPClient(hc *http.Client) Option {
 }
 
 // NewClient creates a new Twilio API client.
-func NewClient(cfg config.TwilioConfig, opts ...Option) *Client {
+func NewClient(cfg Config, opts ...Option) *Client {
 	c := &Client{
 		cfg: cfg,
 		httpClient: &http.Client{
@@ -50,7 +47,7 @@ func NewClient(cfg config.TwilioConfig, opts ...Option) *Client {
 // SendMessage sends a WhatsApp message (text) to the target number.
 // If the formatted text exceeds the max length (1500 chars), it is split across multiple messages.
 func (c *Client) SendMessage(ctx context.Context, to string, text string) error {
-	formattedText := markdown.ToWhatsApp(text)
+	formattedText := ToWhatsApp(text)
 	chunks := SplitMessage(formattedText, 1500)
 
 	for _, chunk := range chunks {

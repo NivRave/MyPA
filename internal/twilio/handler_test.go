@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,12 +48,30 @@ func TestHandleWebhook_PostMethod(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	require.Len(t, pub.Published, 1)
 
-	msg, ok := pub.Published[0].(models.Message)
+	msg, ok := pub.Published[0].(channel.Inbound)
 	require.True(t, ok)
-	assert.Equal(t, "msg-123", msg.ID)
-	assert.Equal(t, "+123456789", msg.UserID) // Notice the whatsapp: prefix is stripped
-	assert.Equal(t, "whatsapp", msg.Source)
+	assert.Equal(t, "msg-123", msg.MessageID)
+	assert.Equal(t, "+123456789", msg.Sender) // Notice the whatsapp: prefix is stripped
+	assert.Equal(t, "whatsapp", msg.Channel)
 	assert.Equal(t, "Test message", msg.Text)
+	assert.Equal(t, channel.Conversation{Kind: channel.Direct, Addressed: true}, msg.Conversation, "replies go to the number")
+	assert.Empty(t, msg.Attachments)
+}
+
+func TestMediaRef_ClassifiesTheMediaType(t *testing.T) {
+	const u = "https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/SM1/Media/ME1"
+	cases := map[string]channel.AttachmentRef{
+		"image/png":       {ID: u, Kind: channel.KindImage, ContentType: "image/png", Label: "whatsapp_image"},
+		"audio/ogg":       {ID: u, Kind: channel.KindAudio, ContentType: "audio/ogg", Label: "whatsapp_audio"},
+		"application/ogg": {ID: u, Kind: channel.KindAudio, ContentType: "application/ogg", Label: "whatsapp_audio"},
+		"application/pdf": {ID: u, Kind: channel.KindDocument, ContentType: "application/pdf", Label: "whatsapp_pdf"},
+		"text/csv":        {ID: u, Kind: channel.KindDocument, ContentType: "text/csv", Label: "whatsapp_document"},
+		"application/zip": {ID: u, Kind: channel.KindDocument, ContentType: "application/zip", Label: "whatsapp_document"},
+		"IMAGE/JPEG":      {ID: u, Kind: channel.KindImage, ContentType: "IMAGE/JPEG", Label: "whatsapp_image"},
+	}
+	for ct, want := range cases {
+		assert.Equal(t, want, MediaRef(u, ct), ct)
+	}
 }
 
 func TestHandleWebhook_WrongMethod(t *testing.T) {

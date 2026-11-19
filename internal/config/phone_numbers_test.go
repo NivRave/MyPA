@@ -95,7 +95,7 @@ func TestCouldBePersonal(t *testing.T) {
 	}
 	for _, p := range []string{
 		"+12025550123", "+13105550199", // reserved for fiction
-		"+14155238886",                 // Twilio sandbox
+		"+14155238886",                                             // Twilio sandbox
 		"+1234567890", "+15550001", "+15550001111", "+15550100123", // not dialable in NANP
 	} {
 		assert.False(t, couldBePersonal(p), p)

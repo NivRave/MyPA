@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/llm"
-	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -27,8 +27,12 @@ func TestProcessMessage_DoesNotLogMessageText(t *testing.T) {
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&llm.Response{Text: "noted"}, nil)
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
-	require.NoError(t, engine.ProcessMessage(context.Background(), models.Message{
-		ID: "lh1", UserID: "u-log", ChatID: "c", Text: "my therapist appointment is on Tuesday", Source: "telegram",
+	require.NoError(t, engine.ProcessMessage(context.Background(), channel.Inbound{
+		MessageID:    "lh1",
+		Sender:       "u-log",
+		Conversation: channel.Conversation{ID: "c"},
+		Text:         "my therapist appointment is on Tuesday",
+		Channel:      "telegram",
 	}))
 	assert.NotContains(t, buf.String(), "therapist")
 	assert.Contains(t, buf.String(), `"text_len"`)

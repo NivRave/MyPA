@@ -10,35 +10,50 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/channel"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/modules/rabbitmq"
 )
 
-var ( sharedRabbitOnce sync.Once; sharedAmqpURL string; sharedRabbitErr error )
-func setupTestRabbitMQ(t *testing.T) (string, func()) { sharedRabbitOnce.Do(func() {
-	ctx := context.Background()
+var (
+	sharedRabbitOnce sync.Once
+	sharedAmqpURL    string
+	sharedRabbitErr  error
+)
 
-	rabbitContainer, err := rabbitmq.Run(ctx,
-		"rabbitmq:4.3.7-management-alpine@sha256:eb338b3fc8f5c251028c0022ac0de3fe1db2d599d1c6a08b45898f756f248881",
-	)
-	if err != nil {
-		sharedRabbitErr = fmt.Errorf("failed to start container: %w", err); return
-	}
+func setupTestRabbitMQ(t *testing.T) (string, func()) {
+	sharedRabbitOnce.Do(func() {
+		ctx := context.Background()
 
-	amqpURL, err := rabbitContainer.AmqpURL(ctx)
-	if err != nil {
-		sharedRabbitErr = fmt.Errorf("failed to get connection string: %w", err); return
-	}
-
-	_ = func() {
-		if false { if err := rabbitContainer.Terminate(ctx); err != nil {
-			log.Fatalf("failed to terminate container: %s", err) }
+		rabbitContainer, err := rabbitmq.Run(ctx,
+			"rabbitmq:4.3.7-management-alpine@sha256:eb338b3fc8f5c251028c0022ac0de3fe1db2d599d1c6a08b45898f756f248881",
+		)
+		if err != nil {
+			sharedRabbitErr = fmt.Errorf("failed to start container: %w", err)
+			return
 		}
-	}
 
-	sharedAmqpURL = amqpURL }); if sharedRabbitErr != nil { t.Fatalf("%v", sharedRabbitErr) }; return sharedAmqpURL, func() {}
+		amqpURL, err := rabbitContainer.AmqpURL(ctx)
+		if err != nil {
+			sharedRabbitErr = fmt.Errorf("failed to get connection string: %w", err)
+			return
+		}
+
+		_ = func() {
+			if false {
+				if err := rabbitContainer.Terminate(ctx); err != nil {
+					log.Fatalf("failed to terminate container: %s", err)
+				}
+			}
+		}
+
+		sharedAmqpURL = amqpURL
+	})
+	if sharedRabbitErr != nil {
+		t.Fatalf("%v", sharedRabbitErr)
+	}
+	return sharedAmqpURL, func() {}
 }
 
 func TestPublishConsumeRoundTrip(t *testing.T) {
@@ -58,17 +73,17 @@ func TestPublishConsumeRoundTrip(t *testing.T) {
 	defer sub.Close()
 
 	// 3. Test Message
-	originalMsg := models.Message{
-		ID:        "msg-123",
-		UserID:    "user-456",
-		ChatID:    "chat-789",
-		Text:      "Block 2 hours for deep work tomorrow",
-		Source:    "telegram",
-		Timestamp: time.Now().Truncate(time.Millisecond),
+	originalMsg := channel.Inbound{
+		MessageID:    "msg-123",
+		Sender:       "user-456",
+		Conversation: channel.Conversation{ID: "chat-789"},
+		Text:         "Block 2 hours for deep work tomorrow",
+		Channel:      "telegram",
+		SentAt:       time.Now().Truncate(time.Millisecond),
 	}
 
 	// 4. Start Consumer in a goroutine
-	var receivedMsg models.Message
+	var receivedMsg channel.Inbound
 	var wg sync.WaitGroup
 	wg.Add(1)
 
@@ -76,7 +91,7 @@ func TestPublishConsumeRoundTrip(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = sub.Consume(func(msg models.Message) error {
+		_ = sub.Consume(func(msg channel.Inbound) error {
 			receivedMsg = msg
 			wg.Done()
 			return nil
@@ -104,9 +119,9 @@ func TestPublishConsumeRoundTrip(t *testing.T) {
 	}
 
 	// 7. Verify Message
-	require.Equal(t, originalMsg.ID, receivedMsg.ID)
+	require.Equal(t, originalMsg.MessageID, receivedMsg.MessageID)
 	require.Equal(t, originalMsg.Text, receivedMsg.Text)
-	require.Equal(t, originalMsg.UserID, receivedMsg.UserID)
+	require.Equal(t, originalMsg.Sender, receivedMsg.Sender)
 }
 
 func TestSafePublisher_ConcurrentPublish_RaceFree(t *testing.T) {
@@ -132,10 +147,10 @@ func TestSafePublisher_ConcurrentPublish_RaceFree(t *testing.T) {
 		go func(routineID int) {
 			defer wg.Done()
 			for m := 0; m < msgsPerGoroutine; m++ {
-				msg := models.Message{
-					ID:        fmt.Sprintf("msg-%d-%d", routineID, m),
+				msg := channel.Inbound{
+					MessageID: fmt.Sprintf("msg-%d-%d", routineID, m),
 					Text:      "concurrent test payload",
-					Timestamp: time.Now(),
+					SentAt:    time.Now(),
 				}
 				err := pub.Publish(ctx, msg)
 				require.NoError(t, err)
@@ -155,7 +170,7 @@ func TestSafePublisher_ConcurrentPublish_RaceFree(t *testing.T) {
 	defer subCancel()
 
 	go func() {
-		_ = sub.Consume(func(m models.Message) error {
+		_ = sub.Consume(func(m channel.Inbound) error {
 			countMu.Lock()
 			receivedCount++
 			current := receivedCount
@@ -213,16 +228,16 @@ func TestConsumer_PoisonPill_RoutesToDLQ(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	failingMsg := models.Message{
-		ID:        "poison-123",
+	failingMsg := channel.Inbound{
+		MessageID: "poison-123",
 		Text:      "always fail",
-		Timestamp: time.Now(),
+		SentAt:    time.Now(),
 	}
 
 	var attemptsMu sync.Mutex
 	attempts := 0
 	go func() {
-		_ = sub.Consume(func(m models.Message) error {
+		_ = sub.Consume(func(m channel.Inbound) error {
 			attemptsMu.Lock()
 			attempts++
 			attemptsMu.Unlock()
@@ -250,10 +265,10 @@ func TestConsumer_PoisonPill_RoutesToDLQ(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok, "Dead-letter queue must contain the rejected message")
 
-	var deadMsg models.Message
+	var deadMsg channel.Inbound
 	err = json.Unmarshal(d.Body, &deadMsg)
 	require.NoError(t, err)
-	require.Equal(t, failingMsg.ID, deadMsg.ID)
+	require.Equal(t, failingMsg.MessageID, deadMsg.MessageID)
 }
 
 func TestConsumer_MalformedJSON_ImmediateDLQ(t *testing.T) {
@@ -282,7 +297,7 @@ func TestConsumer_MalformedJSON_ImmediateDLQ(t *testing.T) {
 	defer sub.Close()
 
 	go func() {
-		_ = sub.Consume(func(m models.Message) error {
+		_ = sub.Consume(func(m channel.Inbound) error {
 			t.Errorf("Handler should never be called for malformed JSON")
 			return nil
 		})
@@ -308,14 +323,14 @@ func TestSafePublisher_AutoReconnect_SimulatedDisconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	err = pub.Publish(ctx, models.Message{ID: "msg-1"})
+	err = pub.Publish(ctx, channel.Inbound{MessageID: "msg-1"})
 	require.NoError(t, err)
 
 	pub.mu.Lock()
 	_ = pub.channel.Close()
 	pub.mu.Unlock()
 
-	err = pub.Publish(ctx, models.Message{ID: "msg-2"})
+	err = pub.Publish(ctx, channel.Inbound{MessageID: "msg-2"})
 	require.NoError(t, err, "SafePublisher must auto-reconnect on channel closure")
 }
 
@@ -343,4 +358,3 @@ func TestGetRetryCount(t *testing.T) {
 	}
 	require.Equal(t, 5, getRetryCount(amqp.Table{HeaderDeath: death}))
 }
-

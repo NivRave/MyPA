@@ -39,83 +39,6 @@ func requireProblem(t *testing.T, r Result, want Status, detailContains string) 
 	assert.NotEmpty(t, strings.TrimSpace(r.NextStep), "a problem must come with a next step")
 }
 
-// --- Telegram webhook -------------------------------------------------------------------------
-
-func webhookCheck(info WebhookInfo, err error) TelegramWebhook {
-	return TelegramWebhook{
-		Configured: true,
-		WantURL:    "https://mypa.example/webhook/telegram",
-		Info:       func(context.Context) (WebhookInfo, error) { return info, err },
-		Now:        fixedNow,
-	}
-}
-
-func TestTelegramWebhook_Healthy(t *testing.T) {
-	r := one(t, webhookCheck(WebhookInfo{URL: "https://mypa.example/webhook/telegram"}, nil), adminScope)
-	assert.Equal(t, StatusOK, r.Status)
-	assert.Empty(t, r.NextStep)
-}
-
-// V4-17 "done when": a broken webhook is detected. Each way it breaks is a failure with a next step.
-func TestTelegramWebhook_Broken(t *testing.T) {
-	t.Run("nothing registered", func(t *testing.T) {
-		r := one(t, webhookCheck(WebhookInfo{URL: ""}, nil), adminScope)
-		requireProblem(t, r, StatusFail, "No webhook is registered")
-	})
-	t.Run("registered to another address", func(t *testing.T) {
-		r := one(t, webhookCheck(WebhookInfo{URL: "https://old-tunnel.example/webhook/telegram"}, nil), adminScope)
-		requireProblem(t, r, StatusFail, "different address")
-		assert.Contains(t, r.Detail, "old-tunnel.example")
-	})
-	t.Run("deliveries are failing", func(t *testing.T) {
-		r := one(t, webhookCheck(WebhookInfo{
-			URL:          "https://mypa.example/webhook/telegram",
-			Pending:      3,
-			LastErrorAt:  testNow.Add(-12 * time.Minute),
-			LastErrorMsg: "Connection refused",
-		}, nil), adminScope)
-		requireProblem(t, r, StatusFail, "Connection refused")
-		assert.Contains(t, r.Detail, "12 minutes ago")
-		assert.Contains(t, r.Detail, "3 updates are waiting")
-	})
-	t.Run("telegram cannot be asked", func(t *testing.T) {
-		r := one(t, webhookCheck(WebhookInfo{}, errors.New("Post: dial tcp: i/o timeout")), adminScope)
-		requireProblem(t, r, StatusFail, "Could not ask Telegram")
-	})
-}
-
-func TestTelegramWebhook_OldErrorWithNothingPendingIsAWarning(t *testing.T) {
-	r := one(t, webhookCheck(WebhookInfo{
-		URL:          "https://mypa.example/webhook/telegram",
-		LastErrorAt:  testNow.Add(-5 * time.Hour),
-		LastErrorMsg: "Read timeout expired",
-	}, nil), adminScope)
-	requireProblem(t, r, StatusWarn, "Read timeout expired")
-}
-
-func TestTelegramWebhook_ErrorOlderThanADayIsHistory(t *testing.T) {
-	r := one(t, webhookCheck(WebhookInfo{
-		URL:          "https://mypa.example/webhook/telegram",
-		LastErrorAt:  testNow.Add(-72 * time.Hour),
-		LastErrorMsg: "Connection refused",
-	}, nil), adminScope)
-	assert.Equal(t, StatusOK, r.Status)
-}
-
-func TestTelegramWebhook_NoConfiguredAddressSkipsTheComparison(t *testing.T) {
-	c := webhookCheck(WebhookInfo{URL: "https://anything.example/webhook/telegram"}, nil)
-	c.WantURL = ""
-	assert.Equal(t, StatusOK, one(t, c, adminScope).Status)
-}
-
-func TestTelegramWebhook_NotConfigured(t *testing.T) {
-	c := TelegramWebhook{Configured: false, Info: func(context.Context) (WebhookInfo, error) {
-		t.Fatal("Telegram must not be called when it is not configured")
-		return WebhookInfo{}, nil
-	}}
-	assert.Equal(t, StatusInfo, one(t, c, adminScope).Status)
-}
-
 // --- Google accounts --------------------------------------------------------------------------
 
 type googleFixture struct {
@@ -329,35 +252,6 @@ func TestRefreshWith_DetectsARevokedToken(t *testing.T) {
 	require.NoError(t, refresh(context.Background(), original))
 	assert.Equal(t, 2, refreshRequests, "every check asks Google")
 	assert.Equal(t, stillValid, original.Expiry, "the caller's token is not modified")
-}
-
-// --- WhatsApp ---------------------------------------------------------------------------------
-
-func TestWhatsApp(t *testing.T) {
-	t.Run("not configured", func(t *testing.T) {
-		assert.Equal(t, StatusInfo, one(t, WhatsApp{}, adminScope).Status)
-	})
-	t.Run("sandbox sender", func(t *testing.T) {
-		results := WhatsApp{Configured: true, Sender: TwilioSandboxSender, StatusCallbackURL: "https://mypa.example/webhook/twilio/status"}.Run(context.Background(), adminScope)
-		require.Len(t, results, 1)
-		requireProblem(t, results[0], StatusWarn, "sandbox")
-		assert.NotContains(t, results[0].Detail, "4155238886", "the sender is shown masked")
-	})
-	t.Run("own sender without delivery reports", func(t *testing.T) {
-		results := WhatsApp{Configured: true, Sender: "whatsapp:+12025550199"}.Run(context.Background(), adminScope)
-		require.Len(t, results, 1)
-		requireProblem(t, results[0], StatusWarn, "Delivery failures")
-		assert.Contains(t, results[0].NextStep, "TWILIO_STATUS_CALLBACK_URL")
-	})
-	t.Run("own sender with delivery reports", func(t *testing.T) {
-		r := one(t, WhatsApp{Configured: true, Sender: "whatsapp:+12025550199", StatusCallbackURL: "https://mypa.example/webhook/twilio/status"}, adminScope)
-		assert.Equal(t, StatusOK, r.Status)
-		assert.Contains(t, r.Detail, "…0199")
-	})
-	t.Run("sandbox without delivery reports reports both", func(t *testing.T) {
-		results := WhatsApp{Configured: true, Sender: TwilioSandboxSender}.Run(context.Background(), adminScope)
-		require.Len(t, results, 2)
-	})
 }
 
 // --- Queues -----------------------------------------------------------------------------------

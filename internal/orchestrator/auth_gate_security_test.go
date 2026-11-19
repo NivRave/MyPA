@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -30,11 +31,11 @@ func TestAdversarial_SEC01_UnauthenticatedCommandsBlocked(t *testing.T) {
 				return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
 			})).Return(nil)
 
-			err := engine.ProcessMessage(context.Background(), models.Message{
-				UserID: unauthUserID,
-				ChatID: "chat-adv",
-				Text:   cmd,
-				Source: "telegram",
+			err := engine.ProcessMessage(context.Background(), channel.Inbound{
+				Sender:       unauthUserID,
+				Conversation: channel.Conversation{ID: "chat-adv"},
+				Text:         cmd,
+				Channel:      "telegram",
 			})
 			require.NoError(t, err)
 		})
@@ -48,11 +49,11 @@ func TestAdversarial_SEC01_UnauthenticatedCommandsBlocked(t *testing.T) {
 			return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
 		})).Return(nil)
 
-		err := engine.ProcessMessage(context.Background(), models.Message{
-			UserID:      unauthUserID,
-			ChatID:      "chat-adv",
-			VoiceFileID: "adversary-voice-id",
-			Source:      "telegram",
+		err := engine.ProcessMessage(context.Background(), channel.Inbound{
+			Sender:       unauthUserID,
+			Conversation: channel.Conversation{ID: "chat-adv"},
+			Attachments:  []channel.AttachmentRef{{ID: "adversary-voice-id", Kind: channel.KindAudio, Label: "telegram_voice"}},
+			Channel:      "telegram",
 		})
 		require.NoError(t, err)
 	})
@@ -65,11 +66,11 @@ func TestAdversarial_SEC01_UnauthenticatedCommandsBlocked(t *testing.T) {
 			return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
 		})).Return(nil)
 
-		err := engine.ProcessMessage(context.Background(), models.Message{
-			UserID:      unauthUserID,
-			ChatID:      "chat-adv",
-			PhotoFileID: "adversary-photo-id",
-			Source:      "telegram",
+		err := engine.ProcessMessage(context.Background(), channel.Inbound{
+			Sender:       unauthUserID,
+			Conversation: channel.Conversation{ID: "chat-adv"},
+			Attachments:  []channel.AttachmentRef{{ID: "adversary-photo-id", Kind: channel.KindImage, ContentType: "image/jpeg", Label: "telegram_photo"}},
+			Channel:      "telegram",
 		})
 		require.NoError(t, err)
 	})
@@ -94,11 +95,11 @@ func TestAdversarial_SEC01_BruteForceLockout(t *testing.T) {
 			return ok && strings.Contains(s, expectedMsg)
 		})).Return(nil)
 
-		err := engine.ProcessMessage(context.Background(), models.Message{
-			UserID: bruteForceUserID,
-			ChatID: "chat-adv",
-			Text:   "000000",
-			Source: "telegram",
+		err := engine.ProcessMessage(context.Background(), channel.Inbound{
+			Sender:       bruteForceUserID,
+			Conversation: channel.Conversation{ID: "chat-adv"},
+			Text:         "000000",
+			Channel:      "telegram",
 		})
 		require.NoError(t, err)
 	}
@@ -110,11 +111,11 @@ func TestAdversarial_SEC01_BruteForceLockout(t *testing.T) {
 		return ok && strings.Contains(s, "Too many failed attempts (5/5). Your account has been locked for 1 hour.")
 	})).Return(nil)
 
-	err := engine.ProcessMessage(context.Background(), models.Message{
-		UserID: bruteForceUserID,
-		ChatID: "chat-adv",
-		Text:   "000000",
-		Source: "telegram",
+	err := engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:       bruteForceUserID,
+		Conversation: channel.Conversation{ID: "chat-adv"},
+		Text:         "000000",
+		Channel:      "telegram",
 	})
 	require.NoError(t, err)
 
@@ -125,11 +126,11 @@ func TestAdversarial_SEC01_BruteForceLockout(t *testing.T) {
 		return ok && strings.Contains(s, "Too many failed pairing attempts. You are temporarily locked out.")
 	})).Return(nil)
 
-	err = engine.ProcessMessage(context.Background(), models.Message{
-		UserID: bruteForceUserID,
-		ChatID: "chat-adv",
-		Text:   "000000",
-		Source: "telegram",
+	err = engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:       bruteForceUserID,
+		Conversation: channel.Conversation{ID: "chat-adv"},
+		Text:         "000000",
+		Channel:      "telegram",
 	})
 	require.NoError(t, err)
 }
@@ -149,11 +150,11 @@ func TestAdversarial_SEC01_PairingCodeRedemption(t *testing.T) {
 			return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
 		})).Return(nil)
 
-		err := engine.ProcessMessage(context.Background(), models.Message{
-			UserID: unauthUserID,
-			ChatID: "chat-adv",
-			Text:   "12345",
-			Source: "telegram",
+		err := engine.ProcessMessage(context.Background(), channel.Inbound{
+			Sender:       unauthUserID,
+			Conversation: channel.Conversation{ID: "chat-adv"},
+			Text:         "12345",
+			Channel:      "telegram",
 		})
 		require.NoError(t, err)
 	})
@@ -166,11 +167,11 @@ func TestAdversarial_SEC01_PairingCodeRedemption(t *testing.T) {
 			return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
 		})).Return(nil)
 
-		err := engine.ProcessMessage(context.Background(), models.Message{
-			UserID: unauthUserID,
-			ChatID: "chat-adv",
-			Text:   "1234567",
-			Source: "telegram",
+		err := engine.ProcessMessage(context.Background(), channel.Inbound{
+			Sender:       unauthUserID,
+			Conversation: channel.Conversation{ID: "chat-adv"},
+			Text:         "1234567",
+			Channel:      "telegram",
 		})
 		require.NoError(t, err)
 	})
@@ -196,11 +197,11 @@ func TestAdversarial_SEC01_PairingCodeRedemption(t *testing.T) {
 			return ok && strings.Contains(s, "Pairing successful!")
 		})).Return(nil)
 
-		err := engine.ProcessMessage(context.Background(), models.Message{
-			UserID: unauthUserID,
-			ChatID: "chat-adv",
-			Text:   validCode,
-			Source: "telegram",
+		err := engine.ProcessMessage(context.Background(), channel.Inbound{
+			Sender:       unauthUserID,
+			Conversation: channel.Conversation{ID: "chat-adv"},
+			Text:         validCode,
+			Channel:      "telegram",
 		})
 		require.NoError(t, err)
 	})
@@ -226,11 +227,11 @@ func TestAdversarial_SEC01_PairingCodeRedemption(t *testing.T) {
 			return ok && strings.Contains(s, "Pairing successful!")
 		})).Return(nil)
 
-		err := engine.ProcessMessage(context.Background(), models.Message{
-			UserID: unauthUserID,
-			ChatID: "chat-adv",
-			Text:   "/start " + validCode,
-			Source: "telegram",
+		err := engine.ProcessMessage(context.Background(), channel.Inbound{
+			Sender:       unauthUserID,
+			Conversation: channel.Conversation{ID: "chat-adv"},
+			Text:         "/start " + validCode,
+			Channel:      "telegram",
 		})
 		require.NoError(t, err)
 	})
@@ -260,11 +261,11 @@ func TestAdversarial_SEC01_RBAC_NonAdminRolesDenied(t *testing.T) {
 				return ok && strings.Contains(s, "Permission denied: administrative privileges required")
 			})).Return(nil)
 
-			err := engine.ProcessMessage(context.Background(), models.Message{
-				UserID: userID,
-				ChatID: "chat-adv",
-				Text:   "/backup",
-				Source: "telegram",
+			err := engine.ProcessMessage(context.Background(), channel.Inbound{
+				Sender:       userID,
+				Conversation: channel.Conversation{ID: "chat-adv"},
+				Text:         "/backup",
+				Channel:      "telegram",
 			})
 			require.NoError(t, err)
 
@@ -275,11 +276,11 @@ func TestAdversarial_SEC01_RBAC_NonAdminRolesDenied(t *testing.T) {
 				return ok && strings.Contains(s, "Permission denied: administrative privileges required")
 			})).Return(nil)
 
-			err = engine.ProcessMessage(context.Background(), models.Message{
-				UserID: userID,
-				ChatID: "chat-adv",
-				Text:   "/restore",
-				Source: "telegram",
+			err = engine.ProcessMessage(context.Background(), channel.Inbound{
+				Sender:       userID,
+				Conversation: channel.Conversation{ID: "chat-adv"},
+				Text:         "/restore",
+				Channel:      "telegram",
 			})
 			require.NoError(t, err)
 		})

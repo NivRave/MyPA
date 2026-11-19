@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/crypto"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
@@ -184,7 +185,7 @@ func (m *Module) GetCredentialFallback(ctx context.Context, userID, provider str
 func (m *Module) Declarations() []*genai.FunctionDeclaration {
 	return []*genai.FunctionDeclaration{
 		{
-			Name: "undo_last_action",
+			Name:        "undo_last_action",
 			Description: "Reverts the user's or family's most recent mutation or change (such as an expense, baby feeding log, schedule entry, or task) using the recorded BeforeJSON state and marks it undone.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
@@ -201,7 +202,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 			},
 		},
 		{
-			Name: "list_recent_changes",
+			Name:        "list_recent_changes",
 			Description: "Lists recent data mutations and changes across life domains (baby, house, finance, schedule, memory). Use when user asks 'what did I change recently?', 'show audit log', or 'who updated what?'.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
@@ -218,7 +219,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 			},
 		},
 		{
-			Name: "export_topic_data",
+			Name:        "export_topic_data",
 			Description: "Exports structured data and mutation history for a specific topic (baby, house, finance, memory, schedule, or all) as formatted JSON or CSV.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
@@ -343,7 +344,7 @@ func (m *Module) executeRollbackInternal(ctx context.Context, actorID, familyGro
 	if handler, exists := m.getUndoHandler(log.EntityType); exists {
 		callCtx := orchestrator.CallContext{
 			User:     &models.User{PlatformID: actorID, FamilyGroup: familyGroup},
-			Message:  models.Message{UserID: actorID},
+			Message:  channel.Inbound{Sender: actorID},
 			EventBus: m.bus,
 		}
 		customDetail, err := handler(ctx, *log, callCtx)

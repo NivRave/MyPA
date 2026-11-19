@@ -6,13 +6,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/nivik/mypa/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAdversarial_SEC03_DownloadMedia_SchemeAndHostnameRejections(t *testing.T) {
-	cfg := config.TwilioConfig{
+	cfg := Config{
 		AccountSID: "secret-account-sid-123",
 		AuthToken:  "secret-auth-token-456",
 	}
@@ -65,7 +64,7 @@ func TestAdversarial_SEC03_DownloadMedia_BasicAuthAttachedOnlyToTrustedHosts(t *
 	}))
 	defer ts.Close()
 
-	cfg := config.TwilioConfig{
+	cfg := Config{
 		AccountSID: "verified-sid",
 		AuthToken:  "verified-token",
 	}

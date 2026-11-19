@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
@@ -78,8 +79,11 @@ func (h *stickyHarness) turn(t *testing.T, text string, script ...*llm.Response)
 	h.responses = script
 	first := len(h.offered)
 	h.mu.Unlock()
-	require.NoError(t, h.engine.ProcessMessage(context.Background(), models.Message{
-		UserID: "user-sticky", ChatID: "chat-sticky", Text: text, Source: "telegram",
+	require.NoError(t, h.engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:       "user-sticky",
+		Conversation: channel.Conversation{ID: "chat-sticky"},
+		Text:         text,
+		Channel:      "telegram",
 	}))
 	h.mu.Lock()
 	defer h.mu.Unlock()

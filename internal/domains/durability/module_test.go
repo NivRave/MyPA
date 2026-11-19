@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
@@ -620,7 +621,7 @@ func TestSEC04_CrossTenant_DurabilityUndo_Blocked(t *testing.T) {
 	// 2. Family Beta attempts to undo Family Alpha's mutation by passing mutation_id
 	callCtxBeta := orchestrator.CallContext{
 		User:    &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"},
-		Message: models.Message{UserID: "user_beta"},
+		Message: channel.Inbound{Sender: "user_beta"},
 	}
 
 	_, undoBetaErr := mod.Execute(ctx, callCtxBeta, "undo_last_action", map[string]interface{}{
@@ -637,7 +638,7 @@ func TestSEC04_CrossTenant_DurabilityUndo_Blocked(t *testing.T) {
 	// 3. Legitimate same-family undo (non-regression)
 	callCtxAlpha := orchestrator.CallContext{
 		User:    &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"},
-		Message: models.Message{UserID: "user_alpha"},
+		Message: channel.Inbound{Sender: "user_alpha"},
 	}
 
 	undoAlphaResp, err := mod.Execute(ctx, callCtxAlpha, "undo_last_action", map[string]interface{}{
@@ -714,5 +715,3 @@ func TestRollbackEngine_AllowlistAndIdempotency(t *testing.T) {
 	assert.True(t, res2.AlreadyUndone)
 	assert.Contains(t, res2.Detail, "already been undone")
 }
-
-

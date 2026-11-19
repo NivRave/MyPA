@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"golang.org/x/sync/errgroup"
@@ -21,7 +22,7 @@ type NotificationSender func(ctx context.Context, userID, text string) error
 // required to execute tools and generate system prompt additions.
 type CallContext struct {
 	User                *models.User
-	Message             models.Message
+	Message             channel.Inbound
 	DB                  DBClient
 	LLM                 LLMClient
 	EventBus            *events.EventBus
@@ -31,13 +32,13 @@ type CallContext struct {
 	UntrustedSources    []string
 }
 
-// ActorID returns the canonical external platform identifier (e.g. Telegram chat ID,
-// WhatsApp phone number) representing the active actor.
+// ActorID returns the canonical external identifier of the active actor on their channel (a user
+// ID or a phone number, whatever the adapter reports as the sender).
 func (c CallContext) ActorID() string {
 	if c.User != nil && strings.TrimSpace(c.User.PlatformID) != "" {
 		return strings.TrimSpace(c.User.PlatformID)
 	}
-	return strings.TrimSpace(c.Message.UserID)
+	return strings.TrimSpace(c.Message.Sender)
 }
 
 // TenantFamilyGroup returns the non-empty family group scope for the active session.

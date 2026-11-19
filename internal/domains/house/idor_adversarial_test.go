@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/domains/house"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -197,7 +198,7 @@ func TestSEC04_CrossTenant_MaintenanceComplete_IDOR_Vulnerability(t *testing.T) 
 
 	// 1. Family Alpha creates a maintenance item
 	userAlpha := &models.User{ID: "u1", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
-	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: models.Message{UserID: "user_alpha"}}
+	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}}
 	createResp, err := mod.Execute(ctx, callCtxAlpha, "manage_home_maintenance", map[string]interface{}{
 		"action":        "create",
 		"task_name":     "Replace HVAC Filters",
@@ -216,7 +217,7 @@ func TestSEC04_CrossTenant_MaintenanceComplete_IDOR_Vulnerability(t *testing.T) 
 
 	// 2. Family Beta attempts to complete Family Alpha's task (item_id: 1)
 	userBeta := &models.User{ID: "u2", PlatformID: "user_beta", FamilyGroup: "family_beta"}
-	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: models.Message{UserID: "user_beta"}}
+	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}}
 	_, completeErr := mod.Execute(ctx, callCtxBeta, "manage_home_maintenance", map[string]interface{}{
 		"action":  "complete",
 		"item_id": 1,
@@ -235,7 +236,7 @@ func TestSEC04_CrossTenant_MaintenanceUpdateDelete_Blocked(t *testing.T) {
 
 	// Family Alpha creates item
 	userAlpha := &models.User{ID: "u1", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
-	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: models.Message{UserID: "user_alpha"}}
+	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}}
 	_, err := mod.Execute(ctx, callCtxAlpha, "manage_home_maintenance", map[string]interface{}{
 		"action":    "create",
 		"task_name": "Fix Roof",
@@ -244,7 +245,7 @@ func TestSEC04_CrossTenant_MaintenanceUpdateDelete_Blocked(t *testing.T) {
 
 	// Family Beta attempts update
 	userBeta := &models.User{ID: "u2", PlatformID: "user_beta", FamilyGroup: "family_beta"}
-	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: models.Message{UserID: "user_beta"}}
+	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}}
 	_, updateErr := mod.Execute(ctx, callCtxBeta, "manage_home_maintenance", map[string]interface{}{
 		"action":    "update",
 		"item_id":   1,
@@ -270,7 +271,7 @@ func TestSEC04_EmptyFamilyGroup_StrictUserIsolation(t *testing.T) {
 
 	// User Solo1 (empty family group)
 	userSolo1 := &models.User{ID: "u10", PlatformID: "solo_1", FamilyGroup: ""}
-	callCtxSolo1 := orchestrator.CallContext{User: userSolo1, Message: models.Message{UserID: "solo_1"}}
+	callCtxSolo1 := orchestrator.CallContext{User: userSolo1, Message: channel.Inbound{Sender: "solo_1"}}
 
 	// Solo1 creates vehicle
 	resp1, err := mod.Execute(ctx, callCtxSolo1, "manage_vehicle_asset", map[string]interface{}{
@@ -282,7 +283,7 @@ func TestSEC04_EmptyFamilyGroup_StrictUserIsolation(t *testing.T) {
 
 	// User Solo2 (also empty family group)
 	userSolo2 := &models.User{ID: "u20", PlatformID: "solo_2", FamilyGroup: ""}
-	callCtxSolo2 := orchestrator.CallContext{User: userSolo2, Message: models.Message{UserID: "solo_2"}}
+	callCtxSolo2 := orchestrator.CallContext{User: userSolo2, Message: channel.Inbound{Sender: "solo_2"}}
 
 	// Solo2 attempts to update Solo1's vehicle (asset_id: 1)
 	_, solo2Err := mod.Execute(ctx, callCtxSolo2, "manage_vehicle_asset", map[string]interface{}{

@@ -1,6 +1,22 @@
 package main
 
-import "io"
+import (
+	"io"
+	"testing"
+
+	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/channel/adapters"
+	"github.com/nivik/mypa/internal/config"
+	"github.com/stretchr/testify/require"
+)
+
+// testChannels builds the production channel registry from a test configuration, as run does.
+func testChannels(t *testing.T, cfg *config.Config) *channel.Registry {
+	t.Helper()
+	reg, err := adapters.Build(cfg.Channels)
+	require.NoError(t, err)
+	return reg
+}
 
 // repeatingReader generates a long stream of bytes without allocating a huge slice in memory.
 // Shared by the body-limit tests of the edge, the ingress and the app router.

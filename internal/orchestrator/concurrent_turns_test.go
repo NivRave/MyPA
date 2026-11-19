@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
@@ -57,8 +58,12 @@ func TestProcessMessage_ConcurrentTurnsForDifferentUsers(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := engine.ProcessMessage(context.Background(), models.Message{
-				ID: "m-" + uid, UserID: uid, ChatID: "chat-" + uid, Text: "book for " + uid, Source: "telegram",
+			err := engine.ProcessMessage(context.Background(), channel.Inbound{
+				MessageID:    "m-" + uid,
+				Sender:       uid,
+				Conversation: channel.Conversation{ID: "chat-" + uid},
+				Text:         "book for " + uid,
+				Channel:      "telegram",
 			})
 			assert.NoError(t, err)
 		}()

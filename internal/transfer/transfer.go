@@ -35,7 +35,7 @@ var NotCarried = []string{
 	"Follow-up tool context and cached prompt sections: rebuilt on the next message.",
 	"The memory of already-handled message IDs: a message a platform re-delivers across the move could be answered twice.",
 	"Messages that had failed for good (the dead-letter queues that /doctor reports): they stay in the old broker. Look at them before retiring it.",
-	"WhatsApp's own 24-hour reply window is kept by WhatsApp, not by MyPA: someone who has not written for a day cannot be messaged until they write.",
+	"A messaging platform's own 24-hour reply window, where it has one, is kept by the platform, not by MyPA: someone who has not written for a day may not be reachable there until they write.",
 }
 
 // QueueProbe reports how many messages wait in a queue and how many consumers are attached.
@@ -326,8 +326,8 @@ func (i Importer) Run(ctx context.Context, path string) (Result, error) {
 	}
 
 	targetIdle := false
-	// 2. The target must not be running: two live installs on one Telegram bot or WhatsApp
-	// number would both answer, and a running app would write into the database being replaced.
+	// 2. The target must not be running: two live installs on one bot account or phone number
+	// would both answer, and a running app would write into the database being replaced.
 	if i.SkipStopCheck {
 		fmt.Fprintln(out, "! Stop check skipped.")
 	} else {

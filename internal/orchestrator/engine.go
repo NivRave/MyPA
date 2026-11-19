@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"github.com/nivik/mypa/internal/logging"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -14,10 +13,11 @@ import (
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/events"
-	"github.com/nivik/mypa/internal/markdown"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
 
+	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/logging"
 	"google.golang.org/genai"
 )
 
@@ -28,8 +28,7 @@ type Engine struct {
 	backups            backupOps // pg_dump and backup-directory seam; zero value = real db functions
 	db                 DBClient
 	llm                LLMClient
-	tgClient           TelegramClient
-	twClient           TwilioClient
+	channels           *channel.Registry // every channel adapter (V4-31); the engine names none
 	audioClient        AudioClient
 	oauthCfg           *calendar.OAuthConfig
 	gmailClient        GmailClient
@@ -133,22 +132,15 @@ func formatAttachmentMarker(mimeType string, dataLen int) string {
 }
 
 // buildCallContext constructs a CallContext for the given user and incoming message.
-func (e *Engine) buildCallContext(ctx context.Context, user *models.User, msg models.Message) CallContext {
+func (e *Engine) buildCallContext(ctx context.Context, user *models.User, msg channel.Inbound) CallContext {
 	sendNotif := func(nCtx context.Context, targetUserID, text string) error {
-		if targetUserID == msg.UserID {
+		if targetUserID == msg.Sender {
 			return e.sendMessage(nCtx, msg, text)
 		}
 		if e.db != nil {
 			log, err := e.db.GetLastAuditSessionForUser(targetUserID)
 			if err == nil && log != nil && log.Source != "" {
-				targetMsg := models.Message{
-					ID:     fmt.Sprintf("notif-%d", time.Now().UnixNano()),
-					ChatID: log.ChatID,
-					UserID: targetUserID,
-					Text:   text,
-					Source: log.Source,
-				}
-				return e.sendMessage(nCtx, targetMsg, text)
+				return e.sendTo(nCtx, lastAddress(log, targetUserID), text)
 			}
 		}
 		return fmt.Errorf("no active channel found for user: %s", targetUserID)
@@ -180,8 +172,7 @@ func NewEngine(
 	store *state.Store,
 	db DBClient,
 	llm LLMClient,
-	tg TelegramClient,
-	tw TwilioClient,
+	channels *channel.Registry,
 	oauth *calendar.OAuthConfig,
 	gmailC GmailClient,
 	tasksC TasksClient,
@@ -196,8 +187,7 @@ func NewEngine(
 		store:          store,
 		db:             db,
 		llm:            llm,
-		tgClient:       tg,
-		twClient:       tw,
+		channels:       channels,
 		oauthCfg:       oauth,
 		gmailClient:    gmailC,
 		tasksClient:    tasksC,
@@ -219,13 +209,13 @@ func NewEngine(
 func (e *Engine) Start(ctx context.Context) error {
 	slog.Info("orchestrator engine starting")
 
-	return e.consumer.ConsumeWithInfo(func(msg models.Message, info broker.DeliveryInfo) error {
+	return e.consumer.ConsumeWithInfo(func(msg channel.Inbound, info broker.DeliveryInfo) error {
 		// Use a bounded timeout for each message processing to prevent stuck consumers, but allow enough time for multi-turn agent execution (5m)
 		msgCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 
 		if err := e.ProcessMessage(msgCtx, msg); err != nil {
-			slog.Error("failed to process message", "message_id", msg.ID, "attempt", info.Attempt, "max_attempts", info.MaxAttempts, "error", err)
+			slog.Error("failed to process message", "message_id", msg.MessageID, "attempt", info.Attempt, "max_attempts", info.MaxAttempts, "error", err)
 
 			// Notify the user only when no retry will follow (final attempt or non-retryable).
 			if shouldNotifyUserOfFailure(err, info) {
@@ -247,29 +237,30 @@ func (e *Engine) Wait() {
 	e.wg.Wait()
 }
 
-// sendMessage sends a text message to the user, breaking it into smaller chunks if necessary to avoid platform limits.
-func (e *Engine) sendMessage(ctx context.Context, msg models.Message, text string) error {
-	if msg.Source == "whatsapp" {
-		return e.twClient.SendMessage(ctx, msg.UserID, text)
-	}
-
-	formatted := text
-	if msg.Source == "telegram" && !markdown.IsTelegramHTML(text) {
-		formatted = markdown.ToTelegramHTML(text)
-	}
-	chunks := markdown.SafeChunkTelegramHTML(formatted, 4000)
-	for _, chunk := range chunks {
-		if err := e.tgClient.SendMessage(ctx, msg.ChatID, chunk); err != nil {
-			return err
-		}
-	}
-	return nil
+// sendMessage sends assistant text back to where msg came from. The channel's adapter converts
+// the text to its markup and splits it at its length limit (V4-31).
+func (e *Engine) sendMessage(ctx context.Context, msg channel.Inbound, text string) error {
+	return e.sendTo(ctx, msg.ReplyAddress(), text)
 }
 
-func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg models.Message) error {
+// sendTo sends assistant text to an address on any channel.
+func (e *Engine) sendTo(ctx context.Context, to channel.Address, text string) error {
+	if e.channels == nil {
+		return fmt.Errorf("no channels configured: cannot send to %q", to.Channel)
+	}
+	return e.channels.SendText(ctx, to, text)
+}
+
+// lastAddress is where the assistant reaches a person it is not answering: the channel and chat of
+// their latest audit session. Proactive delivery gets its own rule in V4-33.
+func lastAddress(log *models.AuditSession, userID string) channel.Address {
+	return channel.Address{Channel: log.Source, Conversation: log.ChatID, Person: userID}
+}
+
+func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg channel.Inbound) error {
 	// Check if user is currently locked out
 	if e.store != nil {
-		if locked, remaining, lockErr := e.store.CheckPairingLockout(ctx, msg.UserID); lockErr == nil && locked {
+		if locked, remaining, lockErr := e.store.CheckPairingLockout(ctx, msg.Sender); lockErr == nil && locked {
 			mins := int(remaining.Minutes()) + 1
 			return e.sendMessage(ctx, msg, fmt.Sprintf("🚫 Too many failed pairing attempts. You are temporarily locked out. Please try again in %d minutes.", mins))
 		}
@@ -287,7 +278,7 @@ func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg models.Messa
 
 	if pc != nil {
 		newUser := models.User{
-			PlatformID:  msg.UserID,
+			PlatformID:  msg.Sender,
 			Name:        "Unknown",
 			Role:        pc.Role,
 			FamilyGroup: pc.FamilyGroup,
@@ -296,7 +287,7 @@ func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg models.Messa
 		if err := e.db.RedeemPairingCode(pc.ID, newUser); err == nil {
 			markSideEffect(ctx) // code consumed: a retry would see it as invalid and count a failed attempt
 			if e.store != nil {
-				_ = e.store.ResetPairingRateLimit(ctx, msg.UserID)
+				_ = e.store.ResetPairingRateLimit(ctx, msg.Sender)
 			}
 			return e.sendMessage(ctx, msg, "✅ Pairing successful! Welcome to MyPA. You can now use all features.")
 		}
@@ -304,7 +295,7 @@ func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg models.Messa
 
 	// Record failed pairing attempt
 	if e.store != nil {
-		attempts, lockedOut, _ := e.store.RecordFailedPairingAttempt(ctx, msg.UserID)
+		attempts, lockedOut, _ := e.store.RecordFailedPairingAttempt(ctx, msg.Sender)
 		markSideEffect(ctx) // attempt counted: a retry would count it twice toward lockout
 		if lockedOut {
 			return e.sendMessage(ctx, msg, "🚫 Too many failed attempts (5/5). Your account has been locked for 1 hour.")
@@ -318,16 +309,16 @@ func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg models.Messa
 
 // ProcessMessage is the main entry point for handling an incoming user message.
 // It orchestrates transcription, command handling, confirmation flows, and LLM reasoning.
-func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err error) {
-	// P1-4: drop duplicate deliveries (Telegram webhook retries, broker redeliveries) before
+func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err error) {
+	// P1-4: drop duplicate deliveries (webhook retries, broker redeliveries) before
 	// doing anything — including telemetry — so a message's tools run at most once.
 	claim, duplicate := e.claimInbound(ctx, msg)
 	if duplicate {
-		slog.Info("duplicate inbound message skipped", "message_id", msg.ID, "user_id", msg.UserID, "source", msg.Source)
+		slog.Info("duplicate inbound message skipped", "message_id", msg.MessageID, "user_id", msg.Sender, "source", msg.Channel)
 		return nil
 	}
 
-	logging.LogMessageText(ctx, nil, "processing message", msg.Text, "user_id", msg.UserID, "message_id", msg.ID) // P3-3
+	logging.LogMessageText(ctx, nil, "processing message", msg.Text, "user_id", msg.Sender, "message_id", msg.MessageID) // P3-3
 
 	var llmResponse string
 	sessionID := uuid.New().String()
@@ -348,9 +339,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 
 			session := models.AuditSession{
 				ID:              sessionID,
-				UserID:          msg.UserID,
-				ChatID:          msg.ChatID,
-				Source:          msg.Source,
+				UserID:          msg.Sender,
+				ChatID:          msg.Conversation.ID,
+				Source:          msg.Channel,
 				UserPrompt:      msgText,
 				FinalResponse:   llmResponse,
 				StartTime:       startTime,
@@ -387,7 +378,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg models.Message) (err er
 	}()
 
 	// 1. Pre-Auth Check: Verify user exists and is authenticated
-	user, err := e.db.GetUser(msg.UserID)
+	user, err := e.db.GetUser(msg.Sender)
 	if err != nil || user == nil {
 		return e.handleUnauthenticatedUser(ctx, msg)
 	}
@@ -429,8 +420,8 @@ func (e *Engine) BroadcastProactiveMessage(ctx context.Context, promptText strin
 		// Mock a message object to pass into processMessage
 		// We'll treat this as a system-triggered prompt that we feed into the LLM on behalf of the user
 
-		// To properly send the message, we need a valid chat ID and source.
-		// We'll just look up the most recent audit session to find the user's preferred platform/chat ID.
+		// To send the message we need a channel and a chat: the person's most recent audit session
+		// says where they last wrote.
 		log, err := e.db.GetLastAuditSessionForUser(userID)
 		if err != nil {
 			slog.Warn("failed to get last audit session for user", "user_id", userID, "error", err)
@@ -441,23 +432,23 @@ func (e *Engine) BroadcastProactiveMessage(ctx context.Context, promptText strin
 			continue // Should not happen, but safeguard
 		}
 
-		msg := models.Message{
-			ID:     fmt.Sprintf("cron-%d", time.Now().Unix()),
-			ChatID: log.ChatID,
-			UserID: userID,
-			Text:   promptText,
-			Source: log.Source, // "telegram" or "whatsapp"
+		msg := channel.Inbound{
+			Channel:      log.Source,
+			MessageID:    fmt.Sprintf("cron-%d", time.Now().Unix()),
+			Sender:       userID,
+			Conversation: channel.Conversation{ID: log.ChatID},
+			Text:         promptText,
 		}
 
 		// Run in a separate goroutine so one user doesn't block another
-		go func(m models.Message) {
+		go func(m channel.Inbound) {
 			// Create a background context specifically for this broadcast
 			bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 
-			slog.Info("sending proactive message", "user_id", m.UserID)
+			slog.Info("sending proactive message", "user_id", m.Sender)
 			if err := e.ProcessMessage(bgCtx, m); err != nil {
-				slog.Error("failed to process proactive message", "user", m.UserID, "error", err)
+				slog.Error("failed to process proactive message", "user", m.Sender, "error", err)
 			}
 		}(msg)
 	}
@@ -482,18 +473,11 @@ func (e *Engine) CheckAndSendReminders() {
 			continue
 		}
 
-		msg := models.Message{
-			ID:     fmt.Sprintf("reminder-%d", reminder.ID),
-			ChatID: log.ChatID,
-			UserID: reminder.UserID,
-			Source: log.Source,
-		}
-
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 
 		formattedMsg := fmt.Sprintf("🔔 *Reminder:*\n\n%s", reminder.Message)
 
-		err = e.sendMessage(ctx, msg, formattedMsg)
+		err = e.sendTo(ctx, lastAddress(log, reminder.UserID), formattedMsg)
 		if err != nil {
 			slog.Error("failed to send reminder message", "reminder_id", reminder.ID, "error", err)
 			cancel()
@@ -527,16 +511,9 @@ func (e *Engine) CheckAndSendReminders() {
 			continue
 		}
 
-		msg := models.Message{
-			ID:     fmt.Sprintf("shared-reminder-%d", s.ID),
-			ChatID: log.ChatID,
-			UserID: targetUserID,
-			Source: log.Source,
-		}
-
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 		formattedMsg := fmt.Sprintf("🔔 *Shared Task Reminder:*\n\n**%s** (Topic: %s)", s.Title, s.Topic)
-		err = e.sendMessage(ctx, msg, formattedMsg)
+		err = e.sendTo(ctx, lastAddress(log, targetUserID), formattedMsg)
 		if err != nil {
 			slog.Error("failed to send shared reminder message", "shared_reminder_id", s.ID, "error", err)
 			cancel()
@@ -551,8 +528,8 @@ func (e *Engine) CheckAndSendReminders() {
 	}
 }
 
-func (e *Engine) handleUndo(ctx context.Context, user *models.User, msg models.Message, mutationID string) error {
-	actorID := msg.UserID
+func (e *Engine) handleUndo(ctx context.Context, user *models.User, msg channel.Inbound, mutationID string) error {
+	actorID := msg.Sender
 	familyGroup := ""
 	if user != nil {
 		if strings.TrimSpace(user.PlatformID) != "" {

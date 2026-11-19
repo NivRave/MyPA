@@ -7,9 +7,11 @@ import (
 	"testing"
 
 	"github.com/nivik/mypa/internal/broker"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/llm"
-	"github.com/nivik/mypa/internal/orchestrator/mocks"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/orchestrator/mocks"
+	tgmocks "github.com/nivik/mypa/internal/telegram/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -17,7 +19,7 @@ import (
 )
 
 // setupIdempotencyEngine registers a single side-effecting tool and returns its execution counter.
-func setupIdempotencyEngine(t *testing.T) (*Engine, *mocks.MockTelegramClient, *mocks.MockLLMClient, *int64) {
+func setupIdempotencyEngine(t *testing.T) (*Engine, *tgmocks.MockAPI, *mocks.MockLLMClient, *int64) {
 	t.Helper()
 	engine, tgMock, llmMock, dbMock, cleanup := setupTestEngine(t)
 	t.Cleanup(cleanup)
@@ -51,8 +53,8 @@ func expectToolTurn(llmMock *mocks.MockLLMClient) {
 		}).Times(2)
 }
 
-func tgMsg(id string) models.Message {
-	return models.Message{ID: id, UserID: "user-idem", ChatID: "chat-idem", Text: "add dentist tomorrow 9am", Source: "telegram"}
+func tgMsg(id string) channel.Inbound {
+	return channel.Inbound{MessageID: id, Sender: "user-idem", Conversation: channel.Conversation{ID: "chat-idem"}, Text: "add dentist tomorrow 9am", Channel: "telegram"}
 }
 
 // Acceptance: same message delivered twice → tools execute once.
@@ -127,7 +129,7 @@ func TestIdempotency_KeyIsScopedPerChat(t *testing.T) {
 
 	a := tgMsg("7")
 	b := tgMsg("7")
-	b.ChatID = "other-chat"
+	b.Conversation.ID = "other-chat"
 	require.NoError(t, engine.ProcessMessage(context.Background(), a))
 	require.NoError(t, engine.ProcessMessage(context.Background(), b))
 }

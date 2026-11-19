@@ -17,9 +17,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/nivik/mypa/internal/broker"
+	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/telegram"
 )
 
 // V4-01: one binary with roles. These tests pin what each role runs and serves.
@@ -65,10 +67,10 @@ func TestRouterForRole_EachRoleKeepsTheSurfaceOfTheServiceItReplaces(t *testing.
 	t.Setenv("ENV", "development") // the playground is served only where the orchestrator served it
 
 	pub := new(MockEventPublisher)
-	pub.On("Publish", mock.Anything, mock.MatchedBy(func(msg models.Message) bool {
-		return msg.UserID == "987654321" && msg.Text == "hello"
+	pub.On("Publish", mock.Anything, mock.MatchedBy(func(msg channel.Inbound) bool {
+		return msg.Sender == "987654321" && msg.Text == "hello"
 	})).Return(nil)
-	ingressRouter := setupIngressRouter(pub, &config.Config{Telegram: config.TelegramConfig{SecretToken: testTelegramSecret}})
+	ingressRouter := setupIngressRouter(pub, testChannels(t, &config.Config{Channels: adapters.Config{Telegram: telegram.Config{SecretToken: testTelegramSecret}}}))
 	appRouter := setupAppRouter(nil, nil, nil, &db.Client{}, nil)
 
 	serve := func(t *testing.T, r role, req *http.Request) int {
@@ -153,7 +155,7 @@ func TestRun_IngressHandsWebhooksToTheDurableQueue(t *testing.T) {
 	declareAppQueues(t, amqpURL)
 	cfg := &config.Config{
 		RabbitMQ: config.RabbitMQConfig{URL: amqpURL},
-		Telegram: config.TelegramConfig{SecretToken: testTelegramSecret},
+		Channels: adapters.Config{Telegram: telegram.Config{SecretToken: testTelegramSecret}},
 		Server:   config.ServerConfig{Port: freePort(t)},
 	}
 
@@ -198,9 +200,9 @@ func TestRun_IngressHandsWebhooksToTheDurableQueue(t *testing.T) {
 		delivery, ok, err = ch.Get(broker.InboundMessagesQueue, true)
 		return err == nil && ok
 	}, 10*time.Second, 50*time.Millisecond, "the webhook must have been published to %s", broker.InboundMessagesQueue)
-	var msg models.Message
+	var msg channel.Inbound
 	require.NoError(t, json.Unmarshal(delivery.Body, &msg))
-	assert.Equal(t, "987654321", msg.UserID)
+	assert.Equal(t, "987654321", msg.Sender)
 	assert.Equal(t, "queued, not processed", msg.Text)
 
 	close(stop)

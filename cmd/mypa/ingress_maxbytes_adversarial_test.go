@@ -8,7 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/config"
+	"github.com/nivik/mypa/internal/telegram"
+	"github.com/nivik/mypa/internal/twilio"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -18,8 +21,8 @@ import (
 // (exceeding the 10MB gateway webhook limit) triggers an HTTP error and does NOT crash the server.
 func TestAdversarial_MaxBytesReader_TelegramWebhook(t *testing.T) {
 	pub := new(MockEventPublisher)
-	cfg := &config.Config{Telegram: config.TelegramConfig{SecretToken: testTelegramSecret}}
-	r := setupIngressRouter(pub, cfg)
+	cfg := &config.Config{Channels: adapters.Config{Telegram: telegram.Config{SecretToken: testTelegramSecret}}}
+	r := setupIngressRouter(pub, testChannels(t, cfg))
 
 	// Create an oversized stream: 12MB of data
 	oversizedStream := newRepeatingReader(`{"update_id":1,"message":{"text":"A"}}`, 12<<20)
@@ -56,8 +59,8 @@ func TestAdversarial_MaxBytesReader_TelegramWebhook(t *testing.T) {
 func TestAdversarial_MaxBytesReader_TwilioWebhook(t *testing.T) {
 	pub := new(MockEventPublisher)
 	const twilioToken = "maxbytes-twilio-token"
-	cfg := &config.Config{Twilio: config.TwilioConfig{AuthToken: twilioToken}}
-	r := setupIngressRouter(pub, cfg)
+	cfg := &config.Config{Channels: adapters.Config{WhatsApp: twilio.Config{AuthToken: twilioToken}}}
+	r := setupIngressRouter(pub, testChannels(t, cfg))
 
 	// Generate 11MB form body: "From=%2B1234567890&Body=" followed by 11MB of filler
 	formPrefix := "From=%2B1234567890&Body="

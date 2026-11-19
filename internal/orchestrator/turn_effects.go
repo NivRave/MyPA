@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/nivik/mypa/internal/broker"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
 )
@@ -157,6 +158,7 @@ func (fx *turnEffects) any() bool { return fx != nil && fx.happened.Load() }
 var readOnlyBuiltinTools = map[string]bool{
 	"get_current_time": true,
 }
+
 // turnUserKey carries the user resolved once at the start of a turn (P2-7), so tool calls don't
 // each re-query the database for the same row.
 type turnUserKey struct{}
@@ -180,15 +182,15 @@ type inboundClaim struct {
 // when another delivery already claimed it. Messages without an ID cannot be deduplicated and
 // are always processed. Redis errors fail open (process without dedup): the turn itself needs
 // Redis for history, so it will fail and retry normally if Redis is truly down.
-func (e *Engine) claimInbound(ctx context.Context, msg models.Message) (claim inboundClaim, duplicate bool) {
+func (e *Engine) claimInbound(ctx context.Context, msg channel.Inbound) (claim inboundClaim, duplicate bool) {
 	if e.store == nil {
 		return inboundClaim{}, false
 	}
-	if msg.ID == "" {
-		slog.Warn("inbound message has no ID; idempotency dedup skipped", "user_id", msg.UserID, "source", msg.Source)
+	if msg.MessageID == "" {
+		slog.Warn("inbound message has no ID; idempotency dedup skipped", "user_id", msg.Sender, "source", msg.Channel)
 		return inboundClaim{}, false
 	}
-	key := state.InboundMessageKey(msg.Source, msg.ChatID, msg.UserID, msg.ID)
+	key := state.InboundMessageKey(msg.Channel, msg.Conversation.ID, msg.Sender, msg.MessageID)
 	ok, err := e.store.ClaimInbound(ctx, key, state.InboundDedupTTL)
 	if err != nil {
 		slog.Warn("inbound dedup claim failed; processing without dedup", "key", key, "error", err)

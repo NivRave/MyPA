@@ -6,11 +6,11 @@ import (
 
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/doctor"
 	"github.com/nivik/mypa/internal/state"
-	"github.com/nivik/mypa/internal/telegram"
 )
 
 const (
@@ -25,37 +25,34 @@ const (
 	doctorQueueBacklog = 20
 )
 
-// newHealthReporter binds the /doctor checks (V4-17, internal/doctor) to this install: Telegram's
-// own view of the webhook, the Google tokens in Redis, the Twilio settings, RabbitMQ queue depths,
-// the backup directory and the schema version in Postgres.
-func newHealthReporter(cfg *config.Config, tg *telegram.Client, store *state.Store, dbClient *db.Client, oauthCfg *calendar.OAuthConfig, backupDir string) *doctor.Doctor {
-	return doctor.New(
-		doctor.TelegramWebhook{
-			Configured: cfg.Telegram.BotToken != "",
-			WantURL:    cfg.Telegram.WebhookURL,
-			Info: func(ctx context.Context) (doctor.WebhookInfo, error) {
-				info, err := tg.GetWebhookInfo(ctx)
-				if err != nil {
-					return doctor.WebhookInfo{}, err
-				}
-				return doctor.WebhookInfo{
-					URL:          info.URL,
-					Pending:      info.PendingUpdateCount,
-					LastErrorAt:  info.LastErrorAt(),
-					LastErrorMsg: info.LastErrorMessage,
-				}, nil
-			},
-		},
+// healthChecker is implemented by a channel adapter that has its own /doctor check.
+type healthChecker interface {
+	HealthCheck() doctor.Check
+}
+
+// channelChecks returns the /doctor check of every registered adapter that has one, in
+// registration order.
+func channelChecks(channels *channel.Registry) []doctor.Check {
+	var checks []doctor.Check
+	for _, a := range channels.All() {
+		if hc, ok := a.(healthChecker); ok {
+			checks = append(checks, hc.HealthCheck())
+		}
+	}
+	return checks
+}
+
+// newHealthReporter binds the /doctor checks (V4-17, internal/doctor) to this install: each
+// channel adapter's own check (V4-31), the Google tokens in Redis, RabbitMQ queue depths, the
+// backup directory and the schema version in Postgres.
+func newHealthReporter(cfg *config.Config, channels *channel.Registry, store *state.Store, dbClient *db.Client, oauthCfg *calendar.OAuthConfig, backupDir string) *doctor.Doctor {
+	checks := channelChecks(channels)
+	checks = append(checks,
 		doctor.GoogleAccounts{
 			Configured:    cfg.Google.ClientID != "",
 			FamilyMembers: dbClient.GetUsersByFamilyGroup,
 			Token:         store.GetOAuthToken,
 			Refresh:       doctor.RefreshWith(oauthCfg.TokenSource),
-		},
-		doctor.WhatsApp{
-			Configured:        cfg.Twilio.AccountSID != "",
-			Sender:            cfg.Twilio.FromNumber,
-			StatusCallbackURL: cfg.Twilio.StatusCallbackURL,
 		},
 		doctor.Queues{
 			Names:       []string{broker.InboundMessagesQueue, broker.AuditEventsQueue},
@@ -78,4 +75,5 @@ func newHealthReporter(cfg *config.Config, tg *telegram.Client, store *state.Sto
 			},
 		},
 	)
+	return doctor.New(checks...)
 }

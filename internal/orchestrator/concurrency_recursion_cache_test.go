@@ -12,11 +12,14 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/channel/adapters/adapterstest"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator/mocks"
 	"github.com/nivik/mypa/internal/state"
+	tgmocks "github.com/nivik/mypa/internal/telegram/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -38,7 +41,7 @@ func TestExecuteToolsConcurrently_50ToolsOrderAlignment(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	msg := models.Message{UserID: "stress_user_50"}
+	msg := channel.Inbound{Sender: "stress_user_50"}
 
 	const totalTools = 50
 	toolCalls := make([]*genai.FunctionCall, totalTools)
@@ -119,7 +122,7 @@ func TestExecuteToolsConcurrently_SingleToolPanic(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	msg := models.Message{UserID: "user_single_panic"}
+	msg := channel.Inbound{Sender: "user_single_panic"}
 
 	reg := NewRegistry()
 	reg.Register(&mockToolModule{
@@ -169,7 +172,7 @@ func TestExecuteToolsConcurrently_MaxLimitRespected(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	msg := models.Message{UserID: "limit_user"}
+	msg := channel.Inbound{Sender: "limit_user"}
 
 	const total = 40
 	toolCalls := make([]*genai.FunctionCall, total)
@@ -227,7 +230,7 @@ func TestExecuteToolsConcurrently_ContextCancellationMidFlight(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Millisecond)
 	defer cancel()
 
-	msg := models.Message{UserID: "cancel_user"}
+	msg := channel.Inbound{Sender: "cancel_user"}
 
 	const totalTools = 30
 	toolCalls := make([]*genai.FunctionCall, totalTools)
@@ -280,7 +283,7 @@ func TestExecuteToolsConcurrently_PreCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Immediately cancel
 
-	msg := models.Message{UserID: "precancel_user"}
+	msg := channel.Inbound{Sender: "precancel_user"}
 	toolCalls := []*genai.FunctionCall{
 		{Name: "tool_a"},
 		{Name: "tool_b"},
@@ -312,7 +315,7 @@ func TestBoundedRecursion_TerminatesAtDepth8(t *testing.T) {
 	defer store.Close()
 
 	llmMock := mocks.NewMockLLMClient(ctrl)
-	tgMock := mocks.NewMockTelegramClient(ctrl)
+	tgMock := tgmocks.NewMockAPI(ctrl)
 	dbMock := mocks.NewMockDBClient(ctrl)
 	eventPublisherMock := mocks.NewMockEventPublisher(ctrl)
 	eventPublisherMock.EXPECT().Publish(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -322,7 +325,7 @@ func TestBoundedRecursion_TerminatesAtDepth8(t *testing.T) {
 	}).AnyTimes()
 
 	engine := NewEngine(
-		nil, store, dbMock, llmMock, tgMock, nil, nil, nil, nil, nil, nil, nil, eventPublisherMock, "UTC",
+		nil, store, dbMock, llmMock, adapterstest.Registry(tgMock, nil), nil, nil, nil, nil, nil, nil, eventPublisherMock, "UTC",
 	)
 
 	reg := NewRegistry()
@@ -372,7 +375,7 @@ func TestBoundedRecursion_TerminatesAtDepth8(t *testing.T) {
 		}, nil
 	}).Times(8) // 7 continuation chats + 1 terminal summary chat
 
-	msg := models.Message{UserID: "user_loop_test"}
+	msg := channel.Inbound{Sender: "user_loop_test"}
 	initialToolCalls := []*genai.FunctionCall{
 		{Name: "loop_tool", Args: map[string]interface{}{"step": float64(0)}},
 	}
@@ -403,7 +406,7 @@ func TestBoundedRecursion_ImmediateHaltWhenDepthGTE8(t *testing.T) {
 		gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
 	).Return(&llm.Response{Text: "Terminated at step 8."}, nil).Times(1)
 
-	msg := models.Message{UserID: "direct_halt_user"}
+	msg := channel.Inbound{Sender: "direct_halt_user"}
 	toolCalls := []*genai.FunctionCall{{Name: "dummy"}}
 
 	res, err := engine.handleToolCalls(context.Background(), msg, nil, "system", toolCalls, 8)
@@ -444,7 +447,7 @@ func TestBoundedRecursion_StubbornLLMIgnoresNoTools(t *testing.T) {
 		},
 	}, nil).Times(1)
 
-	msg := models.Message{UserID: "stubborn_llm_user"}
+	msg := channel.Inbound{Sender: "stubborn_llm_user"}
 	toolCalls := []*genai.FunctionCall{{Name: "dummy"}}
 
 	res, err := engine.handleToolCalls(context.Background(), msg, nil, "system", toolCalls, 8)

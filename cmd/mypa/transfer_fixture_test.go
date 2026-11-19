@@ -14,10 +14,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
+	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/doctor"
 	"github.com/nivik/mypa/internal/models"
-	"github.com/nivik/mypa/internal/telegram"
 	"github.com/pgvector/pgvector-go"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
@@ -170,16 +170,17 @@ func doctorReport(t *testing.T, i *install, amqpURL, adminID string) doctor.Repo
 	oauthCfg.SetEndpoint(oauth2.Endpoint{TokenURL: google.URL, AuthStyle: oauth2.AuthStyleInParams})
 
 	cfg := &config.Config{}
-	cfg.Telegram.BotToken = "bot-token"
-	cfg.Telegram.WebhookURL = "https://mypa.example/webhook/telegram"
+	cfg.Channels.Telegram.BotToken = "bot-token"
+	cfg.Channels.Telegram.WebhookURL = "https://mypa.example/webhook/telegram"
 	cfg.Google.ClientID = "id"
-	cfg.Twilio.AccountSID = "ACtest"
-	cfg.Twilio.FromNumber = "whatsapp:+12025550199"
-	cfg.Twilio.StatusCallbackURL = "https://mypa.example/webhook/twilio/status"
+	cfg.Channels.WhatsApp.AccountSID = "ACtest"
+	cfg.Channels.WhatsApp.FromNumber = "whatsapp:+12025550199"
+	cfg.Channels.WhatsApp.StatusCallbackURL = "https://mypa.example/webhook/twilio/status"
 	cfg.RabbitMQ.URL = amqpURL
-	tg := telegram.NewClient(cfg.Telegram.BotToken, telegram.WithHTTPClient(&http.Client{
+	channels, err := adapters.Build(cfg.Channels, adapters.WithHTTPClient(&http.Client{
 		Transport: telegramAPI{t: t, webhookInfo: `{"url":"https://mypa.example/webhook/telegram","pending_update_count":0}`},
 	}))
+	require.NoError(t, err)
 
 	// The Google check reads sign-ins the way the app does: cache first, then the database copy.
 	_ = i.googleSignIn(adminID)
@@ -188,5 +189,5 @@ func doctorReport(t *testing.T, i *install, amqpURL, adminID string) doctor.Repo
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	return newHealthReporter(cfg, tg, i.store, i.client, oauthCfg, i.deps.BackupDir).Run(ctx, doctor.Scope{Admin: admin})
+	return newHealthReporter(cfg, channels, i.store, i.client, oauthCfg, i.deps.BackupDir).Run(ctx, doctor.Scope{Admin: admin})
 }

@@ -14,11 +14,12 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/nivik/mypa/internal/calendar"
+	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
-	"github.com/nivik/mypa/internal/telegram"
 	"github.com/nivik/mypa/internal/testutil/pgtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,7 +50,7 @@ func (a telegramAPI) RoundTrip(req *http.Request) (*http.Response, error) {
 // real (a throwaway Postgres) and migrated.
 type doctorFixture struct {
 	cfg       *config.Config
-	tg        *telegram.Client
+	channels  *channel.Registry
 	store     *state.Store
 	dbClient  *db.Client
 	oauth     *calendar.OAuthConfig
@@ -110,18 +111,19 @@ func newDoctorFixture(t *testing.T) doctorFixture {
 	require.NoError(t, os.WriteFile(filepath.Join(backupDir, old), []byte("x"), 0o600))
 
 	cfg := &config.Config{}
-	cfg.Telegram.BotToken = "bot-token"
-	cfg.Telegram.WebhookURL = "https://mypa.example/webhook/telegram"
+	cfg.Channels.Telegram.BotToken = "bot-token"
+	cfg.Channels.Telegram.WebhookURL = "https://mypa.example/webhook/telegram"
 	cfg.Google.ClientID = "id"
-	cfg.Twilio.AccountSID = "ACtest"
-	cfg.Twilio.FromNumber = "whatsapp:+12025550199"
-	cfg.Twilio.StatusCallbackURL = "https://mypa.example/webhook/twilio/status"
+	cfg.Channels.WhatsApp.AccountSID = "ACtest"
+	cfg.Channels.WhatsApp.FromNumber = "whatsapp:+12025550199"
+	cfg.Channels.WhatsApp.StatusCallbackURL = "https://mypa.example/webhook/twilio/status"
 	cfg.RabbitMQ.URL = "amqp://guest:guest@127.0.0.1:1/" // nothing listens here
 
-	tg := telegram.NewClient(cfg.Telegram.BotToken, telegram.WithHTTPClient(&http.Client{
+	channels, err := adapters.Build(cfg.Channels, adapters.WithHTTPClient(&http.Client{
 		Transport: telegramAPI{t: t, webhookInfo: `{"url":"https://old-tunnel.example/webhook/telegram","pending_update_count":0}`},
 	}))
-	return doctorFixture{cfg: cfg, tg: tg, store: store, dbClient: dbClient, oauth: oauthCfg, backupDir: backupDir}
+	require.NoError(t, err)
+	return doctorFixture{cfg: cfg, channels: channels, store: store, dbClient: dbClient, oauth: oauthCfg, backupDir: backupDir}
 }
 
 // V4-17 "done when", through the production wiring: a broken webhook, an expired Google token and
@@ -129,7 +131,7 @@ func newDoctorFixture(t *testing.T) doctorFixture {
 // admin's family.
 func TestHealthReporter_DetectsABrokenInstall(t *testing.T) {
 	f := newDoctorFixture(t)
-	reporter := newHealthReporter(f.cfg, f.tg, f.store, f.dbClient, f.oauth, f.backupDir)
+	reporter := newHealthReporter(f.cfg, f.channels, f.store, f.dbClient, f.oauth, f.backupDir)
 	admin, err := f.dbClient.GetUser("1001")
 	require.NoError(t, err)
 
@@ -185,15 +187,17 @@ func TestHealthReporter_DetectsABrokenInstall(t *testing.T) {
 func TestHealthReporter_HealthyInstallHasNoProblems(t *testing.T) {
 	f := newDoctorFixture(t)
 	ctx := context.Background()
-	f.tg = telegram.NewClient(f.cfg.Telegram.BotToken, telegram.WithHTTPClient(&http.Client{
+	channels, err := adapters.Build(f.cfg.Channels, adapters.WithHTTPClient(&http.Client{
 		Transport: telegramAPI{t: t, webhookInfo: `{"url":"https://mypa.example/webhook/telegram","pending_update_count":0}`},
 	}))
+	require.NoError(t, err)
+	f.channels = channels
 	require.NoError(t, f.store.SetOAuthToken(ctx, "1002",
 		[]byte(`{"access_token":"a","refresh_token":"good","token_type":"Bearer","expiry":"2026-11-19T08:00:00Z"}`)))
 	fresh := "backup_" + time.Now().Add(-3*time.Hour).Format("2006-01-02_15-04-05") + ".dump.age"
 	require.NoError(t, os.WriteFile(filepath.Join(f.backupDir, fresh), []byte("x"), 0o600))
 
-	reporter := newHealthReporter(f.cfg, f.tg, f.store, f.dbClient, f.oauth, f.backupDir)
+	reporter := newHealthReporter(f.cfg, f.channels, f.store, f.dbClient, f.oauth, f.backupDir)
 	admin, err := f.dbClient.GetUser("1001")
 	require.NoError(t, err)
 	report := reporter.Report(ctx, admin)

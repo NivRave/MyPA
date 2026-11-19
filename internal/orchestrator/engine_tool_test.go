@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/llm"
-	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,11 +26,11 @@ func TestEngine_HandleToolCall_CalendarCreate(t *testing.T) {
 		return calMock, nil
 	}
 
-	msg := models.Message{UserID: "user1", Text: "create event"}
+	msg := channel.Inbound{Sender: "user1", Text: "create event"}
 	toolCall := &genai.FunctionCall{
 		Name: "create_calendar_event",
 		Args: map[string]any{
-			"title": "Meeting",
+			"title":      "Meeting",
 			"start_time": "2030-01-01T10:00:00Z",
 		},
 	}
@@ -55,12 +55,12 @@ func TestEngine_HandleToolCall_TasksCreate(t *testing.T) {
 	tasksMock := mocks.NewMockTasksClient(ctrl)
 	engine.tasksClient = tasksMock
 
-	msg := models.Message{UserID: "user1", Text: "create task"}
+	msg := channel.Inbound{Sender: "user1", Text: "create task"}
 	toolCall := &genai.FunctionCall{
 		Name: "create_task",
 		Args: map[string]any{
 			"list_id": "list1",
-			"title": "Buy milk",
+			"title":   "Buy milk",
 		},
 	}
 
@@ -82,7 +82,7 @@ func TestEngine_HandleToolCall_Tavily(t *testing.T) {
 	tavilyMock := mocks.NewMockTavilyClient(ctrl)
 	engine.tavilyClient = tavilyMock
 
-	msg := models.Message{UserID: "user1", Text: "search web"}
+	msg := channel.Inbound{Sender: "user1", Text: "search web"}
 	toolCall := &genai.FunctionCall{
 		Name: "search_web",
 		Args: map[string]any{
@@ -109,7 +109,7 @@ func TestEngine_HandleToolCall_GmailSearch(t *testing.T) {
 	gmailMock := mocks.NewMockGmailClient(ctrl)
 	engine.gmailClient = gmailMock
 
-	msg := models.Message{UserID: "user1", Text: "check emails"}
+	msg := channel.Inbound{Sender: "user1", Text: "check emails"}
 	toolCall := &genai.FunctionCall{
 		Name: "search_emails",
 		Args: map[string]any{
@@ -129,12 +129,12 @@ func TestEngine_HandleToolCall_ScheduleReminder(t *testing.T) {
 	engine, _, _, dbMock, cleanup := setupTestEngine(t)
 	defer cleanup()
 
-	msg := models.Message{UserID: "user1", Text: "remind me"}
+	msg := channel.Inbound{Sender: "user1", Text: "remind me"}
 	dueTime := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 	toolCall := &genai.FunctionCall{
 		Name: "schedule_reminder",
 		Args: map[string]any{
-			"message": "Drink water",
+			"message":  "Drink water",
 			"due_time": dueTime,
 		},
 	}
@@ -154,7 +154,7 @@ func TestEngine_HandleToolCall_Unknown(t *testing.T) {
 		Name: "unknown_tool",
 	}
 
-	res, err := engine.handleToolCall(context.Background(), models.Message{}, nil, "system", toolCall)
+	res, err := engine.handleToolCall(context.Background(), channel.Inbound{}, nil, "system", toolCall)
 	require.NoError(t, err)
 	assert.Equal(t, "⚠️ LLM tried to call an unknown tool.", res)
 }

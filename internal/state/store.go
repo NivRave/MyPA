@@ -79,7 +79,7 @@ func (s *Store) AppendChatHistory(ctx context.Context, userID string, msg models
 	}
 
 	key := fmt.Sprintf("chat:%s", userID)
-	
+
 	bytes, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal chat message: %w", err)
@@ -413,12 +413,13 @@ func (s *Store) GetTurnDomains(ctx context.Context, userID string) ([]string, er
 }
 
 // InboundDedupTTL bounds how long a processed inbound message ID is remembered.
-// Telegram retries webhooks for well under a day; RabbitMQ redeliveries are immediate.
+// Platforms retry webhooks for well under a day; RabbitMQ redeliveries are immediate.
 const InboundDedupTTL = 24 * time.Hour
 
-// InboundMessageKey builds inbound:<source>:<scope>:<messageID>. Telegram message_id is unique
-// only per chat, so scope is the chat ID (falling back to the user ID, e.g. WhatsApp, whose
-// MessageSid is globally unique anyway). Segments are encoded like prompt-cache keys.
+// InboundMessageKey builds inbound:<source>:<scope>:<messageID>. A platform's message ID may be
+// unique only per chat, so scope is the chat ID, falling back to the user ID on a channel without
+// chat IDs (whose message IDs are globally unique anyway). Segments are encoded like prompt-cache
+// keys.
 func InboundMessageKey(source, chatID, userID, messageID string) string {
 	scope := chatID
 	if strings.TrimSpace(scope) == "" {
@@ -476,6 +477,3 @@ func (s *Store) InvalidateFamilyPromptSections(ctx context.Context, scope string
 	n, err := s.client.Del(ctx, toDelete...).Result()
 	return int(n), err
 }
-
-
-

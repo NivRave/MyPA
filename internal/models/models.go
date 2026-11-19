@@ -6,44 +6,14 @@ import (
 	"github.com/pgvector/pgvector-go"
 )
 
-// Message represents a normalized incoming message from any channel.
-type Message struct {
-	// ID is the unique message identifier from the source platform.
-	ID string `json:"id"`
-
-	// UserID is the platform-specific user identifier.
-	UserID string `json:"user_id"`
-
-	// ChatID is the platform-specific chat/conversation identifier.
-	ChatID string `json:"chat_id"`
-
-	// Text is the message content.
-	Text string `json:"text"`
-
-	// VoiceFileID holds the Telegram file ID if the message is a voice note.
-	VoiceFileID string `json:"voice_file_id,omitempty"`
-	// PhotoFileID holds the Telegram file ID if the message contains a photo.
-	PhotoFileID string `json:"photo_file_id,omitempty"`
-	// AudioFileID is a generic field for audio identifiers.
-	AudioFileID string `json:"audio_file_id,omitempty"`
-	// MediaURL is used for external media links (e.g., WhatsApp voice notes).
-	MediaURL string `json:"media_url,omitempty"`
-	// MediaContentType holds the MIME type of the external media.
-	MediaContentType string `json:"media_content_type,omitempty"`
-
-	// Source identifies the originating platform (e.g., "telegram").
-	Source string `json:"source"`
-
-	// Timestamp is when the message was sent.
-	Timestamp time.Time `json:"timestamp"`
-}
+// The inbound message type is channel.Inbound (V4-31); it replaced models.Message.
 
 // CalendarEvent represents a calendar event to be created.
 type CalendarEvent struct {
 	ID          string   `json:"id,omitempty"`
 	Title       string   `json:"title"`
-	StartTime   string   `json:"start_time"`   // ISO 8601
-	EndTime     string   `json:"end_time"`     // ISO 8601
+	StartTime   string   `json:"start_time"` // ISO 8601
+	EndTime     string   `json:"end_time"`   // ISO 8601
 	Description string   `json:"description,omitempty"`
 	Timezone    string   `json:"timezone"`
 	Recurrence  []string `json:"recurrence,omitempty"`
@@ -56,6 +26,7 @@ type Contact struct {
 	Email        string `json:"email,omitempty"`
 	Phone        string `json:"phone,omitempty"`
 }
+
 // ChatMessage represents a single message in conversation history.
 type ChatMessage struct {
 	Role          string             `json:"role"` // "user", "assistant", or "function"

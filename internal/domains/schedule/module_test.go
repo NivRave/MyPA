@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -310,7 +311,7 @@ func TestModule_VirtualSubCalendar_PrefixingAndColor(t *testing.T) {
 
 	callCtx := orchestrator.CallContext{
 		User:    user,
-		Message: models.Message{UserID: "tg_123"},
+		Message: channel.Inbound{Sender: "tg_123"},
 	}
 
 	// 1. Title without prefix should receive [Baby]
@@ -619,7 +620,7 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 
 	// 1. User Alpha creates an event in family_alpha
 	userAlpha := &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
-	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: models.Message{UserID: "user_alpha"}}
+	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}}
 
 	createResp, err := mod.Execute(ctx, callCtxAlpha, "schedule_topic_event", map[string]interface{}{
 		"topic":      "medical",
@@ -638,7 +639,7 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 
 	// 2. User Beta (family_beta) attempts to UPDATE Event 1
 	userBeta := &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"}
-	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: models.Message{UserID: "user_beta"}}
+	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}}
 
 	updateBetaResp, err := mod.Execute(ctx, callCtxBeta, "update_topic_event", map[string]interface{}{
 		"event_id": 1,
@@ -687,4 +688,3 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, ev1Deleted)
 }
-

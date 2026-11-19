@@ -7,8 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/config"
-	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/telegram"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -26,7 +28,7 @@ func (m *MockEventPublisher) Publish(ctx context.Context, msg any) error {
 func TestGatewayHealth(t *testing.T) {
 	pub := new(MockEventPublisher)
 	cfg := &config.Config{}
-	r := setupIngressRouter(pub, cfg)
+	r := setupIngressRouter(pub, testChannels(t, cfg))
 
 	req := httptest.NewRequest("GET", "/health", nil)
 	rr := httptest.NewRecorder()
@@ -39,8 +41,8 @@ func TestGatewayHealth(t *testing.T) {
 
 func TestGatewayTelegramWebhook_Success(t *testing.T) {
 	pub := new(MockEventPublisher)
-	cfg := &config.Config{Telegram: config.TelegramConfig{SecretToken: testTelegramSecret}}
-	r := setupIngressRouter(pub, cfg)
+	cfg := &config.Config{Channels: adapters.Config{Telegram: telegram.Config{SecretToken: testTelegramSecret}}}
+	r := setupIngressRouter(pub, testChannels(t, cfg))
 
 	// Valid Telegram Update payload
 	payload := []byte(`{
@@ -66,8 +68,8 @@ func TestGatewayTelegramWebhook_Success(t *testing.T) {
 	}`)
 
 	// We expect the message to be published
-	pub.On("Publish", mock.Anything, mock.MatchedBy(func(msg models.Message) bool {
-		return msg.UserID == "987654321" && msg.Text == "Hello bot"
+	pub.On("Publish", mock.Anything, mock.MatchedBy(func(msg channel.Inbound) bool {
+		return msg.Sender == "987654321" && msg.Text == "Hello bot"
 	})).Return(nil)
 
 	req := httptest.NewRequest("POST", "/webhook/telegram", bytes.NewBuffer(payload))
@@ -83,8 +85,8 @@ func TestGatewayTelegramWebhook_Success(t *testing.T) {
 
 func TestGatewayTelegramWebhook_InvalidJSON(t *testing.T) {
 	pub := new(MockEventPublisher)
-	cfg := &config.Config{Telegram: config.TelegramConfig{SecretToken: testTelegramSecret}}
-	r := setupIngressRouter(pub, cfg)
+	cfg := &config.Config{Channels: adapters.Config{Telegram: telegram.Config{SecretToken: testTelegramSecret}}}
+	r := setupIngressRouter(pub, testChannels(t, cfg))
 
 	payload := []byte(`{"update_id": 12345, bad json`)
 
@@ -102,11 +104,11 @@ func TestGatewayTelegramWebhook_InvalidJSON(t *testing.T) {
 func TestGatewayTelegramWebhook_SecretToken(t *testing.T) {
 	pub := new(MockEventPublisher)
 	cfg := &config.Config{
-		Telegram: config.TelegramConfig{
+		Channels: adapters.Config{Telegram: telegram.Config{
 			SecretToken: "super-secret-token-123",
-		},
+		}},
 	}
-	r := setupIngressRouter(pub, cfg)
+	r := setupIngressRouter(pub, testChannels(t, cfg))
 
 	payload := []byte(`{"update_id": 12345}`)
 

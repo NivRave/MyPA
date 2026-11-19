@@ -13,6 +13,8 @@ import (
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/telegram"
+	"github.com/nivik/mypa/internal/twilio"
 	"github.com/pgvector/pgvector-go"
 	"golang.org/x/oauth2"
 	"google.golang.org/genai"
@@ -425,7 +427,9 @@ func (f *fakeDurability) requests() []rollbackCall {
 	return append([]rollbackCall(nil), f.calls...)
 }
 
-// scenarioDoctor is the real /doctor (internal/doctor) looking at a fixed, partly broken install:
+// scenarioDoctor is the real /doctor (internal/doctor, with the adapters' own checks) looking at a
+// fixed, partly broken install. Its checks are listed in the order the transcripts were pinned in;
+// the app lists the adapters' checks first (cmd/mypa, newHealthReporter).
 // Telegram deliveries are failing, one member's Google sign-in was revoked, WhatsApp runs on the
 // sandbox, and the rest is fine. Its clock is fixed, so the report is the same on every run.
 func scenarioDoctor() *doctor.Doctor {
@@ -436,12 +440,12 @@ func scenarioDoctor() *doctor.Doctor {
 		"Omer": `{"access_token":"omer","refresh_token":"revoked","token_type":"Bearer"}`,
 	}
 	return doctor.New(
-		doctor.TelegramWebhook{
+		telegram.WebhookCheck{
 			Configured: true,
 			WantURL:    "https://mypa.example/webhook/telegram",
 			Now:        clock,
-			Info: func(context.Context) (doctor.WebhookInfo, error) {
-				return doctor.WebhookInfo{
+			Info: func(context.Context) (telegram.WebhookHealth, error) {
+				return telegram.WebhookHealth{
 					URL:          "https://mypa.example/webhook/telegram",
 					Pending:      3,
 					LastErrorAt:  now.Add(-12 * time.Minute),
@@ -465,7 +469,7 @@ func scenarioDoctor() *doctor.Doctor {
 				return nil
 			},
 		},
-		doctor.WhatsApp{Configured: true, Sender: doctor.TwilioSandboxSender, StatusCallbackURL: "https://mypa.example/webhook/twilio/status"},
+		twilio.WhatsAppCheck{Configured: true, Sender: twilio.SandboxSender, StatusCallbackURL: "https://mypa.example/webhook/twilio/status"},
 		doctor.Queues{
 			Names:       []string{"inbound.messages", "audit.events"},
 			BacklogWarn: 20,

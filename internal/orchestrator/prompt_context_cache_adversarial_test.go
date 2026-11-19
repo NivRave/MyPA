@@ -150,8 +150,8 @@ func TestScale01_EventBusInvalidationStress(t *testing.T) {
 	keysToSeed := map[string]string{
 		"ctx_prompt:fam_alpha:u_alpha:baby":               "Baby fam_alpha",
 		"ctx_prompt:fam_alpha:u_alpha2:baby":              "Baby fam_alpha second member",
-		"ctx_prompt:user_john:user_john:baby":              "Baby user_john",
-		"ctx_prompt:fam_beta:u_beta:baby":                "Baby fam_beta", // Unrelated family
+		"ctx_prompt:user_john:user_john:baby":             "Baby user_john",
+		"ctx_prompt:fam_beta:u_beta:baby":                 "Baby fam_beta",     // Unrelated family
 		"ctx_prompt:fam_alpha:u_alpha:finance":            "Finance fam_alpha", // Unrelated module
 		"ctx_prompt:fam_alpha:u_alpha:schedule":           "Schedule fam_alpha",
 		"ctx_prompt:fam_alpha:u_alpha:workspace_calendar": "Calendar fam_alpha",
@@ -208,11 +208,11 @@ func TestScale01_EventBusInvalidationStress(t *testing.T) {
 }
 
 // TestScale01_800msBoundedTimeoutStress verifies:
-// 1. When slow/hanging modules sleep for 2+ seconds or block indefinitely,
-//    CombinedSystemPrompt unblocks and returns within ~800ms-1100ms.
-// 2. Prompt contains outputs from fast modules.
-// 3. Prompt safely omits timed-out modules without panicking or stalling.
-// 4. Timed-out modules are NOT cached to Redis.
+//  1. When slow/hanging modules sleep for 2+ seconds or block indefinitely,
+//     CombinedSystemPrompt unblocks and returns within ~800ms-1100ms.
+//  2. Prompt contains outputs from fast modules.
+//  3. Prompt safely omits timed-out modules without panicking or stalling.
+//  4. Timed-out modules are NOT cached to Redis.
 func TestScale01_800msBoundedTimeoutStress(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()

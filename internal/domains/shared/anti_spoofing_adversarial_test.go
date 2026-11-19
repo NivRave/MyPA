@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -47,7 +48,7 @@ func TestShared_AntiSpoofing(t *testing.T) {
 	dbMock := &mockDBForReminders{}
 	callCtx := orchestrator.CallContext{
 		User:     legitUser,
-		Message:  models.Message{UserID: "shared_victim_actor"},
+		Message:  channel.Inbound{Sender: "shared_victim_actor"},
 		DB:       dbMock,
 		EventBus: bus,
 	}

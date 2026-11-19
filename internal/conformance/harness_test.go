@@ -22,6 +22,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/nivik/mypa/internal/calendar"
+	layer "github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -58,8 +60,10 @@ type inbound struct {
 // channel is what the suite needs to know about one platform: how a person's action arrives, and
 // what the platform will accept back. Everything else about a channel is pinned by its transcripts.
 type channel struct {
-	// name is the value the engine sees in models.Message.Source.
+	// name is the adapter's name: the value the engine sees in channel.Inbound.Channel.
 	name string
+	// webhookPath is the adapter's route for inbound messages.
+	webhookPath string
 	// hardLimit is the platform's own maximum length of one message, in characters.
 	hardLimit int
 	// ingestsDocuments says whether a file sent as a document reaches the assistant today.
@@ -71,15 +75,17 @@ type channel struct {
 	address func(p person) string
 	// messageID returns a platform-shaped message ID.
 	messageID func(n int) string
-	// receive turns the action into the platform's own webhook payload and runs it through the
-	// platform's real ingress code. ok is false when that code produced nothing for the engine.
-	receive func(e *env, in inbound) (msg models.Message, ok bool)
+	// receive turns the action into the platform's own webhook payload and sends it, signed as the
+	// platform signs it, to the adapter's real webhook route. ok is false when the adapter produced
+	// nothing for the engine.
+	receive func(e *env, in inbound) (msg layer.Inbound, ok bool)
 }
 
 // channels lists every supported channel. A scenario runs on all of them.
 var channels = []channel{
 	{
-		name:             "telegram",
+		name:             telegram.Name,
+		webhookPath:      telegram.WebhookPath,
 		hardLimit:        4096,
 		ingestsDocuments: false,
 		person: func(n int) person {
@@ -91,7 +97,8 @@ var channels = []channel{
 		receive:   receiveTelegram,
 	},
 	{
-		name:             "whatsapp",
+		name:             twilio.Name,
+		webhookPath:      twilio.WebhookPath,
 		hardLimit:        1600,
 		ingestsDocuments: true,
 		person: func(n int) person {
@@ -103,9 +110,9 @@ var channels = []channel{
 	},
 }
 
-// receiveTelegram builds a Telegram Update and parses it with the real parser. The webhook's
-// secret-token check lives in cmd/mypa (the ingress) and is pinned by that package's own tests.
-func receiveTelegram(e *env, in inbound) (models.Message, bool) {
+// receiveTelegram builds a Telegram Update and posts it, with the secret token Telegram sends, to
+// the adapter's webhook route.
+func receiveTelegram(e *env, in inbound) (layer.Inbound, bool) {
 	e.t.Helper()
 	userID, err := strconv.ParseInt(in.From.UserID, 10, 64)
 	require.NoError(e.t, err)
@@ -151,17 +158,15 @@ func receiveTelegram(e *env, in inbound) (models.Message, bool) {
 	body, err := json.Marshal(map[string]any{"update_id": 500000 + messageID, "message": message})
 	require.NoError(e.t, err)
 
-	msg, err := telegram.ParseUpdate(body)
-	require.NoError(e.t, err)
-	if msg == nil {
-		return models.Message{}, false
-	}
-	return *msg, true
+	req := httptest.NewRequest(http.MethodPost, "https://mypa.example"+telegram.WebhookPath, strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", telegramSecretToken)
+	return e.post(req)
 }
 
 // receiveWhatsApp builds the form Twilio posts for an inbound WhatsApp message, signs it as Twilio
-// does and sends it through the real webhook handler.
-func receiveWhatsApp(e *env, in inbound) (models.Message, bool) {
+// does and posts it to the adapter's webhook route.
+func receiveWhatsApp(e *env, in inbound) (layer.Inbound, bool) {
 	e.t.Helper()
 	const webhookURL = "https://mypa.example/webhook/twilio"
 
@@ -184,15 +189,33 @@ func receiveWhatsApp(e *env, in inbound) (models.Message, bool) {
 	req := httptest.NewRequest(http.MethodPost, webhookURL, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("X-Twilio-Signature", twilioSignature(webhookURL, form))
-	rec := httptest.NewRecorder()
+	return e.post(req)
+}
+
+// post serves req with the webhook route of the scenario's adapter, taken from the production
+// registry, and returns what the adapter handed to the inbound queue.
+func (e *env) post(req *http.Request) (layer.Inbound, bool) {
+	e.t.Helper()
+	adapter, ok := e.channels.Get(e.ch.name)
+	require.True(e.t, ok, "adapter %q is not registered", e.ch.name)
+	webhook := adapter.Ingress().Webhook
+	require.NotNil(e.t, webhook, "adapter %q has no webhook ingress", e.ch.name)
+
 	queue := &capturedQueue{}
+	var handler http.Handler
+	for _, rt := range webhook.Routes {
+		if rt.Path == e.ch.webhookPath && rt.Method == req.Method {
+			handler = rt.Handler(queue.sink)
+		}
+	}
+	require.NotNil(e.t, handler, "adapter %q serves no %s %s", e.ch.name, req.Method, e.ch.webhookPath)
 
-	twilio.NewHandler(queue, twilioAuthToken).HandleWebhook(rec, req)
-
-	require.Equal(e.t, http.StatusOK, rec.Code, "the Twilio webhook must accept a correctly signed message")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(e.t, http.StatusOK, rec.Code, "the %s webhook must accept a correctly authenticated request", e.ch.name)
 	published := queue.messages()
 	if len(published) == 0 {
-		return models.Message{}, false
+		return layer.Inbound{}, false
 	}
 	require.Len(e.t, published, 1)
 	return published[0], true
@@ -217,41 +240,41 @@ func twilioSignature(fullURL string, form url.Values) string {
 	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }
 
-// capturedQueue stands in for the inbound queue the gateway publishes to.
+// capturedQueue stands in for the inbound queue the ingress publishes to.
 type capturedQueue struct {
 	mu   sync.Mutex
-	msgs []models.Message
+	msgs []layer.Inbound
 }
 
-func (q *capturedQueue) Publish(_ context.Context, v any) error {
+func (q *capturedQueue) sink(_ context.Context, in layer.Inbound) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if m, ok := v.(models.Message); ok {
-		q.msgs = append(q.msgs, m)
-	}
+	q.msgs = append(q.msgs, in)
 	return nil
 }
 
-func (q *capturedQueue) messages() []models.Message {
+func (q *capturedQueue) messages() []layer.Inbound {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	return append([]models.Message(nil), q.msgs...)
+	return append([]layer.Inbound(nil), q.msgs...)
 }
 
-// env is one scenario's world: a real engine wired to the real clients of both platforms, with
-// the network, the model, the database and speech-to-text replaced by fakes.
+// env is one scenario's world: a real engine wired to the production channel registry (both real
+// adapters with their real platform clients), with the network, the model, the database and
+// speech-to-text replaced by fakes.
 type env struct {
-	t      *testing.T
-	ch     channel
-	engine *orchestrator.Engine
-	wire   *fakePlatforms
-	redis  *miniredis.Miniredis
-	db     *memoryDB
-	model  *scriptedModel
-	stt    *fakeTranscriber
-	tools  *scenarioTools
-	undo   *fakeDurability
-	seq    int
+	t        *testing.T
+	ch       channel
+	channels *layer.Registry
+	engine   *orchestrator.Engine
+	wire     *fakePlatforms
+	redis    *miniredis.Miniredis
+	db       *memoryDB
+	model    *scriptedModel
+	stt      *fakeTranscriber
+	tools    *scenarioTools
+	undo     *fakeDurability
+	seq      int
 	// compared is set once the scenario has compared its transcript (see golden).
 	compared bool
 }
@@ -282,17 +305,20 @@ func newEnv(t *testing.T, ch channel) *env {
 		ClientSecret: "conformance",
 		RedirectURL:  "https://mypa.example/oauth/callback",
 	})
+	// The registry the app builds (internal/channel/adapters), configured as an install would be,
+	// with every platform client on the fake transport.
+	e.channels, err = adapters.Build(adapters.Config{
+		Telegram: telegram.Config{BotToken: telegramBotToken, SecretToken: telegramSecretToken},
+		WhatsApp: twilio.Config{AccountSID: twilioAccountSID, AuthToken: twilioAuthToken, FromNumber: twilioSender},
+	}, adapters.WithHTTPClient(httpClient))
+	require.NoError(t, err)
+
 	e.engine = orchestrator.NewEngine(
 		nil, // no queue consumer: the suite hands messages to the engine directly
 		store,
 		e.db,
 		e.model,
-		telegram.NewClient(telegramBotToken, telegram.WithHTTPClient(httpClient)),
-		twilio.NewClient(config.TwilioConfig{
-			AccountSID: twilioAccountSID,
-			AuthToken:  twilioAuthToken,
-			FromNumber: twilioSender,
-		}, twilio.WithHTTPClient(httpClient)),
+		e.channels,
 		oauth,
 		nil, nil, nil, nil, // Gmail, Tasks, Contacts, web search: not part of any scenario
 		e.stt,
@@ -340,10 +366,11 @@ func (e *env) deliver(in inbound) bool {
 	}
 
 	// The neutral message every channel must produce.
-	assert.Equal(e.t, e.ch.name, msg.Source, "source")
-	assert.Equal(e.t, in.From.UserID, msg.UserID, "user ID")
-	assert.Equal(e.t, in.From.ChatID, msg.ChatID, "chat ID")
-	assert.Equal(e.t, in.MessageID, msg.ID, "message ID")
+	assert.Equal(e.t, e.ch.name, msg.Channel, "channel")
+	assert.Equal(e.t, in.From.UserID, msg.Sender, "sender")
+	assert.Equal(e.t, in.From.ChatID, msg.Conversation.ID, "conversation ID")
+	assert.Equal(e.t, in.MessageID, msg.MessageID, "message ID")
+	assert.True(e.t, msg.Conversation.Addressed, "a direct message is addressed to the assistant")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

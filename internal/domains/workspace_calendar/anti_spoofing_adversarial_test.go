@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -62,7 +63,7 @@ func TestWorkspaceCalendar_AntiSpoofing(t *testing.T) {
 	}
 	callCtx := orchestrator.CallContext{
 		User:     legitUser,
-		Message:  models.Message{UserID: "cal_victim_platform"},
+		Message:  channel.Inbound{Sender: "cal_victim_platform"},
 		EventBus: bus,
 	}
 

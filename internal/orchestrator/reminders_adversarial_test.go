@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel/adapters/adapterstest"
 	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/testutil"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,7 +87,7 @@ func TestAdversarial_SharedTaskRemindersDelivery(t *testing.T) {
 
 	spyTg := &spyTelegramClient{}
 	engine := orchestrator.NewEngine(
-		nil, nil, client, nil, spyTg, nil, nil, nil, nil, nil, nil, nil, nil, "UTC",
+		nil, nil, client, nil, adapterstest.Registry(spyTg, nil), nil, nil, nil, nil, nil, nil, nil, "UTC",
 	)
 
 	// Scenario 1: Past Due Reminder (Due 15 minutes ago, IsSent=false) -> MUST BE DISPATCHED

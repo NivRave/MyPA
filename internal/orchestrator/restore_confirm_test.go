@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/models"
-	"github.com/nivik/mypa/internal/orchestrator/mocks"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,7 +68,7 @@ func newRestoreHarness(t *testing.T) *restoreHarness {
 		return nil
 	}
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(record).AnyTimes()
-	engine.twClient.(*mocks.MockTwilioClient).EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(record).AnyTimes()
+	whatsAppMockOf(t, engine).EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(record).AnyTimes()
 	return h
 }
 
@@ -82,8 +82,11 @@ func (h *restoreHarness) writeSet(t *testing.T, stamp string) {
 
 func (h *restoreHarness) send(t *testing.T, source, text string) {
 	t.Helper()
-	require.NoError(t, h.engine.ProcessMessage(context.Background(), models.Message{
-		UserID: "admin-1", ChatID: "chat-admin", Text: text, Source: source,
+	require.NoError(t, h.engine.ProcessMessage(context.Background(), channel.Inbound{
+		Sender:       "admin-1",
+		Conversation: channel.Conversation{ID: "chat-admin"},
+		Text:         text,
+		Channel:      source,
 	}))
 }
 

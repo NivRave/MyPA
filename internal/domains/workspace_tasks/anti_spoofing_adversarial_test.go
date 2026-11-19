@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -13,12 +14,12 @@ import (
 )
 
 type recordingTasksClient struct {
-	lastListUser     string
+	lastListUser       string
 	lastCreateListUser string
-	lastListTasksUser string
+	lastListTasksUser  string
 	lastCreateTaskUser string
-	lastCompleteUser  string
-	lastDeleteUser    string
+	lastCompleteUser   string
+	lastDeleteUser     string
 }
 
 func (r *recordingTasksClient) ListTaskLists(ctx context.Context, userID string) ([]*tasksapi.TaskList, error) {
@@ -67,7 +68,7 @@ func TestWorkspaceTasks_AntiSpoofing(t *testing.T) {
 	}
 	callCtx := orchestrator.CallContext{
 		User:     legitUser,
-		Message:  models.Message{UserID: "canonical_victim_123"},
+		Message:  channel.Inbound{Sender: "canonical_victim_123"},
 		EventBus: bus,
 	}
 
