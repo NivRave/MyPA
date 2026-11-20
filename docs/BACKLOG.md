@@ -35,11 +35,11 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-22 | Low | Restore tool: the rollback test cannot fail yet, and the piped dump check runs only against a fake | open |
 | BL-23 | Low | A failing archive step makes the nightly backup discard its database dump | open |
 | BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: the backfill exists since V4-03 (`mypa embeddings reembed --missing`); running it on the live install is the owner's |
-| BL-25 | Low | Undo snapshots of saved memories carry the full 3,072-number embedding | open: decide with BL-24 and V4-03 |
+| BL-25 | Low | Undo snapshots of saved memories carry the full 3,072-number embedding | open: fixed together with BL-57 in one change, after V4-07 and before the V4.0 release, not part of any stage-4 item |
 | BL-26 | Medium | `save_topic_memory` stores `scope` as given, so a value such as `Family` is saved but never found | open |
 | BL-27 | High | The real-phone-number guard and the `.gitignore` guard are skipped in every full test run, including CI | done 2026-11-19 (`chore/bl-27-guards`) |
 | BL-28 | Low | The one-default-model guard misses a model alias with no version digit (`gemini-flash-latest`) and does not search `.mjs`, `.sh`, `.ps1` or `.sql` files | open |
-| BL-29 | Medium | The LLM client sends `Temperature: 0.2`; Gemini 3.6 Flash ignores sampling parameters and later model generations are to reject them with HTTP 400 | open: resolve before the default moves past 3.6, as part of V4-03 |
+| BL-29 | Medium | The LLM client sends `Temperature: 0.2`; Gemini 3.6 Flash ignores sampling parameters and later model generations are to reject them with HTTP 400 | open: resolve in V4-02 |
 | BL-30 | Low | Tests in `cmd/mypa` (formerly `cmd/orchestrator`) and `internal/crypto` change environment variables and do not put them back exactly | open |
 | BL-31 | Medium | The dashboard `users` query returns the users of every family, not only the caller's | done 2026-11-20 by V4-35 (`feat/v4-35-dashboard-signin`): an owner gets the household's members, an adult only themselves |
 | BL-32 | Low | A pairing code can be redeemed by two senders at the same moment | open: ADR 0002 requires a one-statement claim for every code |
@@ -67,7 +67,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-54 | Low | WhatsApp templates exist in English only | open |
 | BL-55 | Medium | A legacy workflow run counts as the person writing, and its answer bypasses the delivery policy | open |
 | BL-56 | Low | Telegram's "bot was blocked by the user" is an error, not a "not reachable" refusal | open |
-| BL-57 | Medium | Undo restores a memory's old embedding, which after a re-embed into another model is in the wrong vector space | open |
+| BL-57 | Medium | Undo restores a memory's old embedding, which after a re-embed into another model is in the wrong vector space | open: fixed together with BL-25 in one change, after V4-07 and before the V4.0 release, not part of any stage-4 item |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -372,6 +372,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** keep the embedding out of the snapshot and recompute it on restore, or store it once and reference
   it. Decide together with BL-24 and V4-03, which settle how embeddings are (re)computed. Test: the snapshot
   of a saved memory stays small, and an undone-then-restored memory is still found by meaning.
+- **Decided (owner, 2026-11-20):** fixed together with BL-57 in one change, after V4-07 and before the V4.0 release, not part of any stage-4 item. The
+  direction is in BL-57.
 
 ### BL-26 — `save_topic_memory` does not normalise `scope` (Medium)
 - **Found:** 2026-11-19, in the second review of V4-06 (non-blocking, after the item passed).
@@ -438,7 +440,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Impact:** none on replies today, but the setting no longer does what its comment says, so tool calling
   is not made more deterministic by it. Once `DefaultGeminiModel` (or an install's `GEMINI_MODEL`) names a
   later generation, every chat request would fail with HTTP 400, which means no replies at all.
-- **Fix:** resolve before the default moves past 3.6, as part of the provider work (V4-03): send no sampling
+- **Fix:** resolve in V4-02, the provider work, before the default moves past 3.6: send no sampling
   parameters, or send them only to models that accept them, decided per provider and model. Test: the
   request built for the default model carries no `Temperature`.
 
@@ -748,6 +750,9 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** together with BL-25: keep the embedding out of the snapshot, and give a restored memory a zero vector
   (or embed it again on restore). Test: after a re-embed into another model, a restored memory holds no vector
   of the old model.
+- **Direction (owner, 2026-11-20):** one change with BL-25, after V4-07 and before the V4.0 release, not part of any stage-4 item. An undo snapshot no
+  longer carries the embedding, and a memory restored by undo is marked as needing one, so the re-embed path from
+  V4-03 (`mypa embeddings reembed --missing`) fills it in the current model.
 
 ## Operations (owner)
 
