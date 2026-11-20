@@ -245,17 +245,6 @@ func getRecurrenceArg(args map[string]interface{}) []string {
 	return nil
 }
 
-// splitRecurrence turns a stored RecurrenceRule back into its lines.
-func splitRecurrence(rule string) []string {
-	var out []string
-	for _, line := range strings.Split(rule, "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			out = append(out, line)
-		}
-	}
-	return out
-}
-
 // eventRefArg names the event an update or delete acts on: a MyPA ID, or the Google ID of an
 // event that exists only in Google. A non-numeric event_id is taken as a Google ID.
 func eventRefArg(args map[string]interface{}) (uint, string, error) {
