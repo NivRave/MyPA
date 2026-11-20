@@ -70,26 +70,6 @@ func getInt64Arg(args map[string]interface{}, key string) (int64, bool) {
 	return 0, false
 }
 
-func normalizeJSONSlice(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return "[]"
-	}
-	if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-		return trimmed
-	}
-	// Comma-separated fallback
-	items := strings.Split(trimmed, ",")
-	var list []string
-	for _, it := range items {
-		if s := strings.TrimSpace(it); s != "" {
-			list = append(list, s)
-		}
-	}
-	bytes, _ := json.Marshal(list)
-	return string(bytes)
-}
-
 func appendQueryParams(targetURL, queryParams string) string {
 	trimmed := strings.TrimSpace(queryParams)
 	if trimmed == "" {
