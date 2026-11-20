@@ -178,3 +178,18 @@ func TestMember_LooksOnlyInsideTheCallersHousehold(t *testing.T) {
 	_, err = identity.Member(ctx, m, identity.Scope{}, "1002")
 	assert.ErrorIs(t, err, identity.ErrNoScope)
 }
+
+// V4-32: the person of a scope built from a sender's users row is that row's ID (a person keeps
+// users.id), so every account of one person gets the same person; a dashboard scope has none.
+func TestForUser_CarriesThePerson(t *testing.T) {
+	st := identitytest.NewStore()
+	h := st.Household("Levi")
+	s, err := identity.ForUser(context.Background(), st, &models.User{ID: "p-1", PlatformID: "7001", Role: "family", HouseholdID: h.ID})
+	require.NoError(t, err)
+	assert.Equal(t, "p-1", s.PersonID())
+	assert.Equal(t, "7001", s.PersonKey())
+
+	d, err := identity.ForLabel(context.Background(), st, "Levi", "dashboard-service", identity.RoleAdmin)
+	require.NoError(t, err)
+	assert.Empty(t, d.PersonID(), "the dashboard signs no person in until V4-35")
+}

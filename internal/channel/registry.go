@@ -116,7 +116,7 @@ func (r *Registry) All() []Adapter {
 }
 
 // Recognize returns an address for a person known only by an external ID, asking each adapter
-// that implements Recognizer in registration order. Transitional until V4-32 (see Recognizer).
+// that implements Recognizer in registration order (see Recognizer for when it is still used).
 func (r *Registry) Recognize(person string) (Address, bool) {
 	if r == nil || strings.TrimSpace(person) == "" {
 		return Address{}, false

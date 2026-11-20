@@ -126,7 +126,8 @@ func (c *Client) ListScheduleEvents(s identity.Scope, topic string, start, end t
 	}
 	query := q.Model(&models.ScheduleEvent{})
 	if userID := s.PersonKey(); userID != "" {
-		query = query.Where("(is_shared = true OR user_id = ?)", userID)
+		where, args := personIs("user_id", "person_id", userID)
+		query = query.Where("(is_shared = true OR "+where+")", args...)
 	} else {
 		query = query.Where("is_shared = true")
 	}
@@ -168,7 +169,8 @@ func (c *Client) UpsertTopicCalendarConfig(cfg *models.TopicCalendarConfig) erro
 	cfg.UpdatedAt = time.Now()
 
 	var existing models.TopicCalendarConfig
-	err := c.DB.Where("user_id = ? AND LOWER(topic) = ?", cfg.UserID, cfg.Topic).First(&existing).Error
+	where, args := personIs("user_id", "person_id", cfg.UserID)
+	err := c.DB.Where(where, args...).Where("LOWER(topic) = ?", cfg.Topic).Order("person_id IS NULL").First(&existing).Error
 	if err == nil {
 		cfg.ID = existing.ID
 		updates := map[string]interface{}{
@@ -199,7 +201,8 @@ func (c *Client) UpsertTopicCalendarConfig(cfg *models.TopicCalendarConfig) erro
 func (c *Client) GetTopicCalendarConfig(userID, topic string) (*models.TopicCalendarConfig, error) {
 	var cfg models.TopicCalendarConfig
 	normTopic := strings.ToLower(strings.TrimSpace(topic))
-	err := c.DB.Where("user_id = ? AND LOWER(topic) = ?", userID, normTopic).First(&cfg).Error
+	where, args := personIs("user_id", "person_id", userID)
+	err := c.DB.Where(where, args...).Where("LOWER(topic) = ?", normTopic).Order("person_id IS NULL").First(&cfg).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -214,7 +217,8 @@ func (c *Client) ListTopicCalendarConfigs(userID string) ([]models.TopicCalendar
 	var configs []models.TopicCalendarConfig
 	query := c.DB.Model(&models.TopicCalendarConfig{})
 	if userID != "" {
-		query = query.Where("user_id = ?", userID)
+		where, args := personIs("user_id", "person_id", userID)
+		query = query.Where(where, args...)
 	}
 	result := query.Order("topic asc").Find(&configs)
 	if result.Error != nil {

@@ -25,9 +25,9 @@ type Adapter interface {
 }
 
 // Recognizer is implemented by an adapter that can tell whether an external person ID belongs to
-// it. It exists for the callers that today hold only a person's ID (partner notifications, the
-// Google sign-in confirmation) and goes away when people and their channel accounts are linked
-// (V4-32).
+// it. Since V4-32 a person is reached through their channel accounts; Recognizer is left for an ID
+// that names no account: an ALLOWED_USERS entry written without its channel, and a notification
+// to a key that names no person.
 type Recognizer interface {
 	Recognizes(person string) bool
 }

@@ -132,7 +132,7 @@ func TestEngine_ConfirmCommand_RedeemsStagedMetaTool(t *testing.T) {
 		Role:       "user",
 	})
 	expectHouseholds(dbMock)
-	dbMock.EXPECT().GetUser("user-alice").Return(user, nil).AnyTimes()
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), "user-alice").Return(user, nil).AnyTimes()
 	dbMock.EXPECT().SaveWorkflow(gomock.Any()).Return(nil)
 
 	// Stage a workflow creation action

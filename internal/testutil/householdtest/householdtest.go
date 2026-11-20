@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/identity"
@@ -69,4 +70,31 @@ func User(t testing.TB, c *db.Client, platformID, name, role, label string) mode
 		t.Fatalf("create user %q: %v", platformID, err)
 	}
 	return u
+}
+
+// Member is User for someone who can write to the assistant: the user, their person and
+// membership (UpsertUser), and their account on channelName, as pairing makes them (V4-32). A
+// leftover account with the same channel and ID is taken over.
+func Member(t testing.TB, c *db.Client, platformID, name, role, label, channelName string) models.User {
+	t.Helper()
+	key := label
+	if key == "" {
+		key = platformID
+	}
+	h := Household(t, c, key)
+	if err := c.UpsertUser(models.User{PlatformID: platformID, Name: name, Role: role, FamilyGroup: label, HouseholdID: h.ID}); err != nil {
+		t.Fatalf("create user %q: %v", platformID, err)
+	}
+	u, err := c.GetUser(platformID)
+	if err != nil {
+		t.Fatalf("read user %q: %v", platformID, err)
+	}
+	if err := c.DB.Where("channel = ? AND external_id = ?", channelName, platformID).Delete(&models.ChannelAccount{}).Error; err != nil {
+		t.Fatalf("clear account %q: %v", platformID, err)
+	}
+	a := models.ChannelAccount{PersonID: u.ID, Channel: channelName, ExternalID: platformID, LinkedAt: time.Now()}
+	if err := c.DB.Create(&a).Error; err != nil {
+		t.Fatalf("create account %q: %v", platformID, err)
+	}
+	return *u
 }

@@ -718,17 +718,17 @@ func (mr *MockDBClientMockRecorder) MarkSharedReminderSent(s, id any) *gomock.Ca
 }
 
 // RedeemPairingCode mocks base method.
-func (m *MockDBClient) RedeemPairingCode(codeID string, u models.User) error {
+func (m *MockDBClient) RedeemPairingCode(codeID string, u models.User, channelName string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RedeemPairingCode", codeID, u)
+	ret := m.ctrl.Call(m, "RedeemPairingCode", codeID, u, channelName)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RedeemPairingCode indicates an expected call of RedeemPairingCode.
-func (mr *MockDBClientMockRecorder) RedeemPairingCode(codeID, u any) *gomock.Call {
+func (mr *MockDBClientMockRecorder) RedeemPairingCode(codeID, u, channelName any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RedeemPairingCode", reflect.TypeOf((*MockDBClient)(nil).RedeemPairingCode), codeID, u)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RedeemPairingCode", reflect.TypeOf((*MockDBClient)(nil).RedeemPairingCode), codeID, u, channelName)
 }
 
 // SaveReminder mocks base method.
@@ -786,6 +786,21 @@ func (m *MockDBClient) UpsertUser(u models.User) error {
 func (mr *MockDBClientMockRecorder) UpsertUser(u any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertUser", reflect.TypeOf((*MockDBClient)(nil).UpsertUser), u)
+}
+
+// UserForAccount mocks base method.
+func (m *MockDBClient) UserForAccount(ctx context.Context, channelName, externalID string) (*models.User, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UserForAccount", ctx, channelName, externalID)
+	ret0, _ := ret[0].(*models.User)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UserForAccount indicates an expected call of UserForAccount.
+func (mr *MockDBClientMockRecorder) UserForAccount(ctx, channelName, externalID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UserForAccount", reflect.TypeOf((*MockDBClient)(nil).UserForAccount), ctx, channelName, externalID)
 }
 
 // UsersInHousehold mocks base method.

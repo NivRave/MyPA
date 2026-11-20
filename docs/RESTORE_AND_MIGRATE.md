@@ -83,6 +83,10 @@ and is not in a backup. Every export and import prints this list:
 - Actions that were waiting for a `CONFIRM` reply.
 - Google sign-in links that were sent but not finished (`/connect` again).
 - Pairing lockouts and failed-attempt counters.
+- Link codes (`/link`, V4-32) that were issued but not yet confirmed. Only a keyed hash of each code
+  is stored, under `LINK_CODE_SECRET`, which is kept out of the database and the backup on purpose:
+  on an install with a different `LINK_CODE_SECRET` they no longer work; ask for a new code. Copy
+  the setting with the rest of `.env` to keep them.
 - Follow-up tool context and cached prompt sections (rebuilt on the next message).
 - The memory of already-handled message IDs: a message a platform re-delivers across the move
   could be answered twice.

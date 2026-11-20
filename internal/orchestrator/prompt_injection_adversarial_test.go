@@ -120,7 +120,7 @@ func TestSEC09_ConfirmMismatch_RefusesExecution(t *testing.T) {
 		Role:       "user",
 	})
 	expectHouseholds(dbMock)
-	dbMock.EXPECT().GetUser("user-victim").Return(user, nil)
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), "user-victim").Return(user, nil)
 
 	// Stage a create_automation_rule action
 	stagedAction := state.PendingMetaToolAction{

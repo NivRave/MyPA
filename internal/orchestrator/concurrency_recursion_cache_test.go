@@ -321,6 +321,10 @@ func TestBoundedRecursion_TerminatesAtDepth8(t *testing.T) {
 	eventPublisherMock.EXPECT().Publish(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	expectHouseholds(dbMock)
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, _ string, userID string) (*models.User, error) {
+		return inHousehold(&models.User{PlatformID: userID}), nil
+	}).AnyTimes()
+	// Tools invoked outside a turn look the user up by ID (turn.go's fallback).
 	dbMock.EXPECT().GetUser(gomock.Any()).DoAndReturn(func(userID string) (*models.User, error) {
 		return inHousehold(&models.User{PlatformID: userID}), nil
 	}).AnyTimes()

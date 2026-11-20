@@ -58,8 +58,11 @@ type ServerConfig struct {
 	// DashboardFamilyGroup scopes the dashboard secret to one family group (P3-2).
 	DashboardFamilyGroup string `mapstructure:"dashboard_family_group"`
 	JWTSecret            string `mapstructure:"jwt_secret"`
-	WeekStartDay         string `mapstructure:"week_start_day"` // e.g. "Sunday" (default) or "Monday"
-	WeekendDays          string `mapstructure:"weekend_days"`   // e.g. "Friday,Saturday" (default)
+	// LinkCodeSecret is the server secret typed codes (link codes, V4-32) are hashed under, kept
+	// out of the database and backups (ADR 0002 Decision 5). Empty: linking accounts is refused.
+	LinkCodeSecret string `mapstructure:"link_code_secret"`
+	WeekStartDay   string `mapstructure:"week_start_day"` // e.g. "Sunday" (default) or "Monday"
+	WeekendDays    string `mapstructure:"weekend_days"`   // e.g. "Friday,Saturday" (default)
 }
 
 // RabbitMQConfig holds RabbitMQ connection settings.
@@ -163,6 +166,7 @@ func Load() (*Config, error) {
 		"DASHBOARD_API_SECRET":   "server.dashboard_api_secret",
 		"DASHBOARD_FAMILY_GROUP": "server.dashboard_family_group",
 		"JWT_SECRET":             "server.jwt_secret",
+		"LINK_CODE_SECRET":       "server.link_code_secret",
 		"WEEK_START_DAY":         "server.week_start_day",
 		"WEEKEND_DAYS":           "server.weekend_days",
 	}
@@ -196,10 +200,11 @@ func Load() (*Config, error) {
 // ParseAllowedUsers parses the ALLOWED_USERS string, in the order the entries are written (the
 // bootstrap makes the first entry of a household without an admin its owner). A platform ID
 // written twice keeps its first position and its last values.
-// Format: "phone:name:role:family_group, phone2:name2:role2:family_group2"
+// Format: "id:name:role:family_group[:channel], ..."
 //
 // Since V4-30 the setting seeds a fresh install only: it is read when no household exists
-// (ADR 0002 Decision 6, db.BootstrapHouseholds).
+// (ADR 0002 Decision 6, db.BootstrapHouseholds). The optional fifth field names the entry's
+// channel (V4-32); AllowedUserChannels returns it.
 func (c *Config) ParseAllowedUsers() []models.User {
 	var users []models.User
 	if c.Server.AllowedUsersRaw == "" {
@@ -240,4 +245,22 @@ func (c *Config) ParseAllowedUsers() []models.User {
 		users = append(users, u)
 	}
 	return users
+}
+
+// AllowedUserChannels returns the channel named in the optional fifth field of each ALLOWED_USERS
+// entry, by platform ID (V4-32, ADR 0002 Decision 6). An entry without one is not listed: its
+// channel is the one whose adapter recognizes its ID.
+func (c *Config) AllowedUserChannels() map[string]string {
+	out := map[string]string{}
+	for _, entry := range strings.Split(c.Server.AllowedUsersRaw, ",") {
+		parts := strings.Split(strings.TrimSpace(entry), ":")
+		if len(parts) < 5 {
+			continue
+		}
+		id, ch := strings.TrimSpace(parts[0]), strings.ToLower(strings.TrimSpace(parts[4]))
+		if id != "" && ch != "" {
+			out[id] = ch
+		}
+	}
+	return out
 }

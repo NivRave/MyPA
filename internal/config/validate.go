@@ -101,6 +101,7 @@ func (c *Config) Validate(service string) error {
 		if c.Server.JWTSecret != "" && strings.TrimSpace(c.Server.JWTSecret) == strings.TrimSpace(c.Encryption.Key) {
 			errs = append(errs, errors.New("JWT_SECRET must differ from ENCRYPTION_KEY"))
 		}
+		errs = append(errs, c.validateLinkCodeSecret()...)
 	}
 	// The audit worker runs no channel, so it does not check their settings.
 	errs = append(errs, c.Channels.Validate(servesIngress, runsWorker)...)
@@ -132,4 +133,25 @@ func (c *Config) valueFor(envKey string) (string, bool) {
 		return c.Gemini.APIKey, true
 	}
 	return "", false
+}
+
+// MinLinkCodeSecretLen is the shortest LINK_CODE_SECRET accepted (32 characters, e.g. the output
+// of `openssl rand -hex 32` is 64).
+const MinLinkCodeSecretLen = 32
+
+// validateLinkCodeSecret checks LINK_CODE_SECRET when it is set. It is optional: without it the
+// app runs and refuses to link accounts (V4-32).
+func (c *Config) validateLinkCodeSecret() []error {
+	s := strings.TrimSpace(c.Server.LinkCodeSecret)
+	switch {
+	case s == "":
+		return nil
+	case isPlaceholder(s):
+		return []error{errors.New("LINK_CODE_SECRET still contains the .env.example placeholder value")}
+	case len(s) < MinLinkCodeSecretLen:
+		return []error{fmt.Errorf("LINK_CODE_SECRET must be at least %d characters (generate one with: openssl rand -hex 32)", MinLinkCodeSecretLen)}
+	case s == strings.TrimSpace(c.Encryption.Key) || s == strings.TrimSpace(c.Server.JWTSecret):
+		return []error{errors.New("LINK_CODE_SECRET must differ from ENCRYPTION_KEY and JWT_SECRET")}
+	}
+	return nil
 }

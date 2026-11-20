@@ -39,6 +39,7 @@ var scenarios = []scenario{
 	{"duplicate_delivery", duplicateDelivery},
 	{"doctor", doctorReport},
 	{"fallbacks", fallbacks},
+	{"link_accounts", linkAccounts}, // V4-32: one person on two channels
 }
 
 // TestConformance runs every scenario on every adapter the app registers. An adapter without a

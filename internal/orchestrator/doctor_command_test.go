@@ -28,7 +28,7 @@ func doctorEngine(t *testing.T, user models.User) (*Engine, *[]string, func()) {
 	t.Helper()
 	engine, tgMock, dbMock, cleanup := setupUnauthTestEngine(t)
 	inHousehold(&user)
-	dbMock.EXPECT().GetUser(user.PlatformID).Return(&user, nil).AnyTimes()
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), user.PlatformID).Return(&user, nil).AnyTimes()
 	sent := &[]string{}
 	tgMock.EXPECT().SendMessage(gomock.Any(), "chat-1", gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, text string) error {
@@ -90,7 +90,7 @@ func TestDoctorCommand_WithoutAReporterSaysSo(t *testing.T) {
 func TestDoctorCommand_UnpairedSenderNeverReachesIt(t *testing.T) {
 	engine, tgMock, dbMock, cleanup := setupUnauthTestEngine(t)
 	defer cleanup()
-	dbMock.EXPECT().GetUser("666").Return(nil, assert.AnError)
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), "666").Return(nil, assert.AnError)
 	var sent []string
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, text string) error { sent = append(sent, text); return nil }).AnyTimes()

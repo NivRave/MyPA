@@ -32,6 +32,7 @@ var NotCarried = []string{
 	"Actions that were waiting for a CONFIRM reply: ask again.",
 	"Google sign-in links that were sent but not finished: send /connect again.",
 	"Pairing lockouts and failed-attempt counters: they start from zero.",
+	"Link codes (/link) that were issued but not yet confirmed work only where LINK_CODE_SECRET is the same as on the old install: otherwise ask for a new one.",
 	"Follow-up tool context and cached prompt sections: rebuilt on the next message.",
 	"The memory of already-handled message IDs: a message a platform re-delivers across the move could be answered twice.",
 	"Messages that had failed for good (the dead-letter queues that /doctor reports): they stay in the old broker. Look at them before retiring it.",

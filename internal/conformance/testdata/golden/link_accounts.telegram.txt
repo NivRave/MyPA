@@ -1,0 +1,22 @@
+=== message 1: telegram to=7001 parse_mode=HTML
+Done: the plumber task is gone.
+=== message 2: telegram to=7001 parse_mode=HTML
+🔗 To add another account, send this from it to me within 10 minutes:
+
+/link <CODE>
+
+Then confirm here. The code works once. Never send it to anyone: whoever types it asks to join your account.
+=== message 3: telegram to=7001 parse_mode=HTML
+🔗 Add whatsapp ending 0102 to your account? It will see and change all your data.
+
+Reply CONFIRM LINK within 10 minutes to add it. If you did not ask for this, ignore this message and nothing changes.
+=== message 4: whatsapp to=whatsapp:+12025550102 from=whatsapp:+12025550199
+⏳ Almost done: confirm on your telegram account by replying CONFIRM LINK there.
+=== message 5: telegram to=7001 parse_mode=HTML
+⚠️ No pending confirmation found or it has expired.
+=== message 6: whatsapp to=whatsapp:+12025550102 from=whatsapp:+12025550199
+✅ Linked. You are Member 1 here too, with the same data. Send /accounts to see your accounts.
+=== message 7: telegram to=7001 parse_mode=HTML
+✅ whatsapp ending 0102 is now linked to your account.
+=== message 8: whatsapp to=whatsapp:+12025550102 from=whatsapp:+12025550199
+Done: the next one is gone too.

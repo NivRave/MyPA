@@ -24,7 +24,7 @@ func TestProcessMessage_ResolvesUserOncePerTurn(t *testing.T) {
 	require.True(t, ok)
 
 	var lookups int64
-	dbMock.EXPECT().GetUser("user-once").DoAndReturn(func(string) (*models.User, error) {
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), "user-once").DoAndReturn(func(context.Context, string, string) (*models.User, error) {
 		atomic.AddInt64(&lookups, 1)
 		return inHousehold(&models.User{PlatformID: "user-once", Name: "Once", FamilyGroup: "fam"}), nil
 	}).AnyTimes()

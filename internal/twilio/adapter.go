@@ -124,7 +124,7 @@ func (a *Adapter) Fetch(ctx context.Context, ref channel.AttachmentRef) (io.Read
 }
 
 // Recognizes implements channel.Recognizer: a WhatsApp ID is a phone number, with or without the
-// "whatsapp:" prefix. Transitional until V4-32.
+// "whatsapp:" prefix.
 func (a *Adapter) Recognizes(person string) bool {
 	return strings.HasPrefix(person, "+") || strings.HasPrefix(person, "whatsapp:")
 }

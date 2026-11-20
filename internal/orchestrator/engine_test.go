@@ -90,6 +90,10 @@ func setupTestEngine(t *testing.T) (*Engine, *tgmocks.MockAPI, *mocks.MockLLMCli
 	engine.SetToolRegistry(reg)
 
 	expectHouseholds(dbMock)
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, _ string, userID string) (*models.User, error) {
+		return inHousehold(&models.User{PlatformID: userID, Name: "User " + userID}), nil
+	}).AnyTimes()
+	// Tools invoked outside a turn look the user up by ID (turn.go's fallback).
 	dbMock.EXPECT().GetUser(gomock.Any()).DoAndReturn(func(userID string) (*models.User, error) {
 		return inHousehold(&models.User{PlatformID: userID, Name: "User " + userID}), nil
 	}).AnyTimes()
@@ -470,7 +474,7 @@ func TestEngine_HandleToolCall_RegistryDelegation(t *testing.T) {
 	reg.Register(mod)
 	engine.SetToolRegistry(reg)
 
-	dbMock.EXPECT().GetUser("user-1").Return(inHousehold(&models.User{PlatformID: "user-1", Name: "User One"}), nil).AnyTimes()
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), "user-1").Return(inHousehold(&models.User{PlatformID: "user-1", Name: "User One"}), nil).AnyTimes()
 
 	msg := channel.Inbound{Sender: "user-1", Text: "run custom tool"}
 	tc := &genai.FunctionCall{
@@ -549,7 +553,7 @@ func TestProcessMessage_PairingRateLimitAndLockout(t *testing.T) {
 	defer cleanup()
 
 	// Override GetUser to simulate unauthorized user
-	dbMock.EXPECT().GetUser("unauth-user").Return(nil, assert.AnError).AnyTimes()
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), "unauth-user").Return(nil, assert.AnError).AnyTimes()
 	dbMock.EXPECT().GetPairingCode("000000").Return(nil, assert.AnError).AnyTimes()
 
 	// 1-4 failures

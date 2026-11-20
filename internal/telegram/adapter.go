@@ -141,7 +141,7 @@ func (a *Adapter) Fetch(ctx context.Context, ref channel.AttachmentRef) (io.Read
 }
 
 // Recognizes implements channel.Recognizer: a Telegram user or chat ID is a decimal integer
-// (negative for groups). Transitional until V4-32.
+// (negative for groups).
 func (a *Adapter) Recognizes(person string) bool {
 	digits := strings.TrimPrefix(person, "-")
 	if digits == "" {

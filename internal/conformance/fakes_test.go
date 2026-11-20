@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/doctor"
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/identity/identitytest"
@@ -37,6 +38,13 @@ type memoryDB struct {
 	// households answers the engine's household lookups (V4-30). A label always names the same
 	// household; a member without one gets a household keyed by their platform ID.
 	households *identitytest.Store
+	// accounts, people and tokens are people's channel accounts and link codes (V4-32,
+	// accounts_fake_test.go). Accounts are keyed by channel and external ID.
+	accounts map[string]*models.ChannelAccount
+	people   map[string]*models.Person
+	tokens   []*models.AccessToken
+	// sessions is every audit session published, in order.
+	sessions []models.AuditSession
 }
 
 var _ orchestrator.DBClient = (*memoryDB)(nil)
@@ -47,6 +55,8 @@ func newMemoryDB() *memoryDB {
 		codes:       map[string]*models.PairingCode{},
 		lastSession: map[string]models.AuditSession{},
 		households:  identitytest.NewStore(),
+		accounts:    map[string]*models.ChannelAccount{},
+		people:      map[string]*models.Person{},
 	}
 }
 
@@ -171,6 +181,12 @@ func (d *memoryDB) GetUser(platformID string) (*models.User, error) {
 func (d *memoryDB) UpsertUser(u models.User) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if old, ok := d.users[u.PlatformID]; ok && u.ID == "" {
+		u.ID = old.ID
+	}
+	if u.ID == "" {
+		u.ID = uuid.NewString() // users.id: the person keeps it (V4-32)
+	}
 	d.users[u.PlatformID] = u
 	return nil
 }
@@ -202,13 +218,15 @@ func (d *memoryDB) GetPairingCode(code string) (*models.PairingCode, error) {
 	return &out, nil
 }
 
-func (d *memoryDB) RedeemPairingCode(codeID string, u models.User) error {
+func (d *memoryDB) RedeemPairingCode(codeID string, u models.User, channelName string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, pc := range d.codes {
 		if pc.ID == codeID {
 			pc.IsUsed = true
+			u.ID = uuid.NewString()
 			d.users[u.PlatformID] = u
+			d.addAccountLocked(channelName, u.PlatformID, u.ID, time.Now())
 			return nil
 		}
 	}
@@ -235,6 +253,7 @@ func (a auditSink) Publish(_ context.Context, v any) error {
 	if s, ok := v.(models.AuditSession); ok {
 		a.db.mu.Lock()
 		a.db.lastSession[s.UserID] = s
+		a.db.sessions = append(a.db.sessions, s)
 		a.db.mu.Unlock()
 	}
 	return nil

@@ -23,7 +23,7 @@ import (
 // history persistence. It returns the final response text (recorded in the audit session).
 func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inbound, media mediaAttachment, effects *turnEffects) (response string, err error) {
 	// 2. Fetch conversation history
-	history, err := e.store.GetChatHistory(ctx, msg.Sender)
+	history, err := e.store.GetChatHistory(ctx, stateKey(user, msg))
 	if err != nil {
 		return response, fmt.Errorf("failed to get chat history: %w", err)
 	}
@@ -38,7 +38,7 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inb
 		if e.intentMatcher != nil {
 			matchedDomains = e.intentMatcher.MatchDomains(msg.Text)
 		}
-		selected := unionDomains(matchedDomains, e.loadStickyDomains(ctx, msg.Sender))
+		selected := unionDomains(matchedDomains, e.loadStickyDomains(ctx, stateKey(user, msg)))
 		activeTools := e.toolRegistry.SelectDeclarations(selected, false)
 		ctx = llm.WithActiveTools(ctx, activeTools)
 		activeToolNames = make(map[string]bool, len(activeTools))
@@ -139,7 +139,7 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inb
 	}
 
 	// Remember what this turn used so a short follow-up ("yes, the second one") keeps its tools.
-	e.saveStickyDomains(ctx, msg.Sender, matchedDomains, effects.calledTools())
+	e.saveStickyDomains(ctx, stateKey(user, msg), matchedDomains, effects.calledTools())
 
 	// 6. Send the reply on the channel the message came from
 	if strings.TrimSpace(replyText) == "" {
@@ -163,16 +163,17 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inb
 		}
 	}
 
-	_ = e.store.AppendChatHistory(ctx, msg.Sender, models.ChatMessage{
+	historyKey := stateKey(user, msg)
+	_ = e.store.AppendChatHistory(ctx, historyKey, models.ChatMessage{
 		Role:    "user",
 		Content: persistedContent,
 	})
 	// P2-9: keep the turn's tool calls and (truncated) results, so a follow-up such as
 	// "delete that event" can refer to IDs created in this turn.
 	for _, m := range effects.historyMessages() {
-		_ = e.store.AppendChatHistory(ctx, msg.Sender, m)
+		_ = e.store.AppendChatHistory(ctx, historyKey, m)
 	}
-	_ = e.store.AppendChatHistory(ctx, msg.Sender, models.ChatMessage{Role: "assistant", Content: replyText})
+	_ = e.store.AppendChatHistory(ctx, historyKey, models.ChatMessage{Role: "assistant", Content: replyText})
 
 	return response, nil
 }
@@ -361,7 +362,7 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg channel.Inbound, his
 						UserID:    msg.Sender,
 						CreatedAt: time.Now(),
 					}
-					_ = e.store.StagePendingMetaTool(ctx, msg.Sender, stageData, 5*time.Minute)
+					_ = e.store.StagePendingMetaTool(ctx, approvalKey(turnUser(ctx), msg), stageData, 5*time.Minute)
 				}
 
 				sourceDesc := "external untrusted content"

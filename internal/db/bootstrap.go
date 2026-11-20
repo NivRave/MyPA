@@ -20,6 +20,8 @@ type BootstrapResult struct {
 	Users      int
 	// Promoted lists the platform IDs made admin because their household had none.
 	Promoted []string
+	// NoChannel counts the entries whose channel could not be told, so they have no account yet.
+	NoChannel int
 }
 
 // BootstrapHouseholds seeds a fresh install from ALLOWED_USERS (ADR 0002 Decision 6, option 6b).
@@ -33,7 +35,11 @@ type BootstrapResult struct {
 //   - An empty setting creates nothing: the bot answers nobody until someone is added.
 //
 // New households start with timeZone (the install's DEFAULT_TIMEZONE) as their time zone.
-func (c *Client) BootstrapHouseholds(ctx context.Context, entries []models.User, timeZone string) (BootstrapResult, error) {
+//
+// Each entry becomes a person with one channel account (V4-32): channelOf names the channel of a
+// platform ID (the entry's fifth field, or the adapter that recognizes the ID); an entry whose
+// channel is unknown gets no account and is logged.
+func (c *Client) BootstrapHouseholds(ctx context.Context, entries []models.User, timeZone string, channelOf func(platformID string) string) (BootstrapResult, error) {
 	var res BootstrapResult
 	err := c.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Serialize with a concurrent start of a second replica.
@@ -109,6 +115,16 @@ func (c *Client) BootstrapHouseholds(ctx context.Context, entries []models.User,
 				if err := tx.Where("platform_id = ?", m.PlatformID).Assign(m).FirstOrCreate(&m).Error; err != nil {
 					return fmt.Errorf("create user: %w", err)
 				}
+				ch := ""
+				if channelOf != nil {
+					ch = channelOf(m.PlatformID)
+				}
+				if ch == "" {
+					res.NoChannel++
+				}
+				if err := ensurePerson(tx, m, ch); err != nil {
+					return err
+				}
 				res.Users++
 			}
 		}
@@ -133,6 +149,9 @@ func LogBootstrap(res BootstrapResult, settingSet bool) {
 		slog.Info("created the first households from ALLOWED_USERS", "households", res.Households, "users", res.Users)
 		if len(res.Promoted) > 0 {
 			slog.Warn("a household in ALLOWED_USERS had no admin: its first entry was made admin", "households_affected", len(res.Promoted))
+		}
+		if res.NoChannel > 0 {
+			slog.Warn("ALLOWED_USERS entries whose channel is unknown got no channel account and cannot write yet; add the channel as a fifth field (id:name:role:family:channel)", "entries", res.NoChannel)
 		}
 		if res.Households > 1 {
 			slog.Warn("ALLOWED_USERS created more than one household; that is unusual for one install", "households", res.Households)

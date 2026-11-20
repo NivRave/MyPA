@@ -20,6 +20,7 @@ type TokenFallbackGetter func(ctx context.Context, userID string) ([]byte, error
 type Store struct {
 	client         *redis.Client
 	fallbackGetter TokenFallbackGetter
+	accountKeys    AccountKeys
 }
 
 // NewStore initializes a new Redis store.
@@ -79,7 +80,7 @@ func (s *Store) AppendChatHistory(ctx context.Context, userID string, msg models
 	}
 
 	key := fmt.Sprintf("chat:%s", userID)
-	
+
 	bytes, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal chat message: %w", err)
@@ -129,6 +130,16 @@ func (s *Store) GetChatHistory(ctx context.Context, userID string) ([]models.Cha
 	return history, nil
 }
 
+// AccountKeys lists the keys under which a person's Google sign-in may be stored: the external IDs
+// of all their channel accounts, preferred first (V4-32). Sign-ins keep their platform-ID keys
+// until V4-23 moves them into Postgres keyed by person.
+type AccountKeys func(ctx context.Context, key string) ([]string, error)
+
+// SetAccountKeys makes GetOAuthToken look for a person's sign-in through all their accounts.
+func (s *Store) SetAccountKeys(f AccountKeys) {
+	s.accountKeys = f
+}
+
 // SetCredentialFallback configures a persistent fallback getter (e.g. PostgreSQL encrypted fallback).
 func (s *Store) SetCredentialFallback(getter TokenFallbackGetter) {
 	s.fallbackGetter = getter
@@ -144,9 +155,31 @@ func (s *Store) SetOAuthToken(ctx context.Context, userID string, tokenBytes []b
 	return s.client.Set(ctx, key, encrypted, 0).Err()
 }
 
-// GetOAuthToken retrieves and decrypts the Google OAuth2 token for a user.
-// If the token is missing from Redis, it invokes the optional fallback retriever.
+// GetOAuthToken retrieves and decrypts the Google OAuth2 token for a person. It looks under the
+// given key first, then under the person's other account keys (SetAccountKeys), preferred first.
 func (s *Store) GetOAuthToken(ctx context.Context, userID string) ([]byte, error) {
+	tok, err := s.getOAuthToken(ctx, userID)
+	if err != nil || tok != nil || s.accountKeys == nil {
+		return tok, err
+	}
+	keys, kerr := s.accountKeys(ctx, userID)
+	if kerr != nil {
+		return nil, nil
+	}
+	for _, k := range keys {
+		if k == userID {
+			continue
+		}
+		if tok, err := s.getOAuthToken(ctx, k); err != nil || tok != nil {
+			return tok, err
+		}
+	}
+	return nil, nil
+}
+
+// getOAuthToken reads the token stored under exactly one key. If it is missing from Redis, it
+// invokes the optional fallback retriever.
+func (s *Store) getOAuthToken(ctx context.Context, userID string) ([]byte, error) {
 	key := fmt.Sprintf("token:%s", userID)
 	res, err := s.client.Get(ctx, key).Bytes()
 	if err == redis.Nil || len(res) == 0 {
@@ -277,6 +310,37 @@ func (s *Store) ResetPairingRateLimit(ctx context.Context, userID string) error 
 	key := fmt.Sprintf("rate_limit:pairing:%s", userID)
 	lockoutKey := fmt.Sprintf("rate_limit:pairing:lockout:%s", userID)
 	return s.client.Del(ctx, key, lockoutKey).Err()
+}
+
+// GlobalCodeFailureLimit is how many wrong typed codes the whole install accepts within
+// GlobalCodeWindow before it refuses every code until the window ends (ADR 0002 Decision 4: the
+// per-sender lockout plus a limit across all senders, so many senders cannot share the guessing).
+const (
+	GlobalCodeFailureLimit = 30
+	GlobalCodeWindow       = 10 * time.Minute
+	globalCodeFailuresKey  = "rate_limit:codes:global"
+)
+
+// RecordFailedCodeAttempt counts one wrong typed code across all senders.
+func (s *Store) RecordFailedCodeAttempt(ctx context.Context) error {
+	n, err := s.client.Incr(ctx, globalCodeFailuresKey).Result()
+	if err != nil {
+		return fmt.Errorf("count failed code attempt: %w", err)
+	}
+	if n == 1 {
+		_ = s.client.Expire(ctx, globalCodeFailuresKey, GlobalCodeWindow).Err()
+	}
+	return nil
+}
+
+// CodesBlocked reports whether the install-wide limit of wrong codes is reached. It fails closed:
+// an unreadable counter blocks.
+func (s *Store) CodesBlocked(ctx context.Context) bool {
+	n, err := s.client.Get(ctx, globalCodeFailuresKey).Int64()
+	if err == redis.Nil {
+		return false
+	}
+	return err != nil || n >= GlobalCodeFailureLimit
 }
 
 const (
@@ -477,6 +541,3 @@ func (s *Store) InvalidateFamilyPromptSections(ctx context.Context, scope string
 	n, err := s.client.Del(ctx, toDelete...).Result()
 	return int(n), err
 }
-
-
-

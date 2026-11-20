@@ -40,6 +40,16 @@ func goMigrations() []*goose.Migration {
 			}
 			return nil
 		}}, nil),
+		// 4: Migration B of ADR 0002 (V4-32): people, channel accounts, memberships, access
+		// tokens, and person_id beside every person column (person_keys.go). Additive only.
+		goose.NewGoMigration(4, &goose.GoFunc{RunTx: func(ctx context.Context, tx *sql.Tx) error {
+			unmapped, err := migrationB(ctx, tx)
+			if err != nil {
+				return fmt.Errorf("migration B: %w", err)
+			}
+			logUnmappedPersonKeys(unmapped)
+			return nil
+		}}, nil),
 	}
 }
 

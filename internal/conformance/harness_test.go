@@ -199,10 +199,12 @@ func receiveTelegram(e *env, in inbound) (layer.Inbound, bool) {
 // an update only after the sink took its message, so the queue is complete at that point.
 func (e *env) poll(update []byte, updateID int64) (layer.Inbound, bool) {
 	e.t.Helper()
-	adapter, ok := e.polling.Get(e.ch.name)
-	require.True(e.t, ok, "adapter %q is not registered", e.ch.name)
+	// The Telegram update is polled by the Telegram adapter, whichever channel the scenario is
+	// for (a person may write from Telegram in another channel's scenario, V4-32).
+	adapter, ok := e.polling.Get(telegram.Name)
+	require.True(e.t, ok, "adapter %q is not registered", telegram.Name)
 	outward := adapter.Ingress().Outward
-	require.NotNil(e.t, outward, "adapter %q does not poll without a public address", e.ch.name)
+	require.NotNil(e.t, outward, "adapter %q does not poll without a public address", telegram.Name)
 
 	e.wire.queueTelegramUpdate(update)
 	queue := &capturedQueue{}
@@ -260,23 +262,35 @@ func receiveWhatsApp(e *env, in inbound) (layer.Inbound, bool) {
 // instead: see poll, which Telegram also goes through.)
 func (e *env) post(req *http.Request) (layer.Inbound, bool) {
 	e.t.Helper()
-	adapter, ok := e.channels.Get(e.ch.name)
-	require.True(e.t, ok, "adapter %q is not registered", e.ch.name)
+	// The request goes to the adapter whose webhook it was forged for: the scenario's own, or
+	// another registered channel's when one person writes from two (V4-32).
+	name, path := e.ch.name, e.ch.webhookPath
+	for _, a := range e.channels.All() {
+		if wh := a.Ingress().Webhook; wh != nil {
+			for _, rt := range wh.Routes {
+				if rt.Path == req.URL.Path && rt.Method == req.Method {
+					name, path = a.Name(), rt.Path
+				}
+			}
+		}
+	}
+	adapter, ok := e.channels.Get(name)
+	require.True(e.t, ok, "adapter %q is not registered", name)
 	webhook := adapter.Ingress().Webhook
-	require.NotNil(e.t, webhook, "adapter %q has no webhook ingress", e.ch.name)
+	require.NotNil(e.t, webhook, "adapter %q has no webhook ingress", name)
 
 	queue := &capturedQueue{}
 	var handler http.Handler
 	for _, rt := range webhook.Routes {
-		if rt.Path == e.ch.webhookPath && rt.Method == req.Method {
+		if rt.Path == path && rt.Method == req.Method {
 			handler = rt.Handler(queue.sink)
 		}
 	}
-	require.NotNil(e.t, handler, "adapter %q serves no %s %s", e.ch.name, req.Method, e.ch.webhookPath)
+	require.NotNil(e.t, handler, "adapter %q serves no %s %s", name, req.Method, path)
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	require.Equal(e.t, http.StatusOK, rec.Code, "the %s webhook must accept a correctly authenticated request", e.ch.name)
+	require.Equal(e.t, http.StatusOK, rec.Code, "the %s webhook must accept a correctly authenticated request", name)
 	published := queue.messages()
 	if len(published) == 0 {
 		return layer.Inbound{}, false
@@ -344,6 +358,8 @@ type env struct {
 	seq     int
 	// compared is set once the scenario has compared its transcript (see golden).
 	compared bool
+	// redact replaces values that differ on every run (a random code) in the transcript.
+	redact map[string]string
 }
 
 func newEnv(t *testing.T, ch channel) *env {
@@ -401,6 +417,7 @@ func newEnv(t *testing.T, ch channel) *env {
 	registry.Register(e.undo)
 	e.engine.SetToolRegistry(registry)
 	e.engine.WithHealthReporter(scenarioDoctor())
+	e.engine.WithAccounts(e.db, []byte(conformanceLinkSecret))
 
 	t.Cleanup(func() {
 		e.engine.Wait()
@@ -425,6 +442,10 @@ func (e *env) member(n int, role, familyGroup string) person {
 		FamilyGroup: familyGroup,
 		CreatedAt:   time.Now(),
 	}))
+	// A paired member is a person with this channel's account, added long enough ago to link
+	// others (V4-32).
+	u, _ := e.db.user(p.UserID)
+	e.db.addAccount(e.ch.name, p.UserID, u.ID, time.Now().Add(-48*time.Hour))
 	return p
 }
 
@@ -432,17 +453,24 @@ func (e *env) member(n int, role, familyGroup string) person {
 // through the engine. It reports whether the engine received anything.
 func (e *env) deliver(in inbound) bool {
 	e.t.Helper()
+	return e.deliverOn(e.ch, in)
+}
+
+// deliverOn is deliver through another registered channel's ingress: one person writing from
+// their accounts on two channels (V4-32).
+func (e *env) deliverOn(ch channel, in inbound) bool {
+	e.t.Helper()
 	if in.MessageID == "" {
 		e.seq++
-		in.MessageID = e.ch.messageID(e.seq)
+		in.MessageID = ch.messageID(e.seq)
 	}
-	msg, ok := e.ch.receive(e, in)
+	msg, ok := ch.receive(e, in)
 	if !ok {
 		return false
 	}
 
 	// The neutral message every channel must produce.
-	assert.Equal(e.t, e.ch.name, msg.Channel, "channel")
+	assert.Equal(e.t, ch.name, msg.Channel, "channel")
 	assert.Equal(e.t, in.From.UserID, msg.Sender, "sender")
 	assert.Equal(e.t, in.From.ChatID, msg.Conversation.ID, "conversation ID")
 	assert.Equal(e.t, in.MessageID, msg.MessageID, "message ID")
@@ -551,7 +579,23 @@ func (e *env) transcript() string {
 	for i, m := range msgs {
 		fmt.Fprintf(&b, "=== message %d: %s to=%s %s\n%s\n", i+1, m.Platform, m.To, m.Meta, m.Text)
 	}
-	return b.String()
+	out := b.String()
+	for secret, shown := range e.redact {
+		out = strings.ReplaceAll(out, secret, shown)
+	}
+	return out
+}
+
+// otherChannel is the fixture of another registered channel than this scenario's.
+func (e *env) otherChannel() channel {
+	e.t.Helper()
+	for _, ch := range fixtures {
+		if ch.name != e.ch.name {
+			return ch
+		}
+	}
+	e.t.Fatal("only one channel is registered")
+	return channel{}
 }
 
 func goldenPath(scenario, channelName string) string {
