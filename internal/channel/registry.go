@@ -193,6 +193,23 @@ func (r *Registry) NeedPublicAddress() []string {
 	return names
 }
 
+// JoinSteps returns, in registration order, the step each configured adapter needs before a
+// person's first message (Joiner), leaving out adapters that need none (V4-41).
+func (r *Registry) JoinSteps() []JoinStep {
+	var steps []JoinStep
+	for _, a := range r.All() {
+		if c, ok := a.(Configurable); ok && !c.Configured() {
+			continue
+		}
+		if j, ok := a.(Joiner); ok {
+			if step := strings.TrimSpace(j.JoinStep()); step != "" {
+				steps = append(steps, JoinStep{Channel: a.Name(), Step: step})
+			}
+		}
+	}
+	return steps
+}
+
 // WebhookPaths returns every webhook path served by the registered adapters.
 func (r *Registry) WebhookPaths() []string {
 	if r == nil {

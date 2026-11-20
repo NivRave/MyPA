@@ -1,5 +1,6 @@
 import { revalidatePath } from 'next/cache';
-import { graphqlFetch, getMe, type User, type PairingCode } from '@/lib/graphql';
+import { graphqlFetch, getMe, type User, type PairingCode, type JoinStep } from '@/lib/graphql';
+import { JoinSteps } from '@/components/JoinSteps';
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,10 @@ const GET_CODES = `
       role
       expiresAt
     }
+    joinSteps {
+      channel
+      step
+    }
   }
 `;
 
@@ -40,15 +45,18 @@ const GENERATE_PAIRING_CODE_MUTATION = `
 export default async function UsersPage() {
   const me = await getMe();
   const isOwner = me?.role === 'owner';
-  const data: { users: User[]; activePairingCodes: PairingCode[] } = {
+  const data: { users: User[]; activePairingCodes: PairingCode[]; joinSteps: JoinStep[] } = {
     users: [],
     activePairingCodes: [],
+    joinSteps: [],
   };
 
   try {
     data.users = (await graphqlFetch<{ users: User[] }>(GET_USERS)).users;
     if (isOwner) {
-      data.activePairingCodes = (await graphqlFetch<{ activePairingCodes: PairingCode[] }>(GET_CODES)).activePairingCodes;
+      const codes = await graphqlFetch<{ activePairingCodes: PairingCode[]; joinSteps: JoinStep[] }>(GET_CODES);
+      data.activePairingCodes = codes.activePairingCodes;
+      data.joinSteps = codes.joinSteps ?? [];
     }
   } catch (err) {
     console.error('Failed to fetch users and codes:', err);
@@ -134,6 +142,8 @@ export default async function UsersPage() {
               </button>
             </form>
           </div>
+
+          <JoinSteps steps={data.joinSteps} />
 
           <div className="bg-white rounded-xl shadow-sm border border-neutral-200 overflow-hidden">
             <div className="p-6 border-b border-neutral-200">

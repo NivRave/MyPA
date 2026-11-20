@@ -110,6 +110,8 @@ func (f *fakePlatforms) RoundTrip(req *http.Request) (*http.Response, error) {
 		return f.telegram(req)
 	case "api.twilio.com":
 		return f.twilio(req)
+	case "content.twilio.com":
+		return f.twilioContent(req)
 	default:
 		return f.refuse(req, "no platform API lives on this host")
 	}
@@ -235,6 +237,23 @@ func (f *fakePlatforms) twilio(req *http.Request) (*http.Response, error) {
 		return respondBytes(req, http.StatusOK, data), nil
 	}
 	return f.refuse(req, "the suite does not expect this Twilio endpoint")
+}
+
+// twilioContent is Twilio's Content API (V4-41): the sender's reminder template is approved and
+// its briefing template still waits for WhatsApp. /doctor only reads; nothing in a scenario
+// creates or submits a template.
+func (f *fakePlatforms) twilioContent(req *http.Request) (*http.Response, error) {
+	if user, pass, ok := req.BasicAuth(); !ok || user != twilioAccountSID || pass != twilioAuthToken {
+		return respond(req, http.StatusUnauthorized, `{"code":20003,"message":"Authenticate"}`), nil
+	}
+	status := map[string]string{
+		"/v1/Content/" + reminderTemplateSID + "/ApprovalRequests": "approved",
+		"/v1/Content/" + briefingTemplateSID + "/ApprovalRequests": "received",
+	}
+	if s, ok := status[req.URL.Path]; ok && req.Method == http.MethodGet {
+		return respond(req, http.StatusOK, `{"whatsapp":{"status":"`+s+`","rejection_reason":""}}`), nil
+	}
+	return f.refuse(req, "the suite does not expect this Content API call")
 }
 
 func (f *fakePlatforms) record(m wireMessage) {

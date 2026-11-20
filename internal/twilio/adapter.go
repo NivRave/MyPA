@@ -34,24 +34,34 @@ type API interface {
 	DownloadMedia(ctx context.Context, mediaURL string) ([]byte, error)
 }
 
-// Adapter is the WhatsApp channel adapter over Twilio (V4-31, DE-8).
+// Adapter is the WhatsApp channel adapter over Twilio (V4-31, DE-8), in the sandbox or with a
+// registered sender (V4-41).
 type Adapter struct {
-	cfg Config
-	api API
+	cfg     Config
+	api     API
+	content ContentAPI
 }
 
 // AdapterOption configures an Adapter.
 type AdapterOption func(*Adapter)
 
-// WithAPI replaces the Twilio client used for sending and fetching media.
+// WithAPI replaces the Twilio client used for sending and fetching media, and for the Content API
+// when it implements that too (*Client does).
 func WithAPI(api API) AdapterOption {
-	return func(a *Adapter) { a.api = api }
+	return func(a *Adapter) {
+		a.api = api
+		if c, ok := api.(ContentAPI); ok {
+			a.content = c
+		}
+	}
 }
 
 // NewAdapter builds the adapter from its settings. It is always registered: without an auth token
 // its webhooks reject every request (fail closed), as the ingress always did.
 func NewAdapter(cfg Config, opts ...AdapterOption) *Adapter {
-	a := &Adapter{cfg: cfg, api: NewClient(cfg)}
+	cfg = cfg.Effective()
+	client := NewClient(cfg)
+	a := &Adapter{cfg: cfg, api: client, content: client}
 	for _, opt := range opts {
 		opt(a)
 	}
@@ -61,16 +71,40 @@ func NewAdapter(cfg Config, opts ...AdapterOption) *Adapter {
 // Name implements channel.Adapter.
 func (a *Adapter) Name() string { return Name }
 
+// Mode implements channel.Moded: "sandbox" or "sender" (ModeSandbox, ModeSender), from the
+// settings alone (V4-41).
+func (a *Adapter) Mode() string { return string(a.cfg.Mode) }
+
 // Capabilities implements channel.Adapter. They are what the adapter does today. Quick-reply
 // buttons (V4-10), invite links (V4-36) and voice replies (V4-18) are switched on by the items that
-// build them; there are no WhatsApp groups (DE-8).
+// build them; there are no WhatsApp groups (DE-8). What the two modes accept unprompted differs
+// (V4-41); the rule that acts on it is V4-33.
 func (a *Adapter) Capabilities() channel.Capabilities {
+	proactive := "within 24 hours of the person's last message; outside it only MyPA's approved reminder and briefing templates (V4-33)"
+	if a.cfg.Mode == ModeSandbox {
+		proactive = "within 24 hours of the person's last message, while their sandbox membership lasts (72 hours after it); " +
+			"there are no templates of MyPA's, so outside the window the message is held or sent on another channel (V4-33)"
+	}
 	return channel.Capabilities{
 		AttachmentsIn: []channel.AttachmentKind{channel.KindImage, channel.KindAudio, channel.KindDocument},
 		MaxTextLen:    maxTextLen,
 		Markup:        channel.LightMarkup,
-		Proactive:     "within 24 hours of the person's last message; outside it only an approved template (V4-33)",
+		Proactive:     proactive,
 	}
+}
+
+// JoinStep implements channel.Joiner: in the sandbox, a person sends its join message to the
+// sandbox number before anything they write reaches MyPA. A registered sender needs nothing.
+func (a *Adapter) JoinStep() string {
+	if a.cfg.Mode != ModeSandbox {
+		return ""
+	}
+	number := strings.TrimPrefix(SandboxSender, "whatsapp:")
+	if a.cfg.SandboxJoin == "" {
+		return fmt.Sprintf("On WhatsApp, first send %s the sandbox's join message (the owner finds it in the Twilio Console under Messaging → Try it out); "+
+			"Twilio answers that you joined.", number)
+	}
+	return fmt.Sprintf("On WhatsApp, first send `%s` to %s; Twilio answers that you joined. After 3 days without writing, send it again.", a.cfg.SandboxJoin, number)
 }
 
 // Ingress implements channel.Adapter: Twilio calls the webhooks, so WhatsApp always needs a public
@@ -129,17 +163,32 @@ func (a *Adapter) Recognizes(person string) bool {
 	return strings.HasPrefix(person, "+") || strings.HasPrefix(person, "whatsapp:")
 }
 
-// HealthCheck is the adapter's /doctor check.
-func (a *Adapter) HealthCheck() doctor.Check {
-	return WhatsAppCheck{
+// HealthCheck is the adapter's /doctor check: the mode and its health (V4-41). activity, when
+// set, says when each of a household's WhatsApp accounts last wrote; the sandbox check reads it.
+func (a *Adapter) HealthCheck(activity channel.ActivitySource) doctor.Check {
+	c := WhatsAppCheck{
 		Configured:        a.Configured(),
+		Mode:              a.cfg.Mode,
 		Sender:            a.cfg.FromNumber,
+		SandboxJoin:       a.cfg.SandboxJoin,
 		StatusCallbackURL: a.cfg.StatusCallbackURL,
+		TemplateSIDs:      a.cfg.TemplateSIDs,
 	}
+	if a.content != nil {
+		c.Approval = a.content.TemplateApproval
+	}
+	if activity != nil {
+		c.Activity = func(ctx context.Context, householdID string) ([]channel.AccountActivity, error) {
+			return activity(ctx, householdID, Name)
+		}
+	}
+	return c
 }
 
 var (
 	_ channel.Adapter      = (*Adapter)(nil)
 	_ channel.Recognizer   = (*Adapter)(nil)
 	_ channel.Configurable = (*Adapter)(nil)
+	_ channel.Joiner       = (*Adapter)(nil)
+	_ channel.Moded        = (*Adapter)(nil)
 )

@@ -5,7 +5,9 @@
 package adapters
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/nivik/mypa/internal/channel"
@@ -49,6 +51,49 @@ func ConditionalEnvKeys() []string {
 // start while one is still set, so an old value can never silently disagree with the new one.
 func ReplacedEnvKeys() []string {
 	return append(telegram.ReplacedEnvKeys(), twilio.ReplacedEnvKeys()...)
+}
+
+// Modes lists, per adapter name, the modes it can run in, chosen by its settings alone (V4-41).
+// An adapter with one way of running is absent. The conformance suite runs every scenario in
+// every mode, and the capability matrix has a column for each.
+func Modes() map[string][]string {
+	var wa []string
+	for _, m := range twilio.Modes() {
+		wa = append(wa, string(m))
+	}
+	return map[string][]string{twilio.Name: wa}
+}
+
+// InMode returns cfg with the named adapter set to run in mode, as its mode setting would.
+func InMode(cfg Config, adapter, mode string) (Config, error) {
+	switch adapter {
+	case twilio.Name:
+		for _, m := range twilio.Modes() {
+			if string(m) == mode {
+				cfg.WhatsApp.Mode = m
+				return cfg, nil
+			}
+		}
+	}
+	return cfg, fmt.Errorf("adapter %q has no mode %q", adapter, mode)
+}
+
+// SetupGuides are the adapters with a guided setup (`mypa channel-setup <name>`).
+func SetupGuides() []string { return []string{twilio.Name} }
+
+// Setup runs the named adapter's guided setup, writing to w; submit lets it change the owner's
+// platform account (V4-41: create and submit WhatsApp templates). hc, when set, is the HTTP
+// client it uses.
+func Setup(ctx context.Context, cfg Config, name string, w io.Writer, submit bool, hc *http.Client) error {
+	switch name {
+	case twilio.Name:
+		var opts []twilio.Option
+		if hc != nil {
+			opts = append(opts, twilio.WithHTTPClient(hc))
+		}
+		return twilio.Guide(ctx, cfg.WhatsApp, twilio.NewClient(cfg.WhatsApp.Effective(), opts...), w, submit)
+	}
+	return fmt.Errorf("no guided setup for %q (there is one for: %v)", name, SetupGuides())
 }
 
 // options are the test seams of Build.

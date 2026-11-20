@@ -26,7 +26,7 @@ func telegramEnv(t *testing.T) *env {
 	t.Helper()
 	ch, ok := fixtureFor(telegram.Name)
 	require.True(t, ok)
-	return newEnv(t, ch)
+	return newEnv(t, ch, "")
 }
 
 // process hands the engine a message directly (for shapes the fixtures do not forge, such as a

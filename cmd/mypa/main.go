@@ -43,6 +43,11 @@ func main() {
 		logging.Setup()
 		os.Exit(accessMain(os.Args[2:]))
 	}
+	// `mypa channel-setup <channel> [--submit]`: a channel's guided setup (V4-41).
+	if len(os.Args) > 1 && os.Args[1] == "channel-setup" {
+		logging.Setup()
+		os.Exit(channelSetupMain(os.Args[2:]))
+	}
 
 	roleFlag := flag.String("role", config.RoleAll, "what this process runs: "+strings.Join(config.Roles(), ", "))
 	migrateOnly := flag.Bool("migrate-only", false, "apply database schema migrations and exit (P4-3)")

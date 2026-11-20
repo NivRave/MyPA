@@ -2,7 +2,7 @@
 🚫 Permission denied: administrative privileges required.
 === message 2: telegram to=7001 parse_mode=HTML
 🩺 <b>MyPA health check</b>
-2 problems, 1 warning, 5 checks passed.
+2 problems, 1 warning, 6 checks passed.
 
 ❌ <b>Telegram webhook</b>
 Telegram could not deliver updates: Connection refused (12 minutes ago). 3 updates are waiting.
@@ -12,14 +12,16 @@ Telegram could not deliver updates: Connection refused (12 minutes ago). 3 updat
 The Google sign-in has expired or was revoked: Google refused to renew it.
 ➡️ Ask Omer to send /connect and sign in to Google again.
 
-⚠️ <b>WhatsApp sender</b>
-WhatsApp runs on the Twilio sandbox. A person who has not written for 72 hours drops out of it, and replies and reminders to them then fail (Twilio error 63015).
-➡️ When someone stops getting answers, have them send the sandbox join message again. A registered sender removes the limit (planned as V4-41).
+⚠️ <b>WhatsApp sandbox: Omer</b>
+Omer last wrote on WhatsApp 4 days ago, so their sandbox membership has lapsed: replies and reminders to them there fail (Twilio error 63015) until they join again.
+➡️ Ask Omer to send <code>join conformance-check</code> on WhatsApp to +14155238886, Twilio&#39;s sandbox number, and then write to MyPA.
 
 ✅ <b>Google account: Dana</b>: Connected, and Google renews the sign-in.
+✅ <b>WhatsApp delivery reports</b>: On: a message Twilio could not deliver is logged with its reason.
 ✅ <b>Queue inbound.messages</b>: 0 waiting, none failed.
 ✅ <b>Queue audit.events</b>: 0 waiting, none failed.
 ✅ <b>Backups</b>: The newest backup was taken 7 hours ago (<code>backup_2026-11-19_02-00-00.dump.age</code>). Backups are kept on this machine only; there is no off-machine copy.
 ✅ <b>Database schema</b>: At version 2, up to date.
 
 ℹ️ <b>Google account: Noa</b>: Not connected (calendar, mail, tasks and contacts are off until they send /connect).
+ℹ️ <b>WhatsApp mode</b>: Sandbox, on Twilio&#39;s shared number …8886. A person joins it with the join message and drops out 72 hours after they last wrote; MyPA has no templates here, so a reminder outside the 24-hour window cannot go out on WhatsApp.

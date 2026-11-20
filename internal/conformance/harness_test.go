@@ -80,6 +80,89 @@ type channel struct {
 	// platform signs it, to the adapter's real webhook route. ok is false when the adapter produced
 	// nothing for the engine.
 	receive func(e *env, in inbound) (msg layer.Inbound, ok bool)
+	// modes are the adapter's modes (adapters.Modes, V4-41), each with the settings that choose
+	// it. Every scenario runs in each, with a transcript per mode. None: one way of running.
+	modes []fixtureMode
+}
+
+// fixtureMode is one mode of an adapter: its name and the settings an install sets for it, on
+// top of baseConfig. The mode itself is chosen by the settings alone (adapters.InMode).
+type fixtureMode struct {
+	name      string
+	configure func(cfg *adapters.Config)
+}
+
+// baseConfig is the install every scenario starts from: each adapter configured, on the fake
+// platforms, and an adapter with modes in its first one (TestFixturesMatchRegisteredAdapters).
+func baseConfig() adapters.Config {
+	cfg := adapters.Config{
+		Telegram: telegram.Config{BotToken: telegramBotToken, SecretToken: telegramSecretToken},
+		// Delivery reports on, as on any install with a public address (V4-40).
+		WhatsApp: twilio.Config{AccountSID: twilioAccountSID, AuthToken: twilioAuthToken, StatusCallbackURL: "https://mypa.example" + twilio.StatusCallbackPath},
+	}
+	for _, ch := range fixtures {
+		if len(ch.modes) > 0 {
+			ch.modes[0].configure(&cfg)
+		}
+	}
+	return cfg
+}
+
+// configFor is the install of one fixture in one mode ("" for an adapter without modes).
+func configFor(t *testing.T, ch channel, mode string) adapters.Config {
+	t.Helper()
+	cfg := baseConfig()
+	if mode == "" {
+		return cfg
+	}
+	for _, m := range ch.modes {
+		if m.name == mode {
+			m.configure(&cfg)
+			return cfg
+		}
+	}
+	t.Fatalf("fixture %s has no mode %q", ch.name, mode)
+	return cfg
+}
+
+// label names a fixture in one mode: the transcript file and subtest name.
+func label(ch channel, mode string) string {
+	if mode == "" {
+		return ch.name
+	}
+	return ch.name + "-" + mode
+}
+
+// modeNames lists a fixture's modes, or one empty name for an adapter without modes.
+func (ch channel) modeNames() []string {
+	if len(ch.modes) == 0 {
+		return []string{""}
+	}
+	var names []string
+	for _, m := range ch.modes {
+		names = append(names, m.name)
+	}
+	return names
+}
+
+// WhatsApp settings of each mode (V4-41).
+const (
+	// sandboxJoin is the join message of the fake sandbox.
+	sandboxJoin = "join conformance-check"
+	// Content SIDs of the sender's two templates on the fake Content API.
+	reminderTemplateSID = "HX00000000000000000000000000000001"
+	briefingTemplateSID = "HX00000000000000000000000000000002"
+)
+
+func whatsAppMode(mode twilio.Mode, configure func(wa *twilio.Config)) fixtureMode {
+	return fixtureMode{name: string(mode), configure: func(cfg *adapters.Config) {
+		set, err := adapters.InMode(*cfg, twilio.Name, string(mode))
+		if err != nil {
+			panic(err)
+		}
+		*cfg = set
+		configure(&cfg.WhatsApp)
+	}}
 }
 
 // fixtures holds one fixture per adapter the app registers (adapters.Build), in registration
@@ -109,6 +192,16 @@ var fixtures = []channel{
 		address:   func(p person) string { return "whatsapp:" + p.UserID },
 		messageID: func(n int) string { return fmt.Sprintf("SM%032x", n) },
 		receive:   receiveWhatsApp,
+		modes: []fixtureMode{
+			whatsAppMode(twilio.ModeSandbox, func(wa *twilio.Config) {
+				wa.FromNumber = twilio.SandboxSender
+				wa.SandboxJoin = sandboxJoin
+			}),
+			whatsAppMode(twilio.ModeSender, func(wa *twilio.Config) {
+				wa.FromNumber = twilioSender
+				wa.TemplateSIDs = map[string]string{twilio.TemplateReminder: reminderTemplateSID, twilio.TemplateBriefing: briefingTemplateSID}
+			}),
+		},
 	},
 }
 
@@ -239,7 +332,7 @@ func receiveWhatsApp(e *env, in inbound) (layer.Inbound, bool) {
 		"AccountSid": {twilioAccountSID},
 		"MessageSid": {in.MessageID},
 		"From":       {"whatsapp:" + in.From.UserID},
-		"To":         {twilioSender},
+		"To":         {e.cfg.WhatsApp.FromNumber},
 		"Body":       {in.Text},
 		"NumMedia":   {"0"},
 	}
@@ -344,6 +437,8 @@ func (q *capturedQueue) messages() []layer.Inbound {
 type env struct {
 	t        *testing.T
 	ch       channel
+	mode     string          // the adapter's mode, "" for one without modes (V4-41)
+	cfg      adapters.Config // the install's channel settings
 	channels *layer.Registry
 	// polling is the registry of an install with no public address (V4-40), on the same fake
 	// transport: there Telegram is polled instead of calling the webhook.
@@ -363,7 +458,7 @@ type env struct {
 	redact map[string]string
 }
 
-func newEnv(t *testing.T, ch channel) *env {
+func newEnv(t *testing.T, ch channel, mode string) *env {
 	t.Helper()
 	wire := newFakePlatforms(t)
 	httpClient := &http.Client{Transport: wire, Timeout: 5 * time.Second}
@@ -375,6 +470,8 @@ func newEnv(t *testing.T, ch channel) *env {
 	e := &env{
 		t:     t,
 		ch:    ch,
+		mode:  mode,
+		cfg:   configFor(t, ch, mode),
 		wire:  wire,
 		redis: redis,
 		db:    newMemoryDB(),
@@ -391,10 +488,7 @@ func newEnv(t *testing.T, ch channel) *env {
 	})
 	// The registry the app builds (internal/channel/adapters), configured as an install would be,
 	// with every platform client on the fake transport.
-	e.channels, err = adapters.Build(adapters.Config{
-		Telegram: telegram.Config{BotToken: telegramBotToken, SecretToken: telegramSecretToken},
-		WhatsApp: twilio.Config{AccountSID: twilioAccountSID, AuthToken: twilioAuthToken, FromNumber: twilioSender},
-	}, adapters.WithHTTPClient(httpClient))
+	e.channels, err = adapters.Build(e.cfg, adapters.WithHTTPClient(httpClient))
 	require.NoError(t, err)
 	e.polling, err = adapters.Build(adapters.Config{
 		Telegram: telegram.Config{BotToken: telegramBotToken, Polling: true},
@@ -417,7 +511,7 @@ func newEnv(t *testing.T, ch channel) *env {
 	registry.Register(e.tools)
 	registry.Register(e.undo)
 	e.engine.SetToolRegistry(registry)
-	e.engine.WithHealthReporter(scenarioDoctor())
+	e.engine.WithHealthReporter(scenarioDoctor(e))
 	e.engine.WithAccounts(e.db, []byte(conformanceLinkSecret))
 	e.engine.WithSignIn(e.db, "") // V4-35: the default, local dashboard address
 
@@ -600,8 +694,8 @@ func (e *env) otherChannel() channel {
 	return channel{}
 }
 
-func goldenPath(scenario, channelName string) string {
-	return filepath.Join("testdata", "golden", scenario+"."+channelName+".txt")
+func goldenPath(scenario, fixtureLabel string) string {
+	return filepath.Join("testdata", "golden", scenario+"."+fixtureLabel+".txt")
 }
 
 // golden compares the scenario's transcript with the pinned one (or rewrites it with -update).
@@ -609,7 +703,7 @@ func goldenPath(scenario, channelName string) string {
 // differ on every run (a sign-in token, V4-35); everything around them is still compared.
 func (e *env) golden(scenario string, masks ...*regexp.Regexp) {
 	e.t.Helper()
-	path := goldenPath(scenario, e.ch.name)
+	path := goldenPath(scenario, label(e.ch, e.mode))
 	e.compared = true
 	got := e.transcript()
 	for _, m := range masks {

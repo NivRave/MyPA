@@ -1,0 +1,6 @@
+=== message 1: whatsapp to=whatsapp:+12025550101 from=whatsapp:+14155238886
+The plumber comes on Tuesday at 14:00.
+=== message 2: whatsapp to=whatsapp:+12025550101 from=whatsapp:+14155238886
+It is an invoice for 120 NIS.
+=== message 3: whatsapp to=whatsapp:+12025550101 from=whatsapp:+14155238886
+⚠️ Unsupported attachment format (application/zip). Please send a text file (.txt, .md, .csv), PDF, image, or voice note.

@@ -6,17 +6,19 @@ Done: the plumber task is gone.
 /link <CODE>
 
 Then confirm here. The code works once. Never send it to anyone: whoever types it asks to join your account.
+
+On WhatsApp, first send <code>join conformance-check</code> to +14155238886; Twilio answers that you joined. After 3 days without writing, send it again.
 === message 3: telegram to=7001 parse_mode=HTML
 🔗 Add whatsapp ending 0102 to your account? It will see and change all your data.
 
 Reply CONFIRM LINK within 10 minutes to add it. If you did not ask for this, ignore this message and nothing changes.
-=== message 4: whatsapp to=whatsapp:+12025550102 from=whatsapp:+12025550199
+=== message 4: whatsapp to=whatsapp:+12025550102 from=whatsapp:+14155238886
 ⏳ Almost done: confirm on your telegram account by replying CONFIRM LINK there.
 === message 5: telegram to=7001 parse_mode=HTML
 ⚠️ No pending confirmation found or it has expired.
-=== message 6: whatsapp to=whatsapp:+12025550102 from=whatsapp:+12025550199
+=== message 6: whatsapp to=whatsapp:+12025550102 from=whatsapp:+14155238886
 ✅ Linked. You are Member 1 here too, with the same data. Send /accounts to see your accounts.
 === message 7: telegram to=7001 parse_mode=HTML
 ✅ whatsapp ending 0102 is now linked to your account.
-=== message 8: whatsapp to=whatsapp:+12025550102 from=whatsapp:+12025550199
+=== message 8: whatsapp to=whatsapp:+12025550102 from=whatsapp:+14155238886
 Done: the next one is gone too.

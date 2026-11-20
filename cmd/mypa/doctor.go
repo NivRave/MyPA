@@ -27,28 +27,66 @@ const (
 	doctorQueueBacklog = 20
 )
 
-// healthChecker is implemented by a channel adapter that has its own /doctor check.
+// healthChecker is implemented by a channel adapter that has its own /doctor check. activity
+// tells it when each of a household's accounts on it last wrote (V4-41).
 type healthChecker interface {
-	HealthCheck() doctor.Check
+	HealthCheck(activity channel.ActivitySource) doctor.Check
 }
 
 // channelChecks returns the /doctor check of every registered adapter that has one, in
 // registration order.
-func channelChecks(channels *channel.Registry) []doctor.Check {
+func channelChecks(channels *channel.Registry, activity channel.ActivitySource) []doctor.Check {
 	var checks []doctor.Check
 	for _, a := range channels.All() {
 		if hc, ok := a.(healthChecker); ok {
-			checks = append(checks, hc.HealthCheck())
+			checks = append(checks, hc.HealthCheck(activity))
 		}
 	}
 	return checks
+}
+
+// accountActivity is the channel.ActivitySource of the database: the household's members (V4-30)
+// and, for each, their accounts on the channel with when each last wrote (V4-32). A users row and
+// the person it became share an ID until V4-44.
+func accountActivity(dbClient *db.Client) channel.ActivitySource {
+	return func(ctx context.Context, householdID, channelName string) ([]channel.AccountActivity, error) {
+		scope, err := identity.ForStoredRow(ctx, dbClient, householdID, "")
+		if err != nil {
+			return nil, err
+		}
+		members, err := dbClient.UsersInHousehold(ctx, scope)
+		if err != nil {
+			return nil, err
+		}
+		var out []channel.AccountActivity
+		for _, m := range members {
+			accounts, err := dbClient.AccountsOfPerson(ctx, m.ID)
+			if err != nil {
+				return nil, err
+			}
+			for _, a := range accounts {
+				if a.Channel != channelName {
+					continue
+				}
+				act := channel.AccountActivity{Person: m.Name}
+				if act.Person == "" {
+					act.Person = doctor.MaskTail(m.ID)
+				}
+				if a.LastInboundAt != nil {
+					act.LastInboundAt = *a.LastInboundAt
+				}
+				out = append(out, act)
+			}
+		}
+		return out, nil
+	}
 }
 
 // newHealthReporter binds the /doctor checks (V4-17, internal/doctor) to this install: each
 // channel adapter's own check (V4-31), the Google tokens in Redis, RabbitMQ queue depths, the
 // backup directory and the schema version in Postgres.
 func newHealthReporter(cfg *config.Config, channels *channel.Registry, store *state.Store, dbClient *db.Client, oauthCfg *calendar.OAuthConfig, backupDir string) *doctor.Doctor {
-	checks := channelChecks(channels)
+	checks := channelChecks(channels, accountActivity(dbClient))
 	checks = append(checks,
 		doctor.GoogleAccounts{
 			Configured: cfg.Google.ClientID != "",

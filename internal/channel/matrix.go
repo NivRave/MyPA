@@ -38,6 +38,20 @@ var matrixRows = []matrixRow{
 		"longer text is split by the adapter"},
 	{"Formatting (`Markup`)", func(a Adapter) string { return markupName(a.Capabilities().Markup) }, "—"},
 	{"Unprompted messages (`Proactive`)", func(a Adapter) string { return a.Capabilities().Proactive }, "—"},
+	{"Before the first message (`JoinStep`)", func(a Adapter) string {
+		if j, ok := a.(Joiner); ok && strings.TrimSpace(j.JoinStep()) != "" {
+			return j.JoinStep()
+		}
+		return "nothing"
+	}, "—"},
+}
+
+// columnName is an adapter's column header: its name, and its mode when it has several (Moded).
+func columnName(a Adapter) string {
+	if m, ok := a.(Moded); ok && m.Mode() != "" {
+		return fmt.Sprintf("`%s` (%s)", a.Name(), m.Mode())
+	}
+	return fmt.Sprintf("`%s`", a.Name())
 }
 
 // Matrix renders the capability matrix of the given adapters as a Markdown table: one column per
@@ -50,7 +64,7 @@ func Matrix(adapters []Adapter) string {
 	var b strings.Builder
 	b.WriteString("| Capability |")
 	for _, a := range adapters {
-		fmt.Fprintf(&b, " `%s` |", a.Name())
+		fmt.Fprintf(&b, " %s |", columnName(a))
 	}
 	b.WriteString(" When missing |\n|")
 	for i := 0; i < len(adapters)+2; i++ {

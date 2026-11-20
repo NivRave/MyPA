@@ -1,0 +1,11 @@
+=== message 1: whatsapp to=whatsapp:+12025550101 from=whatsapp:+14155238886
+Here is your plan:
+
+*Morning*
+
+- Call _Dana_ about the trip
+- Buy milk & eggs
+
+See the list (https://example.com/list) or run ```git status```.
+
+שלום, הכול מוכן ב-18:00.

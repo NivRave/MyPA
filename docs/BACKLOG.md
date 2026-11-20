@@ -697,6 +697,14 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   The model usually sends an offset or the zone. Same cause as BL-50: `CallContext` carries no zone.
 - **Fix:** with BL-50, give `CallContext` the person's zone and use it as the default.
 
+### BL-54 — WhatsApp templates exist in English only (Low)
+- **Found:** 2026-11-20, while building V4-41.
+- **Evidence:** `twilio.Templates()` defines `mypa_reminder` and `mypa_briefing` with language `en`, and
+  the settings hold one Content SID per template. A household that speaks Hebrew would get the reminder
+  outside the 24-hour window in English. WhatsApp approves each language as its own template.
+- **Fix:** a wording per supported language, a SID per template and language, and the sender
+  choosing by the person's language when V4-33 sends templates.
+
 ## Operations (owner)
 
 | ID | Task | Status |

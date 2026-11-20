@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	layer "github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/doctor"
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/identity/identitytest"
@@ -19,6 +20,8 @@ import (
 	"github.com/nivik/mypa/internal/telegram"
 	"github.com/nivik/mypa/internal/twilio"
 	"github.com/pgvector/pgvector-go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 	"google.golang.org/genai"
 )
@@ -545,11 +548,25 @@ func (f *fakeDurability) requests() []rollbackCall {
 // scenarioDoctor is the real /doctor (internal/doctor, with the adapters' own checks) looking at a
 // fixed, partly broken install. Its checks are listed in the order the transcripts were pinned in;
 // the app lists the adapters' checks first (cmd/mypa, newHealthReporter).
-// Telegram deliveries are failing, one member's Google sign-in was revoked, WhatsApp runs on the
-// sandbox, and the rest is fine. Its clock is fixed, so the report is the same on every run.
-func scenarioDoctor() *doctor.Doctor {
+// Telegram deliveries are failing, one member's Google sign-in was revoked, and the rest is fine.
+// WhatsApp's check is the registered adapter's own (V4-41), so it reports the install's mode: in
+// the sandbox one member last wrote four days ago; with a registered sender one template is still
+// waiting for approval (the fake Content API). Its clock is fixed, so the report is the same on
+// every run.
+func scenarioDoctor(e *env) *doctor.Doctor {
 	now := time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
+	wa, ok := e.channels.Get(twilio.Name)
+	require.True(e.t, ok)
+	activity := func(_ context.Context, householdID, channelName string) ([]layer.AccountActivity, error) {
+		assert.Equal(e.t, twilio.Name, channelName)
+		return []layer.AccountActivity{
+			{Person: "Dana", LastInboundAt: now.Add(-2 * time.Hour)},
+			{Person: "Omer", LastInboundAt: now.Add(-4*24*time.Hour - time.Hour)},
+		}, nil
+	}
+	whatsApp := wa.(*twilio.Adapter).HealthCheck(activity).(twilio.WhatsAppCheck)
+	whatsApp.Now = clock
 	tokens := map[string]string{
 		"Dana": `{"access_token":"dana","refresh_token":"good","token_type":"Bearer"}`,
 		"Omer": `{"access_token":"omer","refresh_token":"revoked","token_type":"Bearer"}`,
@@ -584,7 +601,7 @@ func scenarioDoctor() *doctor.Doctor {
 				return nil
 			},
 		},
-		twilio.WhatsAppCheck{Configured: true, Sender: twilio.SandboxSender, StatusCallbackURL: "https://mypa.example/webhook/twilio/status"},
+		whatsApp,
 		doctor.Queues{
 			Names:       []string{"inbound.messages", "audit.events"},
 			BacklogWarn: 20,

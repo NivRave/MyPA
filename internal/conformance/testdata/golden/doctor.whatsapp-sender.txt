@@ -2,7 +2,7 @@
 🚫 Permission denied: administrative privileges required.
 === message 2: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
 🩺 *MyPA health check*
-2 problems, 1 warning, 5 checks passed.
+2 problems, 1 warning, 7 checks passed.
 
 ❌ *Telegram webhook*
 Telegram could not deliver updates: Connection refused (12 minutes ago). 3 updates are waiting.
@@ -12,14 +12,17 @@ Telegram could not deliver updates: Connection refused (12 minutes ago). 3 updat
 The Google sign-in has expired or was revoked: Google refused to renew it.
 ➡️ Ask Omer to send /connect and sign in to Google again.
 
-⚠️ *WhatsApp sender*
-WhatsApp runs on the Twilio sandbox. A person who has not written for 72 hours drops out of it, and replies and reminders to them then fail (Twilio error 63015).
-➡️ When someone stops getting answers, have them send the sandbox join message again. A registered sender removes the limit (planned as V4-41).
+⚠️ *WhatsApp template mypa_briefing*
+Waiting for WhatsApp's approval (received).
+➡️ Approval usually takes from a few minutes to a day. Run /doctor again later.
 
 ✅ *Google account: Dana*: Connected, and Google renews the sign-in.
+✅ *WhatsApp template mypa_reminder*: Approved by WhatsApp.
+✅ *WhatsApp delivery reports*: On: a message Twilio could not deliver is logged with its reason.
 ✅ *Queue inbound.messages*: 0 waiting, none failed.
 ✅ *Queue audit.events*: 0 waiting, none failed.
 ✅ *Backups*: The newest backup was taken 7 hours ago (```backup_2026-11-19_02-00-00.dump.age```). Backups are kept on this machine only; there is no off-machine copy.
 ✅ *Database schema*: At version 2, up to date.
 
 ℹ️ *Google account: Noa*: Not connected (calendar, mail, tasks and contacts are off until they send /connect).
+ℹ️ *WhatsApp mode*: Registered sender …0199. Messages outside the 24-hour window go out with MyPA's approved templates.

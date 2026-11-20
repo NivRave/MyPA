@@ -189,6 +189,11 @@ type ComplexityRoot struct {
 		Topics   func(childComplexity int) int
 	}
 
+	JoinStep struct {
+		Channel func(childComplexity int) int
+		Step    func(childComplexity int) int
+	}
+
 	Me struct {
 		Household  func(childComplexity int) int
 		IsOperator func(childComplexity int) int
@@ -290,6 +295,7 @@ type ComplexityRoot struct {
 		HomeMaintenanceItems  func(childComplexity int, category *string) int
 		HouseContracts        func(childComplexity int, recordType *string) int
 		Household             func(childComplexity int) int
+		JoinSteps             func(childComplexity int) int
 		Me                    func(childComplexity int) int
 		MutationLogs          func(childComplexity int, topic *string, limit *int) int
 		PersonalCrmContacts   func(childComplexity int) int
@@ -477,6 +483,7 @@ type QueryResolver interface {
 	Household(ctx context.Context) (*model.Household, error)
 	Users(ctx context.Context) ([]*model.User, error)
 	ActivePairingCodes(ctx context.Context) ([]*model.PairingCode, error)
+	JoinSteps(ctx context.Context) ([]*model.JoinStep, error)
 	TopicMemories(ctx context.Context, topic *string, includeSuperseded *bool) ([]*model.TopicMemory, error)
 	EntityProfiles(ctx context.Context, topic *string, entityType *string) ([]*model.EntityProfile, error)
 	SharedSpaces(ctx context.Context) ([]*model.SharedSpace, error)
@@ -1221,6 +1228,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Household.Topics(childComplexity), true
 
+	case "JoinStep.channel":
+		if e.ComplexityRoot.JoinStep.Channel == nil {
+			break
+		}
+
+		return e.ComplexityRoot.JoinStep.Channel(childComplexity), true
+	case "JoinStep.step":
+		if e.ComplexityRoot.JoinStep.Step == nil {
+			break
+		}
+
+		return e.ComplexityRoot.JoinStep.Step(childComplexity), true
+
 	case "Me.household":
 		if e.ComplexityRoot.Me.Household == nil {
 			break
@@ -1900,6 +1920,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Query.Household(childComplexity), true
 
+	case "Query.joinSteps":
+		if e.ComplexityRoot.Query.JoinSteps == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Query.JoinSteps(childComplexity), true
 	case "Query.me":
 		if e.ComplexityRoot.Query.Me == nil {
 			break
@@ -3016,6 +3042,16 @@ func (ec *executionContext) childFields_Household(ctx context.Context, field gra
 		return ec.fieldContext_Household_topics(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Household", field.Name)
+}
+
+func (ec *executionContext) childFields_JoinStep(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "channel":
+		return ec.fieldContext_JoinStep_channel(ctx, field)
+	case "step":
+		return ec.fieldContext_JoinStep_step(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type JoinStep", field.Name)
 }
 
 func (ec *executionContext) childFields_Me(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -7676,6 +7712,52 @@ func (ec *executionContext) fieldContext_Household_topics(_ context.Context, fie
 	return graphql.NewScalarFieldContext("Household", field, false, false, "String")
 }
 
+func (ec *executionContext) _JoinStep_channel(ctx context.Context, field graphql.CollectedField, obj *model.JoinStep) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_JoinStep_channel(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Channel, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_JoinStep_channel(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("JoinStep", field, false, false, "String")
+}
+
+func (ec *executionContext) _JoinStep_step(ctx context.Context, field graphql.CollectedField, obj *model.JoinStep) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_JoinStep_step(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Step, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_JoinStep_step(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("JoinStep", field, false, false, "String")
+}
+
 func (ec *executionContext) _Me_personId(ctx context.Context, field graphql.CollectedField, obj *model.Me) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -10025,6 +10107,38 @@ func (ec *executionContext) fieldContext_Query_activePairingCodes(_ context.Cont
 		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_PairingCode(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_joinSteps(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_joinSteps(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Query().JoinSteps(ctx)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*model.JoinStep) graphql.Marshaler {
+			return ec.marshalNJoinStep2ᚕᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐJoinStepᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_joinSteps(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_JoinStep(ctx, field)
 		},
 	}
 	return fc, nil
@@ -15223,6 +15337,44 @@ func (ec *executionContext) _Household(ctx context.Context, sel ast.SelectionSet
 	return out
 }
 
+var joinStepImplementors = []string{"JoinStep"}
+
+func (ec *executionContext) _JoinStep(ctx context.Context, sel ast.SelectionSet, obj *model.JoinStep) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, joinStepImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := graphql.NewDeferredGroup(ctx)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("JoinStep")
+		case "channel":
+			out.Values[i] = ec._JoinStep_channel(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "step":
+			out.Values[i] = ec._JoinStep_step(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	if n := len(deferred.Defers); n > 0 {
+		atomic.AddInt32(&ec.Deferred, int32(min(n, math.MaxInt32)))
+		ec.ProcessDeferredGroup(deferred)
+	}
+
+	return out
+}
+
 var meImplementors = []string{"Me"}
 
 func (ec *executionContext) _Me(ctx context.Context, sel ast.SelectionSet, obj *model.Me) graphql.Marshaler {
@@ -15848,6 +16000,12 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 				true, true,
 				func(ctx context.Context) graphql.Marshaler {
 					return ec._Query_activePairingCodes(ctx, field)
+				})
+		case "joinSteps":
+			out.ResolveRootConcurrently(innerCtx, ec.OperationContext, i,
+				true, true,
+				func(ctx context.Context) graphql.Marshaler {
+					return ec._Query_joinSteps(ctx, field)
 				})
 		case "topicMemories":
 			out.ResolveRootConcurrently(innerCtx, ec.OperationContext, i,
@@ -17475,6 +17633,30 @@ func (ec *executionContext) marshalNInt2int(ctx context.Context, sel ast.Selecti
 		graphql.AddInvalidNullFromMarshaler(ctx, "Int!")
 	}
 	return res
+}
+
+func (ec *executionContext) marshalNJoinStep2ᚕᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐJoinStepᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.JoinStep) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNJoinStep2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐJoinStep(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNJoinStep2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐJoinStep(ctx context.Context, sel ast.SelectionSet, v *model.JoinStep) graphql.Marshaler {
+	if v == nil {
+		graphql.AddInvalidNullError(ctx, "JoinStep!")
+		return graphql.Null
+	}
+	return ec._JoinStep(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalNMe2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐMe(ctx context.Context, sel ast.SelectionSet, v *model.Me) graphql.Marshaler {

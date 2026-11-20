@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/domains/durability"
 	"github.com/nivik/mypa/internal/events"
@@ -36,6 +37,9 @@ type Resolver struct {
 	// PromptCache drops cached prompt sections when the household's packs change (V4-27); nil
 	// leaves them to expire.
 	PromptCache PromptInvalidator
+	// JoinStepsOf lists what a new person does on each configured channel before their first
+	// message (V4-41, channel.Registry.JoinSteps); nil means none.
+	JoinStepsOf func() []channel.JoinStep
 }
 
 // ResolverConfig holds dependencies for constructing a fully decoupled Resolver.
@@ -52,6 +56,7 @@ type ResolverConfig struct {
 	MemoryRepo     db.MemoryV2Repository
 	AutomationRepo db.AutomationRepository
 	PromptCache    PromptInvalidator
+	JoinStepsOf    func() []channel.JoinStep
 }
 
 // NewResolver constructs a Resolver instance with injected repository interfaces.
@@ -69,6 +74,7 @@ func NewResolver(cfg ResolverConfig) *Resolver {
 		MemoryRepo:     cfg.MemoryRepo,
 		AutomationRepo: cfg.AutomationRepo,
 		PromptCache:    cfg.PromptCache,
+		JoinStepsOf:    cfg.JoinStepsOf,
 	}
 
 	if r.DB != nil {
