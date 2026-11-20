@@ -21,6 +21,7 @@ import (
 	"github.com/nivik/mypa/internal/identity"
 	dbmodels "github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/netguard"
+	"github.com/nivik/mypa/internal/quiet"
 	pgvector "github.com/pgvector/pgvector-go"
 )
 
@@ -1363,6 +1364,13 @@ func (r *mutationResolver) SaveUserPreference(ctx context.Context, userID string
 	}
 	if quietHoursEnd != nil {
 		pref.QuietHoursEnd = *quietHoursEnd
+	}
+	// Enforced by the scheduler (V4-05), which ignores a window it cannot read: refuse one here,
+	// when this request changes it (a window stored before V4-05 does not block other changes).
+	if quietHoursStart != nil || quietHoursEnd != nil {
+		if _, err := quiet.ParseWindow(pref.QuietHoursStart, pref.QuietHoursEnd); err != nil {
+			return nil, fmt.Errorf("%w; use 24-hour times such as 22:00 and 07:30", err)
+		}
 	}
 	if standingInstructions != nil {
 		pref.StandingInstructions = *standingInstructions

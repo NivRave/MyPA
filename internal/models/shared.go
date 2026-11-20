@@ -53,6 +53,7 @@ type SharedTaskReminder struct {
 	CompletedAt         *time.Time `json:"completed_at,omitempty"`
 	IsSent              bool       `json:"is_sent" gorm:"index;default:false"`
 	RemindedAt          *time.Time `json:"reminded_at,omitempty"`
+	Urgent              bool       `json:"urgent" gorm:"not null;default:false"` // V4-05: delivered even during the recipient's quiet hours
 	CreatedAt           time.Time  `json:"created_at"`
 }
 

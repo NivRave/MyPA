@@ -11,6 +11,7 @@ import (
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/quiet"
 )
 
 func (m *Module) executeUpdateUserPreferences(ctx context.Context, callCtx orchestrator.CallContext, repo db.PreferencesRepository, args map[string]interface{}) (string, error) {
@@ -41,11 +42,21 @@ func (m *Module) executeUpdateUserPreferences(ctx context.Context, callCtx orche
 	if curr := strings.TrimSpace(getStringArg(args, "default_currency")); curr != "" {
 		pref.DefaultCurrency = strings.ToUpper(curr)
 	}
-	if qStart := strings.TrimSpace(getStringArg(args, "quiet_hours_start")); qStart != "" {
+	qStart := strings.TrimSpace(getStringArg(args, "quiet_hours_start"))
+	qEnd := strings.TrimSpace(getStringArg(args, "quiet_hours_end"))
+	if qStart != "" {
 		pref.QuietHoursStart = qStart
 	}
-	if qEnd := strings.TrimSpace(getStringArg(args, "quiet_hours_end")); qEnd != "" {
+	if qEnd != "" {
 		pref.QuietHoursEnd = qEnd
+	}
+	// Quiet hours are enforced by the scheduler (V4-05), which ignores a window it cannot read:
+	// refuse one here, so a typo is not silently a night of alerts. Only when this call changes
+	// them: a window stored before V4-05 must not block a change of tone or language.
+	if qStart != "" || qEnd != "" {
+		if _, err := quiet.ParseWindow(pref.QuietHoursStart, pref.QuietHoursEnd); err != nil {
+			return "", fmt.Errorf("%w; use 24-hour times such as 22:00 and 07:30", err)
+		}
 	}
 	if inst := strings.TrimSpace(getStringArg(args, "standing_instructions")); inst != "" {
 		pref.StandingInstructions = inst

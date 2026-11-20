@@ -59,6 +59,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-46 | Medium | Guests cannot be used yet: a guest sees only the topics shared with them by name, and nothing shares a topic with a guest by name | open — needs a roadmap item (proposal: with V4-36 invites or V4-11 tiers) |
 | BL-47 | Medium | A household settings change goes to the mutation log, so `/undo` stops working until the next undoable change | open |
 | BL-48 | Low | The Shared Spaces dashboard page shows two made-up members ("Dana (Admin)", "Omer (Family)") | open |
+| BL-49 | Medium | Partner notifications and event-triggered automation messages ignore quiet hours | open |
+| BL-50 | Medium | The reminder tools read a due time without an offset as UTC and confirm it in the server's zone | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -649,6 +651,25 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Evidence:** `dashboard/src/app/shared/page.tsx` shows "● 2 Active Members Linked", "Dana (Admin)" and
   "Omer (Family)" for every household; the names are hard-coded.
 - **Fix:** list the household's members from the `users` query (V4-35), or drop the card until V4-37.
+
+### BL-49 — Partner notifications and event-triggered automation messages ignore quiet hours (Medium)
+- **Found:** 2026-11-20, while building V4-05.
+- **Evidence:** V4-05 holds what the scheduler sends (reminders, the briefing, cron rules and workflows). A
+  partner notification (`shared.Notifier`, `CallContext.SendNotification`) and the `notify:` message of a
+  rule triggered by an event (`automation.Runner.ExecuteAction` from the event bus) go out at once, at any
+  hour. Neither has a schedule to work the hold out from, so holding them needs stored messages.
+- **Fix:** hold them in a small outbox released when the person's quiet hours end, or decide they are
+  exempt. Fits V4-33, which adds holding a message until a channel can take it.
+
+### BL-50 — Reminder tools read a due time without an offset as UTC (Medium)
+- **Found:** 2026-11-20, while building V4-05.
+- **Evidence:** `schedule_reminder` parses `due_time` with `toolutil.ParseTime` (a naive time is UTC) and
+  `create_shared_reminder` with `time.Parse` (the same), so "2026-11-20T23:00:00" from a person in
+  Jerusalem fires at 01:00 their time. The confirmation prints the time with `time.Local`, the server's
+  zone. The prompt gives the model the household's zone, so it often sends an offset, but nothing
+  enforces it. The scheduler side (V4-05) uses the person's zone.
+- **Fix:** parse with `toolutil.ParseTimeInLocation` in the household's zone (the engine's `location`) and
+  confirm in that zone; this needs the install default zone in `CallContext`.
 
 ## Operations (owner)
 

@@ -285,7 +285,8 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 		WithCalendarConventions(orchestrator.ParseCalendarConventions(cfg.Server.WeekStartDay, cfg.Server.WeekendDays)).
 		WithHealthReporter(newHealthReporter(cfg, channels, store, dbClient, oauthCfg, doctorBackupDir)). // /doctor (V4-17)
 		WithAccounts(dbClient, []byte(strings.TrimSpace(cfg.Server.LinkCodeSecret))).                     // /link (V4-32)
-		WithSignIn(dbClient, cfg.Server.DashboardURL)                                                     // /dashboard (V4-35)
+		WithSignIn(dbClient, cfg.Server.DashboardURL).                                                    // /dashboard (V4-35)
+		WithQuietHours(dbClient)                                                                          // each person's zone and quiet hours (V4-05)
 	if strings.TrimSpace(cfg.Server.LinkCodeSecret) == "" {
 		slog.Warn("LINK_CODE_SECRET is not set: linking a second app to a person (/link) is off")
 	}

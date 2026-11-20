@@ -108,6 +108,10 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 						Type:        genai.TypeString,
 						Description: "Optional family member user ID to assign the task to.",
 					},
+					"urgent": {
+						Type:        genai.TypeBoolean,
+						Description: urgentDescription,
+					},
 				},
 				Required: []string{"title"},
 			},
@@ -156,6 +160,10 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					"due_time": {
 						Type:        genai.TypeString,
 						Description: "The date and time when the reminder should trigger (in ISO 8601 / RFC 3339 format).",
+					},
+					"urgent": {
+						Type:        genai.TypeBoolean,
+						Description: urgentDescription,
 					},
 				},
 				Required: []string{"message", "due_time"},
@@ -287,6 +295,9 @@ func (m *Module) executeConfigureSharedTopic(ctx context.Context, callCtx orches
 		topic, familyGroup, canView, canEdit, notifyMode), nil
 }
 
+// urgentDescription is the urgent flag of both reminder tools (V4-05).
+const urgentDescription = "Set true only when the reminder must reach the person even during their quiet hours: they ask for that, or it is about medication or safety. Any other reminder due in quiet hours waits until they end. Default false."
+
 func (m *Module) executeScheduleReminder(ctx context.Context, callCtx orchestrator.CallContext, args map[string]interface{}) (string, error) {
 	message := toolutil.String(args, "message")
 	dueTimeStr := toolutil.String(args, "due_time")
@@ -311,6 +322,7 @@ func (m *Module) executeScheduleReminder(ctx context.Context, callCtx orchestrat
 		Message:   message,
 		DueTime:   dueTime,
 		IsSent:    false,
+		Urgent:    toolutil.Bool(args, "urgent", false),
 		CreatedAt: time.Now(),
 	}
 
@@ -372,6 +384,7 @@ func (m *Module) executeCreateSharedReminder(ctx context.Context, callCtx orches
 		CreatedByUserID:  actorID,
 		AssignedToUserID: assignedTo,
 		IsCompleted:      false,
+		Urgent:           toolutil.Bool(args, "urgent", false),
 	}
 
 	if err := repo.CreateSharedReminder(callCtx.Scope, &reminder); err != nil {

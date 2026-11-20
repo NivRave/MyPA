@@ -50,6 +50,8 @@ type Engine struct {
 	codeKey            []byte              // the server secret typed codes are hashed under (LINK_CODE_SECRET)
 	signIns            SignInStore         // dashboard sign-in links and sessions (V4-35); nil when not wired
 	dashboardURL       string              // where a sign-in link points (DASHBOARD_URL)
+	quietHours         QuietStore          // people's time zones and quiet hours (V4-05); nil = none held back
+	now                func() time.Time    // the scheduled checks' clock; nil = time.Now
 }
 
 var hebrewPrepositionRegex = regexp.MustCompile(`(^|[^\p{Hebrew}\w])([בלמכ])(\d+)`)
@@ -454,49 +456,13 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 	return err
 }
 
-// BroadcastProactiveMessage sends a scheduled prompt to all known users.
-func (e *Engine) BroadcastProactiveMessage(ctx context.Context, promptText string) {
-	slog.Info("broadcasting proactive message to all users")
-
-	userIDs, err := e.db.GetUniqueUsers()
-	if err != nil {
-		slog.Error("failed to get unique users for broadcast", "error", err)
-		return
-	}
-
-	for _, userID := range userIDs {
-		// A system-triggered prompt fed into a turn on behalf of the person, on the account they
-		// want notifications on (V4-32).
-		to, _, err := e.deliveryAddress(ctx, userID)
-		if err != nil {
-			slog.Warn("no channel to send the briefing on", "user_id", userID, "error", err)
-			continue
-		}
-
-		msg := channel.Inbound{
-			Channel:      to.Channel,
-			MessageID:    fmt.Sprintf("cron-%d", time.Now().Unix()),
-			Sender:       to.Person,
-			Conversation: channel.Conversation{ID: to.Conversation},
-			Text:         promptText,
-		}
-
-		// Run in a separate goroutine so one user doesn't block another
-		go func(m channel.Inbound) {
-			// Create a background context specifically for this broadcast
-			bgCtx, cancel := context.WithTimeout(startedByAssistant(context.Background()), 2*time.Minute)
-			defer cancel()
-
-			slog.Info("sending proactive message", "user_id", m.Sender)
-			if err := e.ProcessMessage(bgCtx, m); err != nil {
-				slog.Error("failed to process proactive message", "user", m.Sender, "error", err)
-			}
-		}(msg)
-	}
-}
-
-// CheckAndSendReminders checks the database for due reminders and sends them.
+// CheckAndSendReminders checks the database for due reminders and sends them. A reminder that is
+// not urgent waits while its recipient is in their quiet hours (V4-05): it stays due, so the first
+// pass after the window ends sends it.
 func (e *Engine) CheckAndSendReminders() {
+	now := e.clock()
+	clocks := e.newQuietClocks()
+
 	reminders, err := e.db.GetDueReminders()
 	if err != nil {
 		slog.Error("failed to get due reminders", "error", err)
@@ -505,6 +471,11 @@ func (e *Engine) CheckAndSendReminders() {
 
 	for _, reminder := range reminders {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+		if clocks.holds(ctx, reminder.UserID, reminder.Urgent, now) {
+			slog.Debug("reminder held for quiet hours", "reminder_id", reminder.ID)
+			cancel()
+			continue
+		}
 		to, historyKey, err := e.deliveryAddress(ctx, reminder.UserID)
 		if err != nil {
 			slog.Warn("no channel to send the reminder on", "user_id", reminder.UserID, "error", err)
@@ -543,6 +514,11 @@ func (e *Engine) CheckAndSendReminders() {
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+		if clocks.holds(ctx, targetUserID, s.Urgent, now) {
+			slog.Debug("shared reminder held for quiet hours", "shared_reminder_id", s.ID)
+			cancel()
+			continue
+		}
 		to, historyKey, err := e.deliveryAddress(ctx, targetUserID)
 		if err != nil {
 			slog.Warn("no channel to send the shared reminder on", "user_id", targetUserID, "shared_reminder_id", s.ID)
