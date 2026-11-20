@@ -16,7 +16,8 @@ const (
 type Person struct {
 	ID          string `json:"id" gorm:"primarykey;type:uuid;default:gen_random_uuid()"`
 	DisplayName string `json:"display_name" gorm:"not null;default:''"`
-	// IsOperator is set by Migration C (V4-35); until then operator powers come from users.role.
+	// IsOperator marks the install's operator (V4-35): backups, restore, /doctor. It gives no
+	// access to a household's content. Migration C set it for every admin.
 	IsOperator bool `json:"is_operator" gorm:"not null;default:false"`
 	// PreferredAccountID is the channel account notifications go to; nil means the account the
 	// person last wrote from.
@@ -46,13 +47,13 @@ type Membership struct {
 	ID          string `json:"id" gorm:"primarykey;type:uuid;default:gen_random_uuid()"`
 	PersonID    string `json:"person_id" gorm:"type:uuid;not null;uniqueIndex"`
 	HouseholdID string `json:"household_id" gorm:"type:uuid;not null;index"`
-	// Role is filled by Migration C (V4-35); until then the role is users.role.
-	Role      *string   `json:"role,omitempty"`
+	// Role is owner, adult, child or guest (V4-35, Migration C); identity.ParseRole reads it.
+	Role      string    `json:"role" gorm:"not null"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// AccessToken is a single-use secret: a link code (V4-32), and later an invite (V4-36) or a
-// sign-in link (V4-35). Only a hash of the secret is stored; the secret itself is shown once.
+// AccessToken is a single-use secret: a link code (V4-32), a dashboard sign-in link (V4-35), and
+// later an invite (V4-36). Only a hash of the secret is stored; the secret itself is shown once.
 type AccessToken struct {
 	ID          string `json:"id" gorm:"primarykey;type:uuid;default:gen_random_uuid()"`
 	Purpose     string `json:"purpose" gorm:"not null"`
@@ -78,4 +79,19 @@ type AccessToken struct {
 	ExpiresAt         time.Time  `json:"expires_at" gorm:"not null"`
 	UsedAt            *time.Time `json:"used_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
+}
+
+// Session is a dashboard sign-in (V4-35, ADR 0002 Decision 5): the browser holds a random secret in
+// an HttpOnly cookie, and only its SHA-256 is stored here. It ends after identity.SessionIdle
+// without a request, at ExpiresAt (identity.SessionMax after sign-in), or when revoked (/signout,
+// signing out in the dashboard). The role is read from the membership on every request, never
+// kept here, so a demotion or removal takes effect at once.
+type Session struct {
+	ID         string     `json:"id" gorm:"primarykey;type:uuid;default:gen_random_uuid()"`
+	SecretHash string     `json:"-" gorm:"not null;uniqueIndex"`
+	PersonID   string     `json:"person_id" gorm:"type:uuid;not null;index"`
+	CreatedAt  time.Time  `json:"created_at" gorm:"not null"`
+	LastSeenAt time.Time  `json:"last_seen_at" gorm:"not null"`
+	ExpiresAt  time.Time  `json:"expires_at" gorm:"not null"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 }

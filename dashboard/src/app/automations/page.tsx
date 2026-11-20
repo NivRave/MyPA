@@ -2,7 +2,6 @@ import { revalidatePath } from "next/cache";
 import { Zap, Globe, Sliders, Users, CheckCircle2, XCircle, Trash2, Shield, Clock } from "lucide-react";
 import {
   graphqlFetch,
-  getDashboardFamilyGroup,
   type ExternalAPIConnector,
   type AutomationRule,
   type UserPreference,
@@ -12,8 +11,8 @@ import {
 export const dynamic = "force-dynamic";
 
 const GET_AUTOMATIONS_QUERY = `
-  query GetAutomations($familyGroup: String!, $userId: ID!) {
-    externalApiConnectors(familyGroup: $familyGroup) {
+  query GetAutomations($userId: ID!) {
+    externalApiConnectors {
       id
       name
       baseUrl
@@ -21,7 +20,7 @@ const GET_AUTOMATIONS_QUERY = `
       description
       createdAt
     }
-    automationRules(familyGroup: $familyGroup) {
+    automationRules {
       id
       name
       triggerType
@@ -40,7 +39,7 @@ const GET_AUTOMATIONS_QUERY = `
       quietHoursEnd
       standingInstructions
     }
-    personalCrmContacts(familyGroup: $familyGroup) {
+    personalCrmContacts {
       id
       personName
       relationship
@@ -53,8 +52,8 @@ const GET_AUTOMATIONS_QUERY = `
 `;
 
 const REGISTER_API_MUTATION = `
-  mutation RegisterAPI($familyGroup: String, $name: String!, $baseUrl: String!, $defaultMethod: String, $description: String) {
-    registerExternalApi(familyGroup: $familyGroup, name: $name, baseUrl: $baseUrl, defaultMethod: $defaultMethod, description: $description) { id }
+  mutation RegisterAPI($name: String!, $baseUrl: String!, $defaultMethod: String, $description: String) {
+    registerExternalApi(name: $name, baseUrl: $baseUrl, defaultMethod: $defaultMethod, description: $description) { id }
   }
 `;
 
@@ -94,14 +93,14 @@ const SAVE_PREFERENCES_MUTATION = `
   }
 `;
 
-async function getAutomationData(familyGroup: string = getDashboardFamilyGroup(), userId: string = "default") {
+async function getAutomationData(userId: string = "default") {
   try {
     const data = await graphqlFetch<{
       externalApiConnectors: ExternalAPIConnector[];
       automationRules: AutomationRule[];
       userPreference: UserPreference | null;
       personalCrmContacts: PersonalCRMContact[];
-    }>(GET_AUTOMATIONS_QUERY, { familyGroup, userId });
+    }>(GET_AUTOMATIONS_QUERY, { userId });
 
     return {
       apis: data.externalApiConnectors || [],
@@ -127,7 +126,6 @@ export default async function AutomationsPage() {
 
     try {
       await graphqlFetch(REGISTER_API_MUTATION, {
-        familyGroup: getDashboardFamilyGroup(),
         name,
         baseUrl,
         defaultMethod,

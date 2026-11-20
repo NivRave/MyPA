@@ -325,65 +325,86 @@ type UserSessionSummary {
   lastActive: Time!
 }
 
+# The signed-in person (V4-35): who they are, their role in the household, and whether they are the
+# install's operator.
+type Me {
+  personId: ID!
+  name: String!
+  role: String!
+  isOperator: Boolean!
+  household: Household!
+}
+
+# Every field acts as the signed-in person, in their own household (V4-35): the household is never
+# an argument. Owners and adults may use the dashboard; children and guests may not. A row that
+# belongs to one person (a personal memory, an unshared event or transaction, preferences, CRM
+# contacts, automations) is visible and changeable only by that person. Owners also see each
+# member's activity, without the text of their chats.
 type Query {
+  "The signed-in person."
+  me: Me!
   "The caller's own household."
   household: Household!
+  "The household's members with their roles (owners); an adult sees only themselves."
   users: [User!]!
-  activePairingCodes(familyGroup: String): [PairingCode!]!
-  topicMemories(topic: String, familyGroup: String, includeSuperseded: Boolean): [TopicMemory!]!
-  entityProfiles(topic: String, entityType: String, familyGroup: String): [EntityProfile!]!
-  sharedSpaces(familyGroup: String!): [SharedSpace!]!
-  sharedTasks(familyGroup: String!, topic: String, isCompleted: Boolean): [SharedTaskReminder!]!
-  scheduleEvents(topic: String, familyGroup: String, startTime: Time, endTime: Time): [ScheduleEvent!]!
-  topicCalendarConfigs(userId: String, familyGroup: String): [TopicCalendarConfig!]!
-  babyProfiles(familyGroup: String!): [BabyProfile!]!
-  babyCareLogs(babyId: ID!, familyGroup: String, logType: String, limit: Int): [BabyCareLog!]!
-  babyInventory(familyGroup: String!): [BabyInventoryItem!]!
-  houseContracts(familyGroup: String!, recordType: String): [HouseContractRecord!]!
-  homeMaintenanceItems(familyGroup: String!, category: String): [HomeMaintenanceItem!]!
-  vehicleAssets(familyGroup: String!): [VehicleAsset!]!
-  financialTransactions(familyGroup: String!, category: String, limit: Int): [FinancialTransaction!]!
-  categoryBudgets(familyGroup: String!): [CategoryBudget!]!
-  recurringBills(familyGroup: String!): [RecurringBill!]!
-  externalApiConnectors(familyGroup: String): [ExternalAPIConnector!]!
-  automationRules(familyGroup: String): [AutomationRule!]!
+  activePairingCodes: [PairingCode!]!
+  topicMemories(topic: String, includeSuperseded: Boolean): [TopicMemory!]!
+  entityProfiles(topic: String, entityType: String): [EntityProfile!]!
+  sharedSpaces: [SharedSpace!]!
+  sharedTasks(topic: String, isCompleted: Boolean): [SharedTaskReminder!]!
+  scheduleEvents(topic: String, startTime: Time, endTime: Time): [ScheduleEvent!]!
+  topicCalendarConfigs(userId: String): [TopicCalendarConfig!]!
+  babyProfiles: [BabyProfile!]!
+  babyCareLogs(babyId: ID!, logType: String, limit: Int): [BabyCareLog!]!
+  babyInventory: [BabyInventoryItem!]!
+  houseContracts(recordType: String): [HouseContractRecord!]!
+  homeMaintenanceItems(category: String): [HomeMaintenanceItem!]!
+  vehicleAssets: [VehicleAsset!]!
+  financialTransactions(category: String, limit: Int): [FinancialTransaction!]!
+  categoryBudgets: [CategoryBudget!]!
+  recurringBills: [RecurringBill!]!
+  externalApiConnectors: [ExternalAPIConnector!]!
+  automationRules: [AutomationRule!]!
   userPreference(userId: ID!): UserPreference
-  personalCrmContacts(familyGroup: String!): [PersonalCRMContact!]!
-  mutationLogs(familyGroup: String, topic: String, limit: Int): [MutationLog!]!
-  auditSessions(familyGroup: String, limit: Int): [AuditSession!]!
-  userSessions(familyGroup: String): [UserSessionSummary!]!
+  personalCrmContacts: [PersonalCRMContact!]!
+  mutationLogs(topic: String, limit: Int): [MutationLog!]!
+  auditSessions(limit: Int): [AuditSession!]!
+  userSessions: [UserSessionSummary!]!
 }
 
 type Mutation {
-  generatePairingCode(role: String!, familyGroup: String!): PairingCode!
-  "Change the caller's own household's settings (admins only). Omitted fields are unchanged; an empty string resets a setting to the install default."
+  "End the current dashboard session (V4-35)."
+  signOut: Boolean!
+  "A pairing code for a new member (owners only): role is adult, child or guest, never owner."
+  generatePairingCode(role: String!): PairingCode!
+  "Change the caller's own household's settings (owners only). Omitted fields are unchanged; an empty string resets a setting to the install default."
   updateHousehold(name: String, language: String, timeZone: String, currency: String): Household!
-  saveTopicMemory(topic: String!, subtopic: String!, fact: String!, tagsJson: String, scope: String, familyGroup: String): TopicMemory!
+  saveTopicMemory(topic: String!, subtopic: String!, fact: String!, tagsJson: String, scope: String): TopicMemory!
   deleteTopicMemory(id: ID!): Boolean!
   pinTopicMemory(id: ID!, isPinned: Boolean!): TopicMemory!
-  upsertEntityProfile(topic: String!, entityType: String!, entityName: String!, attributesJson: String!, familyGroup: String): EntityProfile!
-  updateSharedSpace(familyGroup: String!, topic: String!, sharedWithUserId: String!, canView: Boolean!, canEdit: Boolean!, notifyMode: String!): SharedSpace!
-  createSharedTask(familyGroup: String!, topic: String!, title: String!, dueTime: Time, assignedToUserId: String): SharedTaskReminder!
+  upsertEntityProfile(topic: String!, entityType: String!, entityName: String!, attributesJson: String!): EntityProfile!
+  updateSharedSpace(topic: String!, sharedWithUserId: String!, canView: Boolean!, canEdit: Boolean!, notifyMode: String!): SharedSpace!
+  createSharedTask(topic: String!, title: String!, dueTime: Time, assignedToUserId: String): SharedTaskReminder!
   completeSharedTask(id: ID!, completedByUserId: String!): SharedTaskReminder!
-  createScheduleEvent(topic: String!, title: String!, description: String, startTime: Time!, endTime: Time!, tagsJson: String, syncToGoogle: Boolean, isShared: Boolean, familyGroup: String): ScheduleEvent!
+  createScheduleEvent(topic: String!, title: String!, description: String, startTime: Time!, endTime: Time!, tagsJson: String, syncToGoogle: Boolean, isShared: Boolean): ScheduleEvent!
   deleteScheduleEvent(id: ID!): Boolean!
-  saveTopicCalendarConfig(topic: String!, colorId: String, prefixTag: String, includeInMorningBriefing: Boolean, syncToGoogleDefault: Boolean, familyGroup: String): TopicCalendarConfig!
-  upsertBabyProfile(familyGroup: String!, name: String!, dateOfBirth: Time!, gender: String!, currentWeightGrams: Int, heightCm: Float, pediatricianInfo: String, allergiesNotes: String): BabyProfile!
-  logBabyCare(babyId: ID!, familyGroup: String!, logType: String!, valueNumeric: Float, unit: String, details: String, timestamp: Time): BabyCareLog!
-  updateBabyInventory(familyGroup: String!, itemName: String!, quantityRemaining: Float!, unit: String!, lowThreshold: Float!): BabyInventoryItem!
-  saveHouseContract(familyGroup: String!, recordType: String!, title: String!, vendorOrLandlord: String, amount: Float, currency: String, expirationOrRenewalDate: Time, noticePeriodDays: Int, keyTermsJson: String): HouseContractRecord!
-  saveHomeMaintenanceItem(familyGroup: String!, taskName: String!, category: String!, intervalDays: Int!, nextDueAt: Time!, contractorInfo: String, notes: String): HomeMaintenanceItem!
+  saveTopicCalendarConfig(topic: String!, colorId: String, prefixTag: String, includeInMorningBriefing: Boolean, syncToGoogleDefault: Boolean): TopicCalendarConfig!
+  upsertBabyProfile(name: String!, dateOfBirth: Time!, gender: String!, currentWeightGrams: Int, heightCm: Float, pediatricianInfo: String, allergiesNotes: String): BabyProfile!
+  logBabyCare(babyId: ID!, logType: String!, valueNumeric: Float, unit: String, details: String, timestamp: Time): BabyCareLog!
+  updateBabyInventory(itemName: String!, quantityRemaining: Float!, unit: String!, lowThreshold: Float!): BabyInventoryItem!
+  saveHouseContract(recordType: String!, title: String!, vendorOrLandlord: String, amount: Float, currency: String, expirationOrRenewalDate: Time, noticePeriodDays: Int, keyTermsJson: String): HouseContractRecord!
+  saveHomeMaintenanceItem(taskName: String!, category: String!, intervalDays: Int!, nextDueAt: Time!, contractorInfo: String, notes: String): HomeMaintenanceItem!
   completeHomeMaintenance(id: ID!): HomeMaintenanceItem!
-  saveVehicleAsset(familyGroup: String!, name: String!, licensePlate: String!, insuranceExpiry: Time, annualTestExpiry: Time, currentMileageKm: Int, nextServiceMileageKm: Int, notes: String): VehicleAsset!
-  logFinancialTransaction(familyGroup: String!, type: String!, category: String!, merchant: String!, amount: Float!, currency: String!, notes: String, isShared: Boolean): FinancialTransaction!
-  setCategoryBudget(familyGroup: String!, category: String!, monthlyLimit: Float!, currency: String!, alertThresholdPct: Float): CategoryBudget!
-  saveRecurringBill(familyGroup: String!, name: String!, category: String!, expectedAmount: Float!, currency: String!, billingCycle: String!, nextDueDay: Int!, autoRenew: Boolean!): RecurringBill!
-  registerExternalApi(name: String!, baseUrl: String!, defaultMethod: String, description: String, familyGroup: String): ExternalAPIConnector!
-  saveAutomationRule(name: String!, triggerType: String!, triggerTopic: String!, conditionJson: String!, actionInstruction: String!, isActive: Boolean, familyGroup: String): AutomationRule!
+  saveVehicleAsset(name: String!, licensePlate: String!, insuranceExpiry: Time, annualTestExpiry: Time, currentMileageKm: Int, nextServiceMileageKm: Int, notes: String): VehicleAsset!
+  logFinancialTransaction(type: String!, category: String!, merchant: String!, amount: Float!, currency: String!, notes: String, isShared: Boolean): FinancialTransaction!
+  setCategoryBudget(category: String!, monthlyLimit: Float!, currency: String!, alertThresholdPct: Float): CategoryBudget!
+  saveRecurringBill(name: String!, category: String!, expectedAmount: Float!, currency: String!, billingCycle: String!, nextDueDay: Int!, autoRenew: Boolean!): RecurringBill!
+  registerExternalApi(name: String!, baseUrl: String!, defaultMethod: String, description: String): ExternalAPIConnector!
+  saveAutomationRule(name: String!, triggerType: String!, triggerTopic: String!, conditionJson: String!, actionInstruction: String!, isActive: Boolean): AutomationRule!
   toggleAutomationRule(id: ID!, isActive: Boolean!): AutomationRule!
   deleteAutomationRule(id: ID!): Boolean!
   saveUserPreference(userId: ID!, preferredLanguage: String, tonePersona: String, defaultCurrency: String, quietHoursStart: String, quietHoursEnd: String, standingInstructions: String): UserPreference!
-  savePersonalCrmContact(familyGroup: String!, personName: String!, relationship: String, importantDatesJson: String, giftIdeasAndSizes: String, medicalNotes: String): PersonalCRMContact!
+  savePersonalCrmContact(personName: String!, relationship: String, importantDatesJson: String, giftIdeasAndSizes: String, medicalNotes: String): PersonalCRMContact!
   rollbackMutation(mutationId: ID!): Boolean!
 }
 

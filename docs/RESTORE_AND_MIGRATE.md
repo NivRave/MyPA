@@ -171,7 +171,7 @@ the family first.
    ```
    docker compose up -d --build --remove-orphans
    ```
-5. Send `/doctor` as an admin.
+5. Send `/doctor` as the operator (every former admin is the operator since V4-35).
 
 **To roll back:** stop the app, restore the set from step 3 without migrating, check out `v3.4.x`
 and start it.
@@ -308,7 +308,7 @@ A restore is never started from chat. A restore into the running app would keep 
 to older data and skip the migrations, so the chat restore was retired (BL-21), and `CONFIRM
 RESTORE` no longer does anything special.
 
-`/restore` (admins only, the same on Telegram and WhatsApp) restores nothing. It names the newest
+`/restore` (the operator only, the same on Telegram and WhatsApp) restores nothing. It names the newest
 backup in `backups/` (the manifest of a set, or a bare dump) and replies with the steps of
 section C for it: stop the app, bring the private backup key if the backup is encrypted, run
 `transfer import <name> --replace`, start the app and send `/doctor`. The backup is named by its

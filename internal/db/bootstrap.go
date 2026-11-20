@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
 	"gorm.io/gorm"
 )
@@ -18,7 +19,7 @@ type BootstrapResult struct {
 	// Households and Users are how many rows were created.
 	Households int
 	Users      int
-	// Promoted lists the platform IDs made admin because their household had none.
+	// Promoted lists the platform IDs made owner and operator because their household had no owner.
 	Promoted []string
 	// NoChannel counts the entries whose channel could not be told, so they have no account yet.
 	NoChannel int
@@ -30,8 +31,9 @@ type BootstrapResult struct {
 //
 //   - One household per label in the setting; an entry without a label gets a household of its
 //     own, keyed by its platform ID like every unlabelled user before V4-30.
-//   - Each admin entry stays an admin (in V4-30, admin is owner and operator). A household with
-//     no admin gets its first entry, in the order written, as admin, with a warning.
+//   - Each admin entry becomes an owner and the operator (V4-35); "owner", "adult", "child" and
+//     "guest" are read as such, and "family" or no role is an adult. A household with no admin or
+//     owner gets its first entry, in the order written, as owner and operator, with a warning.
 //   - An empty setting creates nothing: the bot answers nobody until someone is added.
 //
 // New households start with timeZone (the install's DEFAULT_TIMEZONE) as their time zone.
@@ -92,21 +94,20 @@ func (c *Client) BootstrapHouseholds(ctx context.Context, entries []models.User,
 			}
 			res.Households++
 
-			hasAdmin := false
+			hasOwner := false
 			for _, m := range g.members {
-				if strings.EqualFold(strings.TrimSpace(m.Role), "admin") {
-					hasAdmin = true
+				if r, _ := entryRole(m.Role); r == identity.RoleOwner {
+					hasOwner = true
 					break
 				}
 			}
 			for i, m := range g.members {
-				if !hasAdmin && i == 0 {
+				if !hasOwner && i == 0 {
 					m.Role = "admin"
 					res.Promoted = append(res.Promoted, m.PlatformID)
 				}
-				if strings.TrimSpace(m.Role) == "" {
-					m.Role = "family"
-				}
+				role, operator := entryRole(m.Role)
+				m.Role = identity.LegacyRole(role)
 				m.HouseholdID = h.ID
 				m.FamilyGroup = label // the legacy tenant key, written beside household_id until V4-44
 				if m.CreatedAt.IsZero() {
@@ -122,7 +123,7 @@ func (c *Client) BootstrapHouseholds(ctx context.Context, entries []models.User,
 				if ch == "" {
 					res.NoChannel++
 				}
-				if err := ensurePerson(tx, m, ch); err != nil {
+				if err := ensurePerson(tx, m, ch, role, operator); err != nil {
 					return err
 				}
 				res.Users++
@@ -148,7 +149,7 @@ func LogBootstrap(res BootstrapResult, settingSet bool) {
 	default:
 		slog.Info("created the first households from ALLOWED_USERS", "households", res.Households, "users", res.Users)
 		if len(res.Promoted) > 0 {
-			slog.Warn("a household in ALLOWED_USERS had no admin: its first entry was made admin", "households_affected", len(res.Promoted))
+			slog.Warn("a household in ALLOWED_USERS had no admin: its first entry was made its owner and the operator", "households_affected", len(res.Promoted))
 		}
 		if res.NoChannel > 0 {
 			slog.Warn("ALLOWED_USERS entries whose channel is unknown got no channel account and cannot write yet; add the channel as a fifth field (id:name:role:family:channel)", "entries", res.NoChannel)

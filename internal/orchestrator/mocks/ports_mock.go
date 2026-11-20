@@ -526,6 +526,21 @@ func (m *MockDBClient) EXPECT() *MockDBClientMockRecorder {
 	return m.recorder
 }
 
+// AccessOf mocks base method.
+func (m *MockDBClient) AccessOf(ctx context.Context, u *models.User) (identity.Access, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AccessOf", ctx, u)
+	ret0, _ := ret[0].(identity.Access)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AccessOf indicates an expected call of AccessOf.
+func (mr *MockDBClientMockRecorder) AccessOf(ctx, u any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AccessOf", reflect.TypeOf((*MockDBClient)(nil).AccessOf), ctx, u)
+}
+
 // CreatePairingCode mocks base method.
 func (m *MockDBClient) CreatePairingCode(s identity.Scope, pc models.PairingCode) error {
 	m.ctrl.T.Helper()
@@ -672,6 +687,21 @@ func (m *MockDBClient) HouseholdByID(ctx context.Context, id string) (*models.Ho
 func (mr *MockDBClientMockRecorder) HouseholdByID(ctx, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HouseholdByID", reflect.TypeOf((*MockDBClient)(nil).HouseholdByID), ctx, id)
+}
+
+// HouseholdOwners mocks base method.
+func (m *MockDBClient) HouseholdOwners(ctx context.Context, s identity.Scope) ([]models.User, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HouseholdOwners", ctx, s)
+	ret0, _ := ret[0].([]models.User)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// HouseholdOwners indicates an expected call of HouseholdOwners.
+func (mr *MockDBClientMockRecorder) HouseholdOwners(ctx, s any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HouseholdOwners", reflect.TypeOf((*MockDBClient)(nil).HouseholdOwners), ctx, s)
 }
 
 // HouseholdsByLabel mocks base method.

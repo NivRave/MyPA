@@ -21,7 +21,7 @@ func TestHousehold_AdminUpdatesAndReadsBack(t *testing.T) {
 	defer cleanup()
 	label := "fam-settings-" + uuid.NewString()
 	h := householdtest.Household(t, resolver.DB, label)
-	admin := WithClaims(context.Background(), &AuthClaims{UserID: "dashboard-service", Role: "admin", FamilyGroup: label, TenantBound: true})
+	admin := signedIn(t, resolver, label, "dashboard-service", "admin")
 
 	got, err := resolver.Mutation().UpdateHousehold(admin, ptr(" The Levis "), ptr("he"), ptr("Asia/Jerusalem"), ptr("ils"))
 	require.NoError(t, err)
@@ -56,7 +56,7 @@ func TestHousehold_FamilyMemberMayNotChangeSettings(t *testing.T) {
 	defer cleanup()
 	label := "fam-member-" + uuid.NewString()
 	householdtest.Household(t, resolver.DB, label)
-	member := WithClaims(context.Background(), &AuthClaims{UserID: "omer", Role: "family", FamilyGroup: label})
+	member := signedIn(t, resolver, label, "omer", "family")
 
 	_, err := resolver.Mutation().UpdateHousehold(member, nil, nil, ptr("Asia/Tokyo"), nil)
 	require.Error(t, err)
@@ -72,7 +72,7 @@ func TestHousehold_InvalidSettingsAreRefused(t *testing.T) {
 	defer cleanup()
 	label := "fam-invalid-" + uuid.NewString()
 	householdtest.Household(t, resolver.DB, label)
-	admin := WithClaims(context.Background(), &AuthClaims{UserID: "dashboard-service", Role: "admin", FamilyGroup: label, TenantBound: true})
+	admin := signedIn(t, resolver, label, "dashboard-service", "admin")
 
 	cases := map[string][4]*string{
 		"blank name":          {ptr("   "), nil, nil, nil},
@@ -106,8 +106,8 @@ func TestHousehold_IsAlwaysTheCallersOwn(t *testing.T) {
 	labelA, labelB := "fam-a-"+uuid.NewString(), "fam-b-"+uuid.NewString()
 	a := householdtest.Household(t, resolver.DB, labelA)
 	b := householdtest.Household(t, resolver.DB, labelB)
-	dashA := WithClaims(context.Background(), &AuthClaims{UserID: "dashboard-service", Role: "admin", FamilyGroup: labelA, TenantBound: true})
-	adminB := WithClaims(context.Background(), &AuthClaims{UserID: "dashboard-service", Role: "admin", FamilyGroup: labelB, TenantBound: true})
+	dashA := signedIn(t, resolver, labelA, "dashboard-service", "admin")
+	adminB := signedIn(t, resolver, labelB, "dashboard-service", "admin")
 
 	got, err := resolver.Mutation().UpdateHousehold(dashA, ptr("Household A"), nil, nil, ptr("EUR"))
 	require.NoError(t, err)
@@ -125,55 +125,36 @@ func TestHousehold_IsAlwaysTheCallersOwn(t *testing.T) {
 	assert.NotEqual(t, b.ID, readA.ID)
 }
 
-// ADR 0002 §9: a dashboard label is matched ignoring case, and a label that matches two households
-// (labels that differ only in case stay two households after the migration) is refused on every
-// path, never guessed.
-func TestHousehold_LabelMatchingTwoHouseholdsIsRefused(t *testing.T) {
+// ADR 0002 Decision 2: labels that differ only in case stay two households after the migration,
+// because merging them would join two tenants. Before V4-35 the dashboard matched its label
+// ignoring case and refused a label that matched two; since V4-35 a session names its household
+// by ID through the membership, so neither household can reach the other's rows.
+func TestHousehold_LabelsDifferingInCaseStayTwoHouseholds(t *testing.T) {
 	resolver, _, cleanup := setupTestResolver(t)
 	defer cleanup()
 	suffix := uuid.NewString()
-	householdtest.Household(t, resolver.DB, "Levi-"+suffix)
-	householdtest.Household(t, resolver.DB, "LEVI-"+suffix)
-	householdtest.Household(t, resolver.DB, "Cohen-"+suffix)
-	ambiguous := "levi-" + suffix
+	levi := householdtest.Household(t, resolver.DB, "Levi-"+suffix)
+	upper := householdtest.Household(t, resolver.DB, "LEVI-"+suffix)
+	require.NotEqual(t, levi.ID, upper.ID)
 
-	dash := WithClaims(context.Background(), &AuthClaims{UserID: "dashboard-service", Role: "admin", FamilyGroup: "Levi-" + suffix, TenantBound: true})
-	member := WithClaims(context.Background(), &AuthClaims{UserID: "omer", Role: "family", FamilyGroup: "LEVI-" + suffix})
-	global := WithClaims(context.Background(), &AuthClaims{UserID: "root", Role: "admin", FamilyGroup: "Cohen-" + suffix})
+	dana := signedIn(t, resolver, "Levi-"+suffix, "dana", "admin")
+	omer := signedIn(t, resolver, "LEVI-"+suffix, "omer", "family")
 
-	for name, ctx := range map[string]context.Context{"dashboard": dash, "member": member} {
-		_, err := resolver.Query().TopicMemories(ctx, nil, nil, nil)
-		require.Error(t, err, name)
-		assert.Contains(t, err.Error(), "matches 2 households", name)
+	scope := "family"
+	_, err := resolver.Mutation().SaveTopicMemory(dana, "health", "diet", "Levi fact", nil, &scope)
+	require.NoError(t, err)
+	_, err = resolver.Mutation().SaveTopicMemory(omer, "health", "diet", "LEVI fact", nil, &scope)
+	require.NoError(t, err)
 
-		_, err = resolver.Mutation().SaveTopicMemory(ctx, "health", "diet", "No nuts", nil, nil, nil)
-		require.Error(t, err, name)
-		assert.Contains(t, err.Error(), "matches 2 households", name)
-
-		_, err = resolver.Query().Household(ctx)
-		require.Error(t, err, name)
-		assert.Contains(t, err.Error(), "matches 2 households", name)
-
-		_, err = resolver.Mutation().UpdateHousehold(ctx, ptr("x"), nil, nil, nil)
-		require.Error(t, err, name)
-		assert.Contains(t, err.Error(), "matches 2 households", name)
+	for ctx, want := range map[context.Context]string{dana: "Levi fact", omer: "LEVI fact"} {
+		mems, err := resolver.Query().TopicMemories(ctx, nil, nil)
+		require.NoError(t, err)
+		require.Len(t, mems, 1, "each household sees only its own rows")
+		assert.Equal(t, want, mems[0].Fact)
 	}
-
-	// A global admin naming the ambiguous label is refused too.
-	_, err := resolver.Query().TopicMemories(global, nil, &ambiguous, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "matches 2 households")
-	_, err = resolver.Mutation().SaveTopicMemory(global, "health", "diet", "No nuts", nil, nil, &ambiguous)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "matches 2 households")
-
-	// A member of an unambiguous household asking for the ambiguous label is simply refused.
-	cohen := WithClaims(context.Background(), &AuthClaims{UserID: "dana", Role: "family", FamilyGroup: "Cohen-" + suffix})
-	_, err = resolver.Query().TopicMemories(cohen, nil, &ambiguous, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "permission denied")
-
-	var n int64
-	require.NoError(t, resolver.DB.DB.Table("topic_memories").Count(&n).Error)
-	assert.Zero(t, n, "nothing was written by a refused call")
+	h, err := resolver.Query().Household(omer)
+	require.NoError(t, err)
+	assert.Equal(t, upper.ID, h.ID)
+	_, err = resolver.Mutation().UpdateHousehold(omer, ptr("x"), nil, nil, nil)
+	assert.ErrorContains(t, err, "only an owner", "an adult may not change the settings")
 }

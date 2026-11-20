@@ -2,6 +2,7 @@
  * Unified GraphQL Client for MyPA Dashboard
  * Replaces direct pg.Pool and raw SQL queries across all dashboard pages.
  */
+import { sessionFrom } from "./session";
 
 export interface GraphQLErrorLocation {
   line: number;
@@ -57,18 +58,23 @@ export function getGraphQLEndpoint(): string {
 }
 
 /**
- * The family group this dashboard manages. The dashboard's API secret is an admin bound to
- * exactly this family group on the server (P3-2), so every query/mutation must use the same
- * value: DASHBOARD_FAMILY_GROUP (server-side env, shared with the app).
- * Falls back to the demo family when unset (the server rejects any mismatch).
+ * The signed-in person's session secret, from the browser's cookie (V4-35). Server-side only:
+ * `next/headers` is loaded on demand, so the module still imports in a test or a client bundle.
  */
-export function getDashboardFamilyGroup(): string {
-  const fg = process.env.DASHBOARD_FAMILY_GROUP?.trim();
-  return fg ? fg : "Smith Family";
+async function currentSession(): Promise<string | undefined> {
+  try {
+    const { cookies } = await import("next/headers");
+    return sessionFrom(await cookies());
+  } catch {
+    return undefined;
+  }
 }
 
 /**
- * Executes a typed GraphQL query or mutation against the app's /graphql.
+ * Executes a typed GraphQL query or mutation against the app's /graphql, as the signed-in person:
+ * the session secret from the browser's cookie is sent as a bearer value (V4-35). There is no
+ * shared dashboard secret any more. Without a session nothing is sent, and the error has status
+ * 401, so the page can say how to sign in.
  */
 export async function graphqlFetch<TData = unknown, TVariables = Record<string, unknown>>(
   query: string,
@@ -76,13 +82,15 @@ export async function graphqlFetch<TData = unknown, TVariables = Record<string, 
   init?: RequestInit
 ): Promise<TData> {
   const endpoint = getGraphQLEndpoint();
-  const secret = process.env.DASHBOARD_API_SECRET || "";
+  const session = await currentSession();
+  if (!session) {
+    throw new GraphQLClientError("Not signed in: send /dashboard to the assistant for a sign-in link", undefined, 401);
+  }
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    // Always supply Authorization header to satisfy the app's edge guard and auth_middleware
-    Authorization: `Bearer ${secret || "dev-dashboard-token"}`,
     ...(init?.headers as Record<string, string>),
+    Authorization: `Bearer ${session}`,
   };
 
   const response = await fetch(endpoint, {
@@ -114,6 +122,35 @@ export async function graphqlFetch<TData = unknown, TVariables = Record<string, 
   }
 
   return json.data;
+}
+
+/** The signed-in person (V4-35). */
+export interface Me {
+  personId: string;
+  name: string;
+  role: "owner" | "adult" | "child" | "guest" | string;
+  isOperator: boolean;
+  household: { id: string; name: string };
+}
+
+/** The signed-in person, or null when there is no valid session. */
+export async function getMe(): Promise<Me | null> {
+  try {
+    const data = await graphqlFetch<{ me: Me }>(`query Me { me { personId name role isOperator household { id name } } }`);
+    return data.me;
+  } catch {
+    return null;
+  }
+}
+
+/** The signed-in person's household name, or "" when unknown. */
+export async function getHouseholdName(): Promise<string> {
+  try {
+    const data = await graphqlFetch<{ household: { name: string } }>(`query HouseholdName { household { name } }`);
+    return data.household.name;
+  } catch {
+    return "";
+  }
 }
 
 // ----------------- Domain Entity Interfaces -----------------

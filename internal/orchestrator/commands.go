@@ -36,6 +36,9 @@ var commands = map[string]commandHandler{
 	"/accounts": (*Engine).cmdAccounts,
 	"/unlink":   (*Engine).cmdUnlink,
 	"/notify":   (*Engine).cmdNotify,
+	// V4-35: dashboard sign-in (dashboard.go).
+	"/dashboard": (*Engine).cmdDashboard,
+	"/signout":   (*Engine).cmdSignout,
 }
 
 // prefixCommands are the commands that take an argument ("/undo <id>", "/link CODE", ...).
@@ -113,11 +116,12 @@ func (e *Engine) cmdHelp(ctx context.Context, _ *models.User, msg channel.Inboun
 	sb.WriteString("*System Commands:*\n")
 	sb.WriteString("• `/connect` - Connect Google Account (Calendar, Tasks, Gmail, Contacts)\n")
 	sb.WriteString("• `/backup` - Create a manual database backup\n")
-	sb.WriteString("• `/restore` - Show how to restore the newest backup from the terminal; restores nothing itself (admins only)\n")
+	sb.WriteString("• `/restore` - Show how to restore the newest backup from the terminal; restores nothing itself (operator only)\n")
 	sb.WriteString("• `/undo` - Revert your most recent action or specify mutation ID\n")
-	sb.WriteString("• `/doctor` - Check the health of this install: channels, Google sign-ins, queues, backups, database (admins only)\n")
+	sb.WriteString("• `/doctor` - Check the health of this install: channels, Google sign-ins, queues, backups, database (operator only)\n")
 	sb.WriteString("• `/link` - Add another app (account) to you, with the same data; `/accounts` lists them\n")
 	sb.WriteString("• `/notify N` - Send notifications to your account N; `/unlink N` removes account N\n")
+	sb.WriteString("• `/dashboard` - A sign-in link for the web dashboard (owners and adults); `/signout` ends every dashboard session\n")
 	sb.WriteString("• `/help` - Show this help message\n\n")
 	sb.WriteString("*AI Capabilities:*\n")
 	sb.WriteString("I am an AI assistant. You can speak to me naturally. Here are my underlying capabilities:\n\n")
@@ -179,7 +183,7 @@ func (e *Engine) cmdConnect(ctx context.Context, user *models.User, msg channel.
 
 func (e *Engine) cmdBackup(ctx context.Context, user *models.User, msg channel.Inbound) (string, error) {
 	if !e.scopeOf(ctx, user).Can(identity.RunBackup) {
-		slog.Warn("unauthorized backup command attempt", "user_id", user.PlatformID, "role", user.Role)
+		slog.Warn("unauthorized backup command attempt", "user_id", user.PlatformID, "role", e.scopeOf(ctx, user).Role())
 		return "", e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")
 	}
 	_ = e.sendMessage(ctx, msg, "🔄 Starting database backup...")

@@ -2,7 +2,6 @@ import { revalidatePath } from "next/cache";
 import { Home, FileText, Wrench, Car, AlertTriangle, CheckCircle, Plus } from "lucide-react";
 import {
   graphqlFetch,
-  getDashboardFamilyGroup,
   type HouseContractRecord,
   type HomeMaintenanceItem,
   type VehicleAsset,
@@ -11,8 +10,8 @@ import {
 export const dynamic = "force-dynamic";
 
 const GET_HOUSE_DATA_QUERY = `
-  query GetHouseData($familyGroup: String!) {
-    houseContracts(familyGroup: $familyGroup) {
+  query GetHouseData {
+    houseContracts {
       id
       recordType
       title
@@ -23,7 +22,7 @@ const GET_HOUSE_DATA_QUERY = `
       noticePeriodDays
       createdAt
     }
-    homeMaintenanceItems(familyGroup: $familyGroup) {
+    homeMaintenanceItems {
       id
       taskName
       category
@@ -33,7 +32,7 @@ const GET_HOUSE_DATA_QUERY = `
       contractorInfo
       notes
     }
-    vehicleAssets(familyGroup: $familyGroup) {
+    vehicleAssets {
       id
       name
       licensePlate
@@ -54,7 +53,6 @@ const COMPLETE_MAINTENANCE_MUTATION = `
 
 const SAVE_CONTRACT_MUTATION = `
   mutation SaveContract(
-    $familyGroup: String!
     $recordType: String!
     $title: String!
     $vendorOrLandlord: String
@@ -64,7 +62,6 @@ const SAVE_CONTRACT_MUTATION = `
     $noticePeriodDays: Int
   ) {
     saveHouseContract(
-      familyGroup: $familyGroup
       recordType: $recordType
       title: $title
       vendorOrLandlord: $vendorOrLandlord
@@ -78,7 +75,7 @@ const SAVE_CONTRACT_MUTATION = `
   }
 `;
 
-async function getHouseData(familyGroup: string = getDashboardFamilyGroup()): Promise<{
+async function getHouseData(): Promise<{
   contracts: HouseContractRecord[];
   maintenance: HomeMaintenanceItem[];
   vehicles: VehicleAsset[];
@@ -88,7 +85,7 @@ async function getHouseData(familyGroup: string = getDashboardFamilyGroup()): Pr
       houseContracts: HouseContractRecord[];
       homeMaintenanceItems: HomeMaintenanceItem[];
       vehicleAssets: VehicleAsset[];
-    }>(GET_HOUSE_DATA_QUERY, { familyGroup });
+    }>(GET_HOUSE_DATA_QUERY);
 
     return {
       contracts: data.houseContracts || [],
@@ -102,8 +99,7 @@ async function getHouseData(familyGroup: string = getDashboardFamilyGroup()): Pr
 }
 
 export default async function HousePage() {
-  const familyGroup = getDashboardFamilyGroup();
-  const { contracts, maintenance, vehicles } = await getHouseData(familyGroup);
+  const { contracts, maintenance, vehicles } = await getHouseData();
 
   async function completeTask(formData: FormData) {
     "use server";
@@ -128,7 +124,6 @@ export default async function HousePage() {
 
     try {
       await graphqlFetch(SAVE_CONTRACT_MUTATION, {
-        familyGroup: getDashboardFamilyGroup(),
         recordType,
         title,
         vendorOrLandlord: vendor,

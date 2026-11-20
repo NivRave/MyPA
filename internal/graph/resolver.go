@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
-	"gorm.io/gorm"
 	"log/slog"
 	"strings"
 	"time"
@@ -170,172 +169,86 @@ func (r *Resolver) durabilityEngine() durability.RollbackEngine {
 	return nil
 }
 
-// resolveTenantAndActor performs positive multi-tenant authorization and returns the caller's
-// scope (V4-30, ADR 0002 §9). The familyGroup arguments stay in the schema until V4-35; each is
-// resolved to a household by its label, ignoring case as before (a label that matches two
-// households is refused), and must be the caller's own household, compared by ID. Every query
-// then filters by the household ID in the scope.
-func (r *Resolver) resolveTenantAndActor(ctx context.Context, requestedFamilyGroup *string) (actorID string, scope identity.Scope, err error) {
-	claims := GetAuthClaims(ctx)
-	if claims == nil {
-		// P3-2: never fall back to the requested family group — unauthenticated callers must not
-		// be able to pick a tenant. The auth middleware always sets claims on /graphql.
-		return "", identity.Scope{}, fmt.Errorf("unauthorized: no authenticated claims")
+// caller returns who a request acts as (V4-35): the signed-in person's key, as the modules write it
+// into person columns (their platform ID, the same in chat), and their scope. The household is the
+// person's own, read from their membership by the middleware; no argument can name another. Every
+// dashboard field needs identity.UseDashboard: owners and adults, never children or guests.
+func (r *Resolver) caller(ctx context.Context) (actorID string, scope identity.Scope, err error) {
+	c, ok := callerOf(ctx)
+	if !ok {
+		return "", identity.Scope{}, fmt.Errorf("unauthorized: not signed in")
 	}
-	st := r.households()
-	if st == nil {
-		return "", identity.Scope{}, fmt.Errorf("permission denied: household lookup unavailable")
+	if !c.scope.Can(identity.UseDashboard) {
+		return "", identity.Scope{}, fmt.Errorf("permission denied: the dashboard is for the household's owners and adults")
 	}
-
-	actorID = claims.UserID
-	if actorID == "" {
-		actorID = "user"
-	}
-
-	// DE-2: a caller without a family group is its own tenant (its user ID), whose household is
-	// keyed by that ID since V4-30, so the dashboard sees what the bot wrote. There is no shared
-	// "default" tenant; a caller with neither ID nor group has no tenant at all.
-	own := strings.TrimSpace(claims.FamilyGroup)
-	if own == "" {
-		own = strings.TrimSpace(claims.UserID)
-	}
-	if own == "" {
-		return "", identity.Scope{}, fmt.Errorf("permission denied: caller has neither a family group nor a user id")
-	}
-
-	var reqFG string
-	if requestedFamilyGroup != nil {
-		reqFG = strings.TrimSpace(*requestedFamilyGroup)
-	}
-	if reqFG == "*" {
-		// "*" is a read scope (wantsAllTenants), never a tenant to read from or write into.
-		return "", identity.Scope{}, fmt.Errorf("permission denied: %q is not a family group", reqFG)
-	}
-
-	role := identity.ParseRole(claims.Role)
-	ownScope, err := identity.ForLabel(ctx, st, own, actorID, role)
-	// Only global admins may pick another household; tenant-bound admins (the dashboard secret,
-	// P3-2) fall through to the same positive check as members.
-	if claims.IsGlobalAdmin() {
-		if reqFG == "" {
-			if err != nil {
-				return "", identity.Scope{}, fmt.Errorf("permission denied: %w", err)
-			}
-			return actorID, ownScope, nil
-		}
-		picked, perr := identity.ForLabel(ctx, st, reqFG, actorID, role)
-		if perr != nil {
-			return "", identity.Scope{}, fmt.Errorf("permission denied: %w", perr)
-		}
-		return actorID, picked, nil
-	}
-	if err != nil {
-		return "", identity.Scope{}, fmt.Errorf("permission denied: %w", err)
-	}
-
-	// Positive authorization: the requested household must be the caller's own, by ID.
-	if reqFG != "" {
-		requested, rerr := identity.ForLabel(ctx, st, reqFG, actorID, role)
-		if rerr != nil || requested.HouseholdID() != ownScope.HouseholdID() {
-			return "", identity.Scope{}, fmt.Errorf("permission denied: unauthorized access to family group %q", reqFG)
-		}
-	}
-	return actorID, ownScope, nil
+	return c.scope.PersonKey(), c.scope, nil
 }
 
-// resolveActingScope returns the scope a mutation on a row addressed by ID runs in: a global
-// admin acts in the row's own household (householdOf reads it install-wide); every other caller
-// acts in their own household from resolveTenantAndActor, and the repositories then refuse a row
-// of another household.
-func (r *Resolver) resolveActingScope(ctx context.Context, householdOf func(*gorm.DB) (string, error)) (string, identity.Scope, error) {
-	claims := GetAuthClaims(ctx)
-	if claims == nil {
-		return "", identity.Scope{}, fmt.Errorf("unauthorized: no authenticated claims")
-	}
-	if !claims.IsGlobalAdmin() {
-		return r.resolveTenantAndActor(ctx, nil)
-	}
-	if r.DB == nil {
-		return "", identity.Scope{}, fmt.Errorf("household lookup unavailable")
-	}
-	actorID := claims.UserID
-	if actorID == "" {
-		actorID = "user"
-	}
-	householdID, err := householdOf(r.DB.DB.WithContext(ctx))
+// callerMay is caller for a field that needs an action beyond using the dashboard (an owner's).
+func (r *Resolver) callerMay(ctx context.Context, a identity.Action) (string, identity.Scope, error) {
+	actorID, s, err := r.caller(ctx)
 	if err != nil {
 		return "", identity.Scope{}, err
 	}
-	s, err := r.scopeOfRow(ctx, householdID, actorID)
-	if err != nil {
-		return "", identity.Scope{}, fmt.Errorf("permission denied: %w", err)
+	if !s.Can(a) {
+		return "", identity.Scope{}, fmt.Errorf("permission denied: only an owner of the household may do this")
 	}
 	return actorID, s, nil
 }
 
-// automationRuleHousehold reads an automation rule's household install-wide (for global admins).
-func automationRuleHousehold(uID uint, id string) func(*gorm.DB) (string, error) {
-	return func(db *gorm.DB) (string, error) {
-		var rule models.AutomationRule
-		if err := db.Select("household_id").First(&rule, uID).Error; err != nil {
-			return "", fmt.Errorf("automation rule %s not found", id)
-		}
-		return rule.HouseholdID, nil
+// ownedBy reports whether a row that belongs to one person is the caller's: by its person
+// companion when the database filled it (V4-32), else by its old person key, the caller's
+// platform ID or users.id.
+func ownedBy(s identity.Scope, userID string, personID *string) bool {
+	if personID != nil && strings.TrimSpace(*personID) != "" {
+		return s.PersonID() != "" && strings.TrimSpace(*personID) == s.PersonID()
 	}
+	u := strings.TrimSpace(userID)
+	return u != "" && (u == s.PersonKey() || u == s.PersonID())
 }
 
-// scopeOfRow is the scope a global admin acts in on a row addressed by ID: the row's own stored
-// household (V4-30). Only callers that checked IsGlobalAdmin use it; everyone else acts in the
-// scope resolveTenantAndActor returns.
-func (r *Resolver) scopeOfRow(ctx context.Context, householdID, actorID string) (identity.Scope, error) {
-	st := r.households()
-	if st == nil {
-		return identity.Scope{}, fmt.Errorf("household lookup unavailable")
-	}
-	return identity.ForStoredRow(ctx, st, householdID, actorID)
+// memoryVisible reports whether the caller may see a topic memory: the household's family
+// memories, and the caller's own personal ones (as chat's recall reads them).
+func memoryVisible(s identity.Scope, m *models.TopicMemory) bool {
+	return strings.EqualFold(strings.TrimSpace(m.Scope), "family") || ownedBy(s, m.UserID, m.PersonID)
 }
 
-// wantsAllTenants reports an explicit cross-tenant read: only a global admin, and only when it
-// names no family group or asks for "*". Resolvers must use this — never a magic tenant name such
-// as the former "default" — to drop the family filter (DE-2).
-func wantsAllTenants(claims *AuthClaims, familyGroup *string) bool {
-	if !claims.IsGlobalAdmin() {
-		return false
+// ownRows is the SQL form of ownedBy for one column pair: the caller's rows by their person
+// companion, or by the old person key where the companion is empty.
+func ownRows(s identity.Scope, legacy, person string) (string, []interface{}) {
+	if s.PersonID() == "" {
+		return fmt.Sprintf("(%[2]s IS NULL AND %[1]s = ?)", legacy, person), []interface{}{s.PersonKey()}
 	}
-	return familyGroup == nil || strings.TrimSpace(*familyGroup) == "" || strings.TrimSpace(*familyGroup) == "*"
+	return fmt.Sprintf("(%[2]s = ? OR (%[2]s IS NULL AND %[1]s IN (?, ?)))", legacy, person),
+		[]interface{}{s.PersonID(), s.PersonKey(), s.PersonID()}
 }
 
-// householdOfUser returns a user's household ID (for tenant-bound admin checks, P3-2, V4-30).
-func (r *Resolver) householdOfUser(userID string) (string, error) {
+// member resolves a reference to another person (shared with, assigned to, completed by) inside
+// the caller's household only, to the key the modules write (ADR 0002 Decision 3).
+func (r *Resolver) member(ctx context.Context, s identity.Scope, ref string) (string, error) {
 	if r.DB == nil {
-		return "", fmt.Errorf("user lookup unavailable")
+		return "", fmt.Errorf("member lookup unavailable")
 	}
-	u, err := r.DB.GetUser(userID)
+	key, err := identity.Member(ctx, r.DB, s, ref)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("permission denied: %q is not a member of your household", strings.TrimSpace(ref))
 	}
-	if u == nil {
-		return "", fmt.Errorf("user not found")
-	}
-	return u.HouseholdID, nil
+	return key, nil
 }
 
-// resolveTargetUser decides whose per-user data (e.g. preferences) the caller may act on (P3-2):
-// members always act on themselves; global admins on anyone; tenant-bound admins (the dashboard)
-// only on users of their own family group — otherwise an explicit permission error.
-func (r *Resolver) resolveTargetUser(ctx context.Context, requestedUserID, actorID string, caller identity.Scope) (string, error) {
-	claims := GetAuthClaims(ctx)
-	if claims == nil {
-		return "", fmt.Errorf("unauthorized: no authenticated claims")
+// errNotYours is returned for a row of another member's personal data: the same answer as a row
+// that does not exist, so nothing about it leaks.
+func errNotYours(kind, id string) error { return fmt.Errorf("%s %s not found", kind, id) }
+
+// resolveTargetUser decides whose per-person data (preferences, calendar settings) a field acts
+// on: always the caller's own, whatever the request names (V4-35: an owner does not read or
+// change another adult's personal data; members always got their own, P3-2). The result is the
+// caller's person key, the key those rows are written under.
+func (r *Resolver) resolveTargetUser(_ string, caller identity.Scope) (string, error) {
+	if strings.TrimSpace(caller.PersonKey()) == "" {
+		return "", fmt.Errorf("permission denied: no person")
 	}
-	requestedUserID = strings.TrimSpace(requestedUserID)
-	if requestedUserID == "" || requestedUserID == actorID || !claims.IsAdmin() {
-		return actorID, nil
-	}
-	if canActOnUser(claims, caller.HouseholdID(), requestedUserID, r.householdOfUser) {
-		return requestedUserID, nil
-	}
-	return "", fmt.Errorf("permission denied: user %q is outside your family group", requestedUserID)
+	return caller.PersonKey(), nil
 }
 
 // publishEvent emits MutationEvent to EventBus

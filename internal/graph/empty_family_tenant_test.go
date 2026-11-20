@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/graph/model"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,63 +17,42 @@ import (
 
 // DE-2: a caller without a family group used to resolve to the shared tenant "default", and two
 // resolvers treated "default" as "no filter" — such a caller saw every family's pairing codes and
-// mutation logs. The orchestrator scopes the same user to their own ID (CallContext.TenantFamilyGroup);
-// GraphQL now does the same, and "all tenants" is an explicit global-admin request only.
+// mutation logs. The orchestrator scopes the same user to their own ID; GraphQL did the same, and
+// since V4-35 no caller can name a household at all: the signed-in person's household comes from
+// their membership, and no label ("default", "*") means anything but the household that has it.
 
-func TestResolveTenantAndActor_EmptyFamilyIsPerUser(t *testing.T) {
+func TestCaller_EmptyFamilyIsPerUser(t *testing.T) {
 	// V4-30: the user's own tenant is the household keyed by their user ID (the migration's rule).
 	r := &Resolver{Households: labelStore("solo-1", "default", "MyFamily", "solo-2")}
-	ctx := WithClaims(context.Background(), &AuthClaims{UserID: "solo-1", Role: "member"})
-
-	_, hs, err := r.resolveTenantAndActor(ctx, nil)
-	fg := hs.LegacyLabel()
+	_, hs, err := r.caller(signedIn(t, r, "", "solo-1", "member"))
 	require.NoError(t, err)
-	assert.Equal(t, "solo-1", fg, "no family group → the user's own tenant, like the orchestrator")
-
-	own := "solo-1"
-	_, hs, err = r.resolveTenantAndActor(ctx, &own)
-	fg = hs.LegacyLabel()
-	require.NoError(t, err)
-	assert.Equal(t, "solo-1", fg)
-
+	assert.Equal(t, "solo-1", hs.LegacyLabel(), "no family group → the user's own tenant, like the orchestrator")
 	for _, other := range []string{"default", "MyFamily", "solo-2"} {
-		_, _, err = r.resolveTenantAndActor(ctx, &other)
-		assert.Error(t, err, "a caller without a family group must not reach tenant %q", other)
+		assert.NotEqual(t, identitytest.HouseholdID(other), hs.HouseholdID(), "a caller without a family group must not reach tenant %q", other)
 	}
 }
 
-func TestResolveTenantAndActor_GlobalAdminWithoutFamilyIsPerUser(t *testing.T) {
+func TestCaller_OwnerWithoutFamilyIsPerUser(t *testing.T) {
 	r := &Resolver{Households: labelStore("root")}
-	ctx := WithClaims(context.Background(), &AuthClaims{UserID: "root", Role: "admin"})
-	_, hs, err := r.resolveTenantAndActor(ctx, nil)
-	fg := hs.LegacyLabel()
+	_, hs, err := r.caller(signedIn(t, r, "", "root", "admin"))
 	require.NoError(t, err)
-	assert.Equal(t, "root", fg, "writes without a target land in the admin's own tenant, never a shared one")
+	assert.Equal(t, "root", hs.LegacyLabel(), "writes without a target land in the person's own tenant, never a shared one")
 }
 
-// Without a user ID the per-user fallback would put every such caller into one tenant ("user").
-func TestResolveTenantAndActor_NoIDNoFamilyHasNoTenant(t *testing.T) {
+// Without a household there is no caller: a zero scope cannot act.
+func TestCaller_NoIDNoFamilyHasNoTenant(t *testing.T) {
 	r := &Resolver{Households: labelStore("user")}
-	for _, role := range []string{"member", "admin"} {
-		_, _, err := r.resolveTenantAndActor(WithClaims(context.Background(), &AuthClaims{Role: role}), nil)
-		assert.Error(t, err, "role %s without user id and family group must be refused", role)
-	}
+	_, _, err := r.caller(WithCaller(context.Background(), identity.Scope{}))
+	assert.Error(t, err, "a caller without a household must be refused")
 }
 
-// "*" means "all tenants" on list queries only; nobody may read from or write into a tenant "*".
-func TestResolveTenantAndActor_StarIsNotATenant(t *testing.T) {
+// "*" used to mean "all tenants" on list queries; now a household labelled "*" is only itself.
+func TestCaller_StarIsNotATenant(t *testing.T) {
 	r := &Resolver{Households: labelStore("root", "f", "*")}
-	star := "*"
-	for _, c := range []*AuthClaims{
-		{UserID: "root", Role: "admin"},
-		{UserID: "m", Role: "member", FamilyGroup: "f"},
-	} {
-		_, _, err := r.resolveTenantAndActor(WithClaims(context.Background(), c), &star)
-		assert.Error(t, err)
-	}
-	assert.True(t, wantsAllTenants(&AuthClaims{Role: "admin"}, &star))
-	assert.False(t, wantsAllTenants(&AuthClaims{Role: "admin", TenantBound: true}, &star), "the dashboard secret is never cross-tenant")
-	assert.False(t, wantsAllTenants(&AuthClaims{Role: "member"}, nil))
+	_, hs, err := r.caller(signedIn(t, r, "*", "m", "admin"))
+	require.NoError(t, err)
+	assert.Equal(t, identitytest.HouseholdID("*"), hs.HouseholdID())
+	assert.NotEqual(t, identitytest.HouseholdID("f"), hs.HouseholdID())
 }
 
 func TestEmptyFamilyCaller_SeesNoOtherFamilysPairingCodesOrLogs(t *testing.T) {
@@ -88,40 +69,39 @@ func TestEmptyFamilyCaller_SeesNoOtherFamilysPairingCodesOrLogs(t *testing.T) {
 
 	soloID := "solo-" + uuid.New().String()
 	households(t, resolver.DB, soloID) // an unlabelled user's own household, keyed by their ID
-	solo := WithClaims(context.Background(), &AuthClaims{UserID: soloID, Role: "member"})
+	// The pairing codes are an owner's to list (V4-35): the solo caller owns their own household.
+	solo := signedIn(t, resolver, "", soloID, "admin")
 
-	codes, err := resolver.Query().ActivePairingCodes(solo, nil)
+	codes, err := resolver.Query().ActivePairingCodes(solo)
 	require.NoError(t, err)
 	for _, c := range codes {
 		assert.NotEqual(t, victimFG, c.FamilyGroup, "a caller without a family group must not list another family's pairing codes")
 	}
 
-	logs, err := resolver.Query().MutationLogs(solo, nil, nil, nil)
+	logs, err := resolver.Query().MutationLogs(solo, nil, nil)
 	require.NoError(t, err)
 	for _, l := range logs {
 		assert.NotEqual(t, victimFG, l.FamilyGroup, "a caller without a family group must not read another family's mutation logs")
 	}
 
-	// A global admin still gets the cross-tenant view — but only by asking for it.
-	admin := WithClaims(context.Background(), &AuthClaims{UserID: "root", Role: "admin"})
-	for _, scope := range []*string{nil, strPtr("*")} {
-		codes, err = resolver.Query().ActivePairingCodes(admin, scope)
-		require.NoError(t, err)
-		assert.True(t, containsCode(codes, code.Code), "global admin unscoped view lists every family's codes")
+	// V4-35: the global admin's cross-tenant view is gone. The install's operator, signed in, sees
+	// their own household only (ADR 0002 question 2: the operator does not read household content).
+	admin := signedIn(t, resolver, "", "root", "admin")
+	codes, err = resolver.Query().ActivePairingCodes(admin)
+	require.NoError(t, err)
+	assert.False(t, containsCode(codes, code.Code), "no caller lists every family's codes")
+	logs, err = resolver.Query().MutationLogs(admin, nil, nil)
+	require.NoError(t, err)
+	assert.False(t, containsLog(logs, logRow.ID), "no caller lists every family's logs")
 
-		logs, err = resolver.Query().MutationLogs(admin, scope, nil, nil)
-		require.NoError(t, err)
-		assert.True(t, containsLog(logs, logRow.ID), "global admin unscoped view lists every family's logs")
-	}
-
-	// A tenant-bound admin (the dashboard) stays inside its family.
+	// An owner of another household (the dashboard before V4-35) stays inside it.
 	dashFG := "fam-dash-" + uuid.New().String()
 	households(t, resolver.DB, dashFG)
-	dash := WithClaims(context.Background(), &AuthClaims{UserID: "dashboard-service", Role: "admin", FamilyGroup: dashFG, TenantBound: true})
-	codes, err = resolver.Query().ActivePairingCodes(dash, nil)
+	dash := signedIn(t, resolver, dashFG, "dashboard-service", "admin")
+	codes, err = resolver.Query().ActivePairingCodes(dash)
 	require.NoError(t, err)
 	assert.False(t, containsCode(codes, code.Code))
-	logs, err = resolver.Query().MutationLogs(dash, nil, nil, nil)
+	logs, err = resolver.Query().MutationLogs(dash, nil, nil)
 	require.NoError(t, err)
 	assert.False(t, containsLog(logs, logRow.ID))
 }
@@ -133,7 +113,7 @@ func TestSaveUserPreference_EventCarriesCallerTenant(t *testing.T) {
 	fam := "fam-pref-" + uuid.New().String()
 	user := "usr-pref-" + uuid.New().String()
 	households(t, resolver.DB, fam)
-	ctx := WithClaims(context.Background(), &AuthClaims{UserID: user, Role: "member", FamilyGroup: fam})
+	ctx := signedIn(t, resolver, fam, user, "member")
 
 	lang := "he"
 	_, err := resolver.Mutation().SaveUserPreference(ctx, user, &lang, nil, nil, nil, nil, nil)
@@ -142,8 +122,6 @@ func TestSaveUserPreference_EventCarriesCallerTenant(t *testing.T) {
 	require.Eventually(t, func() bool { return len(tracker.getEvents()) == 1 }, time.Second, 10*time.Millisecond)
 	assert.Equal(t, fam, tracker.getEvents()[0].FamilyGroup, "the preference change must be logged in the caller's family, not a shared tenant")
 }
-
-func strPtr(s string) *string { return &s }
 
 func containsCode(codes []*model.PairingCode, code string) bool {
 	for _, c := range codes {

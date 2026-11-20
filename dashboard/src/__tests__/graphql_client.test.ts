@@ -1,10 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// V4-35: the client reads the browser's session cookie through next/headers.
+const cookieJar = new Map<string, string>();
+vi.mock('next/headers', () => ({
+  cookies: async () => ({
+    get: (name: string) => (cookieJar.has(name) ? { name, value: cookieJar.get(name) as string } : undefined),
+  }),
+}));
+
 import {
   graphqlFetch,
   getGraphQLEndpoint,
-  getDashboardFamilyGroup,
   GraphQLClientError,
 } from '@/lib/graphql';
+
+const SESSION = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcde';
 
 describe('graphql client', () => {
   const originalEnv = process.env;
@@ -13,26 +23,14 @@ describe('graphql client', () => {
   beforeEach(() => {
     vi.resetModules();
     process.env = { ...originalEnv };
+    cookieJar.clear();
+    cookieJar.set('mypa_session', SESSION);
   });
 
   afterEach(() => {
     process.env = originalEnv;
     global.fetch = originalFetch;
     vi.restoreAllMocks();
-  });
-
-  describe('getDashboardFamilyGroup', () => {
-    it('uses DASHBOARD_FAMILY_GROUP (the server scopes the dashboard secret to it)', () => {
-      process.env.DASHBOARD_FAMILY_GROUP = '  Levi Family ';
-      expect(getDashboardFamilyGroup()).toBe('Levi Family');
-    });
-
-    it('falls back to the demo family when unset or blank', () => {
-      delete process.env.DASHBOARD_FAMILY_GROUP;
-      expect(getDashboardFamilyGroup()).toBe('Smith Family');
-      process.env.DASHBOARD_FAMILY_GROUP = '   ';
-      expect(getDashboardFamilyGroup()).toBe('Smith Family');
-    });
   });
 
   describe('getGraphQLEndpoint', () => {
@@ -80,8 +78,7 @@ describe('graphql client', () => {
   });
 
   describe('graphqlFetch', () => {
-    it('attaches default Authorization bearer header and sends query and variables', async () => {
-      delete process.env.DASHBOARD_API_SECRET;
+    it("sends the signed-in person's session as the bearer value, with the query and variables", async () => {
       process.env.GRAPHQL_ENDPOINT = 'http://test-server/graphql';
 
       const mockResponseData = { babyProfiles: [{ id: 'baby-1', name: 'Maya' }] };
@@ -94,7 +91,7 @@ describe('graphql client', () => {
       global.fetch = mockFetch;
 
       const query = 'query GetBabies { babyProfiles { id name } }';
-      const variables = { familyGroup: 'Smith Family' };
+      const variables = { topic: 'baby' };
 
       const result = await graphqlFetch(query, variables);
 
@@ -107,28 +104,47 @@ describe('graphql client', () => {
       expect(options.headers).toEqual(
         expect.objectContaining({
           'Content-Type': 'application/json',
-          Authorization: 'Bearer dev-dashboard-token',
+          Authorization: `Bearer ${SESSION}`,
         })
       );
       expect(options.body).toBe(JSON.stringify({ query, variables }));
       expect(options.cache).toBe('no-store');
     });
 
-    it('attaches DASHBOARD_API_SECRET token when configured in environment', async () => {
+    // V4-35 done-when: the shared secret no longer grants access. Setting it changes nothing, and
+    // without a session nothing is sent at all.
+    it('never sends the old shared dashboard secret; without a session it sends nothing', async () => {
       process.env.DASHBOARD_API_SECRET = 'super-secret-dashboard-key-1234';
       process.env.GRAPHQL_ENDPOINT = 'http://test-server/graphql';
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ data: { ping: 'pong' } }),
-      });
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: { ping: 'pong' } }) });
       global.fetch = mockFetch;
 
       await graphqlFetch('query { ping }');
+      expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${SESSION}`);
 
-      const [, options] = mockFetch.mock.calls[0];
-      expect(options.headers.Authorization).toBe('Bearer super-secret-dashboard-key-1234');
+      cookieJar.clear();
+      await expect(graphqlFetch('query { ping }')).rejects.toMatchObject({ status: 401 });
+      cookieJar.set('mypa_session', 'not-a-session');
+      await expect(graphqlFetch('query { ping }')).rejects.toMatchObject({ status: 401 });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads the Secure __Host- cookie used on HTTPS', async () => {
+      process.env.GRAPHQL_ENDPOINT = 'http://test-server/graphql';
+      cookieJar.clear();
+      cookieJar.set('__Host-mypa_session', SESSION);
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: { ok: 1 } }) });
+      global.fetch = mockFetch;
+      await graphqlFetch('query { ok }');
+      expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${SESSION}`);
+    });
+
+    it('a caller-supplied Authorization header cannot replace the session', async () => {
+      process.env.GRAPHQL_ENDPOINT = 'http://test-server/graphql';
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: { ok: 1 } }) });
+      global.fetch = mockFetch;
+      await graphqlFetch('query { ok }', undefined, { headers: { Authorization: 'Bearer forged' } });
+      expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${SESSION}`);
     });
 
     it('merges custom headers and allows overriding options', async () => {
@@ -184,7 +200,7 @@ describe('graphql client', () => {
 
       const mockErrors = [
         { message: 'Field "unknownField" does not exist' },
-        { message: 'Variable $familyGroup is required' },
+        { message: 'Variable $topic is required' },
       ];
 
       const mockFetch = vi.fn().mockResolvedValue({
@@ -204,7 +220,7 @@ describe('graphql client', () => {
         expect(err).toBeInstanceOf(GraphQLClientError);
         const clientErr = err as GraphQLClientError;
         expect(clientErr.message).toBe(
-          'GraphQL Error: Field "unknownField" does not exist; Variable $familyGroup is required'
+          'GraphQL Error: Field "unknownField" does not exist; Variable $topic is required'
         );
         expect(clientErr.errors).toEqual(mockErrors);
       }

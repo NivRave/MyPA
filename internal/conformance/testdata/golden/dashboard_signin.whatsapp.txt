@@ -1,0 +1,12 @@
+=== message 1: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
+🖥️ Open this link in a browser on the computer MyPA runs on; it does not open anywhere else.
+
+🔑 Your dashboard sign-in link, valid for 10 minutes and once:
+
+http://localhost:3030/signin#<masked>
+
+Never send it to anyone: whoever opens it first is signed in as you. Send /signout to end every dashboard session.
+=== message 2: whatsapp to=whatsapp:+12025550102 from=whatsapp:+12025550199
+🚫 The dashboard is for the household's owners and adults. Ask an owner if you need something changed there.
+=== message 3: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
+✅ Signed out of the dashboard everywhere (1 session(s) ended).

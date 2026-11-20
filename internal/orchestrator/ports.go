@@ -94,6 +94,8 @@ type DBClient interface {
 	// typed on.
 	RedeemPairingCode(codeID string, u models.User, channelName string) error
 	UsersInHousehold(ctx context.Context, s identity.Scope) ([]models.User, error)
+	// HouseholdOwners lists the owners of the scope's household, by their membership (V4-35).
+	HouseholdOwners(ctx context.Context, s identity.Scope) ([]models.User, error)
 	SaveWorkflow(w models.Workflow) error
 	GetUserWorkflows(userID string) ([]models.Workflow, error)
 	DeleteWorkflow(id uint, userID string) error

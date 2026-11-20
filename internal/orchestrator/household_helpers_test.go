@@ -37,6 +37,7 @@ func inHousehold(u *models.User) *models.User {
 func expectHouseholds(m *mocks.MockDBClient) {
 	m.EXPECT().HouseholdByID(gomock.Any(), gomock.Any()).DoAndReturn(testHouseholds.HouseholdByID).AnyTimes()
 	m.EXPECT().HouseholdsByLabel(gomock.Any(), gomock.Any()).DoAndReturn(testHouseholds.HouseholdsByLabel).AnyTimes()
+	m.EXPECT().AccessOf(gomock.Any(), gomock.Any()).DoAndReturn(testHouseholds.AccessOf).AnyTimes()
 }
 
 // idScope returns the scope of personKey in a household whose ID is the given string (its label
@@ -51,4 +52,3 @@ func idScope(id, personKey, role string) identity.Scope {
 	}
 	return s
 }
-

@@ -359,6 +359,37 @@ func (c AllowedUsers) Run(ctx context.Context, _ Scope) []Result {
 	return []Result{res}
 }
 
+// --- Owners -----------------------------------------------------------------------------------
+
+// Owners says whether every household has an owner (V4-35). The upgrade makes every admin an
+// owner, and gives a household that had no admin no owner (ADR 0002 Decision 2, Migration C):
+// nobody can then manage its settings or members until the operator assigns one.
+type Owners struct {
+	// Ownerless counts the households that have members but no owner.
+	Ownerless func(ctx context.Context) (int64, error)
+}
+
+func (Owners) Name() string { return "Household owners" }
+
+func (c Owners) Run(ctx context.Context, _ Scope) []Result {
+	res := Result{Check: c.Name()}
+	n, err := c.Ownerless(ctx)
+	switch {
+	case err != nil:
+		res.Status = StatusFail
+		res.Detail = fmt.Sprintf("Could not check the households' owners: %s.", reason(err))
+		res.NextStep = "Check that Postgres is running and that `DATABASE_URL` is right."
+	case n > 0:
+		res.Status = StatusWarn
+		res.Detail = fmt.Sprintf("%d household(s) have members but no owner, so nobody can change their settings or add members.", n)
+		res.NextStep = "On the machine MyPA runs on, make one member the owner: `docker compose run --rm app access grant owner <the ID they write from>`."
+	default:
+		res.Status = StatusOK
+		res.Detail = "Every household has an owner."
+	}
+	return []Result{res}
+}
+
 // --- Database schema --------------------------------------------------------------------------
 
 // Schema checks that the database schema is at the version this build expects.

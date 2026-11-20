@@ -81,7 +81,7 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inb
 	scope := e.scopeOf(ctx, user)
 	systemPrompt := buildSystemPrompt(promptInputs{
 		UserName:       user.Name,
-		Role:           user.Role,
+		Role:           string(scope.Role()),
 		Household:      scope.HouseholdName(),
 		Language:       scope.Language(),
 		ActiveTools:    activeToolNames,

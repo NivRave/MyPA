@@ -6,13 +6,14 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 
 ## Highlights
 
-- **Channels:** Telegram and WhatsApp (Twilio), voice notes (Groq Whisper) and images/documents (Gemini vision); a Next.js web dashboard for browsing, editing and rolling back data. One person can use several apps as the same user with the same data: `/link` in chat adds another account (confirmed from the first), `/accounts` lists them and `/notify N` picks where notifications go.
+- **Channels:** Telegram and WhatsApp (Twilio), voice notes (Groq Whisper) and images/documents (Gemini vision); a Next.js web dashboard for browsing, editing and rolling back data, which each owner or adult signs in to with `/dashboard` in chat (a link valid 10 minutes, once). One person can use several apps as the same user with the same data: `/link` in chat adds another account (confirmed from the first), `/accounts` lists them and `/notify N` picks where notifications go.
 - **Tools:** <!-- gen:tool-summary -->67 tools across 13 modules<!-- /gen:tool-summary -->, offered in two tiers (always-on core tools + domain groups selected per message) to keep prompts small. Full catalogue: [SYSTEM.md §6](./SYSTEM.md#6-complete-ai-agent-tool-catalog).
 - **Google Workspace:** Calendar, Gmail, Tasks and Contacts; live web search (Tavily).
 - **Life domains:** baby care (with medication-cooldown guardrails), house contracts and maintenance, vehicles, finance and budgets, a personal CRM, topic-scoped memory and entity profiles, shared family spaces with partner notifications.
 - **Automations:** event-driven rules, scheduled natural-language workflows, and runtime-registered external APIs behind SSRF protection.
 - **Durability:** every tool write is snapshotted for `/undo` and dashboard rollback; encrypted, age-protected nightly backups (database plus archive files); versioned schema migrations; one documented path to upgrade, move or restore an install.
-- **Health check:** an admin sends `/doctor` in chat and gets the state of the Telegram webhook, each family member's Google sign-in, WhatsApp, the queues, the newest backup and the database schema, with a next step for every problem.
+- **Roles:** owner, adult, child and guest, plus the install's operator. Owners manage the household and its members and see each member's activity, never another member's chats or personal data; adults see the shared data and their own; children and guests chat only. Pairing codes give adult, child or guest.
+- **Health check:** the operator sends `/doctor` in chat and gets the state of the Telegram webhook, each family member's Google sign-in, WhatsApp, the queues, the newest backup and the database schema, with a next step for every problem.
 - **Security:** fail-closed webhook verification, tenant isolation, prompt-injection boundaries with confirmation for sensitive tools, AES-256-GCM encryption at rest.
 
 ## Documentation
@@ -53,7 +54,7 @@ An event-driven, multi-tenant personal and family AI operating system accessible
    cp .env.example .env
    # Edit .env with your API keys, OAuth credentials, and security secrets
    ```
-   Required: `ENCRYPTION_KEY` and `JWT_SECRET` (two *different* `openssl rand -hex 32` values), `DASHBOARD_API_SECRET`, `DASHBOARD_FAMILY_GROUP`, `GEMINI_API_KEY`, and the infrastructure credentials `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` and `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`; plus `TELEGRAM_SECRET_TOKEN` when Telegram receives webhooks and `TWILIO_AUTH_TOKEN` when `TWILIO_ACCOUNT_SID` is set. Recommended: `BACKUP_AGE_RECIPIENTS`, and `LINK_CODE_SECRET` (a third `openssl rand -hex 32` value) to let people link a second app with `/link`. The app and the audit worker validate their keys at startup and list anything missing. To create the first household and its owner, set `ALLOWED_USERS` before the first start; it is read only while no household exists, and after that people join with a pairing code (V4-30). Full reference: [SYSTEM.md §8.1](./SYSTEM.md#81-environment-variables-internalconfigconfiggo--internalcryptoaesgo).
+   Required: `ENCRYPTION_KEY` (an `openssl rand -hex 32` value), `GEMINI_API_KEY`, and the infrastructure credentials `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` and `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`; plus `TELEGRAM_SECRET_TOKEN` when Telegram receives webhooks and `TWILIO_AUTH_TOKEN` when `TWILIO_ACCOUNT_SID` is set. Recommended: `BACKUP_AGE_RECIPIENTS`, and `LINK_CODE_SECRET` (another `openssl rand -hex 32` value) to let people link a second app with `/link`. There is no dashboard secret any more (V4-35): `DASHBOARD_API_SECRET`, `DASHBOARD_FAMILY_GROUP` and `JWT_SECRET` are refused if still set, so remove them when you upgrade. The app and the audit worker validate their keys at startup and list anything missing. To create the first household and its owner, set `ALLOWED_USERS` before the first start; it is read only while no household exists, and after that people join with a pairing code (V4-30). Full reference: [SYSTEM.md §8.1](./SYSTEM.md#81-environment-variables-internalconfigconfiggo--internalcryptoaesgo).
 
    Docker builds each container's broker/Redis/database URL from those credentials and the service names (`rabbitmq`, `redis`, `postgres`); the `RABBITMQ_URL`, `REDIS_URL` and `DATABASE_URL` keys in `.env` are **ignored by Docker** and only used when you run a service on the host (below). To use managed services instead, set `EXTERNAL_DATABASE_URL`, `EXTERNAL_REDIS_URL` and `EXTERNAL_RABBITMQ_URL`.
 
@@ -76,6 +77,8 @@ An event-driven, multi-tenant personal and family AI operating system accessible
    ```
    *(this starts one `app` container — webhooks, conversation turns, `/graphql` and the Google sign-in on port 8000 — plus the `audit-worker`, the `dashboard` and the infrastructure; the one-shot `migrate` service applies database migrations first, and the app and audit-worker start only after it succeeds)*
    *(the tunnel or proxy of your `INGRESS` starts with it, through `COMPOSE_PROFILES`; with ngrok its inspection UI is at `http://localhost:4040`. The Web Dashboard is at `http://localhost:3030`)*
+
+   **Sign in to the dashboard** (V4-35): send `/dashboard` to the assistant in a direct chat and open the link on the computer MyPA runs on. It works once, for 10 minutes; the page signs you in when you press its button. A session lasts 24 hours without use and 7 days at most; `/signout` in chat ends every session. After an upgrade every former admin is an owner and the operator; if `/doctor` reports a household without an owner, run `docker compose run --rm app access grant owner <Telegram ID or phone number>`.
 
 3. **Set Webhooks:**
    - **Telegram:** Automatic. With `INGRESS=none` the app polls (look for `telegram polling for updates` in `docker compose logs app`). With a public address it calls `setWebhook` for `PUBLIC_URL/webhook/telegram` with `TELEGRAM_SECRET_TOKEN` on startup (look for `telegram webhook registered with secret token`).
@@ -139,7 +142,7 @@ go test -v -race ./internal/...
 # 2. Run database repository and GraphQL resolver integration tests
 go test -v ./internal/db/... ./internal/graph/...
 
-# 3. Run Next.js Dashboard Vitest component tests (36 tests across 5 test suites)
+# 3. Run Next.js Dashboard Vitest component tests (46 tests across 6 test suites)
 npm test --prefix dashboard
 
 # 4. Verify full multi-stage container build

@@ -1,10 +1,12 @@
 import { revalidatePath } from 'next/cache';
-import { graphqlFetch, type User, type PairingCode } from '@/lib/graphql';
+import { graphqlFetch, getMe, type User, type PairingCode } from '@/lib/graphql';
 
 export const dynamic = "force-dynamic";
 
-const GET_USERS_AND_CODES = `
-  query GetUsersAndCodes {
+// V4-35: an owner sees the household's members with their roles and issues pairing codes; an
+// adult sees only themselves. The household is the signed-in person's own, never an argument.
+const GET_USERS = `
+  query GetUsers {
     users {
       id
       platformId
@@ -13,34 +15,41 @@ const GET_USERS_AND_CODES = `
       familyGroup
       createdAt
     }
+  }
+`;
+
+const GET_CODES = `
+  query GetCodes {
     activePairingCodes {
       id
       code
       role
-      familyGroup
       expiresAt
     }
   }
 `;
 
 const GENERATE_PAIRING_CODE_MUTATION = `
-  mutation GenerateCode($role: String!, $familyGroup: String!) {
-    generatePairingCode(role: $role, familyGroup: $familyGroup) {
+  mutation GenerateCode($role: String!) {
+    generatePairingCode(role: $role) {
       id
     }
   }
 `;
 
 export default async function UsersPage() {
-  let data: { users: User[]; activePairingCodes: PairingCode[] } = {
+  const me = await getMe();
+  const isOwner = me?.role === 'owner';
+  const data: { users: User[]; activePairingCodes: PairingCode[] } = {
     users: [],
     activePairingCodes: [],
   };
 
   try {
-    data = await graphqlFetch<{ users: User[]; activePairingCodes: PairingCode[] }>(
-      GET_USERS_AND_CODES
-    );
+    data.users = (await graphqlFetch<{ users: User[] }>(GET_USERS)).users;
+    if (isOwner) {
+      data.activePairingCodes = (await graphqlFetch<{ activePairingCodes: PairingCode[] }>(GET_CODES)).activePairingCodes;
+    }
   } catch (err) {
     console.error('Failed to fetch users and codes:', err);
   }
@@ -48,14 +57,13 @@ export default async function UsersPage() {
   async function createCode(formData: FormData) {
     'use server';
     const role = formData.get('role') as string;
-    const familyGroup = formData.get('familyGroup') as string;
 
     try {
-      await graphqlFetch(GENERATE_PAIRING_CODE_MUTATION, { role, familyGroup });
+      await graphqlFetch(GENERATE_PAIRING_CODE_MUTATION, { role });
     } catch (err) {
       console.error('generatePairingCode failed:', err);
     }
-    
+
     revalidatePath('/users');
   }
 
@@ -81,7 +89,7 @@ export default async function UsersPage() {
                   <th className="px-6 py-3 font-medium">Platform ID</th>
                   <th className="px-6 py-3 font-medium">Name</th>
                   <th className="px-6 py-3 font-medium">Role</th>
-                  <th className="px-6 py-3 font-medium">Family Group</th>
+                  <th className="px-6 py-3 font-medium">Household</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-200">
@@ -103,7 +111,12 @@ export default async function UsersPage() {
           </div>
         </div>
 
-        {/* Pairing Codes */}
+        {/* Pairing Codes: an owner's */}
+        {!isOwner ? (
+          <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 text-sm text-neutral-600">
+            Only an owner of the household adds members and sees their roles. Ask an owner if someone should join.
+          </div>
+        ) : (
         <div className="space-y-6">
           <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6">
             <h2 className="text-lg font-medium text-neutral-900 mb-4">Generate Pairing Code</h2>
@@ -111,13 +124,11 @@ export default async function UsersPage() {
               <div>
                 <label className="block text-sm font-medium text-neutral-700 mb-1">Role</label>
                 <select name="role" className="w-full border border-neutral-300 rounded-md shadow-sm p-2 text-sm">
-                  <option value="admin">Admin</option>
-                  <option value="family">Family Member</option>
+                  <option value="adult">Adult</option>
+                  <option value="child">Child (chat only)</option>
+                  <option value="guest">Guest (chat only, shared topics by name)</option>
                 </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-neutral-700 mb-1">Family Group</label>
-                <input type="text" name="familyGroup" placeholder="e.g. Smith Family" className="w-full border border-neutral-300 rounded-md shadow-sm p-2 text-sm" />
+                <p className="text-xs text-neutral-500 mt-1">A code never makes an owner. The new member joins your household.</p>
               </div>
               <button type="submit" className="w-full bg-indigo-600 text-white rounded-md py-2 px-4 text-sm font-medium hover:bg-indigo-700 transition-colors">
                 Generate Code
@@ -156,6 +167,7 @@ export default async function UsersPage() {
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>
   );

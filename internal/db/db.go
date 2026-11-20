@@ -103,6 +103,8 @@ func AutoMigrateSchema(db *gorm.DB) error {
 		&models.ChannelAccount{},
 		&models.Membership{},
 		&models.AccessToken{},
+		// V4-35: dashboard sessions.
+		&models.Session{},
 	}
 	allModels := append(baseModels, GetRegisteredModels()...)
 	if err := db.AutoMigrate(allModels...); err != nil {
@@ -228,18 +230,33 @@ func (c *Client) GetUser(platformID string) (*models.User, error) {
 }
 
 // UpsertUser creates or updates a user, and the person and membership behind it (V4-32). The
-// user must carry the household it belongs to (V4-30). It knows no channel, so it adds no channel
-// account: accounts come from pairing, the bootstrap and linking.
+// user must carry the household it belongs to (V4-30). A new person's role is user.Role read by
+// identity.ParseRole ("admin" is an owner and the operator; empty or unknown is an adult); an
+// existing person keeps theirs (V4-35). It knows no channel, so it adds no channel account:
+// accounts come from pairing, the bootstrap and linking.
 func (c *Client) UpsertUser(user models.User) error {
 	if strings.TrimSpace(user.HouseholdID) == "" {
 		return fmt.Errorf("failed to upsert user: no household")
 	}
+	role, operator := entryRole(user.Role)
+	user.Role = identity.LegacyRole(role)
 	return c.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("platform_id = ?", user.PlatformID).Assign(user).FirstOrCreate(&user).Error; err != nil {
 			return fmt.Errorf("failed to upsert user: %w", err)
 		}
-		return ensurePerson(tx, user, "")
+		return ensurePerson(tx, user, "", role, operator)
 	})
+}
+
+// entryRole is the role and operator flag of a user given with a stored or configured role: the
+// four role names, or "admin" (an owner and the operator) and "family" (an adult) as written
+// before V4-35. Empty or unknown is an adult, as "family" was the default.
+func entryRole(s string) (identity.Role, bool) {
+	role := identity.ParseRole(s)
+	if role == "" {
+		role = identity.RoleAdult
+	}
+	return role, strings.EqualFold(strings.TrimSpace(s), "admin")
 }
 
 // CreatePairingCode inserts a new pairing code into the scope's household: whoever redeems it
@@ -278,8 +295,14 @@ func (c *Client) RedeemPairingCode(codeID string, user models.User, channelName 
 		if pc.HouseholdID == "" || pc.HouseholdID == models.HoldingHouseholdID {
 			return fmt.Errorf("pairing code has no household")
 		}
+		// V4-35: a code gives adult, child or guest, never owner, whatever the caller passed.
+		role, ok := identity.ParseInviteRole(pc.Role)
+		if !ok {
+			return fmt.Errorf("pairing code has no valid role")
+		}
 		user.HouseholdID = pc.HouseholdID
 		user.FamilyGroup = pc.FamilyGroup
+		user.Role = identity.LegacyRole(role)
 		// Mark code as used
 		if err := tx.Model(&models.PairingCode{}).Where("id = ?", codeID).Update("is_used", true).Error; err != nil {
 			return err
@@ -288,7 +311,7 @@ func (c *Client) RedeemPairingCode(codeID string, user models.User, channelName 
 		if err := tx.Create(&user).Error; err != nil {
 			return err
 		}
-		return ensurePerson(tx, user, channelName)
+		return ensurePerson(tx, user, channelName, role, false)
 	})
 }
 

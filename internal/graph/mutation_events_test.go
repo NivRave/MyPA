@@ -1,7 +1,6 @@
 package graph
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -26,28 +25,24 @@ func TestGraphQL_MutationEvents_NoEmissionOnFailure(t *testing.T) {
 	userB := "usr-auth-b-" + uuid.New().String()
 	households(t, resolver.DB, famA, famB)
 
-	ctxA := WithClaims(context.Background(), &AuthClaims{
-		UserID:      userA,
-		Role:        "member",
-		FamilyGroup: famA,
-	})
+	ctxA := signedIn(t, resolver, famA, userA, "member")
 
-	ctxB := WithClaims(context.Background(), &AuthClaims{
-		UserID:      userB,
-		Role:        "member",
-		FamilyGroup: famB,
-	})
+	ctxB := signedIn(t, resolver, famB, userB, "member")
 
-	// 1. Cross-tenant mutation attempt: User B trying to create entity under Family A
-	_, err := resolver.Mutation().UpsertBabyProfile(ctxB, famA, "IntruderBaby", time.Now(), "male", nil, nil, nil, nil)
-	require.Error(t, err, "cross-tenant upsert must be rejected")
+	// 1. An authorization failure: since V4-35 no argument names Family A, so the refusal left is
+	// the role's (an adult may not issue pairing codes or change the household's settings).
+	_, err := resolver.Mutation().GeneratePairingCode(ctxB, "adult")
+	require.Error(t, err, "an adult's pairing code must be refused")
+	assert.Contains(t, err.Error(), "permission denied")
+	_, err = resolver.Mutation().UpdateHousehold(ctxB, ptr("Intruders"), nil, nil, nil)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "permission denied")
 
 	time.Sleep(50 * time.Millisecond)
 	assert.Empty(t, tracker.getEvents(), "Zero MutationEvents must be emitted on authorization failure")
 
 	// 2. Legitimate creation under Family A
-	babyProfile, err := resolver.Mutation().UpsertBabyProfile(ctxA, famA, "BabyA", time.Now(), "female", nil, nil, nil, nil)
+	babyProfile, err := resolver.Mutation().UpsertBabyProfile(ctxA, "BabyA", time.Now(), "female", nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, babyProfile)
 
@@ -69,7 +64,7 @@ func TestGraphQL_MutationEvents_NoEmissionOnFailure(t *testing.T) {
 	assert.Equal(t, "BabyA", afterMap["name"])
 
 	// 3. User B attempting to delete or access Family A's schedule event
-	evCreated, err := resolver.Mutation().CreateScheduleEvent(ctxA, "general", "Secret Meeting", nil, time.Now(), time.Now().Add(time.Hour), nil, nil, nil, &famA)
+	evCreated, err := resolver.Mutation().CreateScheduleEvent(ctxA, "general", "Secret Meeting", nil, time.Now(), time.Now().Add(time.Hour), nil, nil, nil)
 	require.NoError(t, err)
 
 	time.Sleep(50 * time.Millisecond)
@@ -97,21 +92,17 @@ func TestGraphQL_MutationEvents_PayloadCompleteness(t *testing.T) {
 	user := "usr-test-" + uuid.New().String()
 	households(t, resolver.DB, fam)
 
-	ctx := WithClaims(context.Background(), &AuthClaims{
-		UserID:      user,
-		Role:        "member",
-		FamilyGroup: fam,
-	})
+	ctx := signedIn(t, resolver, fam, user, "member")
 
 	// 1. Durability / Memory TopicMemory
-	mem, err := resolver.Mutation().SaveTopicMemory(ctx, "memory", "facts", "Important family fact", nil, nil, &fam)
+	mem, err := resolver.Mutation().SaveTopicMemory(ctx, "memory", "facts", "Important family fact", nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, mem)
 
 	// 2. Finance Transaction
 	notes := "DCA Buy"
 	isShared := true
-	tx, err := resolver.Mutation().LogFinancialTransaction(ctx, fam, "expense", "investments", "Vanguard", 500.0, "USD", &notes, &isShared)
+	tx, err := resolver.Mutation().LogFinancialTransaction(ctx, "expense", "investments", "Vanguard", 500.0, "USD", &notes, &isShared)
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 
@@ -119,7 +110,7 @@ func TestGraphQL_MutationEvents_PayloadCompleteness(t *testing.T) {
 	vendor := "Landlord Corp"
 	amount := 2000.0
 	currency := "USD"
-	contract, err := resolver.Mutation().SaveHouseContract(ctx, fam, "lease", "City Apartment Lease", &vendor, &amount, &currency, nil, nil, nil)
+	contract, err := resolver.Mutation().SaveHouseContract(ctx, "lease", "City Apartment Lease", &vendor, &amount, &currency, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, contract)
 

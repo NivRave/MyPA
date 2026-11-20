@@ -400,3 +400,24 @@ func TestAllowedUsers_SaysTheSettingIsIgnoredOnceAHouseholdExists(t *testing.T) 
 	require.Len(t, got, 1)
 	assert.Equal(t, StatusFail, got[0].Status)
 }
+
+// V4-35 (ADR 0002 Decision 2, Migration C): a household the upgrade left without an owner is
+// reported, with the command that assigns one.
+func TestOwners_ReportsHouseholdsWithoutAnOwner(t *testing.T) {
+	count := func(n int64, err error) func(context.Context) (int64, error) {
+		return func(context.Context) (int64, error) { return n, err }
+	}
+	got := Owners{Ownerless: count(0, nil)}.Run(context.Background(), adminScope)
+	require.Len(t, got, 1)
+	assert.Equal(t, StatusOK, got[0].Status)
+
+	got = Owners{Ownerless: count(2, nil)}.Run(context.Background(), adminScope)
+	require.Len(t, got, 1)
+	assert.Equal(t, StatusWarn, got[0].Status)
+	assert.Contains(t, got[0].Detail, "2 household(s)")
+	assert.Contains(t, got[0].NextStep, "access grant owner")
+
+	got = Owners{Ownerless: count(0, errors.New("connection refused"))}.Run(context.Background(), adminScope)
+	require.Len(t, got, 1)
+	assert.Equal(t, StatusFail, got[0].Status)
+}

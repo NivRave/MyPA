@@ -13,6 +13,8 @@ vi.mock('@/lib/graphql', async (importOriginal) => {
   return {
     ...actual,
     graphqlFetch: vi.fn(),
+    // V4-35: the page shows the signed-in person's household name.
+    getHouseholdName: vi.fn(async () => 'Smith Family'),
   };
 });
 

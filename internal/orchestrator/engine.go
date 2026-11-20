@@ -48,6 +48,8 @@ type Engine struct {
 	health             HealthReporter      // the /doctor report (V4-17); nil when not wired
 	accounts           AccountStore        // people's channel accounts and link codes (V4-32); nil when not wired
 	codeKey            []byte              // the server secret typed codes are hashed under (LINK_CODE_SECRET)
+	signIns            SignInStore         // dashboard sign-in links and sessions (V4-35); nil when not wired
+	dashboardURL       string              // where a sign-in link points (DASHBOARD_URL)
 }
 
 var hebrewPrepositionRegex = regexp.MustCompile(`(^|[^\p{Hebrew}\w])([בלמכ])(\d+)`)

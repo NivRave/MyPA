@@ -29,7 +29,7 @@ func (e *Engine) WithHealthReporter(h HealthReporter) *Engine {
 // recorded as the turn's final response (the report is not copied into the audit log).
 func (e *Engine) cmdDoctor(ctx context.Context, user *models.User, msg channel.Inbound) (string, error) {
 	if !e.scopeOf(ctx, user).Can(identity.RunDoctor) {
-		slog.Warn("unauthorized doctor command attempt", "user_id", user.PlatformID, "role", user.Role)
+		slog.Warn("unauthorized doctor command attempt", "user_id", user.PlatformID, "role", e.scopeOf(ctx, user).Role())
 		return "", e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")
 	}
 	if e.health == nil {

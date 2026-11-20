@@ -1,11 +1,11 @@
 package graph_test
 
 import (
-	"context"
 	"fmt"
-	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"testing"
 	"time"
+
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/db"
@@ -40,13 +40,8 @@ func TestSEC06_RollbackMutation_SystemTablesRejected(t *testing.T) {
 		"schema_migrations",
 	}
 
-	ctx := context.Background()
-	// Admin auth claims
-	adminClaims := &graph.AuthClaims{
-		UserID: "admin-user",
-		Role:   "admin",
-	}
-	adminCtx := graph.WithClaims(ctx, adminClaims)
+	// An owner (an admin before V4-35) undoing their own change: the system-table guard decides.
+	adminCtx := signedIn(t, client, "", "admin-user", "admin")
 
 	for _, sysEntity := range systemEntities {
 		t.Run("RejectSystem_"+sysEntity, func(t *testing.T) {
@@ -57,8 +52,8 @@ func TestSEC06_RollbackMutation_SystemTablesRejected(t *testing.T) {
 				Action:      "delete",
 				EntityType:  sysEntity,
 				EntityID:    "1",
-				UserID:      "attacker",
-				HouseholdID: householdtest.Household(t, client, "attacker").ID,
+				UserID:      "admin-user",
+				HouseholdID: householdtest.Household(t, client, "admin-user").ID,
 				BeforeJSON:  `{"id": "1", "name": "hacked"}`,
 				AfterJSON:   `{}`,
 				IsUndone:    false,
@@ -91,10 +86,7 @@ func TestSEC06_RollbackMutation_TransactionRollbackOnStatementFailure(t *testing
 	resolver := &graph.Resolver{DB: client}
 	mutResolver := resolver.Mutation()
 
-	adminCtx := graph.WithClaims(context.Background(), &graph.AuthClaims{
-		UserID: "admin-user",
-		Role:   "admin",
-	})
+	adminCtx := signedIn(t, client, "", "admin-user", "admin")
 
 	mID := uuid.New().String()
 	// Create an 'update' mutation targeting TopicMemory where BeforeJSON tries to set a non-existent column,
@@ -105,8 +97,8 @@ func TestSEC06_RollbackMutation_TransactionRollbackOnStatementFailure(t *testing
 		Action:      "update",
 		EntityType:  "TopicMemory",
 		EntityID:    "1",
-		UserID:      "user_test",
-		HouseholdID: householdtest.Household(t, client, "user_test").ID,
+		UserID:      "admin-user",
+		HouseholdID: householdtest.Household(t, client, "admin-user").ID,
 		BeforeJSON:  `{"non_existent_column_fail": "crash"}`,
 		AfterJSON:   `{}`,
 		IsUndone:    false,
@@ -159,12 +151,7 @@ func TestSEC06_RollbackMutation_NonAdminTenantBoundary(t *testing.T) {
 
 	// User from family_beta attempts rollback
 	householdtest.Household(t, client, "family_beta")
-	betaClaims := &graph.AuthClaims{
-		UserID:      "user_beta",
-		FamilyGroup: "family_beta",
-		Role:        "family",
-	}
-	betaCtx := graph.WithClaims(context.Background(), betaClaims)
+	betaCtx := signedIn(t, client, "family_beta", "user_beta", "family")
 
 	ok, rErr := mutResolver.RollbackMutation(betaCtx, mID)
 	assert.False(t, ok)

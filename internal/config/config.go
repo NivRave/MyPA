@@ -32,6 +32,16 @@ type Config struct {
 
 	// replaced lists the settings PUBLIC_URL replaced that are still set; Validate refuses them.
 	replaced []string
+	// retired lists the settings dashboard sign-in ended (V4-35) that are still set; Validate
+	// refuses them.
+	retired []string
+}
+
+// RetiredEnvKeys are the settings V4-35 ended: the shared dashboard secret, the family it was
+// bound to, and the JWT signing secret. Dashboard access is a per-person sign-in from /dashboard
+// in chat (ADR 0002 Decision 5); nothing reads these any more.
+func RetiredEnvKeys() []string {
+	return []string{"DASHBOARD_API_SECRET", "DASHBOARD_FAMILY_GROUP", "JWT_SECRET"}
 }
 
 // GoogleCallbackPath is where Google returns after a person signs in (the app's OAuth callback).
@@ -51,13 +61,12 @@ type EncryptionConfig struct {
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
 	// Port is the one HTTP port of the app (V4-01), whatever its role. HTTP_PORT, default 8000.
-	Port               int    `mapstructure:"port"`
-	DefaultTimezone    string `mapstructure:"default_timezone"`
-	AllowedUsersRaw    string `mapstructure:"allowed_users"`
-	DashboardAPISecret string `mapstructure:"dashboard_api_secret"`
-	// DashboardFamilyGroup scopes the dashboard secret to one family group (P3-2).
-	DashboardFamilyGroup string `mapstructure:"dashboard_family_group"`
-	JWTSecret            string `mapstructure:"jwt_secret"`
+	Port            int    `mapstructure:"port"`
+	DefaultTimezone string `mapstructure:"default_timezone"`
+	AllowedUsersRaw string `mapstructure:"allowed_users"`
+	// DashboardURL is the dashboard's address, which /dashboard sign-in links open (V4-35).
+	// Empty: http://localhost:3030, the port docker-compose.yml binds to this machine.
+	DashboardURL string `mapstructure:"dashboard_url"`
 	// LinkCodeSecret is the server secret typed codes (link codes, V4-32) are hashed under, kept
 	// out of the database and backups (ADR 0002 Decision 5). Empty: linking accounts is refused.
 	LinkCodeSecret string `mapstructure:"link_code_secret"`
@@ -149,26 +158,24 @@ func Load() (*Config, error) {
 
 	// Explicit env var bindings (maps FLAT env vars to nested config keys)
 	envBindings := map[string]string{
-		"DEFAULT_TIMEZONE":       "server.default_timezone",
-		"ALLOWED_USERS":          "server.allowed_users",
-		"HTTP_PORT":              "server.port",
-		"RABBITMQ_URL":           "rabbitmq.url",
-		"RABBITMQ_PREFETCH":      "rabbitmq.prefetch",
-		"REDIS_URL":              "redis.url",
-		"DATABASE_URL":           "database.url",
-		"GEMINI_API_KEY":         "gemini.api_key",
-		"GEMINI_MODEL":           "gemini.model",
-		"GOOGLE_CLIENT_ID":       "google.client_id",
-		"GOOGLE_CLIENT_SECRET":   "google.client_secret",
-		"GROQ_API_KEY":           "groq.api_key",
-		"TAVILY_API_KEY":         "tavily.api_key",
-		"ENCRYPTION_KEY":         "encryption.key",
-		"DASHBOARD_API_SECRET":   "server.dashboard_api_secret",
-		"DASHBOARD_FAMILY_GROUP": "server.dashboard_family_group",
-		"JWT_SECRET":             "server.jwt_secret",
-		"LINK_CODE_SECRET":       "server.link_code_secret",
-		"WEEK_START_DAY":         "server.week_start_day",
-		"WEEKEND_DAYS":           "server.weekend_days",
+		"DEFAULT_TIMEZONE":     "server.default_timezone",
+		"ALLOWED_USERS":        "server.allowed_users",
+		"HTTP_PORT":            "server.port",
+		"RABBITMQ_URL":         "rabbitmq.url",
+		"RABBITMQ_PREFETCH":    "rabbitmq.prefetch",
+		"REDIS_URL":            "redis.url",
+		"DATABASE_URL":         "database.url",
+		"GEMINI_API_KEY":       "gemini.api_key",
+		"GEMINI_MODEL":         "gemini.model",
+		"GOOGLE_CLIENT_ID":     "google.client_id",
+		"GOOGLE_CLIENT_SECRET": "google.client_secret",
+		"GROQ_API_KEY":         "groq.api_key",
+		"TAVILY_API_KEY":       "tavily.api_key",
+		"ENCRYPTION_KEY":       "encryption.key",
+		"DASHBOARD_URL":        "server.dashboard_url",
+		"LINK_CODE_SECRET":     "server.link_code_secret",
+		"WEEK_START_DAY":       "server.week_start_day",
+		"WEEKEND_DAYS":         "server.weekend_days",
 	}
 
 	for envKey, configKey := range envBindings {
@@ -191,6 +198,11 @@ func Load() (*Config, error) {
 	for _, k := range replacedEnvKeys() {
 		if strings.TrimSpace(os.Getenv(k)) != "" {
 			cfg.replaced = append(cfg.replaced, k)
+		}
+	}
+	for _, k := range RetiredEnvKeys() {
+		if strings.TrimSpace(os.Getenv(k)) != "" {
+			cfg.retired = append(cfg.retired, k)
 		}
 	}
 

@@ -64,8 +64,6 @@ type worker struct {
 // startWorker connects every dependency, starts the engine and the scheduler, and returns the app
 // router. On an error, whatever was already started is stopped again.
 func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err error) {
-	authCfg = cfg.Server
-
 	if err := crypto.ValidateKeyConfigured(); err != nil {
 		return nil, fmt.Errorf("encryption key validation failed: %w", err)
 	}
@@ -281,10 +279,17 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 		WithEventBus(eventBus).
 		WithCalendarConventions(orchestrator.ParseCalendarConventions(cfg.Server.WeekStartDay, cfg.Server.WeekendDays)).
 		WithHealthReporter(newHealthReporter(cfg, channels, store, dbClient, oauthCfg, doctorBackupDir)). // /doctor (V4-17)
-		WithAccounts(dbClient, []byte(strings.TrimSpace(cfg.Server.LinkCodeSecret)))                      // /link (V4-32)
+		WithAccounts(dbClient, []byte(strings.TrimSpace(cfg.Server.LinkCodeSecret))).                     // /link (V4-32)
+		WithSignIn(dbClient, cfg.Server.DashboardURL)                                                     // /dashboard (V4-35)
 	if strings.TrimSpace(cfg.Server.LinkCodeSecret) == "" {
 		slog.Warn("LINK_CODE_SECRET is not set: linking a second app to a person (/link) is off")
 	}
+	if n, err := dbClient.HouseholdsWithoutOwner(ctx); err == nil && n > 0 {
+		slog.Warn("households without an owner: nobody can manage them or their members; assign one with `mypa access grant owner <person>`", "households", n)
+	}
+	stopPurge := make(chan struct{})
+	go purgeSignInsEvery(dbClient.PurgeSignIns, stopPurge)
+	w.onStop(func() { close(stopPurge) })
 
 	// Start Cron jobs
 	c := scheduler.StartCronJobs(engine, dbClient, automationRunner, cfg.Server.DefaultTimezone)
@@ -462,10 +467,6 @@ func runMigrations(databaseURL string) int {
 	return 0
 }
 
-// authCfg holds the validated /graphql auth settings (set in main). Zero value = fail closed:
-// no dashboard secret or JWT is accepted (e.g. in tests that build the router directly).
-var authCfg config.ServerConfig
-
 func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifier AuthNotifier, dbClient *db.Client, fallbackSaver CredentialFallbackSaver, eventBus ...*events.EventBus) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -493,13 +494,14 @@ func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifier
 		})
 		srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: resolvers}))
 
-		// P3-2: secrets come from validated config (cfg.Validate requires JWT_SECRET, distinct from
-		// ENCRYPTION_KEY — no fallback), and the dashboard secret is bound to one family group.
-		authMiddleware := graph.NewAuthMiddleware(graph.AuthConfig{
-			DashboardSecret:      authCfg.DashboardAPISecret,
-			DashboardFamilyGroup: authCfg.DashboardFamilyGroup,
-			JWTSecret:            authCfg.JWTSecret,
-		})
+		// V4-35: the only credential is a dashboard session (a person signed in with /dashboard);
+		// the person's role and household are read from the database on every request.
+		authMiddleware := graph.NewAuthMiddleware(dbClient, dbClient)
+		var publisher signInPublisher
+		if bus != nil {
+			publisher = bus
+		}
+		mux.Handle(SignInPath, newSignInHandler(dbClient, dbClient, notifier, publisher))
 
 		graphqlHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit for GraphQL

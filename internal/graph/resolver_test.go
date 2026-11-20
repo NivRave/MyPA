@@ -2,9 +2,11 @@ package graph
 
 import (
 	"context"
-	"github.com/nivik/mypa/internal/identity"
 	"testing"
 	"time"
+
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
@@ -157,28 +159,21 @@ func TestResolver_PositiveAuthorization(t *testing.T) {
 		Households: labelStore("FamilyA", "FamilyB", "default"),
 	})
 
-	// Non-admin user with FamilyA trying to delete from FamilyB
-	ctxNonAdmin := WithClaims(context.Background(), &AuthClaims{
-		UserID:      "usr-1",
-		Role:        "member",
-		FamilyGroup: "FamilyA",
-	})
+	// V4-35: no caller can name a household. A member of FamilyA writes into FamilyA, and an owner
+	// (an admin before V4-35, who could pick any family) writes into their own household only.
+	ctxNonAdmin := signedIn(t, resolver, "FamilyA", "usr-1", "member")
+	res, err := resolver.Mutation().SaveTopicMemory(ctxNonAdmin, "health", "diet", "No nuts", nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "FamilyA", res.FamilyGroup)
 
-	fgTarget := "FamilyB"
-	_, err := resolver.Mutation().SaveTopicMemory(ctxNonAdmin, "health", "diet", "No nuts", nil, nil, &fgTarget)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
-
-	// Admin user can access any family group
-	ctxAdmin := WithClaims(context.Background(), &AuthClaims{
-		UserID:      "admin-1",
-		Role:        "admin",
-		FamilyGroup: "default",
-	})
-	res, err := resolver.Mutation().SaveTopicMemory(ctxAdmin, "health", "diet", "No nuts", nil, nil, &fgTarget)
+	ctxAdmin := signedIn(t, resolver, "default", "admin-1", "admin")
+	res, err = resolver.Mutation().SaveTopicMemory(ctxAdmin, "health", "diet", "No nuts", nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	assert.Equal(t, "FamilyB", res.FamilyGroup)
+	assert.Equal(t, "default", res.FamilyGroup, "never FamilyB")
+	for _, m := range memRepo.savedMemories {
+		assert.NotEqual(t, identitytest.HouseholdID("FamilyB"), m.HouseholdID)
+	}
 }
 
 func TestResolver_Mutations_EmitEvents(t *testing.T) {
@@ -201,38 +196,33 @@ func TestResolver_Mutations_EmitEvents(t *testing.T) {
 		Households:     labelStore("fam-test"),
 	})
 
-	ctx := WithClaims(context.Background(), &AuthClaims{
-		UserID:      "usr-100",
-		Role:        "member",
-		FamilyGroup: "fam-test",
-	})
+	ctx := signedIn(t, resolver, "fam-test", "usr-100", "member")
 
 	// 1. LogBabyCare mutation
 	val := 150.0
 	unit := "ml"
-	bLog, err := resolver.Mutation().LogBabyCare(ctx, "1", "fam-test", "feeding", &val, &unit, nil, nil)
+	bLog, err := resolver.Mutation().LogBabyCare(ctx, "1", "feeding", &val, &unit, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bLog)
 	assert.True(t, babyRepo.createCareLogCalled)
 
 	// 2. SaveTopicMemory mutation
 	fact := "Prefers oat milk"
-	mLog, err := resolver.Mutation().SaveTopicMemory(ctx, "diet", "milk", fact, nil, nil, nil)
+	mLog, err := resolver.Mutation().SaveTopicMemory(ctx, "diet", "milk", fact, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, mLog)
 	require.Len(t, memRepo.savedMemories, 1)
 
 	// 3. RegisterExternalAPI mutation (fixes BUG-03)
-	fg := "fam-test"
 	method := "GET"
-	apiLog, err := resolver.Mutation().RegisterExternalAPI(ctx, "WeatherAPI", "https://93.184.216.34/weather", &method, nil, &fg)
+	apiLog, err := resolver.Mutation().RegisterExternalAPI(ctx, "WeatherAPI", "https://93.184.216.34/weather", &method, nil)
 	require.NoError(t, err)
 	require.NotNil(t, apiLog)
 	require.Len(t, autoRepo.createdAPIs, 1)
 	assert.Equal(t, "fam-test", autoRepo.createdAPIs[0].FamilyGroup)
 
 	// 4. SaveAutomationRule mutation (fixes BUG-03)
-	ruleLog, err := resolver.Mutation().SaveAutomationRule(ctx, "BabyRule", "mutation", "baby", "{}", "notify partner", nil, &fg)
+	ruleLog, err := resolver.Mutation().SaveAutomationRule(ctx, "BabyRule", "mutation", "baby", "{}", "notify partner", nil)
 	require.NoError(t, err)
 	require.NotNil(t, ruleLog)
 	require.Len(t, autoRepo.createdRules, 1)

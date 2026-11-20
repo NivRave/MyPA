@@ -2,7 +2,7 @@ import { revalidatePath } from "next/cache";
 import { Share2, Users, Bell, CheckCircle2, Clock, Plus, ShieldCheck } from "lucide-react";
 import {
   graphqlFetch,
-  getDashboardFamilyGroup,
+  getHouseholdName,
   type SharedSpace,
   type SharedTaskReminder,
 } from "@/lib/graphql";
@@ -10,8 +10,8 @@ import {
 export const dynamic = "force-dynamic";
 
 const GET_SHARED_DATA_QUERY = `
-  query GetSharedSpaces($familyGroup: String!) {
-    sharedSpaces(familyGroup: $familyGroup) {
+  query GetSharedSpaces {
+    sharedSpaces {
       id
       familyGroup
       topic
@@ -22,7 +22,7 @@ const GET_SHARED_DATA_QUERY = `
       notifyMode
       updatedAt
     }
-    sharedTasks(familyGroup: $familyGroup) {
+    sharedTasks {
       id
       familyGroup
       topic
@@ -40,7 +40,6 @@ const GET_SHARED_DATA_QUERY = `
 
 const UPDATE_SHARED_SPACE_MUTATION = `
   mutation UpdateSpace(
-    $familyGroup: String!
     $topic: String!
     $sharedWithUserId: String!
     $canView: Boolean!
@@ -48,7 +47,6 @@ const UPDATE_SHARED_SPACE_MUTATION = `
     $notifyMode: String!
   ) {
     updateSharedSpace(
-      familyGroup: $familyGroup
       topic: $topic
       sharedWithUserId: $sharedWithUserId
       canView: $canView
@@ -70,13 +68,11 @@ const COMPLETE_TASK_MUTATION = `
 
 const CREATE_TASK_MUTATION = `
   mutation CreateTask(
-    $familyGroup: String!
     $topic: String!
     $title: String!
     $assignedToUserId: String
   ) {
     createSharedTask(
-      familyGroup: $familyGroup
       topic: $topic
       title: $title
       assignedToUserId: $assignedToUserId
@@ -86,7 +82,7 @@ const CREATE_TASK_MUTATION = `
   }
 `;
 
-async function getSharedData(familyGroup: string = getDashboardFamilyGroup()): Promise<{
+async function getSharedData(): Promise<{
   spaces: SharedSpace[];
   tasks: SharedTaskReminder[];
 }> {
@@ -94,7 +90,7 @@ async function getSharedData(familyGroup: string = getDashboardFamilyGroup()): P
     const data = await graphqlFetch<{
       sharedSpaces: SharedSpace[];
       sharedTasks: SharedTaskReminder[];
-    }>(GET_SHARED_DATA_QUERY, { familyGroup });
+    }>(GET_SHARED_DATA_QUERY);
 
     return {
       spaces: data.sharedSpaces || [],
@@ -107,8 +103,8 @@ async function getSharedData(familyGroup: string = getDashboardFamilyGroup()): P
 }
 
 export default async function SharedSpacesPage() {
-  const familyGroup = getDashboardFamilyGroup();
-  const { spaces, tasks } = await getSharedData(familyGroup);
+  const familyGroup = await getHouseholdName();
+  const { spaces, tasks } = await getSharedData();
 
   async function updatePermission(formData: FormData) {
     "use server";
@@ -120,7 +116,6 @@ export default async function SharedSpacesPage() {
 
     try {
       await graphqlFetch(UPDATE_SHARED_SPACE_MUTATION, {
-        familyGroup: getDashboardFamilyGroup(),
         topic,
         sharedWithUserId,
         canView,
@@ -155,7 +150,6 @@ export default async function SharedSpacesPage() {
 
     try {
       await graphqlFetch(CREATE_TASK_MUTATION, {
-        familyGroup: getDashboardFamilyGroup(),
         topic,
         title,
         assignedToUserId: assignedTo,

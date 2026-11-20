@@ -65,6 +65,17 @@ var unscopedMethods = map[string]string{
 	"ConfirmMergeByIssuer":   "only from the issuing account; merges nothing on its own",
 	"PendingMerge":           "the account that typed the code, its own pending merge",
 	"ResolveAccountChannels": "start-up: names the channel of accounts the upgrade made, by their ID",
+	// Roles and dashboard sign-in (V4-35): keyed by a verified person or a secret's hash; the
+	// household of a session is read from the person's membership on every request.
+	"AccessOf":               "identity.Store: the membership and person a scope is built from",
+	"UserByID":               "the person of a verified session, a scope is built from it",
+	"RedeemSignIn":           "a browser presenting a sign-in token; the person comes from the token row",
+	"SessionPerson":          "a browser presenting a session secret; a scope is built from its person",
+	"RevokeSession":          "the acting session itself",
+	"RevokeSessionsOf":       "the acting person's own sessions (/signout)",
+	"PurgeSignIns":           "install-level clean-up of ended sessions and used links",
+	"HouseholdsWithoutOwner": "install-level count for /doctor",
+	"GrantAccess":            "offline operator recovery command, never moves a person between households",
 }
 
 var scopeType = reflect.TypeOf(identity.Scope{})

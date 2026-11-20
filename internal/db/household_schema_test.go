@@ -27,6 +27,7 @@ var personKeyedTables = map[string]string{
 	"user_preferences":       "one person's preferences (moves to the person in V4-27)",
 	"people":                 "the person itself; the household comes through the membership (V4-32)",
 	"channel_accounts":       "a person's accounts on the channels; the household comes through the membership (V4-32)",
+	"sessions":               "a person's dashboard sign-ins; the household comes through the membership, read on every request (V4-35)",
 }
 
 // identityHouseholdTables carry household_id from the start (V4-32): a membership names its
@@ -78,7 +79,7 @@ func TestHouseholdSchema_EveryHouseholdColumnIsGuarded(t *testing.T) {
 	all := append([]interface{}{
 		&models.Household{}, &models.AuditSession{}, &models.AuditEvent{}, &models.Memory{},
 		&models.ScheduledReminder{}, &models.User{}, &models.PairingCode{}, &models.Workflow{},
-		&models.Person{}, &models.ChannelAccount{}, &models.Membership{}, &models.AccessToken{},
+		&models.Person{}, &models.ChannelAccount{}, &models.Membership{}, &models.AccessToken{}, &models.Session{},
 	}, GetRegisteredModels()...)
 	RegisterWave1Models()
 	RegisterWave2Models()
