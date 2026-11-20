@@ -1,19 +1,26 @@
 // Package docgen gathers every generated region of the docs (SYSTEM.md, README.md) in one map:
-// the tool catalogue from the ToolModule declarations (P5-5) and the channel capability matrix
-// from the adapters the app registers (V4-34). `go run ./cmd/devtools/gendocs` writes them and
+// the tool catalogue from the ToolModule declarations (P5-5), the channel capability matrix
+// from the adapters the app registers (V4-34) and the chat model provider matrix from the
+// provider conformance suite (V4-02). `go run ./cmd/devtools/gendocs` writes them and
 // TestDocsAreUpToDate fails when a committed doc differs.
 package docgen
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/channel/adapters"
+	"github.com/nivik/mypa/internal/llm/conformance"
 	"github.com/nivik/mypa/internal/toolcatalog"
 )
 
 // ChannelMatrixRegion is the block region of SYSTEM.md that holds the capability matrix.
 const ChannelMatrixRegion = "channel-matrix"
+
+// ProviderMatrixRegion is the block region of SYSTEM.md that holds the chat model provider
+// matrix (V4-02). It is rendered only when every provider passes the conformance suite.
+const ProviderMatrixRegion = "llm-provider-matrix"
 
 // DocFiles are the repository files (relative to the module root) containing generated regions.
 var DocFiles = toolcatalog.DocFiles
@@ -25,10 +32,16 @@ func Regions() (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, dup := regions[ChannelMatrixRegion]; dup {
-		return nil, fmt.Errorf("docgen: region %q is generated twice", ChannelMatrixRegion)
+	providers, err := conformance.Matrix(context.Background())
+	if err != nil {
+		return nil, err
 	}
-	regions[ChannelMatrixRegion] = matrix
+	for name, content := range map[string]string{ChannelMatrixRegion: matrix, ProviderMatrixRegion: providers} {
+		if _, dup := regions[name]; dup {
+			return nil, fmt.Errorf("docgen: region %q is generated twice", name)
+		}
+		regions[name] = content
+	}
 	return regions, nil
 }
 

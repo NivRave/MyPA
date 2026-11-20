@@ -38,11 +38,18 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inb
 	// Dynamic Two-Tier Tool Context Selection (SCALE-01) + sticky follow-up domains (P2-2)
 	var matchedDomains []DomainGroup
 	var activeToolNames map[string]bool // nil = no registry → all guidance
+	localTurn := false
 	if e.toolRegistry != nil {
 		if e.intentMatcher != nil {
 			matchedDomains = e.intentMatcher.MatchDomains(msg.Text)
 		}
 		selected := unionDomains(matchedDomains, e.loadStickyDomains(ctx, stateKey(user, msg)))
+		// LLM_LOCAL_DOMAINS (V4-02): a turn in one of these domains runs on the local model only.
+		if e.keptLocal(selected) {
+			ctx = llm.WithLocalOnly(ctx)
+			localTurn = true
+			slog.Info("turn kept on the local model", "message_id", msg.MessageID, "domains", selected)
+		}
 		activeTools := e.toolRegistry.SelectDeclarationsFor(enabled, selected, false)
 		ctx = llm.WithActiveTools(ctx, activeTools)
 		activeToolNames = make(map[string]bool, len(activeTools))
@@ -52,10 +59,12 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inb
 	}
 
 	// Search long-term semantic memory — skipped for trivial acknowledgements (P2-5): an
-	// embedding of "thanks!" retrieves noise and costs an API call per message.
+	// embedding of "thanks!" retrieves noise and costs an API call per message. Skipped too for a
+	// turn kept local (V4-02): the embedding model is a cloud model (V4-03), and the turn's text
+	// must not leave the machine.
 	var memoryLines []string
 	var embedding []float32
-	if !isTrivialMessage(msg.Text) {
+	if !isTrivialMessage(msg.Text) && !localTurn {
 		embedding, err = e.llm.GenerateEmbedding(ctx, msg.Text)
 	}
 	if err == nil && len(embedding) > 0 {

@@ -20,6 +20,11 @@ type Config struct {
 	Database   DatabaseConfig   `mapstructure:"database"`
 	Gemini     GeminiConfig     `mapstructure:"gemini"`
 	Embedding  EmbeddingConfig  `mapstructure:"embedding"`
+	LLM        LLMConfig        `mapstructure:"llm"`
+	Anthropic  AnthropicConfig  `mapstructure:"anthropic"`
+	OpenAI     OpenAIConfig     `mapstructure:"openai"`
+	XAI        XAIConfig        `mapstructure:"xai"`
+	Ollama     OllamaConfig     `mapstructure:"ollama"`
 	Google     GoogleConfig     `mapstructure:"google"`
 	Groq       GroqConfig       `mapstructure:"groq"`
 	Tavily     TavilyConfig     `mapstructure:"tavily"`
@@ -91,7 +96,8 @@ type DatabaseConfig struct {
 	URL string `mapstructure:"url"`
 }
 
-// GeminiConfig holds Gemini API settings.
+// GeminiConfig holds Gemini API settings. Gemini is the default chat provider (LLM_PROVIDER) and
+// the embedding provider of every install (V4-03).
 type GeminiConfig struct {
 	APIKey string `mapstructure:"api_key"`
 	Model  string `mapstructure:"model"`
@@ -194,6 +200,10 @@ func Load() (*Config, error) {
 		"LINK_CODE_SECRET":     "server.link_code_secret",
 		"WEEK_START_DAY":       "server.week_start_day",
 		"WEEKEND_DAYS":         "server.weekend_days",
+	}
+
+	for envKey, configKey := range llmEnvBindings {
+		envBindings[envKey] = configKey
 	}
 
 	for envKey, configKey := range envBindings {

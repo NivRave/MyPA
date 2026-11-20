@@ -39,7 +39,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-26 | Medium | `save_topic_memory` stores `scope` as given, so a value such as `Family` is saved but never found | open |
 | BL-27 | High | The real-phone-number guard and the `.gitignore` guard are skipped in every full test run, including CI | done 2026-11-19 (`chore/bl-27-guards`) |
 | BL-28 | Low | The one-default-model guard misses a model alias with no version digit (`gemini-flash-latest`) and does not search `.mjs`, `.sh`, `.ps1` or `.sql` files | open |
-| BL-29 | Medium | The LLM client sends `Temperature: 0.2`; Gemini 3.6 Flash ignores sampling parameters and later model generations are to reject them with HTTP 400 | open: resolve in V4-02 |
+| BL-29 | Medium | The LLM client sends `Temperature: 0.2`; Gemini 3.6 Flash ignores sampling parameters and later model generations are to reject them with HTTP 400 | done 2026-11-20 (V4-02, DP-35) |
 | BL-30 | Low | Tests in `cmd/mypa` (formerly `cmd/orchestrator`) and `internal/crypto` change environment variables and do not put them back exactly | open |
 | BL-31 | Medium | The dashboard `users` query returns the users of every family, not only the caller's | done 2026-11-20 by V4-35 (`feat/v4-35-dashboard-signin`): an owner gets the household's members, an adult only themselves |
 | BL-32 | Low | A pairing code can be redeemed by two senders at the same moment | open: ADR 0002 requires a one-statement claim for every code |
@@ -68,6 +68,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-55 | Medium | A legacy workflow run counts as the person writing, and its answer bypasses the delivery policy | open |
 | BL-56 | Low | Telegram's "bot was blocked by the user" is an error, not a "not reachable" refusal | open |
 | BL-57 | Medium | Undo restores a memory's old embedding, which after a re-embed into another model is in the wrong vector space | open: fixed together with BL-25 in one change, after V4-07 and before the V4.0 release, not part of any stage-4 item |
+| BL-58 | Medium | A turn kept local (`LLM_LOCAL_DOMAINS`) is in the history later cloud turns send; voice and tools reach their own services | open |
+| BL-59 | Low | `TestReembed_ToAnotherSizeAfterTheDocumentedMigration` fails on a CRLF checkout of docs/EMBEDDINGS.md | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -443,6 +445,34 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** resolve in V4-02, the provider work, before the default moves past 3.6: send no sampling
   parameters, or send them only to models that accept them, decided per provider and model. Test: the
   request built for the default model carries no `Temperature`.
+- **Fixed in V4-02 (2026-11-20, DP-35):** no adapter sends a sampling parameter, for any provider or model.
+  `TestGeminiRequest_CarriesNoSamplingParameter` (`internal/llm`) checks the Gemini request, and the conformance
+  scenario `no-sampling` checks the request every provider's fake receives.
+
+### BL-58 — A turn kept local can still reach cloud services in three ways (Medium)
+- **Found:** 2026-11-20, while building V4-02.
+- **Evidence:** V4-02 keeps a turn in a domain of `LLM_LOCAL_DOMAINS` on Ollama and skips its embedding
+  (`internal/orchestrator/turn.go`, §3.19 of SYSTEM.md). Three paths are outside that: (1) the turn is stored in
+  the conversation history (`chat:person:<id>`), and the next turn that is not local sends that history to the
+  cloud provider; (2) a voice note is transcribed by Groq before the turn's domains are known; (3) a tool the
+  model calls (web search, Gmail) reaches its own service.
+- **Impact:** an owner who sets `LLM_LOCAL_DOMAINS=finance` may expect finance conversations never to leave the
+  machine, and (1) breaks that one turn later. (2) and (3) follow from what the person asked for.
+- **Fix:** decide whether the history of a local turn is withheld from later cloud turns (for example stored
+  with a local mark and dropped from a cloud request), and say in the docs what local routing covers. Test: a
+  cloud turn after a local one carries none of the local turn's text.
+
+### BL-59 — A doc-reading test fails when the doc has Windows line endings (Low)
+- **Found:** 2026-11-20, while running the race suite for V4-02 in the golang container, which mounts the Windows
+  working tree.
+- **Evidence:** `sizeChangeMigration` (`internal/db/embedding_space_test.go`) finds the migration in
+  docs/EMBEDDINGS.md with the pattern ``<!-- size-change-migration -->\s*```sql\n(.*?)```  ``. With CRLF line endings
+  in the working copy (`core.autocrlf=true`, or an editor that writes CRLF) the `\n` after `sql` does not match and
+  the test fails with "must hold the size-change migration in a marked sql block". The committed file is LF, so CI
+  passes; a local run against a CRLF working copy does not.
+- **Impact:** a false failure of the full local check on Windows. No effect on the product.
+- **Fix:** match `\r?\n` in the pattern (the function already removes `\r` from the match), or add
+  `docs/*.md text eol=lf` to `.gitattributes`. Test: the function finds the block in a CRLF copy of the doc.
 
 ### BL-30 — Other tests change the process environment and do not restore it exactly (Low)
 - **Found:** 2026-11-19, in the search of every `_test.go` file done for BL-27.
