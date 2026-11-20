@@ -174,7 +174,7 @@ func (r *mutationResolver) SaveTopicMemory(ctx context.Context, topic string, su
 		ValidFrom:       time.Now(),
 		CreatedAt:       time.Now(),
 		CreatedByUserID: actorID,
-		Embedding:       pgvector.NewVector(make([]float32, 3072)),
+		Embedding:       pgvector.NewVector(make([]float32, dbmodels.EmbeddingDimensions)),
 	}
 
 	if err := r.memoryRepo().SaveTopicMemory(ctx, hs, &mem); err != nil {

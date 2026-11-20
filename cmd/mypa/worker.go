@@ -157,6 +157,13 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 	if err = db.EnsureMigrated(ctx, sqlDB); err != nil {
 		return w, err
 	}
+	// V4-03: embeddings come from EMBEDDING_MODEL, not the chat model, and only when the stored
+	// vectors were made by that model.
+	embedder, err := prepareEmbeddings(ctx, cfg, dbClient)
+	if err != nil {
+		return w, fmt.Errorf("embeddings: %w", err)
+	}
+	llmClient.UseEmbedder(embedder)
 	lanes.set(dbClient)
 	// Accounts Migration B made have no channel yet: no code outside the adapters names a platform,
 	// so the adapter that recognizes each ID names it, before any message is taken (V4-32).

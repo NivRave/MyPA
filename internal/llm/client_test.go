@@ -96,15 +96,8 @@ func TestClient_Chat_ToolCall(t *testing.T) {
 func TestClient_GenerateEmbedding(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Contains(t, r.URL.Path, "EmbedContent")
-
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"embeddings": [
-				{
-					"values": [0.1, 0.2, 0.3]
-				}
-			]
-		}`))
+		_, _ = w.Write(embeddingsJSON(t, 1, 3, 0.1))
 	}))
 	defer ts.Close()
 
@@ -116,6 +109,9 @@ func TestClient_GenerateEmbedding(t *testing.T) {
 
 	client, err := NewClient(context.Background(), "mock-key", "", withHTTPClient)
 	require.NoError(t, err)
+	embedder, err := NewEmbedder(context.Background(), "mock-key", config.DefaultEmbeddingModel, 3, withHTTPClient)
+	require.NoError(t, err)
+	client.UseEmbedder(embedder)
 
 	emb, err := client.GenerateEmbedding(context.Background(), "test text")
 	require.NoError(t, err)

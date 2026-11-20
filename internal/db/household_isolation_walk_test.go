@@ -90,6 +90,10 @@ var unscopedMethods = map[string]string{
 	"UnstickDeliveries": "install-level minute tick: rows a crash left mid-send",
 	"PurgeDeliveries":   "install-level clean-up of messages that ended a month ago",
 	"DeliveryCounts":    "/doctor counts for the admin's own household, by its memberships",
+	// V4-03: the embedding model is install-wide; every household's vectors must be in one space.
+	"EmbeddingStatus":     "install-level counts for the offline `mypa embeddings status`",
+	"CheckEmbeddingSpace": "install-level start-up check of the recorded embedding model; changes no memory",
+	"Reembed":             "offline `mypa embeddings reembed`: every household's vectors move to one model together",
 }
 
 var scopeType = reflect.TypeOf(identity.Scope{})
