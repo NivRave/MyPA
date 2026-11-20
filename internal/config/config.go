@@ -19,6 +19,7 @@ type Config struct {
 	Redis      RedisConfig      `mapstructure:"redis"`
 	Database   DatabaseConfig   `mapstructure:"database"`
 	Gemini     GeminiConfig     `mapstructure:"gemini"`
+	Embedding  EmbeddingConfig  `mapstructure:"embedding"`
 	Google     GoogleConfig     `mapstructure:"google"`
 	Groq       GroqConfig       `mapstructure:"groq"`
 	Tavily     TavilyConfig     `mapstructure:"tavily"`
@@ -96,6 +97,15 @@ type GeminiConfig struct {
 	Model  string `mapstructure:"model"`
 }
 
+// EmbeddingConfig is the embedding model, a setting of its own (V4-03). It is never derived from
+// the chat model: the stored memory vectors belong to the embedding model that made them, so a
+// change of chat model or provider must leave them alone. The key is GEMINI_API_KEY, which every
+// install needs for embeddings until a second embedding provider is supported, even one that
+// chats through another provider.
+type EmbeddingConfig struct {
+	Model string `mapstructure:"model"`
+}
+
 // GoogleConfig holds Google OAuth settings for Calendar API.
 type GoogleConfig struct {
 	ClientID     string `mapstructure:"client_id"`
@@ -122,6 +132,12 @@ type GroqConfig struct {
 // production code, configuration or the dashboard, by its API name or its display name.
 const DefaultGeminiModel = "gemini-3.6-flash"
 
+// DefaultEmbeddingModel is the embedding model an install uses when EMBEDDING_MODEL is not set
+// (V4-03). It is the model every install has embedded its memories with so far. Changing it on an
+// install with memories needs a re-embed (`mypa embeddings reembed`, docs/EMBEDDINGS.md): the app
+// refuses to start while the configured model differs from the one the stored vectors came from.
+const DefaultEmbeddingModel = "gemini-embedding-001"
+
 // Load reads configuration from config file and environment variables.
 func Load() (*Config, error) {
 	// Load .env file if it exists so Viper can read the env vars
@@ -136,6 +152,7 @@ func Load() (*Config, error) {
 	v.SetDefault("rabbitmq.prefetch", 4)
 	v.SetDefault("server.weekend_days", "Friday,Saturday")
 	v.SetDefault("gemini.model", DefaultGeminiModel)
+	v.SetDefault("embedding.model", DefaultEmbeddingModel)
 
 	// Config file
 	v.SetConfigName("config")
@@ -167,6 +184,7 @@ func Load() (*Config, error) {
 		"DATABASE_URL":         "database.url",
 		"GEMINI_API_KEY":       "gemini.api_key",
 		"GEMINI_MODEL":         "gemini.model",
+		"EMBEDDING_MODEL":      "embedding.model",
 		"GOOGLE_CLIENT_ID":     "google.client_id",
 		"GOOGLE_CLIENT_SECRET": "google.client_secret",
 		"GROQ_API_KEY":         "groq.api_key",

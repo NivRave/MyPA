@@ -89,7 +89,7 @@ func (r *MemoryV2Repo) SaveTopicMemory(ctx context.Context, s identity.Scope, me
 	}
 	memory.Topic = strings.ToLower(strings.TrimSpace(memory.Topic))
 	if len(memory.Embedding.Slice()) == 0 {
-		memory.Embedding = pgvector.NewVector(make([]float32, 3072))
+		memory.Embedding = pgvector.NewVector(make([]float32, models.EmbeddingDimensions))
 	}
 
 	result := r.db.WithContext(ctx).Create(memory)

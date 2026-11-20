@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -19,6 +20,15 @@ type Client struct {
 	model       string
 	extraTools  []*genai.FunctionDeclaration
 	toolsMu     sync.RWMutex
+	// embedder makes the embeddings GenerateEmbedding returns. It is set separately (UseEmbedder)
+	// because the embedding model is not the chat model (V4-03).
+	embedder *Embedder
+}
+
+// UseEmbedder sets the embedder GenerateEmbedding uses and returns the client.
+func (c *Client) UseEmbedder(e *Embedder) *Client {
+	c.embedder = e
+	return c
 }
 
 // NewClient initializes a new Gemini client.
@@ -262,21 +272,11 @@ func (c *Client) Chat(ctx context.Context, systemInstruction string, history []m
 	}, nil
 }
 
-// GenerateEmbedding generates a vector embedding for the given text.
+// GenerateEmbedding returns the embedding of text, made by the client's embedder (UseEmbedder)
+// with the embedding model, never with the chat model (V4-03).
 func (c *Client) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
-	// Use gemini-embedding-001 model
-	contents := []*genai.Content{
-		{Parts: []*genai.Part{genai.NewPartFromText(text)}},
+	if c.embedder == nil {
+		return nil, errors.New("no embedding model is configured")
 	}
-	resp, err := c.genaiClient.Models.EmbedContent(ctx, "gemini-embedding-001", contents, nil)
-	
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate embedding: %w", err)
-	}
-
-	if len(resp.Embeddings) == 0 {
-		return nil, fmt.Errorf("no embeddings returned")
-	}
-
-	return resp.Embeddings[0].Values, nil
+	return c.embedder.Embed(ctx, text)
 }

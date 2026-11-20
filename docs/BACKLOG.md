@@ -34,7 +34,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-21 | Medium | `/restore` in chat restores over the live schema and does not migrate, which breaks once V4 adds a migration | done 2026-11-19 (`chore/bl-21-retire-chat-restore`): option A, the chat restore is retired |
 | BL-22 | Low | Restore tool: the rollback test cannot fail yet, and the piped dump check runs only against a fake | open |
 | BL-23 | Low | A failing archive step makes the nightly backup discard its database dump | open |
-| BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: belongs with the re-embedding path of V4-03 |
+| BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: the backfill exists since V4-03 (`mypa embeddings reembed --missing`); running it on the live install is the owner's |
 | BL-25 | Low | Undo snapshots of saved memories carry the full 3,072-number embedding | open: decide with BL-24 and V4-03 |
 | BL-26 | Medium | `save_topic_memory` stores `scope` as given, so a value such as `Family` is saved but never found | open |
 | BL-27 | High | The real-phone-number guard and the `.gitignore` guard are skipped in every full test run, including CI | done 2026-11-19 (`chore/bl-27-guards`) |
@@ -67,6 +67,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-54 | Low | WhatsApp templates exist in English only | open |
 | BL-55 | Medium | A legacy workflow run counts as the person writing, and its answer bypasses the delivery policy | open |
 | BL-56 | Low | Telegram's "bot was blocked by the user" is an error, not a "not reachable" refusal | open |
+| BL-57 | Medium | Undo restores a memory's old embedding, which after a re-embed into another model is in the wrong vector space | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -355,6 +356,10 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** a one-off backfill that embeds every `topic_memories` row with a zero vector, reporting how many it
   did. It is the same job as the re-embedding path V4-03 has to build and test, so do it there or reuse its
   mechanism. Test: a zero-vector memory is found by a similar query after the backfill.
+- **Mechanism (V4-03, 2026-11-20):** `mypa embeddings reembed --missing` embeds every `topic_memories` row
+  holding a zero vector with the recorded model, in one transaction (`db.Reembed`, `TestReembed_MissingOnly`).
+  `mypa embeddings status` shows how many rows are affected, and the worker logs the count at start. Not done:
+  running it on the live install, which follows the V4.0 upgrade (docs/EMBEDDINGS.md).
 
 ### BL-25 — Undo snapshots of memories carry the full embedding (Low)
 - **Found:** 2026-11-19, in the review of V4-06.
@@ -729,6 +734,20 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   channel or holds the message.
 - **Fix:** map Bot API 403 (blocked, user deactivated, chat not found) to `channel.NotReachable` in
   `telegram.Adapter.Send`, so the chain moves on at once.
+
+### BL-57 — Undo restores a memory's old embedding (Medium)
+- **Found:** 2026-11-20, while building V4-03.
+- **Evidence:** `RollbackSnapshot` (`internal/db/durability_repo.go`) writes a mutation's `BeforeJSON` back into
+  the row, for an undone update and for a restored delete. For a `TopicMemory` that snapshot holds the whole
+  `embedding` (BL-25). `mypa embeddings reembed` replaces the vectors in `topic_memories` but not the copies in
+  `mutation_logs`.
+- **Impact:** after a re-embed into another model of the same size, a memory restored with `/undo` or from the
+  dashboard comes back with a vector of the old model. It is not a zero vector, so `reembed --missing` does not
+  find it, and recall ranks it by a meaningless distance. After a change of size the restore fails outright
+  (the old vector does not fit the column). Nothing is affected until an install changes `EMBEDDING_MODEL`.
+- **Fix:** together with BL-25: keep the embedding out of the snapshot, and give a restored memory a zero vector
+  (or embed it again on restore). Test: after a re-embed into another model, a restored memory holds no vector
+  of the old model.
 
 ## Operations (owner)
 

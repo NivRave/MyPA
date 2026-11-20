@@ -56,20 +56,22 @@ func (TopicMemory) TableName() string {
 	return "topic_memories"
 }
 
-// BeforeCreate ensures that uninitialized embeddings are set to a 3072-dimensional zero vector
-// to satisfy PostgreSQL pgvector constraints (preventing SQLSTATE 22000: vector must have at least 1 dimension).
+// BeforeCreate ensures that uninitialized embeddings are set to a zero vector of
+// EmbeddingDimensions to satisfy PostgreSQL pgvector constraints (preventing SQLSTATE 22000:
+// vector must have at least 1 dimension). A zero vector means "no embedding yet":
+// `mypa embeddings reembed --missing` fills them.
 func (m *TopicMemory) BeforeCreate(tx *gorm.DB) error {
 	if len(m.Embedding.Slice()) == 0 {
-		m.Embedding = pgvector.NewVector(make([]float32, 3072))
+		m.Embedding = pgvector.NewVector(make([]float32, EmbeddingDimensions))
 	}
 	return nil
 }
 
-// BeforeSave ensures that uninitialized embeddings are set to a 3072-dimensional zero vector
-// on save/update operations.
+// BeforeSave ensures that uninitialized embeddings are set to a zero vector of
+// EmbeddingDimensions on save/update operations.
 func (m *TopicMemory) BeforeSave(tx *gorm.DB) error {
 	if len(m.Embedding.Slice()) == 0 {
-		m.Embedding = pgvector.NewVector(make([]float32, 3072))
+		m.Embedding = pgvector.NewVector(make([]float32, EmbeddingDimensions))
 	}
 	return nil
 }
