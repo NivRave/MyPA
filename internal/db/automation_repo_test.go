@@ -31,7 +31,7 @@ func TestAutomationRepo_APIConnectors_CRUDAndIsolation(t *testing.T) {
 		EncryptedAuthHeaders: []byte("encrypted-ha-token"),
 		Description:          "Smart home automation bridge",
 	}
-	require.NoError(t, repo.CreateAPIConnector(&connA))
+	require.NoError(t, repo.CreateAPIConnector(scopeFor(t, client, famA), &connA))
 	require.NotZero(t, connA.ID)
 
 	// 2. Create connector for Tenant B
@@ -43,45 +43,45 @@ func TestAutomationRepo_APIConnectors_CRUDAndIsolation(t *testing.T) {
 		DefaultMethod:        "GET",
 		EncryptedAuthHeaders: []byte("encrypted-hue-token"),
 	}
-	require.NoError(t, repo.CreateAPIConnector(&connB))
+	require.NoError(t, repo.CreateAPIConnector(scopeFor(t, client, famB), &connB))
 	require.NotZero(t, connB.ID)
 
 	// 3. Positive lookup and tenant isolation
-	gotA, err := repo.GetAPIConnector(connA.ID, famA)
+	gotA, err := repo.GetAPIConnector(scopeFor(t, client, famA), connA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotA)
 	assert.Equal(t, "HomeAssistant", gotA.Name)
 	assert.Equal(t, famA, gotA.FamilyGroup)
 
 	// Tenant B querying Tenant A's connector returns nil
-	gotLeak, err := repo.GetAPIConnector(connA.ID, famB)
+	gotLeak, err := repo.GetAPIConnector(scopeFor(t, client, famB), connA.ID)
 	require.NoError(t, err)
 	assert.Nil(t, gotLeak, "Tenant B must not access Tenant A's connector")
 
 	// GetAPIConnectorByName
-	byNameA, err := repo.GetAPIConnectorByName(userA, famA, "homeassistant")
+	byNameA, err := repo.GetAPIConnectorByName(scopeFor(t, client, famA), "homeassistant")
 	require.NoError(t, err)
 	require.NotNil(t, byNameA)
 	assert.Equal(t, connA.ID, byNameA.ID)
 
-	byNameLeak, err := repo.GetAPIConnectorByName(userA, famA, "philipshue")
+	byNameLeak, err := repo.GetAPIConnectorByName(scopeFor(t, client, famA), "philipshue")
 	require.NoError(t, err)
 	assert.Nil(t, byNameLeak, "Tenant A must not find Tenant B's connector by name")
 
 	// 4. ListAPIConnectors
-	listA, err := repo.ListAPIConnectors(userA, famA)
+	listA, err := repo.ListAPIConnectors(scopeFor(t, client, famA))
 	require.NoError(t, err)
 	require.Len(t, listA, 1)
 	assert.Equal(t, connA.ID, listA[0].ID)
 
-	listB, err := repo.ListAPIConnectors(userB, famB)
+	listB, err := repo.ListAPIConnectors(scopeFor(t, client, famB))
 	require.NoError(t, err)
 	require.Len(t, listB, 1)
 	assert.Equal(t, connB.ID, listB[0].ID)
 
 	// 5. DeleteAPIConnector
-	require.NoError(t, repo.DeleteAPIConnector(connA.ID))
-	deletedA, err := repo.GetAPIConnector(connA.ID, famA)
+	require.NoError(t, repo.DeleteAPIConnector(scopeFor(t, client, famA), connA.ID))
+	deletedA, err := repo.GetAPIConnector(scopeFor(t, client, famA), connA.ID)
 	require.NoError(t, err)
 	assert.Nil(t, deletedA)
 }
@@ -108,7 +108,7 @@ func TestAutomationRepo_AutomationRules_CRUDAndIsolation(t *testing.T) {
 		ActionInstruction: "Check diaper inventory",
 		IsActive:          true,
 	}
-	require.NoError(t, repo.CreateAutomationRule(&ruleA))
+	require.NoError(t, repo.CreateAutomationRule(scopeFor(t, client, famA), &ruleA))
 	require.NotZero(t, ruleA.ID)
 
 	// 2. Create rule for Tenant B
@@ -122,21 +122,21 @@ func TestAutomationRepo_AutomationRules_CRUDAndIsolation(t *testing.T) {
 		ActionInstruction: "Notify family admin",
 		IsActive:          true,
 	}
-	require.NoError(t, repo.CreateAutomationRule(&ruleB))
+	require.NoError(t, repo.CreateAutomationRule(scopeFor(t, client, famB), &ruleB))
 	require.NotZero(t, ruleB.ID)
 
 	// 3. Positive lookup and tenant isolation
-	gotA, err := repo.GetAutomationRule(ruleA.ID)
+	gotA, err := repo.GetAutomationRule(scopeFor(t, client, famA), ruleA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotA)
 	assert.Equal(t, "Diaper Restock Alert", gotA.Name)
 
-	listA, err := repo.ListAutomationRules(userA, famA, "all")
+	listA, err := repo.ListAutomationRules(scopeFor(t, client, famA), "all")
 	require.NoError(t, err)
 	require.Len(t, listA, 1)
 	assert.Equal(t, ruleA.ID, listA[0].ID)
 
-	listB, err := repo.ListAutomationRules(userB, famB, "all")
+	listB, err := repo.ListAutomationRules(scopeFor(t, client, famB), "all")
 	require.NoError(t, err)
 	require.Len(t, listB, 1)
 	assert.Equal(t, ruleB.ID, listB[0].ID)
@@ -149,7 +149,7 @@ func TestAutomationRepo_AutomationRules_CRUDAndIsolation(t *testing.T) {
 
 	// Update to inactive
 	ruleA.IsActive = false
-	require.NoError(t, repo.UpdateAutomationRule(&ruleA))
+	require.NoError(t, repo.UpdateAutomationRule(scopeFor(t, client, famA), &ruleA))
 
 	activeBabyAfter, err := repo.ListActiveAutomationRules("baby")
 	require.NoError(t, err)
@@ -157,18 +157,18 @@ func TestAutomationRepo_AutomationRules_CRUDAndIsolation(t *testing.T) {
 
 	// 5. DeleteAutomationRule with tenant scoping
 	// Attempt delete with wrong tenant should not delete
-	err = repo.DeleteAutomationRule(ruleA.ID, famB)
+	err = repo.DeleteAutomationRule(scopeFor(t, client, famB), ruleA.ID)
 	require.NoError(t, err)
 
-	recheckStillThere, err := repo.GetAutomationRule(ruleA.ID)
+	recheckStillThere, err := repo.GetAutomationRule(scopeFor(t, client, famA), ruleA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, recheckStillThere, "Rule should not be deleted by unauthorized tenant")
 
 	// Delete with correct tenant
-	err = repo.DeleteAutomationRule(ruleA.ID, famA)
+	err = repo.DeleteAutomationRule(scopeFor(t, client, famA), ruleA.ID)
 	require.NoError(t, err)
 
-	recheckDeleted, err := repo.GetAutomationRule(ruleA.ID)
+	recheckDeleted, err := repo.GetAutomationRule(scopeFor(t, client, famA), ruleA.ID)
 	require.NoError(t, err)
 	assert.Nil(t, recheckDeleted)
 }
@@ -257,54 +257,54 @@ func TestAutomationRepo_PersonalCRM_CRUDAndIsolation(t *testing.T) {
 		MedicalNotes:       "Diabetic, low sugar gifts only",
 		UpdatedAt:          time.Now(),
 	}
-	require.NoError(t, repo.UpsertCRMContact(&contactA))
+	require.NoError(t, repo.UpsertCRMContact(scopeFor(t, client, famA), &contactA))
 	require.NotZero(t, contactA.ID)
 
 	// 2. Create contact for Family B
 	contactB := models.PersonalCRMContact{
-		UserID:             userB,
-		FamilyGroup:        famB,
-		PersonName:         "Uncle Bob",
-		Relationship:       "uncle",
-		GiftIdeasAndSizes:  "Books on history",
-		UpdatedAt:          time.Now(),
+		UserID:            userB,
+		FamilyGroup:       famB,
+		PersonName:        "Uncle Bob",
+		Relationship:      "uncle",
+		GiftIdeasAndSizes: "Books on history",
+		UpdatedAt:         time.Now(),
 	}
-	require.NoError(t, repo.UpsertCRMContact(&contactB))
+	require.NoError(t, repo.UpsertCRMContact(scopeFor(t, client, famB), &contactB))
 	require.NotZero(t, contactB.ID)
 
 	// 3. Positive lookup and cross-tenant isolation
-	gotA, err := repo.GetCRMContact(contactA.ID)
+	gotA, err := repo.GetCRMContact(scopeFor(t, client, famA), contactA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotA)
 	assert.Equal(t, "Grandma Rose", gotA.PersonName)
 
-	listA, err := repo.ListCRMContacts(userA, famA, "Rose")
+	listA, err := repo.ListCRMContacts(scopeFor(t, client, famA), "Rose")
 	require.NoError(t, err)
 	require.Len(t, listA, 1)
 	assert.Equal(t, contactA.ID, listA[0].ID)
 
 	// Cross-tenant search
-	listLeak, err := repo.ListCRMContacts(userA, famA, "Bob")
+	listLeak, err := repo.ListCRMContacts(scopeFor(t, client, famA), "Bob")
 	require.NoError(t, err)
 	assert.Empty(t, listLeak, "Family A must not see Family B's contact")
 
-	listB, err := repo.ListCRMContacts(userB, famB, "Bob")
+	listB, err := repo.ListCRMContacts(scopeFor(t, client, famB), "Bob")
 	require.NoError(t, err)
 	require.Len(t, listB, 1)
 	assert.Equal(t, contactB.ID, listB[0].ID)
 
 	// 4. Update contact
 	contactA.GiftIdeasAndSizes = "Wool socks, Gardening tools"
-	require.NoError(t, repo.UpsertCRMContact(&contactA))
+	require.NoError(t, repo.UpsertCRMContact(scopeFor(t, client, famA), &contactA))
 
-	recheckA, err := repo.GetCRMContact(contactA.ID)
+	recheckA, err := repo.GetCRMContact(scopeFor(t, client, famA), contactA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, recheckA)
 	assert.Equal(t, "Wool socks, Gardening tools", recheckA.GiftIdeasAndSizes)
 
 	// 5. Delete contact
-	require.NoError(t, repo.DeleteCRMContact(contactA.ID))
-	deletedA, err := repo.GetCRMContact(contactA.ID)
+	require.NoError(t, repo.DeleteCRMContact(scopeFor(t, client, famA), contactA.ID))
+	deletedA, err := repo.GetCRMContact(scopeFor(t, client, famA), contactA.ID)
 	require.NoError(t, err)
 	assert.Nil(t, deletedA)
 }

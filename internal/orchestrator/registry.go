@@ -10,6 +10,7 @@ import (
 
 	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/genai"
@@ -21,7 +22,11 @@ type NotificationSender func(ctx context.Context, userID, text string) error
 // CallContext provides domain ToolModules with all ambient context and services
 // required to execute tools and generate system prompt additions.
 type CallContext struct {
-	User                *models.User
+	User *models.User
+	// Scope is the household, person and role every repository call is checked against
+	// (V4-30, ADR 0002). It is built once per message from the sender's users row; modules
+	// never derive a tenant from anything else.
+	Scope               identity.Scope
 	Message             channel.Inbound
 	DB                  DBClient
 	LLM                 LLMClient
@@ -39,16 +44,6 @@ func (c CallContext) ActorID() string {
 		return strings.TrimSpace(c.User.PlatformID)
 	}
 	return strings.TrimSpace(c.Message.Sender)
-}
-
-// TenantFamilyGroup returns the non-empty family group scope for the active session.
-// If the user does not belong to a family group (or User is nil), it safely falls
-// back to ActorID(), ensuring a non-empty, strictly scoped tenant boundary.
-func (c CallContext) TenantFamilyGroup() string {
-	if c.User != nil && strings.TrimSpace(c.User.FamilyGroup) != "" {
-		return strings.TrimSpace(c.User.FamilyGroup)
-	}
-	return c.ActorID()
 }
 
 // ToolModule is the unified contract that domain packages (e.g. durability, memory,
@@ -220,11 +215,12 @@ func (r *Registry) CombinedSystemPrompt(ctx context.Context, callCtx CallContext
 		return ""
 	}
 
-	familyGroup := callCtx.TenantFamilyGroup()
+	// V4-30: sections are cached under the household's ID, never its label.
+	householdID := callCtx.Scope.HouseholdID()
 	userID := callCtx.ActorID()
 	// Cache only when the caller's identity is known: sections may contain personal data,
 	// so they are keyed per user and must never be stored under a shared/anonymous key.
-	useCache := cache != nil && familyGroup != "" && userID != ""
+	useCache := cache != nil && callCtx.Scope.Valid() && userID != ""
 	results := make([]string, len(mods))
 	var missingIndices []int
 
@@ -235,7 +231,7 @@ func (r *Registry) CombinedSystemPrompt(ctx context.Context, callCtx CallContext
 			modNames[i] = m.Name()
 		}
 
-		hits, _, err := cache.GetPromptSections(ctx, familyGroup, userID, modNames)
+		hits, _, err := cache.GetPromptSections(ctx, householdID, userID, modNames)
 		if err == nil {
 			for i, m := range mods {
 				if val, ok := hits[m.Name()]; ok {
@@ -279,7 +275,7 @@ func (r *Registry) CombinedSystemPrompt(ctx context.Context, callCtx CallContext
 					if rec := recover(); rec != nil {
 						slog.Error("recovered panic in module SystemPromptSection",
 							"module", m.Name(),
-							"family_group", familyGroup,
+							"household_id", householdID,
 							"panic", rec,
 						)
 						done <- ""
@@ -297,7 +293,7 @@ func (r *Registry) CombinedSystemPrompt(ctx context.Context, callCtx CallContext
 				slog.Warn("prompt_cache: module prompt section timed out, proceeding with remaining sections",
 					"module", m.Name(),
 					"timeout", "800ms",
-					"family_group", familyGroup,
+					"household_id", householdID,
 				)
 			}
 			return nil
@@ -312,7 +308,7 @@ func (r *Registry) CombinedSystemPrompt(ctx context.Context, callCtx CallContext
 		toCache.Range(func(key, value any) bool {
 			modName := key.(string)
 			content := value.(string)
-			if err := cache.SetPromptSection(ctx, familyGroup, userID, modName, content, DefaultPromptCacheTTL); err != nil {
+			if err := cache.SetPromptSection(ctx, householdID, userID, modName, content, DefaultPromptCacheTTL); err != nil {
 				slog.Warn("prompt_cache: failed to write prompt section to Redis", "module", modName, "error", err)
 			}
 			return true

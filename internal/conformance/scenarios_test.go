@@ -167,8 +167,9 @@ func plainReply(t *testing.T, e *env) {
 // makes them a member with the code's role and family; a code works once.
 func pairing(t *testing.T, e *env) {
 	expires := time.Now().Add(time.Hour)
-	require.NoError(t, e.db.CreatePairingCode(models.PairingCode{Code: "482913", Role: "family", FamilyGroup: "Levi", ExpiresAt: expires}))
-	require.NoError(t, e.db.CreatePairingCode(models.PairingCode{Code: "771204", Role: "admin", FamilyGroup: "Levi", ExpiresAt: expires}))
+	levi := e.db.adminOf(t, "Levi")
+	require.NoError(t, e.db.CreatePairingCode(levi, models.PairingCode{Code: "482913", Role: "family", FamilyGroup: "Levi", ExpiresAt: expires}))
+	require.NoError(t, e.db.CreatePairingCode(levi, models.PairingCode{Code: "771204", Role: "admin", FamilyGroup: "Levi", ExpiresAt: expires}))
 	first, second, third := e.ch.person(1), e.ch.person(2), e.ch.person(3)
 
 	// A stranger is refused and the model is never consulted.
@@ -206,7 +207,7 @@ func pairing(t *testing.T, e *env) {
 
 // pairingLockout: five wrong codes lock the sender out, and a valid code is refused while locked.
 func pairingLockout(t *testing.T, e *env) {
-	require.NoError(t, e.db.CreatePairingCode(models.PairingCode{Code: "482913", Role: "family", FamilyGroup: "Levi", ExpiresAt: time.Now().Add(time.Hour)}))
+	require.NoError(t, e.db.CreatePairingCode(e.db.adminOf(t, "Levi"), models.PairingCode{Code: "482913", Role: "family", FamilyGroup: "Levi", ExpiresAt: time.Now().Add(time.Hour)}))
 	p := e.ch.person(1)
 
 	for i := 0; i < 5; i++ {
@@ -272,7 +273,7 @@ func reminder(t *testing.T, e *env) {
 	require.NoError(t, e.db.SaveReminder(models.ScheduledReminder{UserID: writer.UserID, Message: "Call the dentist about **Noa**'s appointment", DueTime: past}))
 	require.NoError(t, e.db.SaveReminder(models.ScheduledReminder{UserID: silent.UserID, Message: "Water the plants", DueTime: past}))
 	e.db.mu.Lock()
-	e.db.shared = append(e.db.shared, models.SharedTaskReminder{ID: 1, FamilyGroup: "Levi", Topic: "house", Title: "Renew the car insurance", DueTime: &past, CreatedByUserID: writer.UserID})
+	e.db.shared = append(e.db.shared, models.SharedTaskReminder{ID: 1, HouseholdID: e.db.household("Levi"), FamilyGroup: "Levi", Topic: "house", Title: "Renew the car insurance", DueTime: &past, CreatedByUserID: writer.UserID})
 	e.db.mu.Unlock()
 
 	e.engine.CheckAndSendReminders()

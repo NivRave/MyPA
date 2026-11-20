@@ -36,8 +36,9 @@ func (c *AuthClaims) IsAdmin() bool {
 }
 
 // canActOnUser reports whether the caller may read or modify targetUserID's data: global admins
-// anyone; tenant-bound admins only users of their own family; everyone else only themselves.
-func canActOnUser(c *AuthClaims, targetUserID string, familyOf func(userID string) (string, error)) bool {
+// anyone; tenant-bound admins only users of their own household, compared by household ID
+// (V4-30); everyone else only themselves.
+func canActOnUser(c *AuthClaims, callerHousehold, targetUserID string, householdOf func(userID string) (string, error)) bool {
 	switch {
 	case c == nil:
 		return false
@@ -45,9 +46,9 @@ func canActOnUser(c *AuthClaims, targetUserID string, familyOf func(userID strin
 		return true
 	case targetUserID == c.UserID:
 		return true
-	case c.IsAdmin() && c.FamilyGroup != "" && familyOf != nil:
-		fg, err := familyOf(targetUserID)
-		return err == nil && fg != "" && strings.EqualFold(fg, c.FamilyGroup)
+	case c.IsAdmin() && callerHousehold != "" && householdOf != nil:
+		h, err := householdOf(targetUserID)
+		return err == nil && h != "" && h == callerHousehold
 	default:
 		return false
 	}

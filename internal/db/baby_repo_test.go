@@ -33,7 +33,7 @@ func TestBabyRepo_Profile_CRUDAndIsolation(t *testing.T) {
 		PediatricianInfo:   "Dr. Smith, City Clinic",
 		AllergiesNotes:     "None known",
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profileA))
+	require.NoError(t, repo.UpsertBabyProfile(scopeFor(t, client, famA), &profileA))
 	require.NotZero(t, profileA.ID)
 
 	// 2. Create Profile for Family B
@@ -46,33 +46,33 @@ func TestBabyRepo_Profile_CRUDAndIsolation(t *testing.T) {
 		CurrentWeightGrams: 4500,
 		HeightCm:           58.0,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profileB))
+	require.NoError(t, repo.UpsertBabyProfile(scopeFor(t, client, famB), &profileB))
 	require.NotZero(t, profileB.ID)
 
 	// 3. Positive lookup and cross-tenant isolation
-	gotA, err := repo.GetBabyProfile(profileA.ID)
+	gotA, err := repo.GetBabyProfile(scopeFor(t, client, famA), profileA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotA)
 	assert.Equal(t, "Alice", gotA.Name)
 	assert.Equal(t, famA, gotA.FamilyGroup)
 
-	byNameA, err := repo.GetBabyProfileByName(famA, "alice")
+	byNameA, err := repo.GetBabyProfileByName(scopeFor(t, client, famA), "alice")
 	require.NoError(t, err)
 	require.NotNil(t, byNameA)
 	assert.Equal(t, profileA.ID, byNameA.ID)
 
 	// Cross-tenant: Family A querying Bob returns nil
-	byNameLeak, err := repo.GetBabyProfileByName(famA, "bob")
+	byNameLeak, err := repo.GetBabyProfileByName(scopeFor(t, client, famA), "bob")
 	require.NoError(t, err)
 	assert.Nil(t, byNameLeak, "Family A must not find Family B's child profile")
 
 	// GetBabyProfilesForFamily isolation
-	listA, err := repo.GetBabyProfilesForFamily(famA)
+	listA, err := repo.GetBabyProfilesForFamily(scopeFor(t, client, famA))
 	require.NoError(t, err)
 	require.Len(t, listA, 1)
 	assert.Equal(t, "Alice", listA[0].Name)
 
-	listB, err := repo.GetBabyProfilesForFamily(famB)
+	listB, err := repo.GetBabyProfilesForFamily(scopeFor(t, client, famB))
 	require.NoError(t, err)
 	require.Len(t, listB, 1)
 	assert.Equal(t, "Bob", listB[0].Name)
@@ -80,17 +80,17 @@ func TestBabyRepo_Profile_CRUDAndIsolation(t *testing.T) {
 	// 4. Update profile in-place
 	profileA.CurrentWeightGrams = 4600
 	profileA.AllergiesNotes = "Slight eczema noticed"
-	require.NoError(t, repo.UpsertBabyProfile(&profileA))
+	require.NoError(t, repo.UpsertBabyProfile(scopeFor(t, client, famA), &profileA))
 
-	recheckA, err := repo.GetBabyProfile(profileA.ID)
+	recheckA, err := repo.GetBabyProfile(scopeFor(t, client, famA), profileA.ID)
 	require.NoError(t, err)
 	require.NotNil(t, recheckA)
 	assert.Equal(t, 4600, recheckA.CurrentWeightGrams)
 	assert.Equal(t, "Slight eczema noticed", recheckA.AllergiesNotes)
 
 	// 5. Delete profile
-	require.NoError(t, repo.DeleteBabyProfile(profileA.ID))
-	deletedA, err := repo.GetBabyProfile(profileA.ID)
+	require.NoError(t, repo.DeleteBabyProfile(scopeFor(t, client, famA), profileA.ID))
+	deletedA, err := repo.GetBabyProfile(scopeFor(t, client, famA), profileA.ID)
 	require.NoError(t, err)
 	assert.Nil(t, deletedA)
 }
@@ -111,7 +111,7 @@ func TestBabyRepo_CareLogs_CRUDAnalyticsAndIsolation(t *testing.T) {
 		Name:        "Charlie",
 		DateOfBirth: time.Now().Add(-30 * 24 * time.Hour),
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&babyA))
+	require.NoError(t, repo.UpsertBabyProfile(scopeFor(t, client, famA), &babyA))
 
 	now := time.Now()
 
@@ -126,7 +126,7 @@ func TestBabyRepo_CareLogs_CRUDAnalyticsAndIsolation(t *testing.T) {
 		Timestamp:      now.Add(-2 * time.Hour),
 		LoggedByUserID: userA,
 	}
-	require.NoError(t, repo.CreateCareLog(&logFeed))
+	require.NoError(t, repo.CreateCareLog(scopeFor(t, client, famA), &logFeed))
 	require.NotZero(t, logFeed.ID)
 
 	logDiaper := models.BabyCareLog{
@@ -137,7 +137,7 @@ func TestBabyRepo_CareLogs_CRUDAnalyticsAndIsolation(t *testing.T) {
 		Timestamp:      now.Add(-1 * time.Hour),
 		LoggedByUserID: userA,
 	}
-	require.NoError(t, repo.CreateCareLog(&logDiaper))
+	require.NoError(t, repo.CreateCareLog(scopeFor(t, client, famA), &logDiaper))
 
 	logMed := models.BabyCareLog{
 		BabyID:         babyA.ID,
@@ -149,37 +149,37 @@ func TestBabyRepo_CareLogs_CRUDAnalyticsAndIsolation(t *testing.T) {
 		Timestamp:      now.Add(-30 * time.Minute),
 		LoggedByUserID: userA,
 	}
-	require.NoError(t, repo.CreateCareLog(&logMed))
+	require.NoError(t, repo.CreateCareLog(scopeFor(t, client, famA), &logMed))
 
 	// 2. Query and filter logs
-	allLogsA, err := repo.GetCareLogs(babyA.ID, famA, "", now.Add(-5*time.Hour), now.Add(1*time.Hour), 10)
+	allLogsA, err := repo.GetCareLogs(scopeFor(t, client, famA), babyA.ID, "", now.Add(-5*time.Hour), now.Add(1*time.Hour), 10)
 	require.NoError(t, err)
 	require.Len(t, allLogsA, 3)
 
-	feedLogsA, err := repo.GetCareLogs(babyA.ID, famA, "feeding", time.Time{}, time.Time{}, 10)
+	feedLogsA, err := repo.GetCareLogs(scopeFor(t, client, famA), babyA.ID, "feeding", time.Time{}, time.Time{}, 10)
 	require.NoError(t, err)
 	require.Len(t, feedLogsA, 1)
 	assert.Equal(t, 120.0, feedLogsA[0].ValueNumeric)
 
 	// Cross-tenant isolation: querying with Family B returns 0
-	leakLogs, err := repo.GetCareLogs(babyA.ID, famB, "", time.Time{}, time.Time{}, 10)
+	leakLogs, err := repo.GetCareLogs(scopeFor(t, client, famB), babyA.ID, "", time.Time{}, time.Time{}, 10)
 	require.NoError(t, err)
 	assert.Empty(t, leakLogs, "Family B must not see Family A's baby care logs")
 
 	// 3. GetLastMedicationLog
-	lastMed, err := repo.GetLastMedicationLog(babyA.ID, famA, "Tylenol")
+	lastMed, err := repo.GetLastMedicationLog(scopeFor(t, client, famA), babyA.ID, "Tylenol")
 	require.NoError(t, err)
 	require.NotNil(t, lastMed)
 	assert.Contains(t, lastMed.Details, "Tylenol")
 	assert.Equal(t, 2.5, lastMed.ValueNumeric)
 
 	// Cross-tenant check for medication
-	wrongFamMed, err := repo.GetLastMedicationLog(babyA.ID, famB, "Tylenol")
+	wrongFamMed, err := repo.GetLastMedicationLog(scopeFor(t, client, famB), babyA.ID, "Tylenol")
 	require.NoError(t, err)
 	assert.Nil(t, wrongFamMed)
 
 	// 4. GetCareStatsSummary
-	summary, err := repo.GetCareStatsSummary(babyA.ID, famA, now.Add(-5*time.Hour), now.Add(1*time.Hour))
+	summary, err := repo.GetCareStatsSummary(scopeFor(t, client, famA), babyA.ID, now.Add(-5*time.Hour), now.Add(1*time.Hour))
 	require.NoError(t, err)
 	require.NotNil(t, summary)
 	assert.Equal(t, 1, summary.TotalFeedings)
@@ -189,8 +189,8 @@ func TestBabyRepo_CareLogs_CRUDAnalyticsAndIsolation(t *testing.T) {
 	assert.Equal(t, logMed.ID, summary.LastMedication.ID)
 
 	// 5. DeleteCareLog
-	require.NoError(t, repo.DeleteCareLog(logFeed.ID))
-	gotDeleted, err := repo.GetCareLogByID(logFeed.ID)
+	require.NoError(t, repo.DeleteCareLog(scopeFor(t, client, famA), logFeed.ID))
+	gotDeleted, err := repo.GetCareLogByID(scopeFor(t, client, famA), logFeed.ID)
 	require.NoError(t, err)
 	assert.Nil(t, gotDeleted)
 }
@@ -212,7 +212,7 @@ func TestBabyRepo_Inventory_CRUDAndLowStock(t *testing.T) {
 		Unit:              "canister",
 		LowThreshold:      2.0, // Low stock!
 	}
-	require.NoError(t, repo.UpsertBabyInventoryItem(&itemA1))
+	require.NoError(t, repo.UpsertBabyInventoryItem(scopeFor(t, client, famA), &itemA1))
 	require.NotZero(t, itemA1.ID)
 
 	itemA2 := models.BabyInventoryItem{
@@ -222,7 +222,7 @@ func TestBabyRepo_Inventory_CRUDAndLowStock(t *testing.T) {
 		Unit:              "count",
 		LowThreshold:      20.0, // Sufficient
 	}
-	require.NoError(t, repo.UpsertBabyInventoryItem(&itemA2))
+	require.NoError(t, repo.UpsertBabyInventoryItem(scopeFor(t, client, famA), &itemA2))
 	require.NotZero(t, itemA2.ID)
 
 	// 2. Create inventory item for Family B
@@ -233,46 +233,46 @@ func TestBabyRepo_Inventory_CRUDAndLowStock(t *testing.T) {
 		Unit:              "packs",
 		LowThreshold:      3.0,
 	}
-	require.NoError(t, repo.UpsertBabyInventoryItem(&itemB))
+	require.NoError(t, repo.UpsertBabyInventoryItem(scopeFor(t, client, famB), &itemB))
 	require.NotZero(t, itemB.ID)
 
 	// 3. Positive lookup and isolation
-	listA, err := repo.ListBabyInventoryItems(famA)
+	listA, err := repo.ListBabyInventoryItems(scopeFor(t, client, famA))
 	require.NoError(t, err)
 	require.Len(t, listA, 2)
 
-	listB, err := repo.ListBabyInventoryItems(famB)
+	listB, err := repo.ListBabyInventoryItems(scopeFor(t, client, famB))
 	require.NoError(t, err)
 	require.Len(t, listB, 1)
 	assert.Equal(t, "Baby Wipes", listB[0].ItemName)
 
-	byNameA, err := repo.GetBabyInventoryItemByName(famA, "formula powder")
+	byNameA, err := repo.GetBabyInventoryItemByName(scopeFor(t, client, famA), "formula powder")
 	require.NoError(t, err)
 	require.NotNil(t, byNameA)
 	assert.Equal(t, itemA1.ID, byNameA.ID)
 
 	// Cross-tenant: Family A querying Baby Wipes returns nil
-	byNameLeak, err := repo.GetBabyInventoryItemByName(famA, "baby wipes")
+	byNameLeak, err := repo.GetBabyInventoryItemByName(scopeFor(t, client, famA), "baby wipes")
 	require.NoError(t, err)
 	assert.Nil(t, byNameLeak)
 
 	// 4. Low stock detection
-	lowA, err := repo.GetLowBabyInventoryItems(famA)
+	lowA, err := repo.GetLowBabyInventoryItems(scopeFor(t, client, famA))
 	require.NoError(t, err)
 	require.Len(t, lowA, 1)
 	assert.Equal(t, "Formula Powder", lowA[0].ItemName)
 
 	// 5. Restock via upsert
 	itemA1.QuantityRemaining = 5.0
-	require.NoError(t, repo.UpsertBabyInventoryItem(&itemA1))
+	require.NoError(t, repo.UpsertBabyInventoryItem(scopeFor(t, client, famA), &itemA1))
 
-	lowAfterRestock, err := repo.GetLowBabyInventoryItems(famA)
+	lowAfterRestock, err := repo.GetLowBabyInventoryItems(scopeFor(t, client, famA))
 	require.NoError(t, err)
 	assert.Empty(t, lowAfterRestock, "Item should no longer be low stock after replenishment")
 
 	// 6. Delete inventory item
-	require.NoError(t, repo.DeleteBabyInventoryItem(itemA2.ID))
-	gotDeleted, err := repo.GetBabyInventoryItem(itemA2.ID)
+	require.NoError(t, repo.DeleteBabyInventoryItem(scopeFor(t, client, famA), itemA2.ID))
+	gotDeleted, err := repo.GetBabyInventoryItem(scopeFor(t, client, famA), itemA2.ID)
 	require.NoError(t, err)
 	assert.Nil(t, gotDeleted)
 }

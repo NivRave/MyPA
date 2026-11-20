@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"sort"
@@ -20,27 +21,28 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 		return "", err
 	}
 
-	familyGroup := m.resolveFamilyGroup(callCtx)
-	if familyGroup == "" {
+	// V4-30: the household comes from the call's scope only, never from arguments or Extra.
+	s := callCtx.Scope
+	if !s.Valid() {
 		return "Financial tracking requires an active family group. Please ensure your account belongs to a family group.", nil
 	}
 
 	switch toolName {
 	case "log_financial_transaction":
-		return m.executeLogTransaction(ctx, callCtx, repo, familyGroup, args)
+		return m.executeLogTransaction(ctx, callCtx, repo, s, args)
 	case "get_financial_summary":
-		return m.executeGetSummary(ctx, callCtx, repo, familyGroup, args)
+		return m.executeGetSummary(ctx, callCtx, repo, s, args)
 	case "set_category_budget":
-		return m.executeSetBudget(ctx, callCtx, repo, familyGroup, args)
+		return m.executeSetBudget(ctx, callCtx, repo, s, args)
 	case "manage_recurring_bills":
-		return m.executeManageBills(ctx, callCtx, repo, familyGroup, args)
+		return m.executeManageBills(ctx, callCtx, repo, s, args)
 	default:
 		return "", fmt.Errorf("unknown finance tool: %s", toolName)
 	}
 }
 
 // executeLogTransaction records an expense/income and verifies anomaly and budget alerts.
-func (m *Module) executeLogTransaction(ctx context.Context, callCtx orchestrator.CallContext, repo db.FinanceRepository, familyGroup string, args map[string]interface{}) (string, error) {
+func (m *Module) executeLogTransaction(ctx context.Context, callCtx orchestrator.CallContext, repo db.FinanceRepository, s identity.Scope, args map[string]interface{}) (string, error) {
 	amount := parseFloat(args["amount"], 0)
 	if amount <= 0 {
 		return "", fmt.Errorf("transaction amount must be greater than 0")
@@ -50,9 +52,9 @@ func (m *Module) executeLogTransaction(ctx context.Context, callCtx orchestrator
 	category = models.NormalizeFinanceCategory(category)
 	txType := models.NormalizeTransactionType(parseString(args["type"], models.TransactionTypeExpense))
 	merchant := parseString(args["merchant"], "")
-	currency := strings.ToUpper(parseString(args["currency"], "USD"))
+	currency := strings.ToUpper(parseString(args["currency"], s.Currency("USD")))
 	if currency == "" {
-		currency = "USD"
+		currency = s.Currency("USD")
 	}
 	notes := parseString(args["notes"], "")
 	source := parseString(args["source"], models.SourceChat)
@@ -64,7 +66,7 @@ func (m *Module) executeLogTransaction(ctx context.Context, callCtx orchestrator
 
 	// 1. Anomaly check for expenses: check if > 30% higher than historical average
 	if txType == models.TransactionTypeExpense {
-		hist, err := repo.GetHistoricalAverage(ctx, familyGroup, category, merchant, 0)
+		hist, err := repo.GetHistoricalAverage(ctx, s, category, merchant, 0)
 		if err == nil && hist != nil && hist.Count >= 1 && hist.Average > 0 {
 			anomalyThreshold := hist.Average * 1.30
 			if amount > anomalyThreshold {
@@ -85,7 +87,8 @@ func (m *Module) executeLogTransaction(ctx context.Context, callCtx orchestrator
 
 	tx := &models.FinancialTransaction{
 		UserID:          userID,
-		FamilyGroup:     familyGroup,
+		HouseholdID:     s.HouseholdID(),
+		FamilyGroup:     s.LegacyLabel(),
 		Type:            txType,
 		Category:        category,
 		Merchant:        merchant,
@@ -98,15 +101,15 @@ func (m *Module) executeLogTransaction(ctx context.Context, callCtx orchestrator
 		CreatedAt:       time.Now(),
 	}
 
-	if err := repo.CreateTransaction(ctx, tx); err != nil {
+	if err := repo.CreateTransaction(ctx, s, tx); err != nil {
 		return "", fmt.Errorf("failed to save transaction: %w", err)
 	}
 
 	// 3. Category budget threshold check for expenses
 	if txType == models.TransactionTypeExpense {
-		monthlySpend, err := repo.GetMonthlyCategorySpend(ctx, familyGroup, category, txDate.Year(), txDate.Month())
+		monthlySpend, err := repo.GetMonthlyCategorySpend(ctx, s, category, txDate.Year(), txDate.Month())
 		if err == nil {
-			budget, err := repo.GetCategoryBudget(ctx, familyGroup, category)
+			budget, err := repo.GetCategoryBudget(ctx, s, category)
 			if err == nil && budget != nil && budget.MonthlyLimit > 0 {
 				thresholdRatio := budget.ThresholdRatio()
 				thresholdAmount := budget.MonthlyLimit * thresholdRatio
@@ -134,7 +137,8 @@ func (m *Module) executeLogTransaction(ctx context.Context, callCtx orchestrator
 		EntityType:  "FinancialTransaction",
 		EntityID:    strconv.FormatUint(uint64(tx.ID), 10),
 		ActorUserID: userID,
-		FamilyGroup: familyGroup,
+		HouseholdID: s.HouseholdID(),
+		FamilyGroup: s.LegacyLabel(),
 		Summary:     fmt.Sprintf("Logged %s %s %.2f for %s (%s)", tx.Type, tx.Currency, tx.Amount, tx.Category, tx.Merchant),
 		Timestamp:   time.Now(),
 	}, tx)
@@ -168,7 +172,7 @@ func (m *Module) executeLogTransaction(ctx context.Context, callCtx orchestrator
 }
 
 // executeGetSummary produces an aggregated financial summary.
-func (m *Module) executeGetSummary(ctx context.Context, callCtx orchestrator.CallContext, repo db.FinanceRepository, familyGroup string, args map[string]interface{}) (string, error) {
+func (m *Module) executeGetSummary(ctx context.Context, callCtx orchestrator.CallContext, repo db.FinanceRepository, s identity.Scope, args map[string]interface{}) (string, error) {
 	now := time.Now()
 	startDate := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	endDate := startDate.AddDate(0, 1, 0)
@@ -184,10 +188,17 @@ func (m *Module) executeGetSummary(ctx context.Context, callCtx orchestrator.Cal
 		}
 	}
 
-	userID := parseString(args["user_id"], "")
+	userID := ""
+	if ref := parseString(args["user_id"], ""); ref != "" {
+		resolved, err := m.resolveMemberUserID(ctx, callCtx, ref)
+		if err != nil {
+			return "", err
+		}
+		userID = resolved
+	}
 	targetCategory := models.NormalizeFinanceCategory(parseString(args["category"], ""))
 
-	summary, err := repo.GetFinancialSummary(ctx, familyGroup, userID, startDate, endDate)
+	summary, err := repo.GetFinancialSummary(ctx, s, userID, startDate, endDate)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate financial summary: %w", err)
 	}
@@ -195,7 +206,7 @@ func (m *Module) executeGetSummary(ctx context.Context, callCtx orchestrator.Cal
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("### 📊 Financial Summary (%s to %s)\n",
 		summary.StartDate.Format("2006-01-02"), summary.EndDate.Format("2006-01-02")))
-	sb.WriteString(fmt.Sprintf("Family Group: %s\n", familyGroup))
+	sb.WriteString(fmt.Sprintf("Family Group: %s\n", s.HouseholdName()))
 	sb.WriteString(fmt.Sprintf("- Total Income: $%.2f\n", summary.TotalIncome))
 	sb.WriteString(fmt.Sprintf("- Total Expenses: $%.2f\n", summary.TotalExpense))
 	sb.WriteString(fmt.Sprintf("- Net Savings: $%.2f\n", summary.NetSavings))
@@ -249,7 +260,7 @@ func (m *Module) executeGetSummary(ctx context.Context, callCtx orchestrator.Cal
 }
 
 // executeSetBudget creates or updates a category budget limit.
-func (m *Module) executeSetBudget(ctx context.Context, callCtx orchestrator.CallContext, repo db.FinanceRepository, familyGroup string, args map[string]interface{}) (string, error) {
+func (m *Module) executeSetBudget(ctx context.Context, callCtx orchestrator.CallContext, repo db.FinanceRepository, s identity.Scope, args map[string]interface{}) (string, error) {
 	category := parseString(args["category"], "")
 	if strings.TrimSpace(category) == "" {
 		return "", fmt.Errorf("category is required")
@@ -261,9 +272,9 @@ func (m *Module) executeSetBudget(ctx context.Context, callCtx orchestrator.Call
 		return "", fmt.Errorf("monthly_limit must be greater than 0")
 	}
 
-	currency := strings.ToUpper(parseString(args["currency"], "USD"))
+	currency := strings.ToUpper(parseString(args["currency"], s.Currency("USD")))
 	if currency == "" {
-		currency = "USD"
+		currency = s.Currency("USD")
 	}
 
 	threshold := parseFloat(args["alert_threshold_pct"], 80.0)
@@ -272,14 +283,15 @@ func (m *Module) executeSetBudget(ctx context.Context, callCtx orchestrator.Call
 	}
 
 	budget := &models.CategoryBudget{
-		FamilyGroup:       familyGroup,
+		HouseholdID:       s.HouseholdID(),
+		FamilyGroup:       s.LegacyLabel(),
 		Category:          category,
 		MonthlyLimit:      limit,
 		Currency:          currency,
 		AlertThresholdPct: threshold,
 	}
 
-	if err := repo.SetCategoryBudget(ctx, budget); err != nil {
+	if err := repo.SetCategoryBudget(ctx, s, budget); err != nil {
 		return "", fmt.Errorf("failed to set category budget: %w", err)
 	}
 
@@ -289,7 +301,8 @@ func (m *Module) executeSetBudget(ctx context.Context, callCtx orchestrator.Call
 		EntityType:  "CategoryBudget",
 		EntityID:    strconv.FormatUint(uint64(budget.ID), 10),
 		ActorUserID: m.resolveUserID(callCtx),
-		FamilyGroup: familyGroup,
+		HouseholdID: s.HouseholdID(),
+		FamilyGroup: s.LegacyLabel(),
 		Summary:     fmt.Sprintf("Set %s monthly budget to %s %.2f (alert at %.0f%%)", budget.Category, budget.Currency, budget.MonthlyLimit, budget.AlertThresholdPct),
 		Timestamp:   time.Now(),
 	}, budget)
@@ -299,12 +312,12 @@ func (m *Module) executeSetBudget(ctx context.Context, callCtx orchestrator.Call
 }
 
 // executeManageBills handles recurring bill list, add, update, and delete actions.
-func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.CallContext, repo db.FinanceRepository, familyGroup string, args map[string]interface{}) (string, error) {
+func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.CallContext, repo db.FinanceRepository, s identity.Scope, args map[string]interface{}) (string, error) {
 	action := strings.ToLower(strings.TrimSpace(parseString(args["action"], "list")))
 
 	switch action {
 	case "list":
-		bills, err := repo.ListRecurringBills(ctx, familyGroup)
+		bills, err := repo.ListRecurringBills(ctx, s)
 		if err != nil {
 			return "", fmt.Errorf("failed to list recurring bills: %w", err)
 		}
@@ -330,9 +343,9 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 		}
 		category := models.NormalizeFinanceCategory(parseString(args["category"], models.CategoryUtilities))
 		amount := parseFloat(args["expected_amount"], 0)
-		currency := strings.ToUpper(parseString(args["currency"], "USD"))
+		currency := strings.ToUpper(parseString(args["currency"], s.Currency("USD")))
 		if currency == "" {
-			currency = "USD"
+			currency = s.Currency("USD")
 		}
 		cycle := strings.ToLower(parseString(args["billing_cycle"], models.BillingCycleMonthly))
 		if cycle != models.BillingCycleYearly {
@@ -345,7 +358,8 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 		autoRenew := parseBool(args["auto_renew"], true)
 
 		bill := &models.RecurringBill{
-			FamilyGroup:    familyGroup,
+			HouseholdID:    s.HouseholdID(),
+			FamilyGroup:    s.LegacyLabel(),
 			Name:           name,
 			Category:       category,
 			ExpectedAmount: amount,
@@ -355,7 +369,7 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 			AutoRenew:      autoRenew,
 		}
 
-		if err := repo.CreateRecurringBill(ctx, bill); err != nil {
+		if err := repo.CreateRecurringBill(ctx, s, bill); err != nil {
 			return "", fmt.Errorf("failed to create recurring bill: %w", err)
 		}
 
@@ -365,7 +379,8 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 			EntityType:  "RecurringBill",
 			EntityID:    strconv.FormatUint(uint64(bill.ID), 10),
 			ActorUserID: m.resolveUserID(callCtx),
-			FamilyGroup: familyGroup,
+			HouseholdID: s.HouseholdID(),
+			FamilyGroup: s.LegacyLabel(),
 			Summary:     fmt.Sprintf("Added recurring bill %s (%s %.2f)", bill.Name, bill.Currency, bill.ExpectedAmount),
 			Timestamp:   time.Now(),
 		}, bill)
@@ -378,11 +393,11 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 		if id == 0 {
 			return "", fmt.Errorf("bill_id is required to update a recurring bill")
 		}
-		existing, err := repo.GetRecurringBill(ctx, id)
+		existing, err := repo.GetRecurringBill(ctx, s, id)
 		if err != nil {
 			return "", fmt.Errorf("failed to retrieve recurring bill %d: %w", id, err)
 		}
-		isAuthorized := existing != nil && existing.FamilyGroup != "" && existing.FamilyGroup == familyGroup
+		isAuthorized := existing != nil && existing.HouseholdID != "" && existing.HouseholdID == s.HouseholdID()
 		if !isAuthorized {
 			return "", fmt.Errorf("recurring bill %d not found or permission denied", id)
 		}
@@ -409,7 +424,7 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 			existing.AutoRenew = parseBool(ar, existing.AutoRenew)
 		}
 
-		if err := repo.UpdateRecurringBill(ctx, existing); err != nil {
+		if err := repo.UpdateRecurringBill(ctx, s, existing); err != nil {
 			return "", fmt.Errorf("failed to update recurring bill: %w", err)
 		}
 
@@ -419,7 +434,8 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 			EntityType:  "RecurringBill",
 			EntityID:    strconv.FormatUint(uint64(existing.ID), 10),
 			ActorUserID: m.resolveUserID(callCtx),
-			FamilyGroup: familyGroup,
+			HouseholdID: s.HouseholdID(),
+			FamilyGroup: s.LegacyLabel(),
 			Summary:     fmt.Sprintf("Updated recurring bill %s (ID %d)", existing.Name, existing.ID),
 			Timestamp:   time.Now(),
 		}, existing)
@@ -431,16 +447,16 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 		if id == 0 {
 			return "", fmt.Errorf("bill_id is required to delete a recurring bill")
 		}
-		existing, err := repo.GetRecurringBill(ctx, id)
+		existing, err := repo.GetRecurringBill(ctx, s, id)
 		if err != nil {
 			return "", fmt.Errorf("failed to check recurring bill %d: %w", id, err)
 		}
-		isAuthorized := existing != nil && existing.FamilyGroup != "" && existing.FamilyGroup == familyGroup
+		isAuthorized := existing != nil && existing.HouseholdID != "" && existing.HouseholdID == s.HouseholdID()
 		if !isAuthorized {
 			return "", fmt.Errorf("recurring bill %d not found or permission denied", id)
 		}
 
-		if err := repo.DeleteRecurringBill(ctx, id); err != nil {
+		if err := repo.DeleteRecurringBill(ctx, s, id); err != nil {
 			return "", fmt.Errorf("failed to delete recurring bill: %w", err)
 		}
 
@@ -450,7 +466,8 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 			EntityType:  "RecurringBill",
 			EntityID:    strconv.FormatUint(uint64(id), 10),
 			ActorUserID: m.resolveUserID(callCtx),
-			FamilyGroup: familyGroup,
+			HouseholdID: s.HouseholdID(),
+			FamilyGroup: s.LegacyLabel(),
 			Summary:     fmt.Sprintf("Deleted recurring bill %s (ID %d)", existing.Name, id),
 			Timestamp:   time.Now(),
 		}, existing)

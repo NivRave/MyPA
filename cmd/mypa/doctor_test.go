@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +19,6 @@ import (
 	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/nivik/mypa/internal/testutil/pgtest"
 	"github.com/stretchr/testify/assert"
@@ -91,13 +91,9 @@ func newDoctorFixture(t *testing.T) doctorFixture {
 	oauthCfg.SetEndpoint(oauth2.Endpoint{TokenURL: google.URL, AuthStyle: oauth2.AuthStyleInParams})
 
 	// Two families. Only the admin's own may appear in the report.
-	for _, u := range []models.User{
-		{PlatformID: "1001", Name: "Dana", Role: "admin", FamilyGroup: "Levi"},
-		{PlatformID: "1002", Name: "Omer", Role: "family", FamilyGroup: "Levi"},
-		{PlatformID: "2001", Name: "Stranger", Role: "family", FamilyGroup: "Cohen"},
-	} {
-		require.NoError(t, dbClient.UpsertUser(u))
-	}
+	householdtest.User(t, dbClient, "1001", "Dana", "admin", "Levi")
+	householdtest.User(t, dbClient, "1002", "Omer", "family", "Levi")
+	householdtest.User(t, dbClient, "2001", "Stranger", "family", "Cohen")
 	token := func(refresh string) []byte {
 		return []byte(`{"access_token":"a","refresh_token":"` + refresh + `","token_type":"Bearer","expiry":"2026-11-19T08:00:00Z"}`)
 	}

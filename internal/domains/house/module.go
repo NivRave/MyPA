@@ -46,8 +46,8 @@ func (m *Module) Name() string {
 // SystemPromptSection injects active house notices, pending maintenance due,
 // and upcoming vehicle inspection/insurance dates into the system prompt.
 func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.CallContext) string {
-	familyGroup := resolveFamilyGroup(callCtx)
-	if familyGroup == "" {
+	scope := resolveScope(callCtx)
+	if !scope.Valid() {
 		return ""
 	}
 
@@ -63,7 +63,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 	hasItems := false
 
 	// 1. Expiring contracts / warranties / leases within next 60 days
-	expiring, err := repo.ListExpiringContracts(familyGroup, 60)
+	expiring, err := repo.ListExpiringContracts(scope, 60)
 	if err == nil && len(expiring) > 0 {
 		hasItems = true
 		sb.WriteString("• Upcoming Contract & Warranty Deadlines:\n")
@@ -90,7 +90,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 	}
 
 	// 2. Overdue or upcoming maintenance items (within next 14 days)
-	maintenance, err := repo.ListMaintenanceItems(familyGroup, "all", false)
+	maintenance, err := repo.ListMaintenanceItems(scope, "all", false)
 	if err == nil && len(maintenance) > 0 {
 		var pendingItems []string
 		for _, item := range maintenance {
@@ -112,7 +112,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 	}
 
 	// 3. Vehicles with upcoming inspections, insurance renewals, or service overdue
-	vehicles, err := repo.ListVehicleAssets(familyGroup)
+	vehicles, err := repo.ListVehicleAssets(scope)
 	if err == nil && len(vehicles) > 0 {
 		var vehicleAlerts []string
 		for _, v := range vehicles {

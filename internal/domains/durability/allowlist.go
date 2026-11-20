@@ -72,7 +72,7 @@ var AllowedRollbackEntities = map[string]string{
 func ResolveRollbackTable(entityType string) (string, error) {
 	norm := strings.ToLower(strings.TrimSpace(entityType))
 	switch norm {
-	case "users", "pairing_codes", "encrypted_credentials", "audit_sessions", "audit_events", "schema_migrations":
+	case "users", "pairing_codes", "households", "household", "encrypted_credentials", "audit_sessions", "audit_events", "schema_migrations":
 		return "", fmt.Errorf("system entity %q cannot be rolled back via mutation rollback", entityType)
 	}
 

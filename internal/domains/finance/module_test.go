@@ -3,6 +3,8 @@ package finance
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"strings"
 	"sync"
 	"testing"
@@ -20,7 +22,7 @@ import (
 type inMemoryFinanceRepo struct {
 	mu           sync.RWMutex
 	transactions map[uint]*models.FinancialTransaction
-	budgets      map[string]*models.CategoryBudget // key: familyGroup + ":" + category
+	budgets      map[string]*models.CategoryBudget // key: householdID + ":" + category
 	bills        map[uint]*models.RecurringBill
 	nextTxID     uint
 	nextBudgetID uint
@@ -38,9 +40,10 @@ func newInMemoryFinanceRepo() *inMemoryFinanceRepo {
 	}
 }
 
-func (r *inMemoryFinanceRepo) CreateTransaction(ctx context.Context, tx *models.FinancialTransaction) error {
+func (r *inMemoryFinanceRepo) CreateTransaction(ctx context.Context, s identity.Scope, tx *models.FinancialTransaction) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	tx.HouseholdID, tx.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	tx.ID = r.nextTxID
 	r.nextTxID++
 	if tx.CreatedAt.IsZero() {
@@ -56,24 +59,24 @@ func (r *inMemoryFinanceRepo) CreateTransaction(ctx context.Context, tx *models.
 	return nil
 }
 
-func (r *inMemoryFinanceRepo) GetTransaction(ctx context.Context, id uint) (*models.FinancialTransaction, error) {
+func (r *inMemoryFinanceRepo) GetTransaction(ctx context.Context, s identity.Scope, id uint) (*models.FinancialTransaction, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	tx, exists := r.transactions[id]
-	if !exists {
+	if !exists || tx.HouseholdID != s.HouseholdID() {
 		return nil, nil
 	}
 	cp := *tx
 	return &cp, nil
 }
 
-func (r *inMemoryFinanceRepo) ListTransactions(ctx context.Context, familyGroup string, filter db.TransactionFilter) ([]models.FinancialTransaction, error) {
+func (r *inMemoryFinanceRepo) ListTransactions(ctx context.Context, s identity.Scope, filter db.TransactionFilter) ([]models.FinancialTransaction, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	var res []models.FinancialTransaction
 	for _, tx := range r.transactions {
-		if tx.FamilyGroup != familyGroup {
+		if tx.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		if filter.UserID != "" && tx.UserID != filter.UserID {
@@ -99,14 +102,14 @@ func (r *inMemoryFinanceRepo) ListTransactions(ctx context.Context, familyGroup 
 	return res, nil
 }
 
-func (r *inMemoryFinanceRepo) GetMonthlyCategorySpend(ctx context.Context, familyGroup, category string, year int, month time.Month) (float64, error) {
+func (r *inMemoryFinanceRepo) GetMonthlyCategorySpend(ctx context.Context, s identity.Scope, category string, year int, month time.Month) (float64, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	normCat := models.NormalizeFinanceCategory(category)
 	var total float64
 	for _, tx := range r.transactions {
-		if tx.FamilyGroup == familyGroup &&
+		if tx.HouseholdID == s.HouseholdID() &&
 			tx.Type == models.TransactionTypeExpense &&
 			tx.Category == normCat &&
 			tx.TransactionDate.Year() == year &&
@@ -117,13 +120,13 @@ func (r *inMemoryFinanceRepo) GetMonthlyCategorySpend(ctx context.Context, famil
 	return total, nil
 }
 
-func (r *inMemoryFinanceRepo) GetMonthlyTotalsByCategory(ctx context.Context, familyGroup string, year int, month time.Month) (map[string]float64, error) {
+func (r *inMemoryFinanceRepo) GetMonthlyTotalsByCategory(ctx context.Context, s identity.Scope, year int, month time.Month) (map[string]float64, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	totals := make(map[string]float64)
 	for _, tx := range r.transactions {
-		if tx.FamilyGroup == familyGroup &&
+		if tx.HouseholdID == s.HouseholdID() &&
 			tx.Type == models.TransactionTypeExpense &&
 			tx.TransactionDate.Year() == year &&
 			tx.TransactionDate.Month() == month {
@@ -133,7 +136,7 @@ func (r *inMemoryFinanceRepo) GetMonthlyTotalsByCategory(ctx context.Context, fa
 	return totals, nil
 }
 
-func (r *inMemoryFinanceRepo) GetHistoricalAverage(ctx context.Context, familyGroup, category, merchant string, excludeID uint) (*db.HistoricalAverageResult, error) {
+func (r *inMemoryFinanceRepo) GetHistoricalAverage(ctx context.Context, s identity.Scope, category, merchant string, excludeID uint) (*db.HistoricalAverageResult, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -145,7 +148,7 @@ func (r *inMemoryFinanceRepo) GetHistoricalAverage(ctx context.Context, familyGr
 		var sum float64
 		var count int64
 		for _, tx := range r.transactions {
-			if tx.FamilyGroup == familyGroup &&
+			if tx.HouseholdID == s.HouseholdID() &&
 				tx.Type == models.TransactionTypeExpense &&
 				strings.ToLower(strings.TrimSpace(tx.Merchant)) == cleanMerchant &&
 				tx.ID != excludeID {
@@ -167,7 +170,7 @@ func (r *inMemoryFinanceRepo) GetHistoricalAverage(ctx context.Context, familyGr
 		var sum float64
 		var count int64
 		for _, tx := range r.transactions {
-			if tx.FamilyGroup == familyGroup &&
+			if tx.HouseholdID == s.HouseholdID() &&
 				tx.Type == models.TransactionTypeExpense &&
 				tx.Category == cleanCategory &&
 				tx.ID != excludeID {
@@ -191,7 +194,7 @@ func (r *inMemoryFinanceRepo) GetHistoricalAverage(ctx context.Context, familyGr
 	}, nil
 }
 
-func (r *inMemoryFinanceRepo) GetFinancialSummary(ctx context.Context, familyGroup, userID string, startDate, endDate time.Time) (*db.FinancialSummaryResult, error) {
+func (r *inMemoryFinanceRepo) GetFinancialSummary(ctx context.Context, s identity.Scope, userID string, startDate, endDate time.Time) (*db.FinancialSummaryResult, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -204,7 +207,7 @@ func (r *inMemoryFinanceRepo) GetFinancialSummary(ctx context.Context, familyGro
 
 	// Init from configured budgets
 	for _, b := range r.budgets {
-		if b.FamilyGroup == familyGroup {
+		if b.HouseholdID == s.HouseholdID() {
 			res.CategorySummary[b.Category] = db.CategorySpendSummary{
 				Category:          b.Category,
 				MonthlyBudget:     b.MonthlyLimit,
@@ -215,7 +218,7 @@ func (r *inMemoryFinanceRepo) GetFinancialSummary(ctx context.Context, familyGro
 	}
 
 	for _, tx := range r.transactions {
-		if tx.FamilyGroup != familyGroup {
+		if tx.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		if userID != "" && tx.UserID != userID {
@@ -247,8 +250,9 @@ func (r *inMemoryFinanceRepo) GetFinancialSummary(ctx context.Context, familyGro
 		}
 	}
 
+	householdID := s.HouseholdID()
 	for cat, s := range res.CategorySummary {
-		key := familyGroup + ":" + cat
+		key := householdID + ":" + cat
 		if b, ok := r.budgets[key]; ok && b.MonthlyLimit > 0 {
 			s.MonthlyBudget = b.MonthlyLimit
 			s.RemainingBudget = b.MonthlyLimit - s.ActualExpense
@@ -265,12 +269,13 @@ func (r *inMemoryFinanceRepo) GetFinancialSummary(ctx context.Context, familyGro
 	return res, nil
 }
 
-func (r *inMemoryFinanceRepo) SetCategoryBudget(ctx context.Context, budget *models.CategoryBudget) error {
+func (r *inMemoryFinanceRepo) SetCategoryBudget(ctx context.Context, s identity.Scope, budget *models.CategoryBudget) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	budget.HouseholdID, budget.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 
 	normCat := models.NormalizeFinanceCategory(budget.Category)
-	key := budget.FamilyGroup + ":" + normCat
+	key := budget.HouseholdID + ":" + normCat
 
 	if existing, exists := r.budgets[key]; exists {
 		existing.MonthlyLimit = budget.MonthlyLimit
@@ -290,12 +295,12 @@ func (r *inMemoryFinanceRepo) SetCategoryBudget(ctx context.Context, budget *mod
 	return nil
 }
 
-func (r *inMemoryFinanceRepo) GetCategoryBudget(ctx context.Context, familyGroup, category string) (*models.CategoryBudget, error) {
+func (r *inMemoryFinanceRepo) GetCategoryBudget(ctx context.Context, s identity.Scope, category string) (*models.CategoryBudget, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	normCat := models.NormalizeFinanceCategory(category)
-	key := familyGroup + ":" + normCat
+	key := s.HouseholdID() + ":" + normCat
 	b, ok := r.budgets[key]
 	if !ok {
 		return nil, nil
@@ -304,25 +309,25 @@ func (r *inMemoryFinanceRepo) GetCategoryBudget(ctx context.Context, familyGroup
 	return &cp, nil
 }
 
-func (r *inMemoryFinanceRepo) ListCategoryBudgets(ctx context.Context, familyGroup string) ([]models.CategoryBudget, error) {
+func (r *inMemoryFinanceRepo) ListCategoryBudgets(ctx context.Context, s identity.Scope) ([]models.CategoryBudget, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	var res []models.CategoryBudget
 	for _, b := range r.budgets {
-		if b.FamilyGroup == familyGroup {
+		if b.HouseholdID == s.HouseholdID() {
 			res = append(res, *b)
 		}
 	}
 	return res, nil
 }
 
-func (r *inMemoryFinanceRepo) DeleteCategoryBudget(ctx context.Context, id uint) error {
+func (r *inMemoryFinanceRepo) DeleteCategoryBudget(ctx context.Context, s identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	for k, b := range r.budgets {
-		if b.ID == id {
+		if b.ID == id && b.HouseholdID == s.HouseholdID() {
 			delete(r.budgets, k)
 			return nil
 		}
@@ -330,9 +335,10 @@ func (r *inMemoryFinanceRepo) DeleteCategoryBudget(ctx context.Context, id uint)
 	return nil
 }
 
-func (r *inMemoryFinanceRepo) CreateRecurringBill(ctx context.Context, bill *models.RecurringBill) error {
+func (r *inMemoryFinanceRepo) CreateRecurringBill(ctx context.Context, s identity.Scope, bill *models.RecurringBill) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	bill.HouseholdID, bill.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 
 	bill.ID = r.nextBillID
 	r.nextBillID++
@@ -344,12 +350,12 @@ func (r *inMemoryFinanceRepo) CreateRecurringBill(ctx context.Context, bill *mod
 	return nil
 }
 
-func (r *inMemoryFinanceRepo) UpdateRecurringBill(ctx context.Context, bill *models.RecurringBill) error {
+func (r *inMemoryFinanceRepo) UpdateRecurringBill(ctx context.Context, s identity.Scope, bill *models.RecurringBill) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	existing, ok := r.bills[bill.ID]
-	if !ok {
+	if !ok || existing.HouseholdID != s.HouseholdID() {
 		return fmt.Errorf("bill %d not found", bill.ID)
 	}
 	existing.Name = bill.Name
@@ -363,46 +369,50 @@ func (r *inMemoryFinanceRepo) UpdateRecurringBill(ctx context.Context, bill *mod
 	return nil
 }
 
-func (r *inMemoryFinanceRepo) GetRecurringBill(ctx context.Context, id uint) (*models.RecurringBill, error) {
+func (r *inMemoryFinanceRepo) GetRecurringBill(ctx context.Context, s identity.Scope, id uint) (*models.RecurringBill, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	b, ok := r.bills[id]
-	if !ok {
+	if !ok || b.HouseholdID != s.HouseholdID() {
 		return nil, nil
 	}
 	cp := *b
 	return &cp, nil
 }
 
-func (r *inMemoryFinanceRepo) ListRecurringBills(ctx context.Context, familyGroup string) ([]models.RecurringBill, error) {
+func (r *inMemoryFinanceRepo) ListRecurringBills(ctx context.Context, s identity.Scope) ([]models.RecurringBill, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	var res []models.RecurringBill
 	for _, b := range r.bills {
-		if b.FamilyGroup == familyGroup {
+		if b.HouseholdID == s.HouseholdID() {
 			res = append(res, *b)
 		}
 	}
 	return res, nil
 }
 
-func (r *inMemoryFinanceRepo) DeleteRecurringBill(ctx context.Context, id uint) error {
+func (r *inMemoryFinanceRepo) DeleteRecurringBill(ctx context.Context, s identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	delete(r.bills, id)
+	if b, ok := r.bills[id]; ok && b.HouseholdID == s.HouseholdID() {
+		delete(r.bills, id)
+	}
 	return nil
 }
 
-func makeTestCallCtx(familyGroup, userID string, eventBus *events.EventBus) orchestrator.CallContext {
+func makeTestCallCtx(t testing.TB, familyGroup, userID string, eventBus *events.EventBus) orchestrator.CallContext {
+	t.Helper()
 	return orchestrator.CallContext{
 		User: &models.User{
 			ID:          userID,
 			Name:        "Test User",
 			FamilyGroup: familyGroup,
 		},
+		Scope:    identitytest.Scope(t, familyGroup, userID, "family"),
 		EventBus: eventBus,
 		Extra:    make(map[string]interface{}),
 	}
@@ -434,7 +444,7 @@ func TestFinanceModule_LogTransaction_Basic(t *testing.T) {
 	repo := newInMemoryFinanceRepo()
 	mod := NewModule(repo)
 	ctx := context.Background()
-	callCtx := makeTestCallCtx("SmithFamily", "user-1", nil)
+	callCtx := makeTestCallCtx(t, "SmithFamily", "user-1", nil)
 
 	// Log an expense
 	out, err := mod.Execute(ctx, callCtx, "log_financial_transaction", map[string]interface{}{
@@ -450,7 +460,7 @@ func TestFinanceModule_LogTransaction_Basic(t *testing.T) {
 	assert.Contains(t, out, "Trader Joe's")
 
 	// Verify in repository
-	tx, err := repo.GetTransaction(ctx, 1)
+	tx, err := repo.GetTransaction(ctx, callCtx.Scope, 1)
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 	assert.Equal(t, 75.50, tx.Amount)
@@ -476,7 +486,7 @@ func TestFinanceModule_LogTransaction_BudgetThresholdAlert(t *testing.T) {
 	repo := newInMemoryFinanceRepo()
 	mod := NewModule(repo)
 	ctx := context.Background()
-	callCtx := makeTestCallCtx("SmithFamily", "user-1", nil)
+	callCtx := makeTestCallCtx(t, "SmithFamily", "user-1", nil)
 
 	// Configure monthly budget for dining: $500, alert threshold at 80% ($400)
 	_, err := mod.Execute(ctx, callCtx, "set_category_budget", map[string]interface{}{
@@ -522,12 +532,12 @@ func TestFinanceModule_LogTransaction_AnomalyDetection(t *testing.T) {
 	repo := newInMemoryFinanceRepo()
 	mod := NewModule(repo)
 	ctx := context.Background()
-	callCtx := makeTestCallCtx("SmithFamily", "user-1", nil)
+	callCtx := makeTestCallCtx(t, "SmithFamily", "user-1", nil)
 
 	// Seed 3 historical electricity utility bills: $100, $100, $100 (avg = $100)
 	now := time.Now()
 	for i := 1; i <= 3; i++ {
-		require.NoError(t, repo.CreateTransaction(ctx, &models.FinancialTransaction{
+		require.NoError(t, repo.CreateTransaction(ctx, callCtx.Scope, &models.FinancialTransaction{
 			FamilyGroup:     "SmithFamily",
 			UserID:          "user-1",
 			Type:            models.TransactionTypeExpense,
@@ -561,7 +571,7 @@ func TestFinanceModule_LogTransaction_AnomalyDetection(t *testing.T) {
 
 	// 3. Category fallback anomaly test:
 	// Seed groceries transactions with no merchant match:
-	require.NoError(t, repo.CreateTransaction(ctx, &models.FinancialTransaction{
+	require.NoError(t, repo.CreateTransaction(ctx, callCtx.Scope, &models.FinancialTransaction{
 		FamilyGroup:     "SmithFamily",
 		Type:            models.TransactionTypeExpense,
 		Category:        "groceries",
@@ -585,7 +595,7 @@ func TestFinanceModule_GetFinancialSummary(t *testing.T) {
 	repo := newInMemoryFinanceRepo()
 	mod := NewModule(repo)
 	ctx := context.Background()
-	callCtx := makeTestCallCtx("SmithFamily", "user-1", nil)
+	callCtx := makeTestCallCtx(t, "SmithFamily", "user-1", nil)
 
 	// Set a budget
 	_, err := mod.Execute(ctx, callCtx, "set_category_budget", map[string]interface{}{
@@ -596,7 +606,7 @@ func TestFinanceModule_GetFinancialSummary(t *testing.T) {
 
 	now := time.Now()
 	// Add income
-	require.NoError(t, repo.CreateTransaction(ctx, &models.FinancialTransaction{
+	require.NoError(t, repo.CreateTransaction(ctx, callCtx.Scope, &models.FinancialTransaction{
 		FamilyGroup:     "SmithFamily",
 		UserID:          "user-1",
 		Type:            models.TransactionTypeIncome,
@@ -606,7 +616,7 @@ func TestFinanceModule_GetFinancialSummary(t *testing.T) {
 	}))
 
 	// Add expenses
-	require.NoError(t, repo.CreateTransaction(ctx, &models.FinancialTransaction{
+	require.NoError(t, repo.CreateTransaction(ctx, callCtx.Scope, &models.FinancialTransaction{
 		FamilyGroup:     "SmithFamily",
 		UserID:          "user-1",
 		Type:            models.TransactionTypeExpense,
@@ -614,7 +624,7 @@ func TestFinanceModule_GetFinancialSummary(t *testing.T) {
 		Amount:          300.0,
 		TransactionDate: now,
 	}))
-	require.NoError(t, repo.CreateTransaction(ctx, &models.FinancialTransaction{
+	require.NoError(t, repo.CreateTransaction(ctx, callCtx.Scope, &models.FinancialTransaction{
 		FamilyGroup:     "SmithFamily",
 		UserID:          "user-2",
 		Type:            models.TransactionTypeExpense,
@@ -641,7 +651,7 @@ func TestFinanceModule_ManageRecurringBills(t *testing.T) {
 	repo := newInMemoryFinanceRepo()
 	mod := NewModule(repo)
 	ctx := context.Background()
-	callCtx := makeTestCallCtx("SmithFamily", "user-1", nil)
+	callCtx := makeTestCallCtx(t, "SmithFamily", "user-1", nil)
 
 	// 1. Add recurring bill
 	addOut, err := mod.Execute(ctx, callCtx, "manage_recurring_bills", map[string]interface{}{
@@ -677,7 +687,7 @@ func TestFinanceModule_ManageRecurringBills(t *testing.T) {
 	assert.Contains(t, updateOut, "successfully updated")
 
 	// Verify update in repo
-	bill, err := repo.GetRecurringBill(ctx, 1)
+	bill, err := repo.GetRecurringBill(ctx, callCtx.Scope, 1)
 	require.NoError(t, err)
 	require.NotNil(t, bill)
 	assert.Equal(t, 75.0, bill.ExpectedAmount)
@@ -692,7 +702,7 @@ func TestFinanceModule_ManageRecurringBills(t *testing.T) {
 	assert.Contains(t, delOut, "deleted")
 
 	// Verify deletion
-	billAfter, err := repo.GetRecurringBill(ctx, 1)
+	billAfter, err := repo.GetRecurringBill(ctx, callCtx.Scope, 1)
 	require.NoError(t, err)
 	assert.Nil(t, billAfter)
 }
@@ -713,7 +723,7 @@ func TestFinanceModule_MutationEvents(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	callCtx := makeTestCallCtx("SmithFamily", "user-1", bus)
+	callCtx := makeTestCallCtx(t, "SmithFamily", "user-1", bus)
 
 	// 1. Transaction logged
 	_, err := mod.Execute(ctx, callCtx, "log_financial_transaction", map[string]interface{}{
@@ -758,7 +768,7 @@ func TestFinanceModule_SystemPromptSection(t *testing.T) {
 	repo := newInMemoryFinanceRepo()
 	mod := NewModule(repo)
 	ctx := context.Background()
-	callCtx := makeTestCallCtx("SmithFamily", "user-1", nil)
+	callCtx := makeTestCallCtx(t, "SmithFamily", "user-1", nil)
 
 	// Initial prompt with empty state
 	emptyPrompt := mod.SystemPromptSection(ctx, callCtx)
@@ -766,7 +776,7 @@ func TestFinanceModule_SystemPromptSection(t *testing.T) {
 	assert.Contains(t, emptyPrompt, "Ledger ready")
 
 	// Set budget & spend
-	require.NoError(t, repo.SetCategoryBudget(ctx, &models.CategoryBudget{
+	require.NoError(t, repo.SetCategoryBudget(ctx, callCtx.Scope, &models.CategoryBudget{
 		FamilyGroup:       "SmithFamily",
 		Category:          "groceries",
 		MonthlyLimit:      500.0,
@@ -775,7 +785,7 @@ func TestFinanceModule_SystemPromptSection(t *testing.T) {
 	}))
 
 	now := time.Now()
-	require.NoError(t, repo.CreateTransaction(ctx, &models.FinancialTransaction{
+	require.NoError(t, repo.CreateTransaction(ctx, callCtx.Scope, &models.FinancialTransaction{
 		FamilyGroup:     "SmithFamily",
 		Type:            models.TransactionTypeExpense,
 		Category:        "groceries",
@@ -783,7 +793,7 @@ func TestFinanceModule_SystemPromptSection(t *testing.T) {
 		TransactionDate: now,
 	}))
 
-	require.NoError(t, repo.CreateRecurringBill(ctx, &models.RecurringBill{
+	require.NoError(t, repo.CreateRecurringBill(ctx, callCtx.Scope, &models.RecurringBill{
 		FamilyGroup:    "SmithFamily",
 		Name:           "Daycare",
 		Category:       "baby",
@@ -805,7 +815,7 @@ func TestFinanceModule_ErrorHandling(t *testing.T) {
 	repo := newInMemoryFinanceRepo()
 	mod := NewModule(repo)
 	ctx := context.Background()
-	callCtx := makeTestCallCtx("SmithFamily", "user-1", nil)
+	callCtx := makeTestCallCtx(t, "SmithFamily", "user-1", nil)
 
 	// Negative amount
 	_, err := mod.Execute(ctx, callCtx, "log_financial_transaction", map[string]interface{}{
@@ -848,7 +858,7 @@ func TestFinanceModule_FlexibleArgumentParsing(t *testing.T) {
 	repo := newInMemoryFinanceRepo()
 	mod := NewModule(repo)
 	ctx := context.Background()
-	callCtx := makeTestCallCtx("SmithFamily", "user-1", nil)
+	callCtx := makeTestCallCtx(t, "SmithFamily", "user-1", nil)
 
 	// Test string currency with symbols and string booleans
 	out, err := mod.Execute(ctx, callCtx, "log_financial_transaction", map[string]interface{}{
@@ -862,7 +872,7 @@ func TestFinanceModule_FlexibleArgumentParsing(t *testing.T) {
 	assert.Contains(t, out, "USD 120.50")
 	assert.Contains(t, out, "Hardware Store")
 
-	tx, err := repo.GetTransaction(ctx, 1)
+	tx, err := repo.GetTransaction(ctx, callCtx.Scope, 1)
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 	assert.Equal(t, 120.50, tx.Amount)
@@ -880,7 +890,7 @@ func TestSEC04_CrossTenant_RecurringBills_Blocked(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Family Alpha creates a recurring bill
-	callCtxAlpha := makeTestCallCtx("family_alpha", "user_alpha", nil)
+	callCtxAlpha := makeTestCallCtx(t, "family_alpha", "user_alpha", nil)
 	createResp, err := mod.Execute(ctx, callCtxAlpha, "manage_recurring_bills", map[string]interface{}{
 		"action":          "add",
 		"name":            "Internet Fiber",
@@ -894,13 +904,13 @@ func TestSEC04_CrossTenant_RecurringBills_Blocked(t *testing.T) {
 	assert.Contains(t, createResp, "Internet Fiber")
 
 	// Verify Bill 1 is in repo
-	bill1, err := repo.GetRecurringBill(ctx, 1)
+	bill1, err := repo.GetRecurringBill(ctx, callCtxAlpha.Scope, 1)
 	require.NoError(t, err)
 	require.NotNil(t, bill1)
 	assert.Equal(t, "family_alpha", bill1.FamilyGroup)
 
 	// 2. Family Beta attempts to UPDATE Bill 1
-	callCtxBeta := makeTestCallCtx("family_beta", "user_beta", nil)
+	callCtxBeta := makeTestCallCtx(t, "family_beta", "user_beta", nil)
 	_, updateErr := mod.Execute(ctx, callCtxBeta, "manage_recurring_bills", map[string]interface{}{
 		"action":          "update",
 		"bill_id":         1,
@@ -911,7 +921,7 @@ func TestSEC04_CrossTenant_RecurringBills_Blocked(t *testing.T) {
 	assert.Contains(t, updateErr.Error(), "permission denied")
 
 	// Verify bill was not mutated
-	bill1After, err := repo.GetRecurringBill(ctx, 1)
+	bill1After, err := repo.GetRecurringBill(ctx, callCtxAlpha.Scope, 1)
 	require.NoError(t, err)
 	assert.Equal(t, "Internet Fiber", bill1After.Name)
 	assert.Equal(t, 60.00, bill1After.ExpectedAmount)
@@ -925,7 +935,7 @@ func TestSEC04_CrossTenant_RecurringBills_Blocked(t *testing.T) {
 	assert.Contains(t, deleteErr.Error(), "permission denied")
 
 	// Verify bill still exists
-	bill1StillExists, err := repo.GetRecurringBill(ctx, 1)
+	bill1StillExists, err := repo.GetRecurringBill(ctx, callCtxAlpha.Scope, 1)
 	require.NoError(t, err)
 	require.NotNil(t, bill1StillExists)
 
@@ -939,7 +949,7 @@ func TestSEC04_CrossTenant_RecurringBills_Blocked(t *testing.T) {
 	require.NoError(t, err, "Family Alpha must be able to update their own bill")
 	assert.Contains(t, updateAlphaResp, "High-Speed Internet Fiber")
 
-	bill1Updated, err := repo.GetRecurringBill(ctx, 1)
+	bill1Updated, err := repo.GetRecurringBill(ctx, callCtxAlpha.Scope, 1)
 	require.NoError(t, err)
 	assert.Equal(t, "High-Speed Internet Fiber", bill1Updated.Name)
 	assert.Equal(t, 70.00, bill1Updated.ExpectedAmount)
@@ -952,8 +962,89 @@ func TestSEC04_CrossTenant_RecurringBills_Blocked(t *testing.T) {
 	require.NoError(t, err, "Family Alpha must be able to delete their own bill")
 	assert.Contains(t, deleteAlphaResp, "deleted")
 
-	bill1Deleted, err := repo.GetRecurringBill(ctx, 1)
+	bill1Deleted, err := repo.GetRecurringBill(ctx, callCtxAlpha.Scope, 1)
 	require.NoError(t, err)
 	assert.Nil(t, bill1Deleted)
 }
 
+// TestFinanceModule_DefaultCurrencyComesFromTheHousehold proves the household's currency
+// (V4-30: a family-level setting on the household) is the default for transactions, budgets and
+// recurring bills, and that a household without one keeps USD.
+func TestFinanceModule_DefaultCurrencyComesFromTheHousehold(t *testing.T) {
+	store := identitytest.NewStore()
+	h := store.Household("CohenFamily")
+	h.Currency = "ILS"
+	store.Put(h)
+	scope := store.ScopeIn(t, "CohenFamily", "user-1", "family")
+	require.Equal(t, "ILS", scope.Currency("USD"))
+
+	repo := newInMemoryFinanceRepo()
+	mod := NewModule(repo)
+	ctx := context.Background()
+	callCtx := orchestrator.CallContext{
+		User:  &models.User{ID: "user-1", Name: "Test User", FamilyGroup: "CohenFamily"},
+		Scope: scope,
+		Extra: make(map[string]interface{}),
+	}
+
+	out, err := mod.Execute(ctx, callCtx, "log_financial_transaction", map[string]interface{}{
+		"amount":   42.0,
+		"category": "groceries",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, "ILS 42.00")
+	tx, err := repo.GetTransaction(ctx, scope, 1)
+	require.NoError(t, err)
+	require.NotNil(t, tx)
+	assert.Equal(t, "ILS", tx.Currency)
+
+	out, err = mod.Execute(ctx, callCtx, "set_category_budget", map[string]interface{}{
+		"category":      "groceries",
+		"monthly_limit": 2000.0,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, "ILS 2000.00")
+
+	out, err = mod.Execute(ctx, callCtx, "manage_recurring_bills", map[string]interface{}{
+		"action":          "add",
+		"name":            "Arnona",
+		"expected_amount": 600.0,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, "ILS 600.00")
+
+	// An explicit currency still wins.
+	out, err = mod.Execute(ctx, callCtx, "log_financial_transaction", map[string]interface{}{
+		"amount":   10.0,
+		"category": "dining",
+		"currency": "eur",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, "EUR 10.00")
+
+	// A household without a currency keeps the install default, USD.
+	plain := makeTestCallCtx(t, "OtherFamily", "user-2", nil)
+	out, err = mod.Execute(ctx, plain, "log_financial_transaction", map[string]interface{}{
+		"amount":   10.0,
+		"category": "dining",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, "USD 10.00")
+}
+
+// TestFinanceModule_SummaryUserFilterStaysInTheHousehold: the summary's user_id argument names
+// another person, so it is resolved inside the caller's household only (ADR 0002 Decision 3).
+func TestFinanceModule_SummaryUserFilterStaysInTheHousehold(t *testing.T) {
+	repo := newInMemoryFinanceRepo()
+	mod := NewModule(repo)
+	ctx := context.Background()
+	callCtx := makeTestCallCtx(t, "SmithFamily", "user-1", nil)
+
+	_, err := mod.Execute(ctx, callCtx, "get_financial_summary", map[string]interface{}{"user_id": "someone-else"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a member of this household")
+
+	out, err := mod.Execute(ctx, callCtx, "get_financial_summary", map[string]interface{}{"user_id": "user-1"})
+	require.NoError(t, err)
+	assert.Contains(t, out, "Financial Summary")
+}

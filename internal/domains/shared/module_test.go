@@ -3,6 +3,8 @@ package shared
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"strings"
 	"sync"
 	"testing"
@@ -16,17 +18,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// inMemorySharedRepo implements Repository for unit testing.
+// households is the in-memory household store the scopes of these tests are built against (V4-30).
+var households = identitytest.NewStore()
+
+// sc returns the scope of user in the household labelled label.
+func sc(t testing.TB, label, user string) identity.Scope {
+	t.Helper()
+	return households.ScopeIn(t, label, user, "family")
+}
+
+// hid is the household ID of the household labelled label.
+func hid(label string) string { return households.Household(label).ID }
+
+// inMemorySharedRepo implements Repository (and the notifier's DataProvider) for unit testing,
+// with the same household scoping as the real repository.
 type inMemorySharedRepo struct {
+	*identitytest.Store
 	mu        sync.RWMutex
-	spaces    map[string]*models.SharedSpace         // key: familyGroup + ":" + topic
+	spaces    map[string]*models.SharedSpace // key: householdID + ":" + topic
 	reminders map[uint]*models.SharedTaskReminder
-	users     map[string][]models.User               // key: familyGroup
+	users     map[string][]models.User // key: householdID
 	nextRemID uint
 }
 
 func newInMemoryRepo() *inMemorySharedRepo {
 	return &inMemorySharedRepo{
+		Store:     households,
 		spaces:    make(map[string]*models.SharedSpace),
 		reminders: make(map[uint]*models.SharedTaskReminder),
 		users:     make(map[string][]models.User),
@@ -34,11 +51,15 @@ func newInMemoryRepo() *inMemorySharedRepo {
 	}
 }
 
-func (r *inMemorySharedRepo) UpsertSharedSpace(space *models.SharedSpace) error {
+func (r *inMemorySharedRepo) UpsertSharedSpace(s identity.Scope, space *models.SharedSpace) error {
+	if !s.Valid() {
+		return identity.ErrNoScope
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	key := strings.ToLower(space.FamilyGroup) + ":" + strings.ToLower(space.Topic)
+	space.HouseholdID, space.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
+	key := space.HouseholdID + ":" + strings.ToLower(space.Topic)
 	if existing, exists := r.spaces[key]; exists {
 		existing.CanView = space.CanView
 		existing.CanEdit = space.CanEdit
@@ -57,25 +78,30 @@ func (r *inMemorySharedRepo) UpsertSharedSpace(space *models.SharedSpace) error 
 	return nil
 }
 
-func (r *inMemorySharedRepo) GetSharedSpacesForFamily(familyGroup string) ([]models.SharedSpace, error) {
+func (r *inMemorySharedRepo) GetSharedSpacesForFamily(s identity.Scope) ([]models.SharedSpace, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	var result []models.SharedSpace
-	fgLower := strings.ToLower(familyGroup)
 	for _, sp := range r.spaces {
-		if strings.ToLower(sp.FamilyGroup) == fgLower {
+		if sp.HouseholdID == s.HouseholdID() {
 			result = append(result, *sp)
 		}
 	}
 	return result, nil
 }
 
-func (r *inMemorySharedRepo) GetSharedSpace(familyGroup, topic string) (*models.SharedSpace, error) {
+func (r *inMemorySharedRepo) GetSharedSpace(s identity.Scope, topic string) (*models.SharedSpace, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	key := strings.ToLower(familyGroup) + ":" + strings.ToLower(topic)
+	key := s.HouseholdID() + ":" + strings.ToLower(topic)
 	if sp, ok := r.spaces[key]; ok {
 		cp := *sp
 		return &cp, nil
@@ -83,10 +109,14 @@ func (r *inMemorySharedRepo) GetSharedSpace(familyGroup, topic string) (*models.
 	return nil, nil
 }
 
-func (r *inMemorySharedRepo) CreateSharedReminder(reminder *models.SharedTaskReminder) error {
+func (r *inMemorySharedRepo) CreateSharedReminder(s identity.Scope, reminder *models.SharedTaskReminder) error {
+	if !s.Valid() {
+		return identity.ErrNoScope
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	reminder.HouseholdID, reminder.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	reminder.ID = r.nextRemID
 	r.nextRemID++
 	if reminder.CreatedAt.IsZero() {
@@ -97,19 +127,16 @@ func (r *inMemorySharedRepo) CreateSharedReminder(reminder *models.SharedTaskRem
 	return nil
 }
 
-func (r *inMemorySharedRepo) CompleteSharedReminder(id uint, completedByUserID string, familyGroup ...string) (*models.SharedTaskReminder, error) {
+func (r *inMemorySharedRepo) CompleteSharedReminder(s identity.Scope, id uint, completedByUserID string) (*models.SharedTaskReminder, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	rem, exists := r.reminders[id]
-	if !exists {
+	if !exists || rem.HouseholdID != s.HouseholdID() {
 		return nil, fmt.Errorf("shared reminder with id %d not found", id)
-	}
-
-	if len(familyGroup) > 0 && familyGroup[0] != "" {
-		if rem.FamilyGroup != familyGroup[0] && rem.CreatedByUserID != completedByUserID && rem.AssignedToUserID != completedByUserID {
-			return nil, fmt.Errorf("shared reminder with id %d not found in family %q", id, familyGroup[0])
-		}
 	}
 
 	now := time.Now()
@@ -120,16 +147,18 @@ func (r *inMemorySharedRepo) CompleteSharedReminder(id uint, completedByUserID s
 	return &cp, nil
 }
 
-func (r *inMemorySharedRepo) ListSharedReminders(familyGroup string, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error) {
+func (r *inMemorySharedRepo) ListSharedReminders(s identity.Scope, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	var result []models.SharedTaskReminder
-	fgLower := strings.ToLower(familyGroup)
 	topicLower := strings.ToLower(strings.TrimSpace(topic))
 
 	for _, rem := range r.reminders {
-		if strings.ToLower(rem.FamilyGroup) != fgLower {
+		if rem.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		if topicLower != "" && topicLower != "*" && strings.ToLower(rem.Topic) != topicLower {
@@ -143,17 +172,25 @@ func (r *inMemorySharedRepo) ListSharedReminders(familyGroup string, topic strin
 	return result, nil
 }
 
-func (r *inMemorySharedRepo) GetUsersByFamilyGroup(familyGroup string) ([]models.User, error) {
+func (r *inMemorySharedRepo) UsersInHousehold(_ context.Context, s identity.Scope) ([]models.User, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	return r.users[strings.ToLower(familyGroup)], nil
+	return r.users[s.HouseholdID()], nil
 }
 
+// setUsers puts users in the household labelled familyGroup.
 func (r *inMemorySharedRepo) setUsers(familyGroup string, users []models.User) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.users[strings.ToLower(familyGroup)] = users
+	h := hid(familyGroup)
+	for i := range users {
+		users[i].HouseholdID = h
+	}
+	r.users[h] = users
 }
 
 // ------------------- Tests -------------------
@@ -184,12 +221,12 @@ func TestRepository_CRUD(t *testing.T) {
 		CanEdit:     true,
 		NotifyMode:  models.NotifyModeInstant,
 	}
-	err := repo.UpsertSharedSpace(sp)
+	err := repo.UpsertSharedSpace(sc(t, "TheSmiths", "sarah-1"), sp)
 	require.NoError(t, err)
 	assert.NotZero(t, sp.ID)
 
 	// Retrieve
-	found, err := repo.GetSharedSpace("TheSmiths", "baby")
+	found, err := repo.GetSharedSpace(sc(t, "TheSmiths", "sarah-1"), "baby")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, "baby", found.Topic)
@@ -197,15 +234,15 @@ func TestRepository_CRUD(t *testing.T) {
 
 	// Update existing space
 	sp.NotifyMode = models.NotifyModeSilent
-	err = repo.UpsertSharedSpace(sp)
+	err = repo.UpsertSharedSpace(sc(t, "TheSmiths", "sarah-1"), sp)
 	require.NoError(t, err)
 
-	updated, err := repo.GetSharedSpace("TheSmiths", "baby")
+	updated, err := repo.GetSharedSpace(sc(t, "TheSmiths", "sarah-1"), "baby")
 	require.NoError(t, err)
 	assert.Equal(t, models.NotifyModeSilent, updated.NotifyMode)
 
 	// List spaces for family
-	spaces, err := repo.GetSharedSpacesForFamily("TheSmiths")
+	spaces, err := repo.GetSharedSpacesForFamily(sc(t, "TheSmiths", "sarah-1"))
 	require.NoError(t, err)
 	assert.Len(t, spaces, 1)
 
@@ -219,30 +256,30 @@ func TestRepository_CRUD(t *testing.T) {
 		CreatedByUserID:  "sarah-1",
 		AssignedToUserID: "john-2",
 	}
-	err = repo.CreateSharedReminder(rem)
+	err = repo.CreateSharedReminder(sc(t, "TheSmiths", "sarah-1"), rem)
 	require.NoError(t, err)
 	assert.Equal(t, uint(1), rem.ID)
 
 	// List pending
-	list, err := repo.ListSharedReminders("TheSmiths", "baby", false)
+	list, err := repo.ListSharedReminders(sc(t, "TheSmiths", "sarah-1"), "baby", false)
 	require.NoError(t, err)
 	assert.Len(t, list, 1)
 	assert.False(t, list[0].IsCompleted)
 
 	// Complete reminder
-	completed, err := repo.CompleteSharedReminder(rem.ID, "john-2")
+	completed, err := repo.CompleteSharedReminder(sc(t, "TheSmiths", "john-2"), rem.ID, "john-2")
 	require.NoError(t, err)
 	assert.True(t, completed.IsCompleted)
 	assert.Equal(t, "john-2", completed.CompletedByUserID)
 	assert.NotNil(t, completed.CompletedAt)
 
 	// List pending (should be empty now)
-	pendingList, err := repo.ListSharedReminders("TheSmiths", "baby", false)
+	pendingList, err := repo.ListSharedReminders(sc(t, "TheSmiths", "sarah-1"), "baby", false)
 	require.NoError(t, err)
 	assert.Empty(t, pendingList)
 
 	// List with includeCompleted = true
-	allList, err := repo.ListSharedReminders("TheSmiths", "baby", true)
+	allList, err := repo.ListSharedReminders(sc(t, "TheSmiths", "sarah-1"), "baby", true)
 	require.NoError(t, err)
 	assert.Len(t, allList, 1)
 }
@@ -312,6 +349,7 @@ func TestNotifier_CrossUserRouting(t *testing.T) {
 		EntityType:  "BabyCareLog",
 		ActorUserID: "user-sarah",
 		FamilyGroup: "TheSmiths",
+		HouseholdID: hid("TheSmiths"),
 		Summary:     "Feeding 120ml formula",
 	}
 
@@ -361,6 +399,7 @@ func TestNotifier_SilentAndPrivateTopics(t *testing.T) {
 		Action:      "create",
 		ActorUserID: "user-sarah",
 		FamilyGroup: "TheSmiths",
+		HouseholdID: hid("TheSmiths"),
 		Summary:     "Private diary entry",
 	}
 	err := bus.Publish(ctx, evPrivate)
@@ -372,7 +411,7 @@ func TestNotifier_SilentAndPrivateTopics(t *testing.T) {
 	mu.Unlock()
 
 	// 2. Baby topic configured explicitly with NotifyMode = "silent"
-	err = repo.UpsertSharedSpace(&models.SharedSpace{
+	err = repo.UpsertSharedSpace(sc(t, "TheSmiths", "user-sarah"), &models.SharedSpace{
 		FamilyGroup: "TheSmiths",
 		Topic:       "baby",
 		CanView:     true,
@@ -386,6 +425,7 @@ func TestNotifier_SilentAndPrivateTopics(t *testing.T) {
 		Action:      "create",
 		ActorUserID: "user-sarah",
 		FamilyGroup: "TheSmiths",
+		HouseholdID: hid("TheSmiths"),
 		Summary:     "Feeding 90ml formula",
 	}
 	err = bus.Publish(ctx, evSilent)
@@ -419,7 +459,7 @@ func TestNotifier_TargetedPartner(t *testing.T) {
 	notifier.RegisterWithBus(bus)
 
 	// Configure house topic targeted specifically to user-john
-	err := repo.UpsertSharedSpace(&models.SharedSpace{
+	err := repo.UpsertSharedSpace(sc(t, "TheSmiths", "user-sarah"), &models.SharedSpace{
 		FamilyGroup:      "TheSmiths",
 		Topic:            "house",
 		SharedWithUserID: "user-john",
@@ -435,6 +475,7 @@ func TestNotifier_TargetedPartner(t *testing.T) {
 		Action:      "create",
 		ActorUserID: "user-sarah",
 		FamilyGroup: "TheSmiths",
+		HouseholdID: hid("TheSmiths"),
 		Summary:     "Fixed kitchen sink",
 	}
 
@@ -486,7 +527,8 @@ func TestToolModule_DeclarationsAndPrompt(t *testing.T) {
 
 	// User with family group
 	promptFamily := mod.SystemPromptSection(ctx, orchestrator.CallContext{
-		User: &models.User{ID: "user-1", FamilyGroup: "TheSmiths"},
+		User:  &models.User{ID: "user-1", FamilyGroup: "TheSmiths"},
+		Scope: sc(t, "TheSmiths", "user-1"),
 	})
 	assert.Contains(t, promptFamily, "Family Group: TheSmiths")
 	assert.Contains(t, promptFamily, "baby, house, finance")
@@ -517,11 +559,13 @@ func TestToolModule_ExecuteTools(t *testing.T) {
 	ctx := context.Background()
 	callCtxSarah := orchestrator.CallContext{
 		User:             &models.User{ID: "user-sarah", PlatformID: "tg-100", Name: "Sarah", FamilyGroup: "TheSmiths"},
+		Scope:            sc(t, "TheSmiths", "tg-100"),
 		EventBus:         bus,
 		SendNotification: mockSender,
 	}
 	callCtxJohn := orchestrator.CallContext{
 		User:             &models.User{ID: "user-john", PlatformID: "tg-200", Name: "John", FamilyGroup: "TheSmiths"},
+		Scope:            sc(t, "TheSmiths", "tg-200"),
 		EventBus:         bus,
 		SendNotification: mockSender,
 	}
@@ -537,7 +581,7 @@ func TestToolModule_ExecuteTools(t *testing.T) {
 	assert.Contains(t, resConfig, "Successfully configured shared topic 'baby'")
 
 	// Check repo
-	sp, err := repo.GetSharedSpace("TheSmiths", "baby")
+	sp, err := repo.GetSharedSpace(sc(t, "TheSmiths", "tg-100"), "baby")
 	require.NoError(t, err)
 	require.NotNil(t, sp)
 	assert.True(t, sp.CanView)
@@ -626,7 +670,8 @@ func TestToolModule_ErrorCases(t *testing.T) {
 
 	// 2. Family user with missing parameters
 	famCtx := orchestrator.CallContext{
-		User: &models.User{ID: "user-1", FamilyGroup: "FamilyA"},
+		User:  &models.User{ID: "user-1", FamilyGroup: "FamilyA"},
+		Scope: sc(t, "FamilyA", "user-1"),
 	}
 
 	// Missing title in create_shared_reminder
@@ -661,6 +706,7 @@ func TestSEC04_CrossTenant_SharedReminders_Blocked(t *testing.T) {
 	// 1. Family Alpha creates a shared reminder
 	callCtxAlpha := orchestrator.CallContext{
 		User:    &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha", Name: "Alpha User"},
+		Scope:   sc(t, "family_alpha", "user_alpha"),
 		Message: channel.Inbound{Sender: "user_alpha"},
 	}
 
@@ -672,7 +718,7 @@ func TestSEC04_CrossTenant_SharedReminders_Blocked(t *testing.T) {
 	assert.Contains(t, createResp, "Alpha Grocery Shopping")
 
 	// Verify reminder 1 exists and is not completed
-	listAlpha, err := repo.ListSharedReminders("family_alpha", "groceries", true)
+	listAlpha, err := repo.ListSharedReminders(sc(t, "family_alpha", "user_alpha"), "groceries", true)
 	require.NoError(t, err)
 	require.Len(t, listAlpha, 1)
 	assert.Equal(t, uint(1), listAlpha[0].ID)
@@ -681,6 +727,7 @@ func TestSEC04_CrossTenant_SharedReminders_Blocked(t *testing.T) {
 	// 2. Family Beta attempts to complete Family Alpha's reminder (id: 1)
 	callCtxBeta := orchestrator.CallContext{
 		User:    &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta", Name: "Beta Attacker"},
+		Scope:   sc(t, "family_beta", "user_beta"),
 		Message: channel.Inbound{Sender: "user_beta"},
 	}
 
@@ -690,7 +737,7 @@ func TestSEC04_CrossTenant_SharedReminders_Blocked(t *testing.T) {
 	assert.Error(t, completeBetaErr, "Family Beta must NOT be able to complete Family Alpha's reminder")
 
 	// Verify reminder 1 is STILL not completed
-	listAlphaAfter, err := repo.ListSharedReminders("family_alpha", "groceries", true)
+	listAlphaAfter, err := repo.ListSharedReminders(sc(t, "family_alpha", "user_alpha"), "groceries", true)
 	require.NoError(t, err)
 	require.Len(t, listAlphaAfter, 1)
 	assert.False(t, listAlphaAfter[0].IsCompleted)
@@ -703,7 +750,7 @@ func TestSEC04_CrossTenant_SharedReminders_Blocked(t *testing.T) {
 	assert.Contains(t, completeAlphaResp, "completed")
 
 	// Verify reminder 1 is now completed
-	listAlphaFinal, err := repo.ListSharedReminders("family_alpha", "groceries", true)
+	listAlphaFinal, err := repo.ListSharedReminders(sc(t, "family_alpha", "user_alpha"), "groceries", true)
 	require.NoError(t, err)
 	require.Len(t, listAlphaFinal, 1)
 	assert.True(t, listAlphaFinal[0].IsCompleted)
@@ -750,5 +797,3 @@ func TestScheduleReminder_Execution(t *testing.T) {
 	assert.Equal(t, "Pick up dry cleaning", dbMock.savedReminders[0].Message)
 	assert.False(t, dbMock.savedReminders[0].IsSent)
 }
-
-

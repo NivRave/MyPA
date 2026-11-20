@@ -9,6 +9,16 @@ type User {
   createdAt: Time!
 }
 
+# A household (V4-30): the tenant, and where family-level settings live. An empty language,
+# timeZone or currency means the install's default (DEFAULT_TIMEZONE, no language, USD).
+type Household {
+  id: ID!
+  name: String!
+  language: String!
+  timeZone: String!
+  currency: String!
+}
+
 type PairingCode {
   id: ID!
   code: String!
@@ -316,6 +326,8 @@ type UserSessionSummary {
 }
 
 type Query {
+  "The caller's own household."
+  household: Household!
   users: [User!]!
   activePairingCodes(familyGroup: String): [PairingCode!]!
   topicMemories(topic: String, familyGroup: String, includeSuperseded: Boolean): [TopicMemory!]!
@@ -344,6 +356,8 @@ type Query {
 
 type Mutation {
   generatePairingCode(role: String!, familyGroup: String!): PairingCode!
+  "Change the caller's own household's settings (admins only). Omitted fields are unchanged; an empty string resets a setting to the install default."
+  updateHousehold(name: String, language: String, timeZone: String, currency: String): Household!
   saveTopicMemory(topic: String!, subtopic: String!, fact: String!, tagsJson: String, scope: String, familyGroup: String): TopicMemory!
   deleteTopicMemory(id: ID!): Boolean!
   pinTopicMemory(id: ID!, isPinned: Boolean!): TopicMemory!

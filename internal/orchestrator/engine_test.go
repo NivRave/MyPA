@@ -13,6 +13,7 @@ import (
 	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/channel/adapters/adapterstest"
 	"github.com/nivik/mypa/internal/config"
+	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator/mocks"
@@ -39,7 +40,7 @@ func whatsAppMockOf(t *testing.T, e *Engine) *wamocks.MockAPI {
 
 func setupTestEngine(t *testing.T) (*Engine, *tgmocks.MockAPI, *mocks.MockLLMClient, *mocks.MockDBClient, func()) {
 	ctrl := gomock.NewController(t)
-	
+
 	tgMock := tgmocks.NewMockAPI(ctrl)
 	twMock := wamocks.NewMockAPI(ctrl)
 	audioMock := mocks.NewMockAudioClient(ctrl)
@@ -50,7 +51,7 @@ func setupTestEngine(t *testing.T) (*Engine, *tgmocks.MockAPI, *mocks.MockLLMCli
 	dbMock := mocks.NewMockDBClient(ctrl)
 	eventPublisherMock := mocks.NewMockEventPublisher(ctrl)
 	eventPublisherMock.EXPECT().Publish(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	
+
 	// Setup in-memory Redis
 	mr, err := miniredis.Run()
 	assert.NoError(t, err)
@@ -88,8 +89,9 @@ func setupTestEngine(t *testing.T) (*Engine, *tgmocks.MockAPI, *mocks.MockLLMCli
 	reg.Register(&testBaseToolsModule{engine: engine})
 	engine.SetToolRegistry(reg)
 
+	expectHouseholds(dbMock)
 	dbMock.EXPECT().GetUser(gomock.Any()).DoAndReturn(func(userID string) (*models.User, error) {
-		return &models.User{PlatformID: userID, Name: "User " + userID}, nil
+		return inHousehold(&models.User{PlatformID: userID, Name: "User " + userID}), nil
 	}).AnyTimes()
 
 	cleanup := func() {
@@ -204,7 +206,6 @@ func TestProcessMessage_ConnectCommand(t *testing.T) {
 		}).
 		Times(1)
 
-
 	err := engine.ProcessMessage(context.Background(), msg)
 	assert.NoError(t, err)
 }
@@ -224,8 +225,8 @@ func TestProcessMessage_TextMessage(t *testing.T) {
 
 	// Mock DB calls for history and memories
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
-	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
-	
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
+
 	llmResponse := &llm.Response{
 		Text: "Hello there!",
 	}
@@ -257,7 +258,7 @@ func TestProcessMessage_WhatsApp_TextDocument(t *testing.T) {
 	twMock.EXPECT().DownloadMedia(gomock.Any(), "https://api.twilio.com/media/doc123").Return([]byte(docContent), nil).Times(1)
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
-	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
 
 	llmResponse := &llm.Response{
 		Text: "Checklist received and scheduled!",
@@ -296,7 +297,7 @@ func TestProcessMessage_WhatsApp_PDFDocument(t *testing.T) {
 	twMock.EXPECT().DownloadMedia(gomock.Any(), "https://api.twilio.com/media/pdf123").Return(pdfBytes, nil).Times(1)
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
-	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
 
 	llmResponse := &llm.Response{
 		Text: "Document analyzed!",
@@ -397,7 +398,7 @@ func TestProcessMessage_ContentBlocked_RetrySuccess(t *testing.T) {
 	}
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
-	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
 
 	// 1st call fails with ContentBlockedError
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), "תזכיר לי ב18 לנקות את השואב", gomock.Any(), gomock.Any()).
@@ -432,7 +433,7 @@ func TestProcessMessage_ContentBlocked_PersistentError(t *testing.T) {
 	}
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
-	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]models.TopicMemory{}, nil).AnyTimes()
 
 	llmMock.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), "some blocked text without numbers", gomock.Any(), gomock.Any()).
 		Return(nil, &llm.ContentBlockedError{BlockReason: "SAFETY"}).Times(1)
@@ -469,7 +470,7 @@ func TestEngine_HandleToolCall_RegistryDelegation(t *testing.T) {
 	reg.Register(mod)
 	engine.SetToolRegistry(reg)
 
-	dbMock.EXPECT().GetUser("user-1").Return(&models.User{PlatformID: "user-1", Name: "User One"}, nil).AnyTimes()
+	dbMock.EXPECT().GetUser("user-1").Return(inHousehold(&models.User{PlatformID: "user-1", Name: "User One"}), nil).AnyTimes()
 
 	msg := channel.Inbound{Sender: "user-1", Text: "run custom tool"}
 	tc := &genai.FunctionCall{
@@ -531,6 +532,7 @@ func setupUnauthTestEngine(t *testing.T) (*Engine, *tgmocks.MockAPI, *mocks.Mock
 	)
 	whatsAppMocks.Store(engine, twMock)
 	t.Cleanup(func() { whatsAppMocks.Delete(engine) })
+	expectHouseholds(dbMock)
 
 	cleanup := func() {
 		engine.Wait()
@@ -589,20 +591,24 @@ type testRollbackModule struct {
 	lastMutationID string
 }
 
-func (m *testRollbackModule) Name() string { return "durability" }
+func (m *testRollbackModule) Name() string                               { return "durability" }
 func (m *testRollbackModule) Declarations() []*genai.FunctionDeclaration { return nil }
-func (m *testRollbackModule) Execute(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) { return "", nil }
-func (m *testRollbackModule) SystemPromptSection(ctx context.Context, callCtx CallContext) string { return "" }
-func (m *testRollbackModule) Rollback(ctx context.Context, actorID, familyGroup, mutationID string, reason ...string) (*models.RollbackResult, error) {
-	m.lastActorID = actorID
+func (m *testRollbackModule) Execute(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
+	return "", nil
+}
+func (m *testRollbackModule) SystemPromptSection(ctx context.Context, callCtx CallContext) string {
+	return ""
+}
+func (m *testRollbackModule) Rollback(ctx context.Context, s identity.Scope, mutationID string, reason ...string) (*models.RollbackResult, error) {
+	m.lastActorID = s.PersonKey()
 	m.lastMutationID = mutationID
 	return &models.RollbackResult{
 		MutationID: mutationID,
 		Detail:     "Reverted test action",
 	}, nil
 }
-func (m *testRollbackModule) RollbackLast(ctx context.Context, actorID, familyGroup string, reason ...string) (*models.RollbackResult, error) {
-	return m.Rollback(ctx, actorID, familyGroup, "")
+func (m *testRollbackModule) RollbackLast(ctx context.Context, s identity.Scope, reason ...string) (*models.RollbackResult, error) {
+	return m.Rollback(ctx, s, "")
 }
 
 func TestProcessMessage_UndoCommand(t *testing.T) {
@@ -634,6 +640,7 @@ func TestCheckAndSendReminders_SharedTaskReminders(t *testing.T) {
 	sharedDue := []models.SharedTaskReminder{
 		{
 			ID:               42,
+			HouseholdID:      householdID("fam-1"),
 			FamilyGroup:      "fam-1",
 			Topic:            "baby",
 			Title:            "Buy diapers",
@@ -653,7 +660,7 @@ func TestCheckAndSendReminders_SharedTaskReminders(t *testing.T) {
 		str, ok := x.(string)
 		return ok && strings.Contains(str, "Shared Task Reminder") && strings.Contains(str, "Buy diapers") && strings.Contains(str, "baby")
 	})).Return(nil)
-	dbMock.EXPECT().MarkSharedReminderSent(uint(42)).Return(nil)
+	dbMock.EXPECT().MarkSharedReminderSent(gomock.Any(), uint(42)).Return(nil)
 
 	engine.CheckAndSendReminders()
 }
@@ -666,7 +673,7 @@ func TestProcessMessage_PhotoDataStrippedFromRedis(t *testing.T) {
 	userID := "user-photo-strip"
 	photo := []byte("fake-photo-data-bytes-for-receipt")
 
-	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
 	tgMock.EXPECT().GetFile(gomock.Any(), "photo-123").Return("path/to/photo.jpg", nil)
 	tgMock.EXPECT().DownloadFile(gomock.Any(), "path/to/photo.jpg").Return(photo, nil)
@@ -835,7 +842,7 @@ func TestProcessMessage_TwoTierToolScoping(t *testing.T) {
 
 	ctx := context.Background()
 
-	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
 	// Register baby and finance modules
 	reg := NewRegistry()
@@ -953,8 +960,3 @@ func TestExecuteToolsConcurrently_ContextCancellation(t *testing.T) {
 	require.Len(t, funcCalls, 2)
 	require.Len(t, funcResponses, 2)
 }
-
-
-
-
-

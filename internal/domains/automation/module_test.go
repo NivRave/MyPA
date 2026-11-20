@@ -3,6 +3,8 @@ package automation
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -42,9 +44,10 @@ func newFakeAutomationRepo() *fakeAutomationRepo {
 	}
 }
 
-func (r *fakeAutomationRepo) CreateAPIConnector(c *models.ExternalAPIConnector) error {
+func (r *fakeAutomationRepo) CreateAPIConnector(s identity.Scope, c *models.ExternalAPIConnector) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	c.HouseholdID, c.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	c.ID = r.nextConnID
 	r.nextConnID++
 	if c.CreatedAt.IsZero() {
@@ -55,7 +58,7 @@ func (r *fakeAutomationRepo) CreateAPIConnector(c *models.ExternalAPIConnector) 
 	return nil
 }
 
-func (r *fakeAutomationRepo) GetAPIConnector(id uint, familyGroup ...string) (*models.ExternalAPIConnector, error) {
+func (r *fakeAutomationRepo) GetAPIConnector(s identity.Scope, id uint) (*models.ExternalAPIConnector, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	c, ok := r.connectors[id]
@@ -66,61 +69,42 @@ func (r *fakeAutomationRepo) GetAPIConnector(id uint, familyGroup ...string) (*m
 	return &cp, nil
 }
 
-func (r *fakeAutomationRepo) GetAPIConnectorByName(userID, familyGroup, name string) (*models.ExternalAPIConnector, error) {
+func (r *fakeAutomationRepo) GetAPIConnectorByName(s identity.Scope, name string) (*models.ExternalAPIConnector, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	normName := strings.ToLower(strings.TrimSpace(name))
 	for _, c := range r.connectors {
-		if strings.ToLower(c.Name) == normName {
-			if userID != "" && familyGroup != "" {
-				if c.UserID == userID || c.FamilyGroup == familyGroup {
-					cp := *c
-					return &cp, nil
-				}
-			} else if userID != "" {
-				if c.UserID == userID {
-					cp := *c
-					return &cp, nil
-				}
-			} else {
-				cp := *c
-				return &cp, nil
-			}
+		if c.HouseholdID == s.HouseholdID() && strings.ToLower(c.Name) == normName {
+			cp := *c
+			return &cp, nil
 		}
 	}
 	return nil, nil
 }
 
-func (r *fakeAutomationRepo) ListAPIConnectors(userID, familyGroup string) ([]models.ExternalAPIConnector, error) {
+func (r *fakeAutomationRepo) ListAPIConnectors(s identity.Scope) ([]models.ExternalAPIConnector, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var list []models.ExternalAPIConnector
 	for _, c := range r.connectors {
-		if userID != "" && familyGroup != "" {
-			if c.UserID == userID || c.FamilyGroup == familyGroup {
-				list = append(list, *c)
-			}
-		} else if userID != "" {
-			if c.UserID == userID {
-				list = append(list, *c)
-			}
-		} else {
+		if c.HouseholdID == s.HouseholdID() {
 			list = append(list, *c)
 		}
 	}
 	return list, nil
 }
 
-func (r *fakeAutomationRepo) DeleteAPIConnector(id uint) error {
+func (r *fakeAutomationRepo) DeleteAPIConnector(s identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.connectors, id)
 	return nil
 }
 
-func (r *fakeAutomationRepo) CreateAutomationRule(rule *models.AutomationRule) error {
+func (r *fakeAutomationRepo) CreateAutomationRule(s identity.Scope, rule *models.AutomationRule) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	rule.HouseholdID, rule.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	rule.ID = r.nextRuleID
 	r.nextRuleID++
 	if rule.CreatedAt.IsZero() {
@@ -131,7 +115,7 @@ func (r *fakeAutomationRepo) CreateAutomationRule(rule *models.AutomationRule) e
 	return nil
 }
 
-func (r *fakeAutomationRepo) GetAutomationRule(id uint) (*models.AutomationRule, error) {
+func (r *fakeAutomationRepo) GetAutomationRule(s identity.Scope, id uint) (*models.AutomationRule, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	rule, ok := r.rules[id]
@@ -142,24 +126,17 @@ func (r *fakeAutomationRepo) GetAutomationRule(id uint) (*models.AutomationRule,
 	return &cp, nil
 }
 
-func (r *fakeAutomationRepo) ListAutomationRules(userID, familyGroup, triggerTopic string) ([]models.AutomationRule, error) {
+func (r *fakeAutomationRepo) ListAutomationRules(s identity.Scope, triggerTopic string) ([]models.AutomationRule, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var list []models.AutomationRule
 	normTopic := strings.ToLower(strings.TrimSpace(triggerTopic))
 	for _, rule := range r.rules {
-		if userID != "" && familyGroup != "" {
-			if rule.UserID != userID && rule.FamilyGroup != familyGroup {
-				continue
-			}
-		} else if userID != "" && rule.UserID != userID {
+		if rule.HouseholdID != s.HouseholdID() {
 			continue
 		}
-
-		if normTopic != "" && normTopic != "all" && normTopic != "*" {
-			if strings.ToLower(rule.TriggerTopic) != normTopic {
-				continue
-			}
+		if normTopic != "" && normTopic != "all" && normTopic != "*" && strings.ToLower(rule.TriggerTopic) != normTopic {
+			continue
 		}
 		list = append(list, *rule)
 	}
@@ -187,7 +164,7 @@ func (r *fakeAutomationRepo) ListActiveAutomationRules(triggerTopic string) ([]m
 	return list, nil
 }
 
-func (r *fakeAutomationRepo) UpdateAutomationRule(rule *models.AutomationRule) error {
+func (r *fakeAutomationRepo) UpdateAutomationRule(s identity.Scope, rule *models.AutomationRule) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cp := *rule
@@ -195,7 +172,7 @@ func (r *fakeAutomationRepo) UpdateAutomationRule(rule *models.AutomationRule) e
 	return nil
 }
 
-func (r *fakeAutomationRepo) DeleteAutomationRule(id uint, familyGroup ...string) error {
+func (r *fakeAutomationRepo) DeleteAutomationRule(s identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.rules, id)
@@ -224,9 +201,10 @@ func (r *fakeAutomationRepo) GetUserPreference(userID string) (*models.UserPrefe
 	return &cp, nil
 }
 
-func (r *fakeAutomationRepo) UpsertCRMContact(contact *models.PersonalCRMContact) error {
+func (r *fakeAutomationRepo) UpsertCRMContact(s identity.Scope, contact *models.PersonalCRMContact) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	contact.HouseholdID, contact.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	if contact.ID == 0 {
 		contact.ID = r.nextCrmID
 		r.nextCrmID++
@@ -239,7 +217,7 @@ func (r *fakeAutomationRepo) UpsertCRMContact(contact *models.PersonalCRMContact
 	return nil
 }
 
-func (r *fakeAutomationRepo) GetCRMContact(id uint) (*models.PersonalCRMContact, error) {
+func (r *fakeAutomationRepo) GetCRMContact(s identity.Scope, id uint) (*models.PersonalCRMContact, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	c, ok := r.contacts[id]
@@ -250,17 +228,13 @@ func (r *fakeAutomationRepo) GetCRMContact(id uint) (*models.PersonalCRMContact,
 	return &cp, nil
 }
 
-func (r *fakeAutomationRepo) ListCRMContacts(userID, familyGroup, query string) ([]models.PersonalCRMContact, error) {
+func (r *fakeAutomationRepo) ListCRMContacts(s identity.Scope, query string) ([]models.PersonalCRMContact, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var list []models.PersonalCRMContact
 	q := strings.ToLower(strings.TrimSpace(query))
 	for _, c := range r.contacts {
-		if userID != "" && familyGroup != "" {
-			if c.UserID != userID && c.FamilyGroup != familyGroup {
-				continue
-			}
-		} else if userID != "" && c.UserID != userID {
+		if c.HouseholdID != s.HouseholdID() {
 			continue
 		}
 
@@ -278,7 +252,7 @@ func (r *fakeAutomationRepo) ListCRMContacts(userID, familyGroup, query string) 
 	return list, nil
 }
 
-func (r *fakeAutomationRepo) DeleteCRMContact(id uint) error {
+func (r *fakeAutomationRepo) DeleteCRMContact(s identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.contacts, id)
@@ -297,6 +271,7 @@ func TestExternalAPI_RegistrationAndEncryption(t *testing.T) {
 			PlatformID:  "user_123",
 			FamilyGroup: "cohen_family",
 		},
+		Scope:    identitytest.Scope(t, "cohen_family", "user_123", "family"),
 		EventBus: bus,
 	}
 
@@ -315,7 +290,7 @@ func TestExternalAPI_RegistrationAndEncryption(t *testing.T) {
 	assert.Contains(t, result, "Successfully registered external API connector")
 
 	// 2. Verify stored in repo with encrypted headers
-	connectors, err := repo.ListAPIConnectors("user_123", "cohen_family")
+	connectors, err := repo.ListAPIConnectors(callCtx.Scope)
 	require.NoError(t, err)
 	require.Len(t, connectors, 1)
 
@@ -398,7 +373,8 @@ func TestExternalAPI_ExecutionWithTestServer(t *testing.T) {
 	mod := NewModule(repo, WithEventBus(bus), WithAllowLoopback(true))
 
 	callCtx := orchestrator.CallContext{
-		User: &models.User{PlatformID: "user_test", FamilyGroup: "grp_1"},
+		User:  &models.User{PlatformID: "user_test", FamilyGroup: "grp_1"},
+		Scope: identitytest.Scope(t, "grp_1", "user_test", "family"),
 	}
 
 	// 1. Register test connector with encrypted auth
@@ -432,6 +408,7 @@ func TestAutomationRule_MatchingAgainstMutationEvents(t *testing.T) {
 	repo := newFakeAutomationRepo()
 	bus := events.NewEventBus()
 	runner := NewRunner(repo, bus)
+	scope := identitytest.Scope(t, "user_1", "user_1", "family")
 
 	var executedRules []string
 	var mu sync.Mutex
@@ -443,7 +420,7 @@ func TestAutomationRule_MatchingAgainstMutationEvents(t *testing.T) {
 	}
 
 	// Rule 1: Triggers only on topic 'finance' with action 'create'
-	err := repo.CreateAutomationRule(&models.AutomationRule{
+	err := repo.CreateAutomationRule(scope, &models.AutomationRule{
 		UserID:            "user_1",
 		Name:              "Finance Create Watcher",
 		TriggerType:       "event_mutation",
@@ -455,7 +432,7 @@ func TestAutomationRule_MatchingAgainstMutationEvents(t *testing.T) {
 	require.NoError(t, err)
 
 	// Rule 2: Triggers on topic 'baby' when summary contains 'fever'
-	err = repo.CreateAutomationRule(&models.AutomationRule{
+	err = repo.CreateAutomationRule(scope, &models.AutomationRule{
 		UserID:            "user_1",
 		Name:              "Baby Fever Alert",
 		TriggerType:       "keyword",
@@ -467,7 +444,7 @@ func TestAutomationRule_MatchingAgainstMutationEvents(t *testing.T) {
 	require.NoError(t, err)
 
 	// Rule 3: Triggers on any topic when amount in AfterJSON exceeds 500
-	err = repo.CreateAutomationRule(&models.AutomationRule{
+	err = repo.CreateAutomationRule(scope, &models.AutomationRule{
 		UserID:            "user_1",
 		Name:              "High Threshold Alert",
 		TriggerType:       "threshold",
@@ -485,6 +462,7 @@ func TestAutomationRule_MatchingAgainstMutationEvents(t *testing.T) {
 		Topic:       "finance",
 		Action:      "create",
 		ActorUserID: "user_1",
+		HouseholdID: scope.HouseholdID(),
 		AfterJSON:   `{"amount": 750, "category": "electronics"}`,
 		Summary:     "Bought laptop for 750",
 	})
@@ -508,6 +486,7 @@ func TestAutomationRule_MatchingAgainstMutationEvents(t *testing.T) {
 		Topic:       "baby",
 		Action:      "create",
 		ActorUserID: "user_1",
+		HouseholdID: scope.HouseholdID(),
 		Summary:     "Fed 120ml milk formula",
 	})
 	require.NoError(t, err)
@@ -522,6 +501,7 @@ func TestAutomationRule_MatchingAgainstMutationEvents(t *testing.T) {
 		Topic:       "baby",
 		Action:      "update",
 		ActorUserID: "user_1",
+		HouseholdID: scope.HouseholdID(),
 		Summary:     "Baby has a high fever of 39.1C",
 	})
 	require.NoError(t, err)
@@ -549,6 +529,7 @@ func TestUserPreferences_UpdateGetAndPromptInjection(t *testing.T) {
 			PlatformID:  "u_vip",
 			FamilyGroup: "family_alpha",
 		},
+		Scope:    identitytest.Scope(t, "family_alpha", "u_vip", "family"),
 		EventBus: bus,
 	}
 
@@ -594,6 +575,7 @@ func TestPersonalCRM_UpsertQueryAndUpcomingAlerts(t *testing.T) {
 			PlatformID:  "u_crm_user",
 			FamilyGroup: "cohen_home",
 		},
+		Scope:    identitytest.Scope(t, "cohen_home", "u_crm_user", "family"),
 		EventBus: bus,
 	}
 
@@ -755,6 +737,7 @@ func TestAutomation_ToolEdgeCases(t *testing.T) {
 
 	callCtx := orchestrator.CallContext{
 		User:     &models.User{PlatformID: "u_edge"},
+		Scope:    identitytest.Scope(t, "u_edge", "u_edge", "family"),
 		EventBus: bus,
 	}
 
@@ -776,9 +759,11 @@ func TestAutomation_ToolEdgeCases(t *testing.T) {
 	_, err = mod.Execute(ctx, callCtx, "call_external_api", map[string]interface{}{"connector_name": "ghost_connector"})
 	assert.Error(t, err)
 
-	// Delete non-existent rule
+	// Delete non-existent rule. V4-30 (DP-26): the lookup is confined to the caller's household,
+	// so "missing" and "another household's" cannot be told apart without a cross-household read;
+	// both are refused alike, never reported as a deletion.
 	_, err = mod.Execute(ctx, callCtx, "delete_automation_rule", map[string]interface{}{"rule_id": 9999})
-	require.NoError(t, err) // Idempotent delete
+	require.Error(t, err)
 
 	// Missing person_name in CRM
 	_, err = mod.Execute(ctx, callCtx, "upsert_personal_crm", map[string]interface{}{})
@@ -828,4 +813,48 @@ func TestCalculateDaysUntil(t *testing.T) {
 	// Invalid date
 	_, ok = calculateDaysUntil("not-a-date", refTime)
 	assert.False(t, ok)
+}
+
+// TestRunner_RulesReactOnlyToTheirOwnHousehold: an automation rule reacts only to events of its
+// own household (V4-30). Before, a rule whose user or event actor was empty matched events of
+// every family; an event without a household now matches no rule at all.
+func TestRunner_RulesReactOnlyToTheirOwnHousehold(t *testing.T) {
+	repo := newFakeAutomationRepo()
+	runner := NewRunner(repo, nil)
+	var mu sync.Mutex
+	var executed []string
+	runner.actionExecutor = func(ctx context.Context, rule models.AutomationRule, ev events.MutationEvent) error {
+		mu.Lock()
+		defer mu.Unlock()
+		executed = append(executed, rule.Name)
+		return nil
+	}
+
+	store := identitytest.NewStore()
+	alpha := store.ScopeIn(t, "family_alpha", "u_alpha", "family")
+	beta := store.ScopeIn(t, "family_beta", "u_beta", "family")
+	require.NoError(t, repo.CreateAutomationRule(alpha, &models.AutomationRule{
+		Name:          "Alpha watcher",
+		TriggerType:   "event_mutation",
+		TriggerTopic:  "*",
+		ConditionJSON: `{}`,
+		IsActive:      true,
+	}))
+
+	ctx := context.Background()
+	for _, ev := range []events.MutationEvent{
+		{Topic: "finance", Action: "create", HouseholdID: beta.HouseholdID(), FamilyGroup: beta.LegacyLabel()},
+		{Topic: "finance", Action: "create"}, // no household: matches nothing
+		{Topic: "finance", Action: "create", FamilyGroup: alpha.LegacyLabel()},
+	} {
+		require.NoError(t, runner.HandleMutationEvent(ctx, ev))
+	}
+	mu.Lock()
+	assert.Empty(t, executed, "a rule must not react to another household's events, nor to events without a household")
+	mu.Unlock()
+
+	require.NoError(t, runner.HandleMutationEvent(ctx, events.MutationEvent{Topic: "finance", Action: "create", HouseholdID: alpha.HouseholdID()}))
+	mu.Lock()
+	assert.Equal(t, []string{"Alpha watcher"}, executed)
+	mu.Unlock()
 }

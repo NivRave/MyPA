@@ -25,7 +25,7 @@ func TestAdversarial_ZeroElapsedTime(t *testing.T) {
 		Name:        "BabyZero",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(callCtx.Scope, &profile))
 
 	t0 := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
@@ -54,7 +54,7 @@ func TestAdversarial_ZeroElapsedTime(t *testing.T) {
 	assert.Contains(t, out2, "COOLDOWN ACTIVE")
 
 	// Verify database contains ONLY Dose 1
-	logs, err := repo.GetCareLogs(profile.ID, fg, "medication", time.Time{}, time.Time{}, 100)
+	logs, err := repo.GetCareLogs(callCtx.Scope, profile.ID, "medication", time.Time{}, time.Time{}, 100)
 	require.NoError(t, err)
 	assert.Len(t, logs, 1, "Unsafe dose with zero elapsed time must NOT be persisted in database")
 }
@@ -73,7 +73,7 @@ func TestAdversarial_NegativeElapsedTime(t *testing.T) {
 		Name:        "BabyNeg",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(callCtx.Scope, &profile))
 
 	// Dose 1 is recorded at 14:00 (future clock skew)
 	tFuture := time.Date(2026, 11, 5, 14, 0, 0, 0, time.UTC)
@@ -102,7 +102,7 @@ func TestAdversarial_NegativeElapsedTime(t *testing.T) {
 	assert.Contains(t, out2, "COOLDOWN ACTIVE")
 
 	// Ensure DB still has only 1 log
-	logs, err := repo.GetCareLogs(profile.ID, fg, "medication", time.Time{}, time.Time{}, 100)
+	logs, err := repo.GetCareLogs(callCtx.Scope, profile.ID, "medication", time.Time{}, time.Time{}, 100)
 	require.NoError(t, err)
 	assert.Len(t, logs, 1, "Backdated dose against a future log must be blocked from database")
 }
@@ -123,7 +123,7 @@ func TestAdversarial_Exact4HourBoundary(t *testing.T) {
 		Name:        "BabyBoundary",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(callCtx.Scope, &profile))
 
 	t0 := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
@@ -177,7 +177,7 @@ func TestAdversarial_Exact4HourBoundary(t *testing.T) {
 	assert.Equal(t, "blocked", respAfter["status"], "1 second after Dose 2 must be blocked")
 
 	// Verify DB has 2 logs (Dose 1 and Dose 2)
-	logs, err := repo.GetCareLogs(profile.ID, fg, "medication", time.Time{}, time.Time{}, 100)
+	logs, err := repo.GetCareLogs(callCtx.Scope, profile.ID, "medication", time.Time{}, time.Time{}, 100)
 	require.NoError(t, err)
 	assert.Len(t, logs, 2)
 }
@@ -197,7 +197,7 @@ func TestAdversarial_ForceFlagHandling(t *testing.T) {
 		Name:        "BabyForce",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(callCtx.Scope, &profile))
 
 	t0 := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
@@ -244,7 +244,7 @@ func TestAdversarial_ForceFlagHandling(t *testing.T) {
 	assert.Contains(t, outForceTrue, "success")
 
 	// DB must now have 2 records
-	logs, err := repo.GetCareLogs(profile.ID, fg, "medication", time.Time{}, time.Time{}, 100)
+	logs, err := repo.GetCareLogs(callCtx.Scope, profile.ID, "medication", time.Time{}, time.Time{}, 100)
 	require.NoError(t, err)
 	assert.Len(t, logs, 2)
 
@@ -275,7 +275,7 @@ func TestAdversarial_NonMedicationBypass(t *testing.T) {
 		Name:        "BabyNonMed",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(callCtx.Scope, &profile))
 
 	t0 := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
@@ -330,7 +330,7 @@ func TestAdversarial_VaryingMedicationDetails(t *testing.T) {
 		Name:        "BabyVariation",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(callCtx.Scope, &profile))
 
 	t0 := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
@@ -374,7 +374,7 @@ func TestAdversarial_DifferentBrandNamesSameClass(t *testing.T) {
 		Name:        "BabyBrands",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(callCtx.Scope, &profile))
 
 	t0 := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 

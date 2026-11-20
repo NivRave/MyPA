@@ -2,14 +2,14 @@ package orchestrator_test
 
 import (
 	"context"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/nivik/mypa/internal/channel"
-	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/domains/memory"
 	"github.com/nivik/mypa/internal/domains/shared"
 	"github.com/nivik/mypa/internal/domains/web_research"
@@ -19,6 +19,8 @@ import (
 	"github.com/nivik/mypa/internal/domains/workspace_tasks"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/gmail"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -155,9 +157,23 @@ type mockDBClient struct {
 	deletedWorkflows []uint
 }
 
-func (m *mockDBClient) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
+func (m *mockDBClient) SearchSimilarMemories(ctx context.Context, s identity.Scope, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
 	return nil, nil
 }
+
+// identity.Store and the household members, answered from integrationHouseholds (V4-30).
+func (m *mockDBClient) HouseholdByID(ctx context.Context, id string) (*models.Household, error) {
+	return integrationHouseholds.HouseholdByID(ctx, id)
+}
+func (m *mockDBClient) HouseholdsByLabel(ctx context.Context, label string) ([]models.Household, error) {
+	return integrationHouseholds.HouseholdsByLabel(ctx, label)
+}
+func (m *mockDBClient) UsersInHousehold(ctx context.Context, s identity.Scope) ([]models.User, error) {
+	return nil, nil
+}
+
+// integrationHouseholds holds this file's households; a label always names the same one.
+var integrationHouseholds = identitytest.NewStore()
 
 // recordingMemoryRepo captures what memory tools write to the single (v2) memory store.
 type recordingMemoryRepo struct {
@@ -166,7 +182,7 @@ type recordingMemoryRepo struct {
 	saved []models.TopicMemory
 }
 
-func (r *recordingMemoryRepo) SaveTopicMemory(ctx context.Context, m *models.TopicMemory) error {
+func (r *recordingMemoryRepo) SaveTopicMemory(ctx context.Context, _ identity.Scope, m *models.TopicMemory) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.saved = append(r.saved, *m)
@@ -181,23 +197,20 @@ func (m *mockDBClient) SaveReminder(reminder models.ScheduledReminder) error {
 	return nil
 }
 func (m *mockDBClient) GetDueReminders() ([]models.ScheduledReminder, error) { return nil, nil }
-func (m *mockDBClient) MarkReminderSent(id uint) error                      { return nil }
+func (m *mockDBClient) MarkReminderSent(id uint) error                       { return nil }
 func (m *mockDBClient) GetDueSharedReminders() ([]models.SharedTaskReminder, error) {
 	return nil, nil
 }
-func (m *mockDBClient) MarkSharedReminderSent(id uint) error { return nil }
+func (m *mockDBClient) MarkSharedReminderSent(s identity.Scope, id uint) error { return nil }
 func (m *mockDBClient) GetUser(platformID string) (*models.User, error) {
 	return &models.User{ID: "uuid-1", PlatformID: platformID, FamilyGroup: "fam-canonical"}, nil
 }
-func (m *mockDBClient) UpsertUser(u models.User) error                 { return nil }
-func (m *mockDBClient) CreatePairingCode(pc models.PairingCode) error  { return nil }
+func (m *mockDBClient) UpsertUser(u models.User) error                                  { return nil }
+func (m *mockDBClient) CreatePairingCode(s identity.Scope, pc models.PairingCode) error { return nil }
 func (m *mockDBClient) GetPairingCode(code string) (*models.PairingCode, error) {
 	return nil, nil
 }
 func (m *mockDBClient) RedeemPairingCode(codeID string, u models.User) error { return nil }
-func (m *mockDBClient) GetUsersByFamilyGroup(familyGroup string) ([]models.User, error) {
-	return nil, nil
-}
 func (m *mockDBClient) SaveWorkflow(w models.Workflow) error {
 	m.savedWorkflows = append(m.savedWorkflows, w)
 	return nil
@@ -349,6 +362,7 @@ func TestARCH01_28Tools_ModularizationAndDynamicDispatch(t *testing.T) {
 				PlatformID:  "canonical_user_42",
 				FamilyGroup: "canonical_family_1",
 			},
+			Scope:    integrationHouseholds.ScopeIn(t, "canonical_family_1", "canonical_user_42", ""),
 			Message:  channel.Inbound{Sender: "canonical_user_42"},
 			DB:       mockDB,
 			LLM:      mockLLM,
@@ -476,6 +490,7 @@ func TestARCH04_All28Tools_AntiIDOR_IdentitySpoofingStress(t *testing.T) {
 
 	callCtx := orchestrator.CallContext{
 		User:     legitUser,
+		Scope:    integrationHouseholds.ScopeIn(t, "canonical_victim_family_group", "canonical_victim_platform_id", ""),
 		Message:  channel.Inbound{Sender: "canonical_victim_platform_id"},
 		DB:       mockDB,
 		LLM:      mockLLM,

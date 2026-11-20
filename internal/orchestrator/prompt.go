@@ -101,13 +101,14 @@ func joinAnd(items []string) string {
 
 // promptInputs is everything that varies between requests, ordered by how often it changes.
 type promptInputs struct {
-	UserName, Role, FamilyGroup string
-	ActiveTools                 map[string]bool // nil = no registry → include all guidance
-	ModuleSections              string          // per user, cached 10 min
-	Memories                    []string        // per message, pre-formatted "- fact"
-	Now                         time.Time
-	Location                    *time.Location
-	Calendar                    CalendarConventions
+	UserName, Role, Household string
+	Language                  string          // the household's language; "" = none set (V4-30)
+	ActiveTools               map[string]bool // nil = no registry → include all guidance
+	ModuleSections            string          // per user, cached 10 min
+	Memories                  []string        // per message, pre-formatted "- fact"
+	Now                       time.Time
+	Location                  *time.Location
+	Calendar                  CalendarConventions
 }
 
 // buildSystemPrompt assembles the system prompt from most to least stable section:
@@ -125,7 +126,10 @@ func buildSystemPrompt(in promptInputs) string {
 	if name == "" {
 		name = "the user"
 	}
-	fmt.Fprintf(&b, "\n\nYou are assisting %s (Role: %s, Family Group: %s).", name, in.Role, in.FamilyGroup)
+	fmt.Fprintf(&b, "\n\nYou are assisting %s (Role: %s, Household: %s).", name, in.Role, in.Household)
+	if in.Language != "" {
+		fmt.Fprintf(&b, " The household's language is %s: reply in it unless the user writes in another language or has set their own preference.", in.Language)
+	}
 
 	var guidance []string
 	for _, g := range toolGuidance {

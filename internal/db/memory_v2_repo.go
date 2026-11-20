@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
 	"strings"
 	"time"
 
@@ -17,21 +18,33 @@ func init() {
 }
 
 // MemoryV2Repository defines the interface for managing topic-mapped memories and living entity profiles.
+//
+// Topic memories and entity profiles are household rows (V4-30): every method takes the caller's
+// scope, except ListActiveMemoriesForConsolidation, which scans every household for the
+// scheduled consolidation job.
 type MemoryV2Repository interface {
-	SaveTopicMemory(ctx context.Context, memory *models.TopicMemory) error
-	GetTopicMemory(ctx context.Context, id uint, familyGroup ...string) (*models.TopicMemory, error)
-	DeleteTopicMemory(ctx context.Context, id uint, familyGroup ...string) error
-	PinTopicMemory(ctx context.Context, id uint, isPinned bool, familyGroup ...string) (*models.TopicMemory, error)
-	ListTopicMemories(ctx context.Context, familyGroup, topic string, includeSuperseded bool) ([]models.TopicMemory, error)
-	SearchTopicMemories(ctx context.Context, userID, familyGroup, topic, query string, tags []string) ([]models.TopicMemory, error)
-	SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error)
-	SupersedeMemory(ctx context.Context, oldID uint, newID uint) error
-	UpsertEntityProfile(ctx context.Context, profile *models.EntityProfile) error
-	GetEntityProfile(ctx context.Context, familyGroup, topic, entityName string) (*models.EntityProfile, error)
-	ListEntityProfiles(ctx context.Context, familyGroup, topic string) ([]models.EntityProfile, error)
+	SaveTopicMemory(ctx context.Context, s identity.Scope, memory *models.TopicMemory) error
+	GetTopicMemory(ctx context.Context, s identity.Scope, id uint) (*models.TopicMemory, error)
+	DeleteTopicMemory(ctx context.Context, s identity.Scope, id uint) error
+	PinTopicMemory(ctx context.Context, s identity.Scope, id uint, isPinned bool) (*models.TopicMemory, error)
+	ListTopicMemories(ctx context.Context, s identity.Scope, topic string, includeSuperseded bool) ([]models.TopicMemory, error)
+	SearchTopicMemories(ctx context.Context, s identity.Scope, topic, query string, tags []string) ([]models.TopicMemory, error)
+	SearchSimilarMemories(ctx context.Context, s identity.Scope, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error)
+	SupersedeMemory(ctx context.Context, s identity.Scope, oldID uint, newID uint) error
+	UpsertEntityProfile(ctx context.Context, s identity.Scope, profile *models.EntityProfile) error
+	GetEntityProfile(ctx context.Context, s identity.Scope, topic, entityName string) (*models.EntityProfile, error)
+	ListEntityProfiles(ctx context.Context, s identity.Scope, topic string) ([]models.EntityProfile, error)
 	ListActiveMemoriesForConsolidation(ctx context.Context) ([]models.TopicMemory, error)
 }
 
+// memoryVisibility is who may see a memory inside the household: the household's family-scope
+// memories, plus the scope person's own personal ones.
+func memoryVisibility(q *gorm.DB, s identity.Scope) *gorm.DB {
+	if p := s.PersonKey(); p != "" {
+		return q.Where("(scope = 'family' OR (user_id = ? AND scope = 'personal'))", p)
+	}
+	return q.Where("scope = 'family'")
+}
 
 // MemoryV2Repo implements MemoryV2Repository using GORM.
 type MemoryV2Repo struct {
@@ -43,11 +56,22 @@ func NewMemoryV2Repo(db *gorm.DB) *MemoryV2Repo {
 	return &MemoryV2Repo{db: db}
 }
 
-// SaveTopicMemory inserts a new topic memory. If temporal bounds or timestamps are missing,
-// appropriate defaults are applied.
-func (r *MemoryV2Repo) SaveTopicMemory(ctx context.Context, memory *models.TopicMemory) error {
+func (r *MemoryV2Repo) scoped(ctx context.Context, s identity.Scope) (*gorm.DB, error) {
+	q, err := (&Client{DB: r.db}).scoped(s)
+	if err != nil {
+		return nil, err
+	}
+	return q.WithContext(ctx), nil
+}
+
+// SaveTopicMemory inserts a new topic memory into the scope's household. If temporal bounds or
+// timestamps are missing, appropriate defaults are applied.
+func (r *MemoryV2Repo) SaveTopicMemory(ctx context.Context, s identity.Scope, memory *models.TopicMemory) error {
 	if memory == nil {
 		return errors.New("memory is nil")
+	}
+	if err := stamp(s, &memory.HouseholdID, &memory.FamilyGroup); err != nil {
+		return err
 	}
 
 	if memory.ValidFrom.IsZero() {
@@ -74,24 +98,18 @@ func (r *MemoryV2Repo) SaveTopicMemory(ctx context.Context, memory *models.Topic
 	return nil
 }
 
-// SearchTopicMemories searches for active, valid topic memories accessible to the user
-// based on user ID, family group, topic, keyword query, and tags.
-func (r *MemoryV2Repo) SearchTopicMemories(ctx context.Context, userID, familyGroup, topic, query string, tags []string) ([]models.TopicMemory, error) {
+// SearchTopicMemories searches for active, valid topic memories the scope may see (the
+// household's family memories and the person's own personal ones), by topic, keyword query and
+// tags.
+func (r *MemoryV2Repo) SearchTopicMemories(ctx context.Context, s identity.Scope, topic, query string, tags []string) ([]models.TopicMemory, error) {
 	var memories []models.TopicMemory
 
-	now := time.Now()
-	dbQuery := r.db.WithContext(ctx).
-		Where("superseded_by_id IS NULL AND (valid_until IS NULL OR valid_until > ?)", now)
-
-	// User / Family access scope
-	if familyGroup != "" && userID != "" {
-		dbQuery = dbQuery.Where("((user_id = ? AND scope = 'personal') OR (family_group = ? AND scope = 'family') OR (user_id = ? AND scope = 'family'))",
-			userID, familyGroup, userID)
-	} else if familyGroup != "" {
-		dbQuery = dbQuery.Where("(family_group = ? AND scope = 'family')", familyGroup)
-	} else if userID != "" {
-		dbQuery = dbQuery.Where("user_id = ?", userID)
+	q, err := r.scoped(ctx, s)
+	if err != nil {
+		return nil, err
 	}
+	now := time.Now()
+	dbQuery := memoryVisibility(q.Where("superseded_by_id IS NULL AND (valid_until IS NULL OR valid_until > ?)", now), s)
 
 	// Topic filter
 	topic = strings.ToLower(strings.TrimSpace(topic))
@@ -123,9 +141,13 @@ func (r *MemoryV2Repo) SearchTopicMemories(ctx context.Context, userID, familyGr
 	return memories, nil
 }
 
-// SearchSimilarMemories searches for active, valid topic memories using pgvector cosine distance.
-func (r *MemoryV2Repo) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
+// SearchSimilarMemories searches for active, valid topic memories the scope may see (the
+// household's family memories and the person's own personal ones) by pgvector cosine distance.
+func (r *MemoryV2Repo) SearchSimilarMemories(ctx context.Context, s identity.Scope, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
 	var memories []models.TopicMemory
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	if limit <= 0 {
 		limit = 5
 	}
@@ -134,15 +156,9 @@ func (r *MemoryV2Repo) SearchSimilarMemories(ctx context.Context, userID, family
 	// Order by cosine distance using the HNSW-indexed halfvec expression (P2-3). The whole query
 	// is built from tx so it runs inside withVectorScan's session settings.
 	err := withVectorScan(ctx, r.db, func(tx *gorm.DB) error {
-		q := tx.Where("superseded_by_id IS NULL AND (valid_until IS NULL OR valid_until > ?)", now)
-		if familyGroup != "" && userID != "" {
-			q = q.Where("((user_id = ? AND scope = 'personal') OR (family_group = ? AND scope = 'family') OR (user_id = ? AND scope = 'family'))",
-				userID, familyGroup, userID)
-		} else if familyGroup != "" {
-			q = q.Where("(family_group = ? AND scope = 'family')", familyGroup)
-		} else if userID != "" {
-			q = q.Where("user_id = ?", userID)
-		}
+		q := tx.Where("household_id = ?", s.HouseholdID()).
+			Where("superseded_by_id IS NULL AND (valid_until IS NULL OR valid_until > ?)", now)
+		q = memoryVisibility(q, s)
 		return q.Order(cosineOrder(embedding)).Limit(limit).Find(&memories).Error
 	})
 	if err != nil {
@@ -154,9 +170,21 @@ func (r *MemoryV2Repo) SearchSimilarMemories(ctx context.Context, userID, family
 
 // SupersedeMemory marks an existing memory as superseded by setting its SupersededByID
 // pointer and setting its ValidUntil timestamp to the current time.
-func (r *MemoryV2Repo) SupersedeMemory(ctx context.Context, oldID uint, newID uint) error {
+// Both memories must belong to the scope's household.
+func (r *MemoryV2Repo) SupersedeMemory(ctx context.Context, s identity.Scope, oldID uint, newID uint) error {
+	q, err := r.scoped(ctx, s)
+	if err != nil {
+		return err
+	}
+	var n int64
+	if err := r.db.WithContext(ctx).Model(&models.TopicMemory{}).Where("household_id = ? AND id = ?", s.HouseholdID(), newID).Count(&n).Error; err != nil {
+		return fmt.Errorf("failed to check superseding memory %d: %w", newID, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("topic memory %d not found", newID)
+	}
 	now := time.Now()
-	result := r.db.WithContext(ctx).
+	result := q.
 		Model(&models.TopicMemory{}).
 		Where("id = ?", oldID).
 		Updates(map[string]interface{}{
@@ -170,10 +198,17 @@ func (r *MemoryV2Repo) SupersedeMemory(ctx context.Context, oldID uint, newID ui
 }
 
 // UpsertEntityProfile inserts or updates a living structured EntityProfile.
-// Profile matches on (Topic, EntityName) within the caller's FamilyGroup (or UserID).
-func (r *MemoryV2Repo) UpsertEntityProfile(ctx context.Context, profile *models.EntityProfile) error {
+// Profile matches on (Topic, EntityName) within the scope's household.
+func (r *MemoryV2Repo) UpsertEntityProfile(ctx context.Context, s identity.Scope, profile *models.EntityProfile) error {
 	if profile == nil {
 		return errors.New("profile is nil")
+	}
+	q, err := r.scoped(ctx, s)
+	if err != nil {
+		return err
+	}
+	if err := stamp(s, &profile.HouseholdID, &profile.FamilyGroup); err != nil {
+		return err
 	}
 
 	now := time.Now()
@@ -187,27 +222,23 @@ func (r *MemoryV2Repo) UpsertEntityProfile(ctx context.Context, profile *models.
 	profile.EntityType = strings.ToLower(strings.TrimSpace(profile.EntityType))
 	profile.EntityName = strings.TrimSpace(profile.EntityName)
 
-	query := r.db.WithContext(ctx).
-		Where("LOWER(topic) = ? AND LOWER(entity_name) = ?", profile.Topic, strings.ToLower(profile.EntityName))
-
-	if profile.FamilyGroup != "" {
-		query = query.Where("family_group = ?", profile.FamilyGroup)
-	} else if profile.UserID != "" {
-		query = query.Where("user_id = ?", profile.UserID)
-	}
+	query := q.Where("LOWER(topic) = ? AND LOWER(entity_name) = ?", profile.Topic, strings.ToLower(profile.EntityName))
 
 	var existing models.EntityProfile
-	err := query.First(&existing).Error
+	err = query.First(&existing).Error
 	if err == nil {
-		// Update existing record preserving ID
+		// Update existing record preserving ID, inside the household only
 		profile.ID = existing.ID
-		result := r.db.WithContext(ctx).Save(profile)
+		result := r.db.WithContext(ctx).Model(&models.EntityProfile{}).
+			Where("id = ? AND household_id = ?", existing.ID, s.HouseholdID()).
+			Select("*").Omit("id").Updates(profile)
 		if result.Error != nil {
 			return fmt.Errorf("failed to update entity profile: %w", result.Error)
 		}
 		return nil
 	} else if errors.Is(err, gorm.ErrRecordNotFound) {
 		// Create new profile record
+		profile.ID = 0
 		result := r.db.WithContext(ctx).Create(profile)
 		if result.Error != nil {
 			return fmt.Errorf("failed to create entity profile: %w", result.Error)
@@ -217,20 +248,19 @@ func (r *MemoryV2Repo) UpsertEntityProfile(ctx context.Context, profile *models.
 	return fmt.Errorf("failed to query existing entity profile: %w", err)
 }
 
-// GetEntityProfile retrieves an EntityProfile by topic and entity name for a family group.
-func (r *MemoryV2Repo) GetEntityProfile(ctx context.Context, familyGroup, topic, entityName string) (*models.EntityProfile, error) {
+// GetEntityProfile retrieves the scope household's EntityProfile by topic and entity name.
+func (r *MemoryV2Repo) GetEntityProfile(ctx context.Context, s identity.Scope, topic, entityName string) (*models.EntityProfile, error) {
+	q, err := r.scoped(ctx, s)
+	if err != nil {
+		return nil, err
+	}
 	topic = strings.ToLower(strings.TrimSpace(topic))
 	entityName = strings.ToLower(strings.TrimSpace(entityName))
 
-	query := r.db.WithContext(ctx).
-		Where("LOWER(topic) = ? AND LOWER(entity_name) = ?", topic, entityName)
-
-	if familyGroup != "" {
-		query = query.Where("(family_group = ? OR family_group = '')", familyGroup)
-	}
+	query := q.Where("LOWER(topic) = ? AND LOWER(entity_name) = ?", topic, entityName)
 
 	var profile models.EntityProfile
-	err := query.First(&profile).Error
+	err = query.First(&profile).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -240,15 +270,13 @@ func (r *MemoryV2Repo) GetEntityProfile(ctx context.Context, familyGroup, topic,
 	return &profile, nil
 }
 
-// ListEntityProfiles retrieves all entity profiles for a family group or user, optionally filtered by topic.
-func (r *MemoryV2Repo) ListEntityProfiles(ctx context.Context, familyGroup, topic string) ([]models.EntityProfile, error) {
+// ListEntityProfiles retrieves the scope household's entity profiles, optionally filtered by topic.
+func (r *MemoryV2Repo) ListEntityProfiles(ctx context.Context, s identity.Scope, topic string) ([]models.EntityProfile, error) {
 	var profiles []models.EntityProfile
 
-	query := r.db.WithContext(ctx)
-	if familyGroup != "" {
-		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup, familyGroup)
-	} else {
-		query = query.Where("1 = 0")
+	query, err := r.scoped(ctx, s)
+	if err != nil {
+		return nil, err
 	}
 
 	topic = strings.ToLower(strings.TrimSpace(topic))
@@ -264,6 +292,8 @@ func (r *MemoryV2Repo) ListEntityProfiles(ctx context.Context, familyGroup, topi
 }
 
 // ListActiveMemoriesForConsolidation returns all active topic memories ordered for consolidation.
+// It scans every household (scheduled job): the consolidator groups rows by household_id and
+// builds each group's scope from it (identity.ForStoredRow) before writing.
 func (r *MemoryV2Repo) ListActiveMemoriesForConsolidation(ctx context.Context) ([]models.TopicMemory, error) {
 	var memories []models.TopicMemory
 	now := time.Now()
@@ -285,33 +315,33 @@ func (c *Client) MemoryV2() *MemoryV2Repo {
 }
 
 // SaveTopicMemory provides a direct helper on Client.
-func (c *Client) SaveTopicMemory(ctx context.Context, memory *models.TopicMemory) error {
-	return c.MemoryV2().SaveTopicMemory(ctx, memory)
+func (c *Client) SaveTopicMemory(ctx context.Context, s identity.Scope, memory *models.TopicMemory) error {
+	return c.MemoryV2().SaveTopicMemory(ctx, s, memory)
 }
 
 // SearchTopicMemories provides a direct helper on Client.
-func (c *Client) SearchTopicMemories(ctx context.Context, userID, familyGroup, topic, query string, tags []string) ([]models.TopicMemory, error) {
-	return c.MemoryV2().SearchTopicMemories(ctx, userID, familyGroup, topic, query, tags)
+func (c *Client) SearchTopicMemories(ctx context.Context, s identity.Scope, topic, query string, tags []string) ([]models.TopicMemory, error) {
+	return c.MemoryV2().SearchTopicMemories(ctx, s, topic, query, tags)
 }
 
 // SupersedeMemory provides a direct helper on Client.
-func (c *Client) SupersedeMemory(ctx context.Context, oldID uint, newID uint) error {
-	return c.MemoryV2().SupersedeMemory(ctx, oldID, newID)
+func (c *Client) SupersedeMemory(ctx context.Context, s identity.Scope, oldID uint, newID uint) error {
+	return c.MemoryV2().SupersedeMemory(ctx, s, oldID, newID)
 }
 
 // UpsertEntityProfile provides a direct helper on Client.
-func (c *Client) UpsertEntityProfile(ctx context.Context, profile *models.EntityProfile) error {
-	return c.MemoryV2().UpsertEntityProfile(ctx, profile)
+func (c *Client) UpsertEntityProfile(ctx context.Context, s identity.Scope, profile *models.EntityProfile) error {
+	return c.MemoryV2().UpsertEntityProfile(ctx, s, profile)
 }
 
 // GetEntityProfile provides a direct helper on Client.
-func (c *Client) GetEntityProfile(ctx context.Context, familyGroup, topic, entityName string) (*models.EntityProfile, error) {
-	return c.MemoryV2().GetEntityProfile(ctx, familyGroup, topic, entityName)
+func (c *Client) GetEntityProfile(ctx context.Context, s identity.Scope, topic, entityName string) (*models.EntityProfile, error) {
+	return c.MemoryV2().GetEntityProfile(ctx, s, topic, entityName)
 }
 
 // ListEntityProfiles provides a direct helper on Client.
-func (c *Client) ListEntityProfiles(ctx context.Context, familyGroup, topic string) ([]models.EntityProfile, error) {
-	return c.MemoryV2().ListEntityProfiles(ctx, familyGroup, topic)
+func (c *Client) ListEntityProfiles(ctx context.Context, s identity.Scope, topic string) ([]models.EntityProfile, error) {
+	return c.MemoryV2().ListEntityProfiles(ctx, s, topic)
 }
 
 // ListActiveMemoriesForConsolidation provides a direct helper on Client.
@@ -320,18 +350,18 @@ func (c *Client) ListActiveMemoriesForConsolidation(ctx context.Context) ([]mode
 }
 
 // SearchSimilarMemories provides a direct helper on Client.
-func (c *Client) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
-	return c.MemoryV2().SearchSimilarMemories(ctx, userID, familyGroup, embedding, limit)
+func (c *Client) SearchSimilarMemories(ctx context.Context, s identity.Scope, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
+	return c.MemoryV2().SearchSimilarMemories(ctx, s, embedding, limit)
 }
 
-// GetTopicMemory retrieves a TopicMemory by ID, optionally scoped by familyGroup.
-func (r *MemoryV2Repo) GetTopicMemory(ctx context.Context, id uint, familyGroup ...string) (*models.TopicMemory, error) {
+// GetTopicMemory retrieves a TopicMemory of the scope's household by ID.
+func (r *MemoryV2Repo) GetTopicMemory(ctx context.Context, s identity.Scope, id uint) (*models.TopicMemory, error) {
 	var mem models.TopicMemory
-	q := r.db.WithContext(ctx).Where("id = ?", id)
-	if len(familyGroup) > 0 && familyGroup[0] != "" {
-		q = q.Where("family_group = ?", familyGroup[0])
+	q, err := r.scoped(ctx, s)
+	if err != nil {
+		return nil, err
 	}
-	if err := q.First(&mem).Error; err != nil {
+	if err := q.Where("id = ?", id).First(&mem).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -340,13 +370,13 @@ func (r *MemoryV2Repo) GetTopicMemory(ctx context.Context, id uint, familyGroup 
 	return &mem, nil
 }
 
-// DeleteTopicMemory deletes a TopicMemory by ID, optionally scoped by familyGroup.
-func (r *MemoryV2Repo) DeleteTopicMemory(ctx context.Context, id uint, familyGroup ...string) error {
-	q := r.db.WithContext(ctx).Where("id = ?", id)
-	if len(familyGroup) > 0 && familyGroup[0] != "" {
-		q = q.Where("family_group = ?", familyGroup[0])
+// DeleteTopicMemory deletes a TopicMemory of the scope's household by ID.
+func (r *MemoryV2Repo) DeleteTopicMemory(ctx context.Context, s identity.Scope, id uint) error {
+	q, err := r.scoped(ctx, s)
+	if err != nil {
+		return err
 	}
-	res := q.Delete(&models.TopicMemory{})
+	res := q.Where("id = ?", id).Delete(&models.TopicMemory{})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -356,32 +386,37 @@ func (r *MemoryV2Repo) DeleteTopicMemory(ctx context.Context, id uint, familyGro
 	return nil
 }
 
-// PinTopicMemory toggles the pinned state of a TopicMemory.
-func (r *MemoryV2Repo) PinTopicMemory(ctx context.Context, id uint, isPinned bool, familyGroup ...string) (*models.TopicMemory, error) {
-	mem, err := r.GetTopicMemory(ctx, id, familyGroup...)
+// PinTopicMemory toggles the pinned state of a TopicMemory of the scope's household.
+func (r *MemoryV2Repo) PinTopicMemory(ctx context.Context, s identity.Scope, id uint, isPinned bool) (*models.TopicMemory, error) {
+	mem, err := r.GetTopicMemory(ctx, s, id)
 	if err != nil {
 		return nil, err
 	}
 	if mem == nil {
 		return nil, fmt.Errorf("topic memory %d not found", id)
 	}
+	res := r.db.WithContext(ctx).Model(&models.TopicMemory{}).
+		Where("id = ? AND household_id = ?", mem.ID, s.HouseholdID()).
+		Update("is_pinned", isPinned)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, fmt.Errorf("topic memory %d not found", id)
+	}
 	mem.IsPinned = isPinned
-	if len(mem.Embedding.Slice()) == 0 {
-		mem.Embedding = pgvector.NewVector(make([]float32, 3072))
-	}
-	if err := r.db.WithContext(ctx).Save(mem).Error; err != nil {
-		return nil, err
-	}
 	return mem, nil
 }
 
-// ListTopicMemories retrieves topic memories optionally filtered by familyGroup and topic, with superseded filter.
-func (r *MemoryV2Repo) ListTopicMemories(ctx context.Context, familyGroup, topic string, includeSuperseded bool) ([]models.TopicMemory, error) {
+// ListTopicMemories retrieves the scope household's topic memories, optionally filtered by topic,
+// with a superseded filter.
+func (r *MemoryV2Repo) ListTopicMemories(ctx context.Context, s identity.Scope, topic string, includeSuperseded bool) ([]models.TopicMemory, error) {
 	var mems []models.TopicMemory
-	q := r.db.WithContext(ctx).Model(&models.TopicMemory{})
-	if familyGroup != "" {
-		q = q.Where("family_group = ?", familyGroup)
+	sq, err := r.scoped(ctx, s)
+	if err != nil {
+		return nil, err
 	}
+	q := sq.Model(&models.TopicMemory{})
 	if topic != "" && !strings.EqualFold(topic, "all") {
 		q = q.Where("LOWER(topic) = ?", strings.ToLower(strings.TrimSpace(topic)))
 	}
@@ -395,23 +430,21 @@ func (r *MemoryV2Repo) ListTopicMemories(ctx context.Context, familyGroup, topic
 }
 
 // GetTopicMemory provides a direct helper on Client.
-func (c *Client) GetTopicMemory(ctx context.Context, id uint, familyGroup ...string) (*models.TopicMemory, error) {
-	return c.MemoryV2().GetTopicMemory(ctx, id, familyGroup...)
+func (c *Client) GetTopicMemory(ctx context.Context, s identity.Scope, id uint) (*models.TopicMemory, error) {
+	return c.MemoryV2().GetTopicMemory(ctx, s, id)
 }
 
 // DeleteTopicMemory provides a direct helper on Client.
-func (c *Client) DeleteTopicMemory(ctx context.Context, id uint, familyGroup ...string) error {
-	return c.MemoryV2().DeleteTopicMemory(ctx, id, familyGroup...)
+func (c *Client) DeleteTopicMemory(ctx context.Context, s identity.Scope, id uint) error {
+	return c.MemoryV2().DeleteTopicMemory(ctx, s, id)
 }
 
 // PinTopicMemory provides a direct helper on Client.
-func (c *Client) PinTopicMemory(ctx context.Context, id uint, isPinned bool, familyGroup ...string) (*models.TopicMemory, error) {
-	return c.MemoryV2().PinTopicMemory(ctx, id, isPinned, familyGroup...)
+func (c *Client) PinTopicMemory(ctx context.Context, s identity.Scope, id uint, isPinned bool) (*models.TopicMemory, error) {
+	return c.MemoryV2().PinTopicMemory(ctx, s, id, isPinned)
 }
 
 // ListTopicMemories provides a direct helper on Client.
-func (c *Client) ListTopicMemories(ctx context.Context, familyGroup, topic string, includeSuperseded bool) ([]models.TopicMemory, error) {
-	return c.MemoryV2().ListTopicMemories(ctx, familyGroup, topic, includeSuperseded)
+func (c *Client) ListTopicMemories(ctx context.Context, s identity.Scope, topic string, includeSuperseded bool) ([]models.TopicMemory, error) {
+	return c.MemoryV2().ListTopicMemories(ctx, s, topic, includeSuperseded)
 }
-
-

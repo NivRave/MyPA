@@ -112,11 +112,12 @@ func (m *Module) executeRegisterExternalAPI(ctx context.Context, callCtx orchest
 		encryptedHeaders = enc
 	}
 
-	userID, familyGroup := getUserAndFamily(callCtx)
+	userID, s := getUserAndScope(callCtx)
 
 	conn := &models.ExternalAPIConnector{
 		UserID:               userID,
-		FamilyGroup:          familyGroup,
+		HouseholdID:          s.HouseholdID(),
+		FamilyGroup:          s.LegacyLabel(),
 		Name:                 name,
 		BaseURL:              baseURL,
 		DefaultMethod:        method,
@@ -125,7 +126,7 @@ func (m *Module) executeRegisterExternalAPI(ctx context.Context, callCtx orchest
 		CreatedAt:            time.Now(),
 	}
 
-	if err := repo.CreateAPIConnector(conn); err != nil {
+	if err := repo.CreateAPIConnector(s, conn); err != nil {
 		return "", fmt.Errorf("failed to save API connector: %w", err)
 	}
 
@@ -137,7 +138,8 @@ func (m *Module) executeRegisterExternalAPI(ctx context.Context, callCtx orchest
 			EntityType:  "ExternalAPIConnector",
 			EntityID:    fmt.Sprint(conn.ID),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			HouseholdID: s.HouseholdID(),
+			FamilyGroup: s.LegacyLabel(),
 			Summary:     fmt.Sprintf("Registered external API connector %q (%s)", conn.Name, conn.BaseURL),
 			Timestamp:   time.Now(),
 		})
@@ -147,9 +149,9 @@ func (m *Module) executeRegisterExternalAPI(ctx context.Context, callCtx orchest
 }
 
 func (m *Module) executeListExternalAPIs(ctx context.Context, callCtx orchestrator.CallContext, repo db.AutomationRepository, args map[string]interface{}) (string, error) {
-	userID, familyGroup := getUserAndFamily(callCtx)
+	_, s := getUserAndScope(callCtx)
 
-	connectors, err := repo.ListAPIConnectors(userID, familyGroup)
+	connectors, err := repo.ListAPIConnectors(s)
 	if err != nil {
 		return "", fmt.Errorf("failed to list connectors: %w", err)
 	}
@@ -194,7 +196,7 @@ func (m *Module) executeCallExternalAPI(ctx context.Context, callCtx orchestrato
 	queryParams := getStringArg(args, "query_params")
 	body := getStringArg(args, "body")
 
-	userID, familyGroup := getUserAndFamily(callCtx)
+	_, s := getUserAndScope(callCtx)
 
 	var targetURL string
 	var encryptedHeaders []byte
@@ -203,14 +205,14 @@ func (m *Module) executeCallExternalAPI(ctx context.Context, callCtx orchestrato
 		var conn *models.ExternalAPIConnector
 		var err error
 		if connectorID > 0 {
-			conn, err = repo.GetAPIConnector(uint(connectorID))
+			conn, err = repo.GetAPIConnector(s, uint(connectorID))
 		} else {
-			conn, err = repo.GetAPIConnectorByName(userID, familyGroup, connectorName)
+			conn, err = repo.GetAPIConnectorByName(s, connectorName)
 		}
 		if err != nil {
 			return "", fmt.Errorf("failed to look up connector: %w", err)
 		}
-		isAuthorized := conn != nil && ((familyGroup != "" && conn.FamilyGroup == familyGroup) || (conn.UserID != "" && conn.UserID == userID))
+		isAuthorized := conn != nil && conn.HouseholdID != "" && conn.HouseholdID == s.HouseholdID()
 		if !isAuthorized {
 			return "", fmt.Errorf("API connector not found or permission denied")
 		}
@@ -287,11 +289,12 @@ func (m *Module) executeCreateAutomationRule(ctx context.Context, callCtx orches
 		isActive = activeVal
 	}
 
-	userID, familyGroup := getUserAndFamily(callCtx)
+	userID, s := getUserAndScope(callCtx)
 
 	rule := &models.AutomationRule{
 		UserID:            userID,
-		FamilyGroup:       familyGroup,
+		HouseholdID:       s.HouseholdID(),
+		FamilyGroup:       s.LegacyLabel(),
 		Name:              name,
 		TriggerType:       triggerType,
 		TriggerTopic:      triggerTopic,
@@ -301,7 +304,7 @@ func (m *Module) executeCreateAutomationRule(ctx context.Context, callCtx orches
 		CreatedAt:         time.Now(),
 	}
 
-	if err := repo.CreateAutomationRule(rule); err != nil {
+	if err := repo.CreateAutomationRule(s, rule); err != nil {
 		return "", fmt.Errorf("failed to create automation rule: %w", err)
 	}
 
@@ -313,7 +316,8 @@ func (m *Module) executeCreateAutomationRule(ctx context.Context, callCtx orches
 			EntityType:  "AutomationRule",
 			EntityID:    fmt.Sprint(rule.ID),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			HouseholdID: s.HouseholdID(),
+			FamilyGroup: s.LegacyLabel(),
 			Summary:     fmt.Sprintf("Created automation rule %q for topic %s", rule.Name, rule.TriggerTopic),
 			Timestamp:   time.Now(),
 		})
@@ -323,10 +327,10 @@ func (m *Module) executeCreateAutomationRule(ctx context.Context, callCtx orches
 }
 
 func (m *Module) executeListAutomationRules(ctx context.Context, callCtx orchestrator.CallContext, repo db.AutomationRepository, args map[string]interface{}) (string, error) {
-	userID, familyGroup := getUserAndFamily(callCtx)
+	_, s := getUserAndScope(callCtx)
 	triggerTopic := getStringArg(args, "trigger_topic")
 
-	rules, err := repo.ListAutomationRules(userID, familyGroup, triggerTopic)
+	rules, err := repo.ListAutomationRules(s, triggerTopic)
 	if err != nil {
 		return "", fmt.Errorf("failed to list automation rules: %w", err)
 	}
@@ -345,19 +349,18 @@ func (m *Module) executeDeleteAutomationRule(ctx context.Context, callCtx orches
 		return "", fmt.Errorf("valid rule_id is required")
 	}
 
-	userID, familyGroup := getUserAndFamily(callCtx)
-	rule, err := repo.GetAutomationRule(uint(ruleID))
+	userID, s := getUserAndScope(callCtx)
+	rule, err := repo.GetAutomationRule(s, uint(ruleID))
 	if err != nil {
 		return "", fmt.Errorf("failed to lookup automation rule: %w", err)
 	}
-	if rule != nil {
-		isAuthorized := (familyGroup != "" && rule.FamilyGroup == familyGroup) || (rule.UserID != "" && rule.UserID == userID)
-		if !isAuthorized {
-			return "", fmt.Errorf("automation rule %d not found or permission denied", ruleID)
-		}
+	// V4-30: the lookup is confined to the caller's household, so a rule of another household (or
+	// none at all) comes back nil. Refuse it: never report a deletion that did not happen.
+	if rule == nil || rule.HouseholdID == "" || rule.HouseholdID != s.HouseholdID() {
+		return "", fmt.Errorf("automation rule %d not found or permission denied", ruleID)
 	}
 
-	if err := repo.DeleteAutomationRule(uint(ruleID)); err != nil {
+	if err := repo.DeleteAutomationRule(s, uint(ruleID)); err != nil {
 		return "", fmt.Errorf("failed to delete automation rule: %w", err)
 	}
 	if bus := m.resolveEventBus(callCtx); bus != nil {
@@ -367,7 +370,8 @@ func (m *Module) executeDeleteAutomationRule(ctx context.Context, callCtx orches
 			EntityType:  "AutomationRule",
 			EntityID:    fmt.Sprint(ruleID),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			HouseholdID: s.HouseholdID(),
+			FamilyGroup: s.LegacyLabel(),
 			Summary:     fmt.Sprintf("Deleted automation rule %d", ruleID),
 			Timestamp:   time.Now(),
 		})
@@ -377,7 +381,7 @@ func (m *Module) executeDeleteAutomationRule(ctx context.Context, callCtx orches
 }
 
 func (m *Module) executeUpdateUserPreferences(ctx context.Context, callCtx orchestrator.CallContext, repo db.AutomationRepository, args map[string]interface{}) (string, error) {
-	userID, familyGroup := getUserAndFamily(callCtx)
+	userID, s := getUserAndScope(callCtx)
 	if userID == "" {
 		return "", fmt.Errorf("unable to identify user from call context")
 	}
@@ -429,7 +433,8 @@ func (m *Module) executeUpdateUserPreferences(ctx context.Context, callCtx orche
 			EntityType:  "UserPreference",
 			EntityID:    userID,
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			HouseholdID: s.HouseholdID(),
+			FamilyGroup: s.LegacyLabel(),
 			Summary:     "Updated user customization preferences and standing instructions",
 			Timestamp:   time.Now(),
 		})
@@ -440,7 +445,7 @@ func (m *Module) executeUpdateUserPreferences(ctx context.Context, callCtx orche
 }
 
 func (m *Module) executeGetUserPreferences(ctx context.Context, callCtx orchestrator.CallContext, repo db.AutomationRepository, args map[string]interface{}) (string, error) {
-	userID, _ := getUserAndFamily(callCtx)
+	userID, _ := getUserAndScope(callCtx)
 	if userID == "" {
 		return "", fmt.Errorf("unable to determine user ID")
 	}
@@ -464,16 +469,16 @@ func (m *Module) executeUpsertPersonalCRM(ctx context.Context, callCtx orchestra
 	}
 
 	contactID, _ := getInt64Arg(args, "id")
-	userID, familyGroup := getUserAndFamily(callCtx)
+	userID, s := getUserAndScope(callCtx)
 
 	var beforeJSON string
 	action := "create"
 	if contactID > 0 {
-		existing, err := repo.GetCRMContact(uint(contactID))
+		existing, err := repo.GetCRMContact(s, uint(contactID))
 		if err != nil {
 			return "", fmt.Errorf("failed to verify CRM contact %d: %w", contactID, err)
 		}
-		isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.UserID != "" && existing.UserID == userID))
+		isAuthorized := existing != nil && existing.HouseholdID != "" && existing.HouseholdID == s.HouseholdID()
 		if !isAuthorized {
 			return "", fmt.Errorf("CRM contact %d not found or permission denied", contactID)
 		}
@@ -490,7 +495,8 @@ func (m *Module) executeUpsertPersonalCRM(ctx context.Context, callCtx orchestra
 	contact := &models.PersonalCRMContact{
 		ID:                 uint(contactID),
 		UserID:             userID,
-		FamilyGroup:        familyGroup,
+		HouseholdID:        s.HouseholdID(),
+		FamilyGroup:        s.LegacyLabel(),
 		PersonName:         personName,
 		Relationship:       relationship,
 		ImportantDatesJSON: datesJSON,
@@ -499,7 +505,7 @@ func (m *Module) executeUpsertPersonalCRM(ctx context.Context, callCtx orchestra
 		UpdatedAt:          time.Now(),
 	}
 
-	if err := repo.UpsertCRMContact(contact); err != nil {
+	if err := repo.UpsertCRMContact(s, contact); err != nil {
 		return "", fmt.Errorf("failed to save CRM contact: %w", err)
 	}
 
@@ -515,7 +521,8 @@ func (m *Module) executeUpsertPersonalCRM(ctx context.Context, callCtx orchestra
 			EntityType:  "PersonalCRMContact",
 			EntityID:    fmt.Sprint(contact.ID),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			HouseholdID: s.HouseholdID(),
+			FamilyGroup: s.LegacyLabel(),
 			BeforeJSON:  beforeJSON,
 			AfterJSON:   afterJSON,
 			Summary:     fmt.Sprintf("Saved personal CRM contact %s (%s)", contact.PersonName, contact.Relationship),
@@ -527,11 +534,11 @@ func (m *Module) executeUpsertPersonalCRM(ctx context.Context, callCtx orchestra
 }
 
 func (m *Module) executeQueryPersonalCRM(ctx context.Context, callCtx orchestrator.CallContext, repo db.AutomationRepository, args map[string]interface{}) (string, error) {
-	userID, familyGroup := getUserAndFamily(callCtx)
+	_, s := getUserAndScope(callCtx)
 	query := getStringArg(args, "query")
 	relationshipFilter := strings.ToLower(strings.TrimSpace(getStringArg(args, "relationship")))
 
-	contacts, err := repo.ListCRMContacts(userID, familyGroup, query)
+	contacts, err := repo.ListCRMContacts(s, query)
 	if err != nil {
 		return "", fmt.Errorf("failed to query CRM contacts: %w", err)
 	}
@@ -564,7 +571,7 @@ func (m *Module) executeScheduleWorkflow(ctx context.Context, callCtx orchestrat
 	}
 
 	actorID := callCtx.ActorID()
-	familyGroup := callCtx.TenantFamilyGroup()
+	s := callCtx.Scope
 
 	if callCtx.DB == nil {
 		return "❌ Database client not configured.", nil
@@ -603,7 +610,8 @@ func (m *Module) executeScheduleWorkflow(ctx context.Context, callCtx orchestrat
 			EntityType:  "Workflow",
 			EntityID:    fmt.Sprintf("%s:%s", actorID, name),
 			ActorUserID: actorID,
-			FamilyGroup: familyGroup,
+			HouseholdID: s.HouseholdID(),
+			FamilyGroup: s.LegacyLabel(),
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Scheduled workflow '%s' on cron %s", name, cronExp),
 			Timestamp:   time.Now(),
@@ -649,7 +657,7 @@ func (m *Module) executeDeleteWorkflow(ctx context.Context, callCtx orchestrator
 	}
 
 	actorID := callCtx.ActorID()
-	familyGroup := callCtx.TenantFamilyGroup()
+	s := callCtx.Scope
 
 	if callCtx.DB == nil {
 		return "❌ Database client not configured.", nil
@@ -678,7 +686,8 @@ func (m *Module) executeDeleteWorkflow(ctx context.Context, callCtx orchestrator
 			EntityType:  "Workflow",
 			EntityID:    fmt.Sprintf("%d", id),
 			ActorUserID: actorID,
-			FamilyGroup: familyGroup,
+			HouseholdID: s.HouseholdID(),
+			FamilyGroup: s.LegacyLabel(),
 			Summary:     fmt.Sprintf("Deleted workflow #%d", id),
 			Timestamp:   time.Now(),
 		})

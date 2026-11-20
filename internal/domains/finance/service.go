@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"strconv"
 	"strings"
@@ -29,21 +30,43 @@ func (m *Module) emitMutation(ctx context.Context, callCtx orchestrator.CallCont
 	_ = bus.Publish(ctx, event)
 }
 
-func (m *Module) resolveFamilyGroup(callCtx orchestrator.CallContext) string {
-	if callCtx.User != nil && strings.TrimSpace(callCtx.User.FamilyGroup) != "" {
-		return strings.TrimSpace(callCtx.User.FamilyGroup)
-	}
-	if fg, ok := callCtx.Extra["family_group"].(string); ok && strings.TrimSpace(fg) != "" {
-		return strings.TrimSpace(fg)
-	}
-	return ""
-}
-
 func (m *Module) resolveUserID(callCtx orchestrator.CallContext) string {
 	if callCtx.User != nil {
 		return callCtx.User.ID
 	}
 	return ""
+}
+
+// resolveMemberUserID resolves the summary's person filter inside the caller's household only
+// (ADR 0002 Decision 3). The reference may be a member's platform ID or users.id; the result is
+// that member's users.id, the key finance writes on its rows. A reference outside the household
+// is refused.
+func (m *Module) resolveMemberUserID(ctx context.Context, callCtx orchestrator.CallContext, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if callCtx.User != nil && (ref == callCtx.User.ID || ref == strings.TrimSpace(callCtx.User.PlatformID)) {
+		return callCtx.User.ID, nil
+	}
+	var members identity.Members
+	if callCtx.DB != nil {
+		members = callCtx.DB
+	}
+	platformID, err := identity.Member(ctx, members, callCtx.Scope, ref)
+	if err != nil {
+		return "", fmt.Errorf("user %q is not a member of this household", ref)
+	}
+	if members == nil {
+		return "", fmt.Errorf("user %q is not a member of this household", ref)
+	}
+	users, err := members.UsersInHousehold(ctx, callCtx.Scope)
+	if err != nil {
+		return "", fmt.Errorf("failed to look up household members: %w", err)
+	}
+	for _, u := range users {
+		if strings.TrimSpace(u.PlatformID) == platformID {
+			return u.ID, nil
+		}
+	}
+	return "", fmt.Errorf("user %q is not a member of this household", ref)
 }
 
 // Helpers for safe argument conversion

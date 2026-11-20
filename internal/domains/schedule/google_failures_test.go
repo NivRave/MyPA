@@ -46,12 +46,12 @@ func calendarFactory(c orchestrator.CalendarClient, err error) Option {
 	})
 }
 
-var aliceCtx = orchestrator.CallContext{User: &models.User{PlatformID: "usr_1"}}
+var aliceCtx = orchestrator.CallContext{User: &models.User{PlatformID: "usr_1"}, Scope: mustScope("usr_1", "usr_1")}
 
 func seedLocalEvent(t *testing.T, repo *fakeScheduleRepo, googleID string) {
 	t.Helper()
 	now := time.Now().Truncate(time.Hour)
-	require.NoError(t, repo.CreateScheduleEvent(&models.ScheduleEvent{
+	require.NoError(t, repo.CreateScheduleEvent(aliceCtx.Scope, &models.ScheduleEvent{
 		UserID: "usr_1", Topic: "baby", Title: "Morning Feeding",
 		StartTime: now.Add(time.Hour), EndTime: now.Add(2 * time.Hour),
 		SyncToGoogle: googleID != "", ExternalGoogleEventID: googleID,
@@ -120,7 +120,7 @@ func TestScheduleTopicEvent_GoogleCreateFailureIsNotReportedAsSynced(t *testing.
 	require.NoError(t, err)
 	assert.NotContains(t, res, "Synced ✅")
 	assert.Contains(t, res, "**Google Calendar**: ⚠️ Sync failed")
-	ev, err := repo.GetScheduleEvent(1)
+	ev, err := repo.GetScheduleEvent(aliceCtx.Scope, 1)
 	require.NoError(t, err)
 	require.NotNil(t, ev, "the event is still saved locally")
 	assert.Empty(t, ev.ExternalGoogleEventID)
@@ -149,6 +149,7 @@ func TestScheduleTopicEvent_PartnerSyncFailureIsReported(t *testing.T) {
 	}))
 	callCtx := orchestrator.CallContext{
 		User:  &models.User{PlatformID: "tg_alice", FamilyGroup: "Smiths"},
+		Scope: sc(t, "Smiths", "tg_alice"),
 		Extra: map[string]interface{}{"partner_user_id": "tg_bob"},
 	}
 	res, err := mod.Execute(context.Background(), callCtx, "schedule_topic_event", map[string]interface{}{

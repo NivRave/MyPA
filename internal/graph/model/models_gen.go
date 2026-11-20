@@ -147,6 +147,14 @@ type HouseContractRecord struct {
 	CreatedAt               time.Time  `json:"createdAt"`
 }
 
+type Household struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Language string `json:"language"`
+	TimeZone string `json:"timeZone"`
+	Currency string `json:"currency"`
+}
+
 type Mutation struct {
 }
 

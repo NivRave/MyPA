@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"github.com/nivik/mypa/internal/identity"
 	"log/slog"
 
 	"github.com/nivik/mypa/internal/channel"
@@ -27,7 +28,7 @@ func (e *Engine) WithHealthReporter(h HealthReporter) *Engine {
 // members of the admin's family. It only reads, so it marks no side effect, and nothing is
 // recorded as the turn's final response (the report is not copied into the audit log).
 func (e *Engine) cmdDoctor(ctx context.Context, user *models.User, msg channel.Inbound) (string, error) {
-	if user.Role != "admin" {
+	if !e.scopeOf(ctx, user).Can(identity.RunDoctor) {
 		slog.Warn("unauthorized doctor command attempt", "user_id", user.PlatformID, "role", user.Role)
 		return "", e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")
 	}

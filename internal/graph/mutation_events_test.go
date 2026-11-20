@@ -24,6 +24,7 @@ func TestGraphQL_MutationEvents_NoEmissionOnFailure(t *testing.T) {
 
 	famB := "fam-auth-b-" + uuid.New().String()
 	userB := "usr-auth-b-" + uuid.New().String()
+	households(t, resolver.DB, famA, famB)
 
 	ctxA := WithClaims(context.Background(), &AuthClaims{
 		UserID:      userA,
@@ -94,6 +95,7 @@ func TestGraphQL_MutationEvents_PayloadCompleteness(t *testing.T) {
 
 	fam := "fam-test-" + uuid.New().String()
 	user := "usr-test-" + uuid.New().String()
+	households(t, resolver.DB, fam)
 
 	ctx := WithClaims(context.Background(), &AuthClaims{
 		UserID:      user,

@@ -6,6 +6,7 @@ import (
 
 	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"github.com/stretchr/testify/assert"
@@ -63,6 +64,7 @@ func TestWorkspaceCalendar_AntiSpoofing(t *testing.T) {
 	}
 	callCtx := orchestrator.CallContext{
 		User:     legitUser,
+		Scope:    identitytest.Scope(t, "cal_family_legit", "cal_victim_platform", "family"), // V4-30: the tenant
 		Message:  channel.Inbound{Sender: "cal_victim_platform"},
 		EventBus: bus,
 	}

@@ -93,7 +93,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 	sb.WriteString("### Runtime Customization, Preferences & Personal CRM:\n")
 	sb.WriteString("• You manage on-demand external APIs (`register_external_api`, `call_external_api`), event-driven automations (`create_automation_rule`), user preferences (`update_user_preferences`), and family/personal CRM (`upsert_personal_crm`, `query_personal_crm`).\n")
 
-	userID, familyGroup := getUserAndFamily(callCtx)
+	userID, s := getUserAndScope(callCtx)
 	repo, err := m.resolveRepo(callCtx)
 	if err == nil && repo != nil && userID != "" {
 		pref, _ := repo.GetUserPreference(userID)
@@ -124,7 +124,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 
 		// Check Personal CRM for upcoming birthdays / anniversaries within 30 days
 		now := time.Now()
-		contacts, _ := repo.ListCRMContacts(userID, familyGroup, "")
+		contacts, _ := repo.ListCRMContacts(s, "")
 		var alerts []string
 
 		for _, contact := range contacts {

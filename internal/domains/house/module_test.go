@@ -3,6 +3,8 @@ package house
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +17,33 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// testHouseholds holds the households tests create tenants in (V4-30): a family label becomes a
+// household with an ID derived from the label, and scopes are built by the production constructor.
+var testHouseholds = identitytest.NewStore()
+
+// withScope gives a call context the scope of its user. The user's family label becomes a
+// household; a user without a label is their own tenant, keyed by their platform ID (DE-2), as
+// the migration maps them.
+func withScope(cc orchestrator.CallContext) orchestrator.CallContext {
+	label, key := "", cc.Message.Sender
+	if cc.User != nil {
+		label = cc.User.FamilyGroup
+		if cc.User.PlatformID != "" {
+			key = cc.User.PlatformID
+		}
+	}
+	if strings.TrimSpace(label) == "" {
+		label = key
+	}
+	h := testHouseholds.Household(label)
+	s, err := identity.ForUser(context.Background(), testHouseholds, &models.User{PlatformID: key, Role: "family", HouseholdID: h.ID})
+	if err != nil {
+		panic(err)
+	}
+	cc.Scope = s
+	return cc
+}
 
 // fakeHouseRepo provides a thread-safe, in-memory implementation of db.HouseRepository for unit testing.
 type fakeHouseRepo struct {
@@ -38,7 +67,8 @@ func newFakeHouseRepo() *fakeHouseRepo {
 	}
 }
 
-func (r *fakeHouseRepo) CreateContract(c *models.HouseContractRecord) error {
+func (r *fakeHouseRepo) CreateContract(s identity.Scope, c *models.HouseContractRecord) error {
+	c.HouseholdID, c.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c.ID = r.nextContract
@@ -51,7 +81,7 @@ func (r *fakeHouseRepo) CreateContract(c *models.HouseContractRecord) error {
 	return nil
 }
 
-func (r *fakeHouseRepo) GetContract(id uint, familyGroup ...string) (*models.HouseContractRecord, error) {
+func (r *fakeHouseRepo) GetContract(s identity.Scope, id uint) (*models.HouseContractRecord, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	c, ok := r.contracts[id]
@@ -62,7 +92,8 @@ func (r *fakeHouseRepo) GetContract(id uint, familyGroup ...string) (*models.Hou
 	return &cp, nil
 }
 
-func (r *fakeHouseRepo) UpdateContract(c *models.HouseContractRecord) error {
+func (r *fakeHouseRepo) UpdateContract(s identity.Scope, c *models.HouseContractRecord) error {
+	c.HouseholdID, c.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cp := *c
@@ -70,20 +101,20 @@ func (r *fakeHouseRepo) UpdateContract(c *models.HouseContractRecord) error {
 	return nil
 }
 
-func (r *fakeHouseRepo) DeleteContract(id uint) error {
+func (r *fakeHouseRepo) DeleteContract(_ identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.contracts, id)
 	return nil
 }
 
-func (r *fakeHouseRepo) ListContracts(familyGroup string, recordType string, expiringBefore *time.Time) ([]models.HouseContractRecord, error) {
+func (r *fakeHouseRepo) ListContracts(s identity.Scope, recordType string, expiringBefore *time.Time) ([]models.HouseContractRecord, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var res []models.HouseContractRecord
 	recordType = strings.ToLower(strings.TrimSpace(recordType))
 	for _, c := range r.contracts {
-		if familyGroup != "" && c.FamilyGroup != familyGroup {
+		if c.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		if recordType != "" && recordType != "all" && c.RecordType != recordType {
@@ -99,14 +130,14 @@ func (r *fakeHouseRepo) ListContracts(familyGroup string, recordType string, exp
 	return res, nil
 }
 
-func (r *fakeHouseRepo) ListExpiringContracts(familyGroup string, withinDays int) ([]models.HouseContractRecord, error) {
+func (r *fakeHouseRepo) ListExpiringContracts(s identity.Scope, withinDays int) ([]models.HouseContractRecord, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	now := time.Now()
 	cutoff := now.AddDate(0, 0, withinDays)
 	var res []models.HouseContractRecord
 	for _, c := range r.contracts {
-		if familyGroup != "" && c.FamilyGroup != familyGroup {
+		if c.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		if c.ExpirationOrRenewalDate == nil {
@@ -119,7 +150,8 @@ func (r *fakeHouseRepo) ListExpiringContracts(familyGroup string, withinDays int
 	return res, nil
 }
 
-func (r *fakeHouseRepo) CreateMaintenanceItem(m *models.HomeMaintenanceItem) error {
+func (r *fakeHouseRepo) CreateMaintenanceItem(s identity.Scope, m *models.HomeMaintenanceItem) error {
+	m.HouseholdID, m.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	m.ID = r.nextMaint
@@ -129,23 +161,22 @@ func (r *fakeHouseRepo) CreateMaintenanceItem(m *models.HomeMaintenanceItem) err
 	return nil
 }
 
-func (r *fakeHouseRepo) GetMaintenanceItem(id uint, familyGroup ...string) (*models.HomeMaintenanceItem, error) {
+func (r *fakeHouseRepo) GetMaintenanceItem(s identity.Scope, id uint) (*models.HomeMaintenanceItem, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	m, ok := r.maintenance[id]
 	if !ok {
 		return nil, nil
 	}
-	if len(familyGroup) > 0 && familyGroup[0] != "" {
-		if m.FamilyGroup != familyGroup[0] && m.UpdatedByUserID != familyGroup[0] {
-			return nil, nil
-		}
+	if m.HouseholdID != s.HouseholdID() {
+		return nil, nil
 	}
 	cp := *m
 	return &cp, nil
 }
 
-func (r *fakeHouseRepo) UpdateMaintenanceItem(m *models.HomeMaintenanceItem) error {
+func (r *fakeHouseRepo) UpdateMaintenanceItem(s identity.Scope, m *models.HomeMaintenanceItem) error {
+	m.HouseholdID, m.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cp := *m
@@ -153,21 +184,21 @@ func (r *fakeHouseRepo) UpdateMaintenanceItem(m *models.HomeMaintenanceItem) err
 	return nil
 }
 
-func (r *fakeHouseRepo) DeleteMaintenanceItem(id uint) error {
+func (r *fakeHouseRepo) DeleteMaintenanceItem(_ identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.maintenance, id)
 	return nil
 }
 
-func (r *fakeHouseRepo) ListMaintenanceItems(familyGroup string, category string, overdueOnly bool) ([]models.HomeMaintenanceItem, error) {
+func (r *fakeHouseRepo) ListMaintenanceItems(s identity.Scope, category string, overdueOnly bool) ([]models.HomeMaintenanceItem, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	now := time.Now()
 	category = strings.ToLower(strings.TrimSpace(category))
 	var res []models.HomeMaintenanceItem
 	for _, m := range r.maintenance {
-		if familyGroup != "" && m.FamilyGroup != familyGroup {
+		if m.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		if category != "" && category != "all" && m.Category != category {
@@ -181,24 +212,23 @@ func (r *fakeHouseRepo) ListMaintenanceItems(familyGroup string, category string
 	return res, nil
 }
 
-func (r *fakeHouseRepo) CompleteMaintenanceItem(id uint, completedAt time.Time, userID string, familyGroup ...string) (*models.HomeMaintenanceItem, error) {
+func (r *fakeHouseRepo) CompleteMaintenanceItem(s identity.Scope, id uint, completedAt time.Time, userID string) (*models.HomeMaintenanceItem, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	m, ok := r.maintenance[id]
 	if !ok {
 		return nil, assert.AnError
 	}
-	if len(familyGroup) > 0 && familyGroup[0] != "" {
-		if m.FamilyGroup != familyGroup[0] && m.UpdatedByUserID != familyGroup[0] {
-			return nil, fmt.Errorf("maintenance item %d not found in family %q", id, familyGroup[0])
-		}
+	if m.HouseholdID != s.HouseholdID() {
+		return nil, fmt.Errorf("maintenance item %d not found in family %q", id, s.LegacyLabel())
 	}
 	m.MarkCompleted(completedAt, userID)
 	cp := *m
 	return &cp, nil
 }
 
-func (r *fakeHouseRepo) CreateVehicleAsset(v *models.VehicleAsset) error {
+func (r *fakeHouseRepo) CreateVehicleAsset(s identity.Scope, v *models.VehicleAsset) error {
+	v.HouseholdID, v.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	v.ID = r.nextVehicle
@@ -208,7 +238,7 @@ func (r *fakeHouseRepo) CreateVehicleAsset(v *models.VehicleAsset) error {
 	return nil
 }
 
-func (r *fakeHouseRepo) GetVehicleAsset(id uint) (*models.VehicleAsset, error) {
+func (r *fakeHouseRepo) GetVehicleAsset(_ identity.Scope, id uint) (*models.VehicleAsset, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	v, ok := r.vehicles[id]
@@ -219,7 +249,8 @@ func (r *fakeHouseRepo) GetVehicleAsset(id uint) (*models.VehicleAsset, error) {
 	return &cp, nil
 }
 
-func (r *fakeHouseRepo) UpdateVehicleAsset(v *models.VehicleAsset) error {
+func (r *fakeHouseRepo) UpdateVehicleAsset(s identity.Scope, v *models.VehicleAsset) error {
+	v.HouseholdID, v.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cp := *v
@@ -227,19 +258,19 @@ func (r *fakeHouseRepo) UpdateVehicleAsset(v *models.VehicleAsset) error {
 	return nil
 }
 
-func (r *fakeHouseRepo) DeleteVehicleAsset(id uint) error {
+func (r *fakeHouseRepo) DeleteVehicleAsset(_ identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.vehicles, id)
 	return nil
 }
 
-func (r *fakeHouseRepo) ListVehicleAssets(familyGroup string) ([]models.VehicleAsset, error) {
+func (r *fakeHouseRepo) ListVehicleAssets(s identity.Scope) ([]models.VehicleAsset, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var res []models.VehicleAsset
 	for _, v := range r.vehicles {
-		if familyGroup != "" && v.FamilyGroup != familyGroup {
+		if v.HouseholdID != s.HouseholdID() {
 			continue
 		}
 		res = append(res, *v)
@@ -247,7 +278,7 @@ func (r *fakeHouseRepo) ListVehicleAssets(familyGroup string) ([]models.VehicleA
 	return res, nil
 }
 
-func (r *fakeHouseRepo) UpdateVehicleMileage(id uint, mileageKm int) (*models.VehicleAsset, error) {
+func (r *fakeHouseRepo) UpdateVehicleMileage(_ identity.Scope, id uint, mileageKm int) (*models.VehicleAsset, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	v, ok := r.vehicles[id]
@@ -353,13 +384,13 @@ func TestModule_SaveAndListContracts(t *testing.T) {
 	})
 
 	mod := NewModule(repo, WithEventBus(eventBus))
-	callCtx := orchestrator.CallContext{
+	callCtx := withScope(orchestrator.CallContext{
 		User: &models.User{
 			ID:          "user-bob",
 			FamilyGroup: "family-smith",
 		},
 		EventBus: eventBus,
-	}
+	})
 
 	// 1. Save lease contract
 	saveArgs := map[string]interface{}{
@@ -447,13 +478,13 @@ func TestModule_HomeMaintenance(t *testing.T) {
 	})
 
 	mod := NewModule(repo, WithEventBus(eventBus))
-	callCtx := orchestrator.CallContext{
+	callCtx := withScope(orchestrator.CallContext{
 		User: &models.User{
 			ID:          "user-carol",
 			FamilyGroup: "family-smith",
 		},
 		EventBus: eventBus,
-	}
+	})
 
 	// 1. Create maintenance item
 	createArgs := map[string]interface{}{
@@ -538,13 +569,13 @@ func TestModule_VehicleVault(t *testing.T) {
 	eventBus := events.NewEventBus()
 
 	mod := NewModule(repo, WithEventBus(eventBus))
-	callCtx := orchestrator.CallContext{
+	callCtx := withScope(orchestrator.CallContext{
 		User: &models.User{
 			ID:          "user-dave",
 			FamilyGroup: "family-smith",
 		},
 		EventBus: eventBus,
-	}
+	})
 
 	testExpiry := time.Now().AddDate(0, 0, 25).Format("2006-01-02")
 	insExpiry := time.Now().AddDate(0, 0, 10).Format("2006-01-02")
@@ -576,7 +607,7 @@ func TestModule_VehicleVault(t *testing.T) {
 	// 3. Update mileage below threshold
 	outKm1, err := mod.Execute(ctx, callCtx, "manage_vehicle_asset", map[string]interface{}{
 		"action":             "update_mileage",
-		"asset_id":          1,
+		"asset_id":           1,
 		"current_mileage_km": 44000,
 	})
 	require.NoError(t, err)
@@ -586,7 +617,7 @@ func TestModule_VehicleVault(t *testing.T) {
 	// 4. Update mileage above threshold -> service warning
 	outKm2, err := mod.Execute(ctx, callCtx, "manage_vehicle_asset", map[string]interface{}{
 		"action":             "update_mileage",
-		"asset_id":          1,
+		"asset_id":           1,
 		"current_mileage_km": 45500,
 	})
 	require.NoError(t, err)
@@ -620,12 +651,12 @@ func TestModule_SystemPromptSection(t *testing.T) {
 	repo := newFakeHouseRepo()
 	mod := NewModule(repo)
 
-	callCtx := orchestrator.CallContext{
+	callCtx := withScope(orchestrator.CallContext{
 		User: &models.User{
 			ID:          "user-alice",
 			FamilyGroup: "family-jones",
 		},
-	}
+	})
 
 	// 1. Empty repository
 	promptEmpty := mod.SystemPromptSection(ctx, callCtx)
@@ -633,7 +664,7 @@ func TestModule_SystemPromptSection(t *testing.T) {
 
 	// 2. Add expiring contract
 	expiry := time.Now().AddDate(0, 0, 20)
-	_ = repo.CreateContract(&models.HouseContractRecord{
+	_ = repo.CreateContract(callCtx.Scope, &models.HouseContractRecord{
 		FamilyGroup:             "family-jones",
 		RecordType:              "lease",
 		Title:                   "Rental Lease",
@@ -644,7 +675,7 @@ func TestModule_SystemPromptSection(t *testing.T) {
 
 	// 3. Add overdue maintenance item
 	pastDue := time.Now().AddDate(0, 0, -3)
-	_ = repo.CreateMaintenanceItem(&models.HomeMaintenanceItem{
+	_ = repo.CreateMaintenanceItem(callCtx.Scope, &models.HomeMaintenanceItem{
 		FamilyGroup: "family-jones",
 		TaskName:    "Clean Gutter",
 		Category:    "general",
@@ -653,7 +684,7 @@ func TestModule_SystemPromptSection(t *testing.T) {
 
 	// 4. Add vehicle with expiring test
 	testExp := time.Now().AddDate(0, 0, 15).Add(time.Hour)
-	_ = repo.CreateVehicleAsset(&models.VehicleAsset{
+	_ = repo.CreateVehicleAsset(callCtx.Scope, &models.VehicleAsset{
 		FamilyGroup:      "family-jones",
 		Name:             "Subaru Outback",
 		LicensePlate:     "44-555-66",
@@ -677,12 +708,12 @@ func TestModule_ErrorHandling(t *testing.T) {
 	repo := newFakeHouseRepo()
 	mod := NewModule(repo)
 
-	callCtx := orchestrator.CallContext{
+	callCtx := withScope(orchestrator.CallContext{
 		User: &models.User{
 			ID:          "user-alice",
 			FamilyGroup: "family-jones",
 		},
-	}
+	})
 
 	// Unknown tool
 	_, err := mod.Execute(ctx, callCtx, "non_existent_tool", map[string]interface{}{})

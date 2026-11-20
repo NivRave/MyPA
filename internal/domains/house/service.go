@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"strconv"
@@ -15,7 +16,7 @@ import (
 )
 
 // getSeasonalMaintenanceSuggestions provides season-specific home maintenance upkeep templates.
-func (m *Module) getSeasonalMaintenanceSuggestions(repo db.HouseRepository, familyGroup string) (string, error) {
+func (m *Module) getSeasonalMaintenanceSuggestions(repo db.HouseRepository, scope identity.Scope) (string, error) {
 	currentMonth := time.Now().Month()
 	season := "General"
 	switch currentMonth {
@@ -57,7 +58,7 @@ func (m *Module) getSeasonalMaintenanceSuggestions(repo db.HouseRepository, fami
 	}
 
 	// Fetch existing to indicate which tasks are already added
-	existingItems, _ := repo.ListMaintenanceItems(familyGroup, "all", false)
+	existingItems, _ := repo.ListMaintenanceItems(scope, "all", false)
 	existingMap := make(map[string]bool)
 	for _, it := range existingItems {
 		existingMap[strings.ToLower(strings.TrimSpace(it.TaskName))] = true
@@ -105,6 +106,9 @@ func (m *Module) publishEvent(ctx context.Context, callCtx orchestrator.CallCont
 	if event.Topic == "" {
 		event.Topic = "house"
 	}
+	// V4-30: the event belongs to the caller's household; the label rides along until V4-44.
+	event.HouseholdID = callCtx.Scope.HouseholdID()
+	event.FamilyGroup = callCtx.Scope.LegacyLabel()
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
@@ -112,8 +116,9 @@ func (m *Module) publishEvent(ctx context.Context, callCtx orchestrator.CallCont
 	_ = bus.Publish(ctx, event)
 }
 
-func resolveFamilyGroup(callCtx orchestrator.CallContext) string {
-	return callCtx.TenantFamilyGroup()
+// resolveScope returns the caller's household scope (V4-30); every repository call takes it.
+func resolveScope(callCtx orchestrator.CallContext) identity.Scope {
+	return callCtx.Scope
 }
 
 func resolveUserID(callCtx orchestrator.CallContext) string {

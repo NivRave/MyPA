@@ -16,7 +16,7 @@ func basePromptInputs(t *testing.T) promptInputs {
 	return promptInputs{
 		UserName:       "Dana",
 		Role:           "admin",
-		FamilyGroup:    "Levi",
+		Household:      "Levi",
 		ActiveTools:    toolSet("create_calendar_event", "save_topic_memory", "search_web"),
 		ModuleSections: "### Baby\nLiam is 8 months old.",
 		Memories:       []string{"- Allergic to peanuts"},

@@ -13,18 +13,18 @@ import (
 const DefaultPromptCacheTTL = 10 * time.Minute
 
 // PromptCache defines the Redis operations required by the orchestrator for dynamic prompt caching.
-// Sections are cached PER USER (familyGroup + userID + module): several modules render personal
+// Sections are cached PER USER (household ID + userID + module, V4-30): several modules render personal
 // data (pinned memories, persona, standing instructions), so a family-wide key would leak them.
 type PromptCache interface {
 	// GetPromptSection retrieves a single cached module section. Returns (content, found, error).
-	GetPromptSection(ctx context.Context, familyGroup, userID, module string) (string, bool, error)
+	GetPromptSection(ctx context.Context, householdID, userID, module string) (string, bool, error)
 
 	// GetPromptSections retrieves multiple module prompt sections in a single roundtrip (e.g. via Redis MGet).
 	// Returns a map of module names to cached content, and a slice of module names that missed cache.
-	GetPromptSections(ctx context.Context, familyGroup, userID string, modules []string) (hits map[string]string, misses []string, err error)
+	GetPromptSections(ctx context.Context, householdID, userID string, modules []string) (hits map[string]string, misses []string, err error)
 
 	// SetPromptSection persists a generated prompt section with a specified TTL.
-	SetPromptSection(ctx context.Context, familyGroup, userID, module, content string, ttl time.Duration) error
+	SetPromptSection(ctx context.Context, householdID, userID, module, content string, ttl time.Duration) error
 
 	// InvalidateFamilyPromptSections deletes the given modules' sections for every user in a scope.
 	InvalidateFamilyPromptSections(ctx context.Context, scope string, modules []string) (int, error)
@@ -78,21 +78,16 @@ func MapEventToModules(event events.MutationEvent) []string {
 }
 
 // BuildPromptInvalidationScopes returns the tenant scopes (first key segment) and modules a
-// MutationEvent invalidates. Scopes are the event's family group and its actor: users without a
-// family group are cached under their own ID as scope (CallContext.TenantFamilyGroup fallback).
-// Every user within each scope is invalidated, because a family-shared mutation (e.g. a family
-// pinned memory) changes every member's rendered section.
+// MutationEvent invalidates. The scope is the event's household (V4-30): every user has one, so
+// there is no per-user fallback scope any more. Every user within it is invalidated, because a
+// family-shared mutation (e.g. a family pinned memory) changes every member's rendered section.
 func BuildPromptInvalidationScopes(event events.MutationEvent) (scopes []string, modules []string) {
 	modules = MapEventToModules(event)
 	if len(modules) == 0 {
 		return nil, nil
 	}
-	seen := make(map[string]bool)
-	for _, s := range []string{event.FamilyGroup, event.ActorUserID} {
-		if s = strings.TrimSpace(s); s != "" && !seen[s] {
-			seen[s] = true
-			scopes = append(scopes, s)
-		}
+	if s := strings.TrimSpace(event.HouseholdID); s != "" {
+		scopes = append(scopes, s)
 	}
 	return scopes, modules
 }

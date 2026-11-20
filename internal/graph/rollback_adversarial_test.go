@@ -3,14 +3,15 @@ package graph_test
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/testutil"
 	"github.com/nivik/mypa/internal/graph"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -57,6 +58,7 @@ func TestSEC06_RollbackMutation_SystemTablesRejected(t *testing.T) {
 				EntityType:  sysEntity,
 				EntityID:    "1",
 				UserID:      "attacker",
+				HouseholdID: householdtest.Household(t, client, "attacker").ID,
 				BeforeJSON:  `{"id": "1", "name": "hacked"}`,
 				AfterJSON:   `{}`,
 				IsUndone:    false,
@@ -104,6 +106,7 @@ func TestSEC06_RollbackMutation_TransactionRollbackOnStatementFailure(t *testing
 		EntityType:  "TopicMemory",
 		EntityID:    "1",
 		UserID:      "user_test",
+		HouseholdID: householdtest.Household(t, client, "user_test").ID,
 		BeforeJSON:  `{"non_existent_column_fail": "crash"}`,
 		AfterJSON:   `{}`,
 		IsUndone:    false,
@@ -143,6 +146,7 @@ func TestSEC06_RollbackMutation_NonAdminTenantBoundary(t *testing.T) {
 		EntityType:  "BabyProfile",
 		EntityID:    "123",
 		UserID:      "user_alpha",
+		HouseholdID: householdtest.Household(t, client, "family_alpha").ID,
 		FamilyGroup: "family_alpha",
 		BeforeJSON:  `{}`,
 		AfterJSON:   `{}`,
@@ -154,6 +158,7 @@ func TestSEC06_RollbackMutation_NonAdminTenantBoundary(t *testing.T) {
 	defer client.DB.Delete(&models.MutationLog{}, "id = ?", mID)
 
 	// User from family_beta attempts rollback
+	householdtest.Household(t, client, "family_beta")
 	betaClaims := &graph.AuthClaims{
 		UserID:      "user_beta",
 		FamilyGroup: "family_beta",

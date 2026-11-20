@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -109,11 +110,14 @@ func (e *Engine) WithCalendarConventions(c CalendarConventions) *Engine {
 	return e
 }
 
-// location returns the configured default timezone (UTC if unset or invalid).
-func (e *Engine) location() *time.Location {
-	if tz := strings.TrimSpace(e.timezone); tz != "" {
-		if loc, err := time.LoadLocation(tz); err == nil {
-			return loc
+// location returns the household's time zone, else the install's DEFAULT_TIMEZONE, else UTC
+// (an unset or invalid zone falls through to the next).
+func (e *Engine) location(s identity.Scope) *time.Location {
+	for _, tz := range []string{s.TimeZone(""), e.timezone} {
+		if tz = strings.TrimSpace(tz); tz != "" {
+			if loc, err := time.LoadLocation(tz); err == nil {
+				return loc
+			}
 		}
 	}
 	return time.UTC
@@ -148,6 +152,7 @@ func (e *Engine) buildCallContext(ctx context.Context, user *models.User, msg ch
 
 	callCtx := CallContext{
 		User:             user,
+		Scope:            e.scopeOf(ctx, user),
 		Message:          msg,
 		DB:               e.db,
 		LLM:              e.llm,
@@ -281,6 +286,7 @@ func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg channel.Inbo
 			PlatformID:  msg.Sender,
 			Name:        "Unknown",
 			Role:        pc.Role,
+			HouseholdID: pc.HouseholdID, // the code's household (V4-30); the label is still written
 			FamilyGroup: pc.FamilyGroup,
 			CreatedAt:   time.Now(),
 		}
@@ -383,6 +389,13 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 		return e.handleUnauthenticatedUser(ctx, msg)
 	}
 	ctx = withTurnUser(ctx, user) // P2-7: resolved once; tool calls reuse it
+	// V4-30: the household is read from the database once per message, from the sender's row.
+	scope, scopeErr := identity.ForUser(ctx, e.db, user)
+	if scopeErr != nil {
+		slog.Warn("sender has no usable household", "user_id", user.PlatformID, "error", scopeErr)
+		return e.sendMessage(ctx, msg, "🚫 Your account is not attached to a household. Ask an admin to add you again.")
+	}
+	ctx = withTurnScope(ctx, scope)
 
 	// 2. Staged-action confirmation ("CONFIRM [TOOL]") and slash commands (commands.go)
 	if response, handled, cerr := e.handleConfirmation(ctx, user, msg); handled {
@@ -521,7 +534,12 @@ func (e *Engine) CheckAndSendReminders() {
 		}
 		cancel()
 
-		_ = e.db.MarkSharedReminderSent(s.ID)
+		// A scheduled job: the scope comes from the stored row's household (ADR 0002 Decision 3).
+		if scope, serr := identity.ForStoredRow(context.Background(), e.db, s.HouseholdID, s.CreatedByUserID); serr == nil {
+			_ = e.db.MarkSharedReminderSent(scope, s.ID)
+		} else {
+			slog.Error("shared reminder has no usable household", "shared_reminder_id", s.ID, "error", serr)
+		}
 		if e.store != nil {
 			_ = e.store.AppendChatHistory(context.Background(), targetUserID, models.ChatMessage{Role: "assistant", Content: formattedMsg})
 		}
@@ -529,19 +547,11 @@ func (e *Engine) CheckAndSendReminders() {
 }
 
 func (e *Engine) handleUndo(ctx context.Context, user *models.User, msg channel.Inbound, mutationID string) error {
-	actorID := msg.Sender
-	familyGroup := ""
-	if user != nil {
-		if strings.TrimSpace(user.PlatformID) != "" {
-			actorID = strings.TrimSpace(user.PlatformID)
-		}
-		familyGroup = strings.TrimSpace(user.FamilyGroup)
-	}
-
+	scope := e.scopeOf(ctx, user)
 	if e.toolRegistry != nil {
 		if mod, ok := e.toolRegistry.GetModule("durability"); ok {
 			if rEngine, ok := mod.(RollbackEngine); ok {
-				res, err := rEngine.Rollback(ctx, actorID, familyGroup, mutationID)
+				res, err := rEngine.Rollback(ctx, scope, mutationID)
 				if err != nil {
 					if strings.Contains(err.Error(), "no recent undoable actions found") {
 						return e.sendMessage(ctx, msg, "ℹ️ No recent undoable actions found.")

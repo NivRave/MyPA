@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"github.com/nivik/mypa/internal/identity"
 
 	"github.com/nivik/mypa/internal/gmail"
 	"github.com/nivik/mypa/internal/llm"
@@ -67,22 +68,26 @@ type ContactsClient interface {
 }
 
 type DBClient interface {
-	// SearchSimilarMemories is the single memory retrieval path (P2-4): the caller's personal
-	// memories plus their family group's shared ones, nearest first.
-	SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error)
+	// identity.Store: the engine builds each message's scope from the sender's household.
+	identity.Store
+	// SearchSimilarMemories is the single memory retrieval path (P2-4): the scope person's
+	// personal memories plus their household's shared ones, nearest first.
+	SearchSimilarMemories(ctx context.Context, s identity.Scope, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error)
 	GetUniqueUsers() ([]string, error)
 	GetLastAuditSessionForUser(userID string) (*models.AuditSession, error)
 	SaveReminder(reminder models.ScheduledReminder) error
 	GetDueReminders() ([]models.ScheduledReminder, error)
 	MarkReminderSent(id uint) error
+	// GetDueSharedReminders scans every household (a scheduled job); each row's household_id
+	// becomes the scope that marks it sent.
 	GetDueSharedReminders() ([]models.SharedTaskReminder, error)
-	MarkSharedReminderSent(id uint) error
+	MarkSharedReminderSent(s identity.Scope, id uint) error
 	GetUser(platformID string) (*models.User, error)
 	UpsertUser(u models.User) error
-	CreatePairingCode(pc models.PairingCode) error
+	CreatePairingCode(s identity.Scope, pc models.PairingCode) error
 	GetPairingCode(code string) (*models.PairingCode, error)
 	RedeemPairingCode(codeID string, u models.User) error
-	GetUsersByFamilyGroup(familyGroup string) ([]models.User, error)
+	UsersInHousehold(ctx context.Context, s identity.Scope) ([]models.User, error)
 	SaveWorkflow(w models.Workflow) error
 	GetUserWorkflows(userID string) ([]models.Workflow, error)
 	DeleteWorkflow(id uint, userID string) error
@@ -100,6 +105,6 @@ type TavilyClient interface {
 
 // RollbackEngine defines the interface for state rollback operations.
 type RollbackEngine interface {
-	Rollback(ctx context.Context, actorID, familyGroup, mutationID string, reason ...string) (*models.RollbackResult, error)
-	RollbackLast(ctx context.Context, actorID, familyGroup string, reason ...string) (*models.RollbackResult, error)
+	Rollback(ctx context.Context, s identity.Scope, mutationID string, reason ...string) (*models.RollbackResult, error)
+	RollbackLast(ctx context.Context, s identity.Scope, reason ...string) (*models.RollbackResult, error)
 }

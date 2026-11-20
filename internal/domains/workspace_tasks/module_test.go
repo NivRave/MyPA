@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 	tasksapi "google.golang.org/api/tasks/v1"
@@ -73,6 +74,7 @@ func TestWorkspaceTasks_Operations(t *testing.T) {
 			FamilyGroup: "family_tasks",
 		},
 		EventBus: bus,
+		Scope:    identitytest.Scope(t, "family_tasks", "tg_789", "family"), // V4-30: the tenant
 	}
 
 	// 1. List Task Lists

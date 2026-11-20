@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,45 +36,46 @@ func seedEveryOtherTable(i *install) {
 	later := now.Add(72 * time.Hour)
 	embedding := make([]float32, 3072)
 	embedding[3] = 1
+	levi := householdtest.Household(i.t, i.client, "Levi").ID // V4-30: rows carry their household
 
-	baby := models.BabyProfile{FamilyGroup: "Levi", Name: "Noa", DateOfBirth: now.AddDate(0, -4, 0), UpdatedByUserID: "1001"}
+	baby := models.BabyProfile{HouseholdID: levi, FamilyGroup: "Levi", Name: "Noa", DateOfBirth: now.AddDate(0, -4, 0), UpdatedByUserID: "1001"}
 	require.NoError(i.t, i.client.DB.Create(&baby).Error)
 	sessionID := uuid.NewString()
 
 	rows := []any{
 		// Core
-		&models.PairingCode{Code: "482913", Role: "family", FamilyGroup: "Levi", ExpiresAt: later},
+		&models.PairingCode{Code: "482913", Role: "family", HouseholdID: levi, FamilyGroup: "Levi", ExpiresAt: later},
 		&models.Memory{UserID: "1001", Scope: "personal", Fact: "Prefers tea to coffee.", Embedding: pgvector.NewVector(embedding)},
 		&models.Workflow{UserID: "1001", Name: "Morning summary", CronExpression: "0 7 * * *", Instruction: "Summarise my day", IsActive: true},
 		&models.AuditSession{ID: sessionID, UserID: "1001", ChatID: "1001", Source: "telegram", UserPrompt: "hello", FinalResponse: "hi", StartTime: now, EndTime: now, Status: "success"},
 		&models.AuditEvent{ID: uuid.NewString(), SessionID: sessionID, EventType: "tool_execution", ActionName: "get_current_time", RequestPayload: "{}", ResponsePayload: "{}", StartTime: now, EndTime: now},
 		// Durability
-		&models.MutationLog{ID: uuid.NewString(), UserID: "1001", FamilyGroup: "Levi", Topic: "house", Action: "create", EntityType: "house_contract_record", EntityID: "1", BeforeJSON: "{}", AfterJSON: "{}", Summary: "Added the rental contract"},
+		&models.MutationLog{ID: uuid.NewString(), UserID: "1001", HouseholdID: levi, FamilyGroup: "Levi", Topic: "house", Action: "create", EntityType: "house_contract_record", EntityID: "1", BeforeJSON: "{}", AfterJSON: "{}", Summary: "Added the rental contract"},
 		&models.IdempotencyRecord{Key: "idem-1", UserID: "1001", ToolName: "log_transaction", ResponseSummary: "done", ExpiresAt: later},
 		// Memory
-		&models.EntityProfile{UserID: "1001", FamilyGroup: "Levi", Topic: "house", EntityType: "appliance", EntityName: "Boiler", AttributesJSON: "{}", UpdatedByUserID: "1001"},
+		&models.EntityProfile{UserID: "1001", HouseholdID: levi, FamilyGroup: "Levi", Topic: "house", EntityType: "appliance", EntityName: "Boiler", AttributesJSON: "{}", UpdatedByUserID: "1001"},
 		// Sharing
-		&models.SharedSpace{FamilyGroup: "Levi", Topic: "house", OwnerUserID: "1001", SharedWithUserID: "1002", CanView: true, CanEdit: true, NotifyMode: "instant"},
-		&models.SharedTaskReminder{FamilyGroup: "Levi", Topic: "house", Title: "Renew the car insurance", DueTime: &later, CreatedByUserID: "1001"},
+		&models.SharedSpace{HouseholdID: levi, FamilyGroup: "Levi", Topic: "house", OwnerUserID: "1001", SharedWithUserID: "1002", CanView: true, CanEdit: true, NotifyMode: "instant"},
+		&models.SharedTaskReminder{HouseholdID: levi, FamilyGroup: "Levi", Topic: "house", Title: "Renew the car insurance", DueTime: &later, CreatedByUserID: "1001"},
 		// Calendar
-		&models.ScheduleEvent{UserID: "1001", FamilyGroup: "Levi", Topic: "house", TagsJSON: "[]", Title: "Plumber", StartTime: later, EndTime: later.Add(time.Hour), CreatedByUserID: "1001"},
+		&models.ScheduleEvent{UserID: "1001", HouseholdID: levi, FamilyGroup: "Levi", Topic: "house", TagsJSON: "[]", Title: "Plumber", StartTime: later, EndTime: later.Add(time.Hour), CreatedByUserID: "1001"},
 		&models.TopicCalendarConfig{UserID: "1001", Topic: "house", ColorID: "5", PrefixTag: "[House]"},
 		// Baby
-		&models.BabyCareLog{BabyID: baby.ID, FamilyGroup: "Levi", LogType: "feeding", ValueNumeric: 120, Unit: "ml", Timestamp: now, LoggedByUserID: "1002"},
-		&models.BabyInventoryItem{FamilyGroup: "Levi", ItemName: "Diapers", QuantityRemaining: 40, Unit: "pcs", LowThreshold: 10},
+		&models.BabyCareLog{BabyID: baby.ID, HouseholdID: levi, FamilyGroup: "Levi", LogType: "feeding", ValueNumeric: 120, Unit: "ml", Timestamp: now, LoggedByUserID: "1002"},
+		&models.BabyInventoryItem{HouseholdID: levi, FamilyGroup: "Levi", ItemName: "Diapers", QuantityRemaining: 40, Unit: "pcs", LowThreshold: 10},
 		// House and vehicles
-		&models.HouseContractRecord{FamilyGroup: "Levi", RecordType: "rental", Title: "Apartment lease", Amount: 5200, Currency: "ILS", NoticePeriodDays: 60, KeyTermsJSON: "{}", CreatedByUserID: "1001"},
-		&models.HomeMaintenanceItem{FamilyGroup: "Levi", TaskName: "Service the boiler", Category: "heating", IntervalDays: 365, NextDueAt: later, UpdatedByUserID: "1001"},
-		&models.VehicleAsset{FamilyGroup: "Levi", Name: "Family car", LicensePlate: "00-000-00", CurrentMileageKm: 42000},
+		&models.HouseContractRecord{HouseholdID: levi, FamilyGroup: "Levi", RecordType: "rental", Title: "Apartment lease", Amount: 5200, Currency: "ILS", NoticePeriodDays: 60, KeyTermsJSON: "{}", CreatedByUserID: "1001"},
+		&models.HomeMaintenanceItem{HouseholdID: levi, FamilyGroup: "Levi", TaskName: "Service the boiler", Category: "heating", IntervalDays: 365, NextDueAt: later, UpdatedByUserID: "1001"},
+		&models.VehicleAsset{HouseholdID: levi, FamilyGroup: "Levi", Name: "Family car", LicensePlate: "00-000-00", CurrentMileageKm: 42000},
 		// Finance
-		&models.FinancialTransaction{UserID: "1001", FamilyGroup: "Levi", Type: "expense", Category: "groceries", Merchant: "Market", Amount: 180.5, Currency: "ILS", TransactionDate: now, IsShared: true, Source: "manual"},
-		&models.CategoryBudget{FamilyGroup: "Levi", Category: "groceries", MonthlyLimit: 3000, Currency: "ILS", AlertThresholdPct: 80},
-		&models.RecurringBill{FamilyGroup: "Levi", Name: "Electricity", Category: "utilities", ExpectedAmount: 400, Currency: "ILS", BillingCycle: "monthly", NextDueDay: 10},
+		&models.FinancialTransaction{UserID: "1001", HouseholdID: levi, FamilyGroup: "Levi", Type: "expense", Category: "groceries", Merchant: "Market", Amount: 180.5, Currency: "ILS", TransactionDate: now, IsShared: true, Source: "manual"},
+		&models.CategoryBudget{HouseholdID: levi, FamilyGroup: "Levi", Category: "groceries", MonthlyLimit: 3000, Currency: "ILS", AlertThresholdPct: 80},
+		&models.RecurringBill{HouseholdID: levi, FamilyGroup: "Levi", Name: "Electricity", Category: "utilities", ExpectedAmount: 400, Currency: "ILS", BillingCycle: "monthly", NextDueDay: 10},
 		// Automations, preferences and the personal CRM
-		&models.ExternalAPIConnector{UserID: "1001", FamilyGroup: "Levi", Name: "weather", BaseURL: "https://api.example.com", DefaultMethod: "GET", EncryptedAuthHeaders: []byte("ciphertext"), Description: "Weather"},
-		&models.AutomationRule{UserID: "1001", FamilyGroup: "Levi", Name: "Budget alert", TriggerType: "event", TriggerTopic: "finance", ConditionJSON: "{}", ActionInstruction: "Tell me", IsActive: true},
+		&models.ExternalAPIConnector{UserID: "1001", HouseholdID: levi, FamilyGroup: "Levi", Name: "weather", BaseURL: "https://api.example.com", DefaultMethod: "GET", EncryptedAuthHeaders: []byte("ciphertext"), Description: "Weather"},
+		&models.AutomationRule{UserID: "1001", HouseholdID: levi, FamilyGroup: "Levi", Name: "Budget alert", TriggerType: "event", TriggerTopic: "finance", ConditionJSON: "{}", ActionInstruction: "Tell me", IsActive: true},
 		&models.UserPreference{UserID: "1001", PreferredLanguage: "he", TonePersona: "warm", DefaultCurrency: "ILS", QuietHoursStart: "22:00", QuietHoursEnd: "07:00", BriefingTopicsJSON: "[]", StandingInstructions: "Keep answers short."},
-		&models.PersonalCRMContact{UserID: "1001", FamilyGroup: "Levi", PersonName: "Grandma Rina", Relationship: "grandmother", ImportantDatesJSON: "{}"},
+		&models.PersonalCRMContact{UserID: "1001", HouseholdID: levi, FamilyGroup: "Levi", PersonName: "Grandma Rina", Relationship: "grandmother", ImportantDatesJSON: "{}"},
 	}
 	for _, row := range rows {
 		require.NoError(i.t, i.client.DB.Create(row).Error, "seed %T", row)

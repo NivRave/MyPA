@@ -7,6 +7,7 @@ import (
 
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/gmail"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 )
@@ -93,6 +94,7 @@ func TestWorkspaceGmail_Operations(t *testing.T) {
 			FamilyGroup: "family_alpha",
 		},
 		EventBus: bus,
+		Scope:    identitytest.Scope(t, "family_alpha", "tg_456", "family"), // V4-30: the tenant
 	}
 
 	// 1. Search Emails

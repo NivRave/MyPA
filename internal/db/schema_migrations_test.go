@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -89,18 +88,25 @@ func diff(a, b []string) []string {
 	return out
 }
 
-// An existing pre-goose database (built by AutoMigrate, with data) is adopted at the baseline
-// without re-running it, and later migrations (legacy memories, P2-4) still apply.
+// An existing pre-goose database (the pre-goose AutoMigrate schema, with data) is adopted at the
+// baseline without re-running it, and later migrations (legacy memories, P2-4; households, V4-30)
+// still apply. The pre-goose schema is the baseline itself (00001 was generated from it), so the
+// database is built from it and goose's bookkeeping is removed; today's models would already
+// contain the later migrations' tables.
 func TestMigrations_AdoptsExistingDatabase(t *testing.T) {
 	dsn := newEmptyTestDatabase(t)
-	legacyClient, err := NewClientAutoMigrate(dsn)
+	legacy := openRaw(t, dsn)
+	migrateTo(t, legacy, 1)
+	_, err := legacy.Exec(`DROP TABLE goose_db_version`)
 	require.NoError(t, err)
-	require.NoError(t, legacyClient.DB.Create(&models.User{PlatformID: "u1", Name: "U", FamilyGroup: "fam"}).Error)
-	require.NoError(t, legacyClient.DB.Exec(`INSERT INTO memories (user_id, scope, fact, embedding, created_at)
-		VALUES ('u1', 'personal', 'adopted fact', array_fill(0, ARRAY[3072])::vector, now())`).Error)
+	_, err = legacy.Exec(`INSERT INTO users (platform_id, name, family_group) VALUES ('u1', 'U', 'fam')`)
+	require.NoError(t, err)
+	_, err = legacy.Exec(`INSERT INTO memories (user_id, scope, fact, embedding, created_at)
+		VALUES ('u1', 'personal', 'adopted fact', array_fill(0, ARRAY[3072])::vector, now())`)
+	require.NoError(t, err)
 	// Simulate a pre-P2-4 database: the fact exists only in the legacy table.
-	require.NoError(t, legacyClient.DB.Exec(`DELETE FROM topic_memories`).Error)
-	require.NoError(t, legacyClient.Close())
+	_, err = legacy.Exec(`DELETE FROM topic_memories`)
+	require.NoError(t, err)
 
 	sqlDB := openRaw(t, dsn)
 	require.NoError(t, Migrate(context.Background(), sqlDB), "adoption must not try to re-create existing tables")

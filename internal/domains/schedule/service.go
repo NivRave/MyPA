@@ -113,11 +113,11 @@ func (m *Module) resolveEventBus(callCtx orchestrator.CallContext) *events.Event
 	return nil
 }
 
-// findPartnerUsers retrieves partner users in the same family group.
-func (m *Module) findPartnerUsers(callCtx orchestrator.CallContext, userID, familyGroup string) []models.User {
+// findPartnerUsers retrieves the other members of the caller's household (V4-30).
+func (m *Module) findPartnerUsers(ctx context.Context, callCtx orchestrator.CallContext, userID string) []models.User {
 	var partners []models.User
-	if callCtx.DB != nil && familyGroup != "" {
-		users, err := callCtx.DB.GetUsersByFamilyGroup(familyGroup)
+	if callCtx.DB != nil && callCtx.Scope.Valid() {
+		users, err := callCtx.DB.UsersInHousehold(ctx, callCtx.Scope)
 		if err == nil {
 			for _, u := range users {
 				if u.PlatformID != userID && u.ID != userID {

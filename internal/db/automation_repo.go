@@ -3,6 +3,7 @@ package db
 import (
 	"errors"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
 	"strings"
 	"time"
 
@@ -22,30 +23,32 @@ func init() {
 // AutomationRepository defines CRUD operations for external API connectors,
 // event-driven automation rules, user customization preferences, and personal CRM contacts.
 type AutomationRepository interface {
-	// ExternalAPIConnector CRUD
-	CreateAPIConnector(connector *models.ExternalAPIConnector) error
-	GetAPIConnector(id uint, familyGroup ...string) (*models.ExternalAPIConnector, error)
-	GetAPIConnectorByName(userID, familyGroup, name string) (*models.ExternalAPIConnector, error)
-	ListAPIConnectors(userID, familyGroup string) ([]models.ExternalAPIConnector, error)
-	DeleteAPIConnector(id uint) error
+	// ExternalAPIConnector CRUD. Every method is confined to the scope's household (V4-30).
+	CreateAPIConnector(s identity.Scope, connector *models.ExternalAPIConnector) error
+	GetAPIConnector(s identity.Scope, id uint) (*models.ExternalAPIConnector, error)
+	GetAPIConnectorByName(s identity.Scope, name string) (*models.ExternalAPIConnector, error)
+	ListAPIConnectors(s identity.Scope) ([]models.ExternalAPIConnector, error)
+	DeleteAPIConnector(s identity.Scope, id uint) error
 
 	// AutomationRule CRUD
-	CreateAutomationRule(rule *models.AutomationRule) error
-	GetAutomationRule(id uint) (*models.AutomationRule, error)
-	ListAutomationRules(userID, familyGroup, triggerTopic string) ([]models.AutomationRule, error)
+	CreateAutomationRule(s identity.Scope, rule *models.AutomationRule) error
+	GetAutomationRule(s identity.Scope, id uint) (*models.AutomationRule, error)
+	ListAutomationRules(s identity.Scope, triggerTopic string) ([]models.AutomationRule, error)
+	// ListActiveAutomationRules scans every household (scheduled job and event runner): each
+	// returned rule carries its HouseholdID, and callers act only within that household.
 	ListActiveAutomationRules(triggerTopic string) ([]models.AutomationRule, error)
-	UpdateAutomationRule(rule *models.AutomationRule) error
-	DeleteAutomationRule(id uint, familyGroup ...string) error
+	UpdateAutomationRule(s identity.Scope, rule *models.AutomationRule) error
+	DeleteAutomationRule(s identity.Scope, id uint) error
 
-	// UserPreference CRUD
+	// UserPreference CRUD (person-keyed, no household column)
 	UpsertUserPreference(pref *models.UserPreference) error
 	GetUserPreference(userID string) (*models.UserPreference, error)
 
 	// PersonalCRMContact CRUD
-	UpsertCRMContact(contact *models.PersonalCRMContact) error
-	GetCRMContact(id uint) (*models.PersonalCRMContact, error)
-	ListCRMContacts(userID, familyGroup, query string) ([]models.PersonalCRMContact, error)
-	DeleteCRMContact(id uint) error
+	UpsertCRMContact(s identity.Scope, contact *models.PersonalCRMContact) error
+	GetCRMContact(s identity.Scope, id uint) (*models.PersonalCRMContact, error)
+	ListCRMContacts(s identity.Scope, query string) ([]models.PersonalCRMContact, error)
+	DeleteCRMContact(s identity.Scope, id uint) error
 }
 
 // NewAutomationRepository initializes an AutomationRepository backed by a *gorm.DB instance.
@@ -53,10 +56,13 @@ func NewAutomationRepository(db *gorm.DB) AutomationRepository {
 	return &Client{DB: db}
 }
 
-// CreateAPIConnector inserts a new ExternalAPIConnector into the database.
-func (c *Client) CreateAPIConnector(connector *models.ExternalAPIConnector) error {
+// CreateAPIConnector inserts a new ExternalAPIConnector into the scope's household.
+func (c *Client) CreateAPIConnector(s identity.Scope, connector *models.ExternalAPIConnector) error {
 	if connector == nil {
 		return fmt.Errorf("connector cannot be nil")
+	}
+	if err := stamp(s, &connector.HouseholdID, &connector.FamilyGroup); err != nil {
+		return err
 	}
 	if connector.CreatedAt.IsZero() {
 		connector.CreatedAt = time.Now()
@@ -72,15 +78,15 @@ func (c *Client) CreateAPIConnector(connector *models.ExternalAPIConnector) erro
 	return nil
 }
 
-// GetAPIConnector retrieves an ExternalAPIConnector by its primary key ID, optionally scoped to tenant.
+// GetAPIConnector retrieves an ExternalAPIConnector of the scope's household by ID.
 // Returns (nil, nil) if not found.
-func (c *Client) GetAPIConnector(id uint, familyGroup ...string) (*models.ExternalAPIConnector, error) {
-	var conn models.ExternalAPIConnector
-	query := c.DB.Where("id = ?", id)
-	if len(familyGroup) > 0 && familyGroup[0] != "" {
-		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup[0], familyGroup[0])
+func (c *Client) GetAPIConnector(s identity.Scope, id uint) (*models.ExternalAPIConnector, error) {
+	query, err := c.scoped(s)
+	if err != nil {
+		return nil, err
 	}
-	result := query.First(&conn)
+	var conn models.ExternalAPIConnector
+	result := query.Where("id = ?", id).First(&conn)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -90,25 +96,20 @@ func (c *Client) GetAPIConnector(id uint, familyGroup ...string) (*models.Extern
 	return &conn, nil
 }
 
-// GetAPIConnectorByName retrieves an ExternalAPIConnector by name for a user or family group.
+// GetAPIConnectorByName retrieves an ExternalAPIConnector of the scope's household by name.
 // Returns (nil, nil) if not found.
-func (c *Client) GetAPIConnectorByName(userID, familyGroup, name string) (*models.ExternalAPIConnector, error) {
+func (c *Client) GetAPIConnectorByName(s identity.Scope, name string) (*models.ExternalAPIConnector, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("connector name cannot be empty")
 	}
-
-	var conn models.ExternalAPIConnector
-	query := c.DB.Where("LOWER(name) = ?", strings.ToLower(name))
-	if userID != "" && familyGroup != "" {
-		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup, userID)
-	} else if userID != "" {
-		query = query.Where("user_id = ?", userID)
-	} else if familyGroup != "" {
-		query = query.Where("family_group = ? AND family_group != ''", familyGroup)
+	query, err := c.scoped(s)
+	if err != nil {
+		return nil, err
 	}
 
-	result := query.First(&conn)
+	var conn models.ExternalAPIConnector
+	result := query.Where("LOWER(name) = ?", strings.ToLower(name)).Order("id ASC").First(&conn)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -118,15 +119,11 @@ func (c *Client) GetAPIConnectorByName(userID, familyGroup, name string) (*model
 	return &conn, nil
 }
 
-// ListAPIConnectors lists all ExternalAPIConnectors matching the given user or family group.
-func (c *Client) ListAPIConnectors(userID, familyGroup string) ([]models.ExternalAPIConnector, error) {
-	query := c.DB.Model(&models.ExternalAPIConnector{})
-	if userID != "" && familyGroup != "" {
-		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup, userID)
-	} else if userID != "" {
-		query = query.Where("user_id = ?", userID)
-	} else if familyGroup != "" {
-		query = query.Where("family_group = ? AND family_group != ''", familyGroup)
+// ListAPIConnectors lists the ExternalAPIConnectors of the scope's household.
+func (c *Client) ListAPIConnectors(s identity.Scope) ([]models.ExternalAPIConnector, error) {
+	query, err := c.scoped(s)
+	if err != nil {
+		return nil, err
 	}
 
 	var connectors []models.ExternalAPIConnector
@@ -136,19 +133,29 @@ func (c *Client) ListAPIConnectors(userID, familyGroup string) ([]models.Externa
 	return connectors, nil
 }
 
-// DeleteAPIConnector removes an ExternalAPIConnector by its primary key ID.
-func (c *Client) DeleteAPIConnector(id uint) error {
-	result := c.DB.Delete(&models.ExternalAPIConnector{}, id)
+// DeleteAPIConnector removes an ExternalAPIConnector of the scope's household by ID.
+func (c *Client) DeleteAPIConnector(s identity.Scope, id uint) error {
+	query, err := c.scoped(s)
+	if err != nil {
+		return err
+	}
+	result := query.Where("id = ?", id).Delete(&models.ExternalAPIConnector{})
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete api connector: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("api connector %d not found", id)
 	}
 	return nil
 }
 
-// CreateAutomationRule inserts a new AutomationRule into the database.
-func (c *Client) CreateAutomationRule(rule *models.AutomationRule) error {
+// CreateAutomationRule inserts a new AutomationRule into the scope's household.
+func (c *Client) CreateAutomationRule(s identity.Scope, rule *models.AutomationRule) error {
 	if rule == nil {
 		return fmt.Errorf("automation rule cannot be nil")
+	}
+	if err := stamp(s, &rule.HouseholdID, &rule.FamilyGroup); err != nil {
+		return err
 	}
 	if rule.CreatedAt.IsZero() {
 		rule.CreatedAt = time.Now()
@@ -166,11 +173,15 @@ func (c *Client) CreateAutomationRule(rule *models.AutomationRule) error {
 	return nil
 }
 
-// GetAutomationRule retrieves an AutomationRule by its primary key ID.
+// GetAutomationRule retrieves an AutomationRule of the scope's household by ID.
 // Returns (nil, nil) if not found.
-func (c *Client) GetAutomationRule(id uint) (*models.AutomationRule, error) {
+func (c *Client) GetAutomationRule(s identity.Scope, id uint) (*models.AutomationRule, error) {
+	query, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
 	var rule models.AutomationRule
-	result := c.DB.First(&rule, id)
+	result := query.Where("id = ?", id).First(&rule)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -180,16 +191,13 @@ func (c *Client) GetAutomationRule(id uint) (*models.AutomationRule, error) {
 	return &rule, nil
 }
 
-// ListAutomationRules lists AutomationRules filtered by user/family and optionally trigger topic.
-func (c *Client) ListAutomationRules(userID, familyGroup, triggerTopic string) ([]models.AutomationRule, error) {
-	query := c.DB.Model(&models.AutomationRule{})
-	if userID != "" && familyGroup != "" {
-		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup, userID)
-	} else if userID != "" {
-		query = query.Where("user_id = ?", userID)
-	} else if familyGroup != "" {
-		query = query.Where("family_group = ? AND family_group != ''", familyGroup)
+// ListAutomationRules lists the scope household's AutomationRules, optionally by trigger topic.
+func (c *Client) ListAutomationRules(s identity.Scope, triggerTopic string) ([]models.AutomationRule, error) {
+	query, err := c.scoped(s)
+	if err != nil {
+		return nil, err
 	}
+	query = query.Model(&models.AutomationRule{})
 
 	normTopic := strings.ToLower(strings.TrimSpace(triggerTopic))
 	if normTopic != "" && normTopic != "all" && normTopic != "*" {
@@ -203,7 +211,9 @@ func (c *Client) ListAutomationRules(userID, familyGroup, triggerTopic string) (
 	return rules, nil
 }
 
-// ListActiveAutomationRules retrieves all active AutomationRules matching a trigger topic or event_mutation type.
+// ListActiveAutomationRules retrieves all active AutomationRules matching a trigger topic or
+// event_mutation type. It scans every household (scheduled job and event runner): each rule
+// carries its HouseholdID, and callers act only within that household (V4-30).
 func (c *Client) ListActiveAutomationRules(triggerTopic string) ([]models.AutomationRule, error) {
 	query := c.DB.Where("is_active = ?", true)
 	normTopic := strings.ToLower(strings.TrimSpace(triggerTopic))
@@ -218,28 +228,51 @@ func (c *Client) ListActiveAutomationRules(triggerTopic string) ([]models.Automa
 	return rules, nil
 }
 
-// UpdateAutomationRule updates an existing AutomationRule in the database.
-func (c *Client) UpdateAutomationRule(rule *models.AutomationRule) error {
-	if rule == nil {
-		return fmt.Errorf("automation rule cannot be nil")
+// UpdateAutomationRule updates an existing AutomationRule of the scope's household.
+func (c *Client) UpdateAutomationRule(s identity.Scope, rule *models.AutomationRule) error {
+	if rule == nil || rule.ID == 0 {
+		return fmt.Errorf("automation rule with an ID is required")
+	}
+	query, err := c.scoped(s)
+	if err != nil {
+		return err
+	}
+	if err := stamp(s, &rule.HouseholdID, &rule.FamilyGroup); err != nil {
+		return err
 	}
 	rule.TriggerTopic = strings.ToLower(strings.TrimSpace(rule.TriggerTopic))
 	rule.TriggerType = strings.ToLower(strings.TrimSpace(rule.TriggerType))
+	if rule.ConditionJSON == "" {
+		rule.ConditionJSON = "{}"
+	}
 
-	result := c.DB.Save(rule)
+	result := query.Model(&models.AutomationRule{}).Where("id = ?", rule.ID).Updates(map[string]interface{}{
+		"user_id":            rule.UserID,
+		"family_group":       rule.FamilyGroup,
+		"name":               rule.Name,
+		"trigger_type":       rule.TriggerType,
+		"trigger_topic":      rule.TriggerTopic,
+		"condition_json":     rule.ConditionJSON,
+		"action_instruction": rule.ActionInstruction,
+		"is_active":          rule.IsActive,
+	})
 	if result.Error != nil {
 		return fmt.Errorf("failed to update automation rule: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("automation rule %d not found", rule.ID)
 	}
 	return nil
 }
 
-// DeleteAutomationRule removes an AutomationRule by its primary key ID, optionally scoped to tenant.
-func (c *Client) DeleteAutomationRule(id uint, familyGroup ...string) error {
-	query := c.DB.Where("id = ?", id)
-	if len(familyGroup) > 0 && familyGroup[0] != "" {
-		query = query.Where("((family_group = ? AND family_group != '') OR user_id = ?)", familyGroup[0], familyGroup[0])
+// DeleteAutomationRule removes an AutomationRule of the scope's household by ID. A rule of
+// another household is left untouched (no error, nothing deleted).
+func (c *Client) DeleteAutomationRule(s identity.Scope, id uint) error {
+	query, err := c.scoped(s)
+	if err != nil {
+		return err
 	}
-	result := query.Delete(&models.AutomationRule{})
+	result := query.Where("id = ?", id).Delete(&models.AutomationRule{})
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete automation rule: %w", result.Error)
 	}
@@ -285,10 +318,18 @@ func (c *Client) GetUserPreference(userID string) (*models.UserPreference, error
 	return &pref, nil
 }
 
-// UpsertCRMContact creates or updates a PersonalCRMContact record.
-func (c *Client) UpsertCRMContact(contact *models.PersonalCRMContact) error {
+// UpsertCRMContact creates or updates a PersonalCRMContact of the scope's household. An ID that
+// is not in the household is refused, never created.
+func (c *Client) UpsertCRMContact(s identity.Scope, contact *models.PersonalCRMContact) error {
 	if contact == nil {
 		return fmt.Errorf("crm contact cannot be nil")
+	}
+	query, err := c.scoped(s)
+	if err != nil {
+		return err
+	}
+	if err := stamp(s, &contact.HouseholdID, &contact.FamilyGroup); err != nil {
+		return err
 	}
 	contact.PersonName = strings.TrimSpace(contact.PersonName)
 	if contact.PersonName == "" {
@@ -301,18 +342,40 @@ func (c *Client) UpsertCRMContact(contact *models.PersonalCRMContact) error {
 		contact.UpdatedAt = time.Now()
 	}
 
-	result := c.DB.Save(contact)
+	if contact.ID == 0 {
+		if result := c.DB.Create(contact); result.Error != nil {
+			return fmt.Errorf("failed to upsert crm contact: %w", result.Error)
+		}
+		return nil
+	}
+	result := query.Model(&models.PersonalCRMContact{}).Where("id = ?", contact.ID).Updates(map[string]interface{}{
+		"user_id":              contact.UserID,
+		"family_group":         contact.FamilyGroup,
+		"person_name":          contact.PersonName,
+		"relationship":         contact.Relationship,
+		"important_dates_json": contact.ImportantDatesJSON,
+		"gift_ideas_and_sizes": contact.GiftIdeasAndSizes,
+		"medical_notes":        contact.MedicalNotes,
+		"updated_at":           contact.UpdatedAt,
+	})
 	if result.Error != nil {
 		return fmt.Errorf("failed to upsert crm contact: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("crm contact %d not found", contact.ID)
 	}
 	return nil
 }
 
-// GetCRMContact retrieves a PersonalCRMContact by its primary key ID.
+// GetCRMContact retrieves a PersonalCRMContact of the scope's household by ID.
 // Returns (nil, nil) if not found.
-func (c *Client) GetCRMContact(id uint) (*models.PersonalCRMContact, error) {
+func (c *Client) GetCRMContact(s identity.Scope, id uint) (*models.PersonalCRMContact, error) {
+	query, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
 	var contact models.PersonalCRMContact
-	result := c.DB.First(&contact, id)
+	result := query.Where("id = ?", id).First(&contact)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -322,16 +385,13 @@ func (c *Client) GetCRMContact(id uint) (*models.PersonalCRMContact, error) {
 	return &contact, nil
 }
 
-// ListCRMContacts retrieves personal CRM contacts filtered by user/family and an optional search query.
-func (c *Client) ListCRMContacts(userID, familyGroup, query string) ([]models.PersonalCRMContact, error) {
-	dbQuery := c.DB.Model(&models.PersonalCRMContact{})
-	if userID != "" && familyGroup != "" {
-		dbQuery = dbQuery.Where("(user_id = ? OR family_group = ?)", userID, familyGroup)
-	} else if userID != "" {
-		dbQuery = dbQuery.Where("user_id = ?", userID)
-	} else if familyGroup != "" {
-		dbQuery = dbQuery.Where("family_group = ?", familyGroup)
+// ListCRMContacts retrieves the scope household's personal CRM contacts, optionally by a search query.
+func (c *Client) ListCRMContacts(s identity.Scope, query string) ([]models.PersonalCRMContact, error) {
+	dbQuery, err := c.scoped(s)
+	if err != nil {
+		return nil, err
 	}
+	dbQuery = dbQuery.Model(&models.PersonalCRMContact{})
 
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q != "" {
@@ -346,11 +406,18 @@ func (c *Client) ListCRMContacts(userID, familyGroup, query string) ([]models.Pe
 	return contacts, nil
 }
 
-// DeleteCRMContact removes a PersonalCRMContact by primary key ID.
-func (c *Client) DeleteCRMContact(id uint) error {
-	result := c.DB.Delete(&models.PersonalCRMContact{}, id)
+// DeleteCRMContact removes a PersonalCRMContact of the scope's household by ID.
+func (c *Client) DeleteCRMContact(s identity.Scope, id uint) error {
+	query, err := c.scoped(s)
+	if err != nil {
+		return err
+	}
+	result := query.Where("id = ?", id).Delete(&models.PersonalCRMContact{})
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete crm contact: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("crm contact %d not found", id)
 	}
 	return nil
 }

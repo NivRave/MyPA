@@ -26,7 +26,7 @@ func TestAdversarial_InterveningNonAntipyreticMedications(t *testing.T) {
 		Name:        "BabyIntervening",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(callCtx.Scope, &profile))
 
 	t0 := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
@@ -104,7 +104,7 @@ func TestAdversarial_InterveningNonAntipyreticMedications(t *testing.T) {
 	assert.Equal(t, "blocked", respCalpol["status"], "Calpol given 2h after Paracetamol must be blocked!")
 
 	// Verify database contains ONLY the 4 valid doses (Paracetamol, Vit D, Saline, Zinc)
-	logs, err := repo.GetCareLogs(profile.ID, fg, "medication", time.Time{}, time.Time{}, 100)
+	logs, err := repo.GetCareLogs(callCtx.Scope, profile.ID, "medication", time.Time{}, time.Time{}, 100)
 	require.NoError(t, err)
 	assert.Len(t, logs, 4, "Blocked antipyretic doses must NOT be persisted in database")
 
@@ -153,7 +153,7 @@ func TestAdversarial_CapitalizationAndWhitespaceVariations(t *testing.T) {
 		Name:        "BabyCase",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(callCtx.Scope, &profile))
 
 	t0 := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
@@ -197,7 +197,7 @@ func TestAdversarial_CapitalizationAndWhitespaceVariations(t *testing.T) {
 	}
 
 	// Verify only Dose 1 is in database
-	logs, err := repo.GetCareLogs(profile.ID, fg, "medication", time.Time{}, time.Time{}, 100)
+	logs, err := repo.GetCareLogs(callCtx.Scope, profile.ID, "medication", time.Time{}, time.Time{}, 100)
 	require.NoError(t, err)
 	assert.Len(t, logs, 1, "Database must only contain the initial valid dose; variations must not be saved")
 }
@@ -225,7 +225,7 @@ func TestAdversarial_GenuineAlternateClasses(t *testing.T) {
 		Name:        "BabyAlternate",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(callCtx.Scope, &profile))
 
 	t0 := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
@@ -337,7 +337,7 @@ func TestAdversarial_GenuineAlternateClasses(t *testing.T) {
 	// 2. Ibuprofen (13:00)
 	// 3. Tylenol (16:15)
 	// 4. Motrin (19:05)
-	logs, err := repo.GetCareLogs(profile.ID, fg, "medication", time.Time{}, time.Time{}, 100)
+	logs, err := repo.GetCareLogs(callCtx.Scope, profile.ID, "medication", time.Time{}, time.Time{}, 100)
 	require.NoError(t, err)
 	assert.Len(t, logs, 4, "Only the 4 valid doses must be persisted in database")
 }
@@ -357,7 +357,7 @@ func TestAdversarial_IbuprofenAgeGuardrailUnder6Months(t *testing.T) {
 		Name:        "BabyUnder6m",
 		DateOfBirth: dob,
 	}
-	require.NoError(t, repo.UpsertBabyProfile(&profile))
+	require.NoError(t, repo.UpsertBabyProfile(callCtx.Scope, &profile))
 
 	t0 := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	out, err := mod.Execute(context.Background(), callCtx, "log_baby_care", map[string]interface{}{

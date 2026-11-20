@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
 	"io"
 	"log/slog"
 	"os"
@@ -149,7 +150,7 @@ func (e *Engine) cmdConnect(ctx context.Context, _ *models.User, msg channel.Inb
 }
 
 func (e *Engine) cmdBackup(ctx context.Context, user *models.User, msg channel.Inbound) (string, error) {
-	if user.Role != "admin" {
+	if !e.scopeOf(ctx, user).Can(identity.RunBackup) {
 		slog.Warn("unauthorized backup command attempt", "user_id", user.PlatformID, "role", user.Role)
 		return "", e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")
 	}

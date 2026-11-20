@@ -2,6 +2,9 @@ package automation_test
 
 import (
 	"context"
+	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"strings"
 	"sync"
 	"testing"
@@ -39,9 +42,10 @@ func newIDORAutomationRepo() *idorAutomationRepo {
 	}
 }
 
-func (r *idorAutomationRepo) CreateAPIConnector(c *models.ExternalAPIConnector) error {
+func (r *idorAutomationRepo) CreateAPIConnector(s identity.Scope, c *models.ExternalAPIConnector) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	c.HouseholdID, c.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	c.ID = r.nextConnID
 	r.nextConnID++
 	if c.CreatedAt.IsZero() {
@@ -51,7 +55,7 @@ func (r *idorAutomationRepo) CreateAPIConnector(c *models.ExternalAPIConnector) 
 	r.connectors[c.ID] = &cp
 	return nil
 }
-func (r *idorAutomationRepo) GetAPIConnector(id uint, familyGroup ...string) (*models.ExternalAPIConnector, error) {
+func (r *idorAutomationRepo) GetAPIConnector(s identity.Scope, id uint) (*models.ExternalAPIConnector, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	c, ok := r.connectors[id]
@@ -61,40 +65,39 @@ func (r *idorAutomationRepo) GetAPIConnector(id uint, familyGroup ...string) (*m
 	cp := *c
 	return &cp, nil
 }
-func (r *idorAutomationRepo) GetAPIConnectorByName(userID, familyGroup, name string) (*models.ExternalAPIConnector, error) {
+func (r *idorAutomationRepo) GetAPIConnectorByName(s identity.Scope, name string) (*models.ExternalAPIConnector, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	normName := strings.ToLower(strings.TrimSpace(name))
 	for _, c := range r.connectors {
-		if strings.ToLower(c.Name) == normName {
-			if (familyGroup != "" && c.FamilyGroup == familyGroup) || (userID != "" && c.UserID == userID) {
-				cp := *c
-				return &cp, nil
-			}
+		if c.HouseholdID == s.HouseholdID() && strings.ToLower(c.Name) == normName {
+			cp := *c
+			return &cp, nil
 		}
 	}
 	return nil, nil
 }
-func (r *idorAutomationRepo) ListAPIConnectors(userID, familyGroup string) ([]models.ExternalAPIConnector, error) {
+func (r *idorAutomationRepo) ListAPIConnectors(s identity.Scope) ([]models.ExternalAPIConnector, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var list []models.ExternalAPIConnector
 	for _, c := range r.connectors {
-		if (familyGroup != "" && c.FamilyGroup == familyGroup) || (userID != "" && c.UserID == userID) {
+		if c.HouseholdID == s.HouseholdID() {
 			list = append(list, *c)
 		}
 	}
 	return list, nil
 }
-func (r *idorAutomationRepo) DeleteAPIConnector(id uint) error {
+func (r *idorAutomationRepo) DeleteAPIConnector(s identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.connectors, id)
 	return nil
 }
-func (r *idorAutomationRepo) CreateAutomationRule(rule *models.AutomationRule) error {
+func (r *idorAutomationRepo) CreateAutomationRule(s identity.Scope, rule *models.AutomationRule) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	rule.HouseholdID, rule.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	rule.ID = r.nextRuleID
 	r.nextRuleID++
 	if rule.CreatedAt.IsZero() {
@@ -104,27 +107,29 @@ func (r *idorAutomationRepo) CreateAutomationRule(rule *models.AutomationRule) e
 	r.rules[rule.ID] = &cp
 	return nil
 }
-func (r *idorAutomationRepo) GetAutomationRule(id uint) (*models.AutomationRule, error) {
+func (r *idorAutomationRepo) GetAutomationRule(s identity.Scope, id uint) (*models.AutomationRule, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	rule, ok := r.rules[id]
-	if !ok {
+	if !ok || rule.HouseholdID != s.HouseholdID() { // as the real repository: confined to the household
 		return nil, nil
 	}
 	cp := *rule
 	return &cp, nil
 }
-func (r *idorAutomationRepo) ListAutomationRules(userID, familyGroup, triggerTopic string) ([]models.AutomationRule, error) {
+func (r *idorAutomationRepo) ListAutomationRules(s identity.Scope, triggerTopic string) ([]models.AutomationRule, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var list []models.AutomationRule
 	normTopic := strings.ToLower(strings.TrimSpace(triggerTopic))
 	for _, rule := range r.rules {
-		if (familyGroup != "" && rule.FamilyGroup == familyGroup) || (userID != "" && rule.UserID == userID) {
-			if normTopic == "" || normTopic == "all" || normTopic == "*" || strings.ToLower(rule.TriggerTopic) == normTopic {
-				list = append(list, *rule)
-			}
+		if rule.HouseholdID != s.HouseholdID() {
+			continue
 		}
+		if normTopic != "" && normTopic != "all" && normTopic != "*" && strings.ToLower(rule.TriggerTopic) != normTopic {
+			continue
+		}
+		list = append(list, *rule)
 	}
 	return list, nil
 }
@@ -139,17 +144,19 @@ func (r *idorAutomationRepo) ListActiveAutomationRules(triggerTopic string) ([]m
 	}
 	return list, nil
 }
-func (r *idorAutomationRepo) UpdateAutomationRule(rule *models.AutomationRule) error {
+func (r *idorAutomationRepo) UpdateAutomationRule(s identity.Scope, rule *models.AutomationRule) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cp := *rule
 	r.rules[rule.ID] = &cp
 	return nil
 }
-func (r *idorAutomationRepo) DeleteAutomationRule(id uint, familyGroup ...string) error {
+func (r *idorAutomationRepo) DeleteAutomationRule(s identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.rules, id)
+	if rule, ok := r.rules[id]; ok && rule.HouseholdID == s.HouseholdID() { // as the real repository
+		delete(r.rules, id)
+	}
 	return nil
 }
 func (r *idorAutomationRepo) UpsertUserPreference(pref *models.UserPreference) error {
@@ -169,9 +176,10 @@ func (r *idorAutomationRepo) GetUserPreference(userID string) (*models.UserPrefe
 	cp := *pref
 	return &cp, nil
 }
-func (r *idorAutomationRepo) UpsertCRMContact(contact *models.PersonalCRMContact) error {
+func (r *idorAutomationRepo) UpsertCRMContact(s identity.Scope, contact *models.PersonalCRMContact) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	contact.HouseholdID, contact.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	if contact.ID == 0 {
 		contact.ID = r.nextCrmID
 		r.nextCrmID++
@@ -183,7 +191,7 @@ func (r *idorAutomationRepo) UpsertCRMContact(contact *models.PersonalCRMContact
 	r.contacts[contact.ID] = &cp
 	return nil
 }
-func (r *idorAutomationRepo) GetCRMContact(id uint) (*models.PersonalCRMContact, error) {
+func (r *idorAutomationRepo) GetCRMContact(s identity.Scope, id uint) (*models.PersonalCRMContact, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	c, ok := r.contacts[id]
@@ -193,18 +201,39 @@ func (r *idorAutomationRepo) GetCRMContact(id uint) (*models.PersonalCRMContact,
 	cp := *c
 	return &cp, nil
 }
-func (r *idorAutomationRepo) ListCRMContacts(userID, familyGroup, query string) ([]models.PersonalCRMContact, error) {
+func (r *idorAutomationRepo) ListCRMContacts(s identity.Scope, query string) ([]models.PersonalCRMContact, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var list []models.PersonalCRMContact
 	for _, c := range r.contacts {
-		if (familyGroup != "" && c.FamilyGroup == familyGroup) || (userID != "" && c.UserID == userID) {
+		if c.HouseholdID == s.HouseholdID() {
 			list = append(list, *c)
 		}
 	}
 	return list, nil
 }
-func (r *idorAutomationRepo) DeleteCRMContact(id uint) error {
+
+// seedConnector stores a connector exactly as given, the way a row already in the database is.
+func (r *idorAutomationRepo) seedConnector(c *models.ExternalAPIConnector) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c.ID = r.nextConnID
+	r.nextConnID++
+	cp := *c
+	r.connectors[c.ID] = &cp
+}
+
+// idorScope is the scope of a user's household: their family label, or for a user without one
+// their platform ID (the tenant key before V4-30, DE-2), as migration 00003 maps them.
+func idorScope(t *testing.T, u *models.User) identity.Scope {
+	t.Helper()
+	label := u.FamilyGroup
+	if label == "" {
+		label = u.PlatformID
+	}
+	return identitytest.Scope(t, label, u.PlatformID, "family")
+}
+func (r *idorAutomationRepo) DeleteCRMContact(s identity.Scope, id uint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.contacts, id)
@@ -232,7 +261,7 @@ func TestSEC04_CrossTenant_AutomationRules_Isolation(t *testing.T) {
 
 	// Family Alpha creates rule
 	userAlpha := &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
-	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}}
+	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}, Scope: idorScope(t, userAlpha)}
 
 	resp, err := mod.Execute(ctx, callCtxAlpha, "create_automation_rule", map[string]interface{}{
 		"name":               "Alpha Baby Rule",
@@ -246,7 +275,7 @@ func TestSEC04_CrossTenant_AutomationRules_Isolation(t *testing.T) {
 
 	// Family Beta attempts to delete Alpha's rule (rule_id: 1)
 	userBeta := &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"}
-	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}}
+	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}, Scope: idorScope(t, userBeta)}
 
 	_, err = mod.Execute(ctx, callCtxBeta, "delete_automation_rule", map[string]interface{}{
 		"rule_id": 1,
@@ -267,7 +296,7 @@ func TestSEC04_CrossTenant_APIConnectors_Isolation(t *testing.T) {
 
 	// Family Alpha registers connector
 	userAlpha := &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
-	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}}
+	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}, Scope: idorScope(t, userAlpha)}
 
 	_, err := mod.Execute(ctx, callCtxAlpha, "register_external_api", map[string]interface{}{
 		"name":         "alpha_secret_api",
@@ -278,7 +307,7 @@ func TestSEC04_CrossTenant_APIConnectors_Isolation(t *testing.T) {
 
 	// Family Beta attempts to list connectors
 	userBeta := &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"}
-	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}}
+	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}, Scope: idorScope(t, userBeta)}
 
 	listResp, err := mod.Execute(ctx, callCtxBeta, "list_external_apis", map[string]interface{}{})
 	require.NoError(t, err)
@@ -305,7 +334,7 @@ func TestSEC04_EmptyFamilyGroup_ConnectorAndRule_Isolation(t *testing.T) {
 
 	// Solo 1 creates rule
 	userSolo1 := &models.User{ID: "u_solo1", PlatformID: "solo_1", FamilyGroup: ""}
-	callCtxSolo1 := orchestrator.CallContext{User: userSolo1, Message: channel.Inbound{Sender: "solo_1"}}
+	callCtxSolo1 := orchestrator.CallContext{User: userSolo1, Message: channel.Inbound{Sender: "solo_1"}, Scope: idorScope(t, userSolo1)}
 
 	_, err := mod.Execute(ctx, callCtxSolo1, "create_automation_rule", map[string]interface{}{
 		"name":               "Solo1 Rule",
@@ -318,7 +347,7 @@ func TestSEC04_EmptyFamilyGroup_ConnectorAndRule_Isolation(t *testing.T) {
 
 	// Solo 2 attempts to delete Solo 1's rule
 	userSolo2 := &models.User{ID: "u_solo2", PlatformID: "solo_2", FamilyGroup: ""}
-	callCtxSolo2 := orchestrator.CallContext{User: userSolo2, Message: channel.Inbound{Sender: "solo_2"}}
+	callCtxSolo2 := orchestrator.CallContext{User: userSolo2, Message: channel.Inbound{Sender: "solo_2"}, Scope: idorScope(t, userSolo2)}
 
 	_, err = mod.Execute(ctx, callCtxSolo2, "delete_automation_rule", map[string]interface{}{
 		"rule_id": 1,
@@ -340,9 +369,10 @@ func TestSEC04_LegacyEmptyFamilyGroup_IDOR_Vulnerability(t *testing.T) {
 
 	// Seed directly a legacy connector with UserID="user_victim" and empty FamilyGroup=""
 	encHeader, _ := crypto.Encrypt([]byte(`{"X-Secret": "victim_token"}`), "")
-	_ = repo.CreateAPIConnector(&models.ExternalAPIConnector{
+	repo.seedConnector(&models.ExternalAPIConnector{
 		UserID:               "user_victim",
-		FamilyGroup:          "", // legacy unpopulated family_group
+		HouseholdID:          models.HoldingHouseholdID, // migration 00003: empty label → holding household
+		FamilyGroup:          "",                        // legacy unpopulated family_group
 		Name:                 "victim_connector",
 		BaseURL:              "https://httpbin.org/get",
 		DefaultMethod:        "GET",
@@ -351,7 +381,7 @@ func TestSEC04_LegacyEmptyFamilyGroup_IDOR_Vulnerability(t *testing.T) {
 
 	// Attacker user with UserID="user_attacker", FamilyGroup="attacker_family"
 	userAttacker := &models.User{ID: "u_att", PlatformID: "user_attacker", FamilyGroup: "attacker_family"}
-	callCtxAttacker := orchestrator.CallContext{User: userAttacker, Message: channel.Inbound{Sender: "user_attacker"}}
+	callCtxAttacker := orchestrator.CallContext{User: userAttacker, Message: channel.Inbound{Sender: "user_attacker"}, Scope: idorScope(t, userAttacker)}
 
 	// Attacker calls victim's connector using connector_id: 1
 	// Look at line 507 of module.go:
@@ -377,7 +407,7 @@ func TestSEC04_CrossTenant_PersonalCRM_Overwrite_Blocked(t *testing.T) {
 
 	// 1. Family Alpha creates a CRM contact
 	userAlpha := &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
-	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}}
+	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}, Scope: idorScope(t, userAlpha)}
 
 	respAlpha, err := mod.Execute(ctx, callCtxAlpha, "upsert_personal_crm", map[string]interface{}{
 		"person_name":  "Grandma Alice",
@@ -387,7 +417,7 @@ func TestSEC04_CrossTenant_PersonalCRM_Overwrite_Blocked(t *testing.T) {
 	assert.Contains(t, respAlpha, "Grandma Alice")
 
 	// Verify Contact 1 exists
-	contact1, err := repo.GetCRMContact(1)
+	contact1, err := repo.GetCRMContact(callCtxAlpha.Scope, 1)
 	require.NoError(t, err)
 	require.NotNil(t, contact1)
 	assert.Equal(t, "Grandma Alice", contact1.PersonName)
@@ -395,7 +425,7 @@ func TestSEC04_CrossTenant_PersonalCRM_Overwrite_Blocked(t *testing.T) {
 
 	// 2. Family Beta attempts to overwrite Family Alpha's contact via ID: 1
 	userBeta := &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"}
-	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}}
+	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}, Scope: idorScope(t, userBeta)}
 
 	_, errBeta := mod.Execute(ctx, callCtxBeta, "upsert_personal_crm", map[string]interface{}{
 		"id":           1,
@@ -406,7 +436,7 @@ func TestSEC04_CrossTenant_PersonalCRM_Overwrite_Blocked(t *testing.T) {
 	assert.Contains(t, errBeta.Error(), "permission denied")
 
 	// Ensure Contact 1 was NOT altered
-	contact1After, err := repo.GetCRMContact(1)
+	contact1After, err := repo.GetCRMContact(callCtxAlpha.Scope, 1)
 	require.NoError(t, err)
 	assert.Equal(t, "Grandma Alice", contact1After.PersonName)
 	assert.Equal(t, "grandmother", contact1After.Relationship)
@@ -420,24 +450,69 @@ func TestSEC04_CrossTenant_PersonalCRM_Overwrite_Blocked(t *testing.T) {
 	require.NoError(t, err, "Family Alpha must be able to update their own contact")
 	assert.Contains(t, respAlphaUpdate, "Grandma Alice Smith")
 
-	contact1Updated, err := repo.GetCRMContact(1)
+	contact1Updated, err := repo.GetCRMContact(callCtxAlpha.Scope, 1)
 	require.NoError(t, err)
 	assert.Equal(t, "Grandma Alice Smith", contact1Updated.PersonName)
 
 	// 4. Solo user isolation (empty FamilyGroup)
 	userSolo1 := &models.User{ID: "u_solo1", PlatformID: "solo1", FamilyGroup: ""}
-	callCtxSolo1 := orchestrator.CallContext{User: userSolo1, Message: channel.Inbound{Sender: "solo1"}}
+	callCtxSolo1 := orchestrator.CallContext{User: userSolo1, Message: channel.Inbound{Sender: "solo1"}, Scope: idorScope(t, userSolo1)}
 	_, err = mod.Execute(ctx, callCtxSolo1, "upsert_personal_crm", map[string]interface{}{
 		"person_name": "Solo Contact",
 	})
 	require.NoError(t, err)
 
 	userSolo2 := &models.User{ID: "u_solo2", PlatformID: "solo2", FamilyGroup: ""}
-	callCtxSolo2 := orchestrator.CallContext{User: userSolo2, Message: channel.Inbound{Sender: "solo2"}}
+	callCtxSolo2 := orchestrator.CallContext{User: userSolo2, Message: channel.Inbound{Sender: "solo2"}, Scope: idorScope(t, userSolo2)}
 	_, errSolo2 := mod.Execute(ctx, callCtxSolo2, "upsert_personal_crm", map[string]interface{}{
 		"id":          2,
 		"person_name": "Stolen Contact",
 	})
 	assert.Error(t, errSolo2, "Solo2 must NOT be able to overwrite Solo1's contact")
 	assert.Contains(t, errSolo2.Error(), "permission denied")
+}
+
+// V4-30 (review finding): the rule lookup is confined to the caller's household, so another
+// household's rule comes back as not found. The delete must be refused: no success reply, no
+// rule_deleted event in the caller's mutation log, and the rule untouched.
+func TestDeleteAutomationRule_ForeignRuleIsRefusedWithoutAnEvent(t *testing.T) {
+	repo := newIDORAutomationRepo()
+	bus := events.NewEventBus()
+	var mu sync.Mutex
+	var deleted []events.MutationEvent
+	bus.SubscribeSync(func(_ context.Context, ev events.MutationEvent) error {
+		if ev.Action == "rule_deleted" {
+			mu.Lock()
+			deleted = append(deleted, ev)
+			mu.Unlock()
+		}
+		return nil
+	})
+	mod := automation.NewModule(repo, automation.WithEventBus(bus))
+	ctx := context.Background()
+
+	owner := &models.User{ID: "u_owner", PlatformID: "owner_1", FamilyGroup: "Levi"}
+	ownerCtx := orchestrator.CallContext{User: owner, Message: channel.Inbound{Sender: "owner_1"}, Scope: idorScope(t, owner), EventBus: bus}
+	_, err := mod.Execute(ctx, ownerCtx, "create_automation_rule", map[string]interface{}{
+		"name": "Levi Rule", "trigger_type": "keyword", "trigger_topic": "tasks",
+		"condition_json": `{"keyword": "urgent"}`, "action_instruction": "notify: check task",
+	})
+	require.NoError(t, err)
+
+	stranger := &models.User{ID: "u_stranger", PlatformID: "stranger_1", FamilyGroup: "Cohen"}
+	strangerCtx := orchestrator.CallContext{User: stranger, Message: channel.Inbound{Sender: "stranger_1"}, Scope: idorScope(t, stranger), EventBus: bus}
+	reply, err := mod.Execute(ctx, strangerCtx, "delete_automation_rule", map[string]interface{}{"rule_id": 1})
+	require.Error(t, err)
+	assert.NotContains(t, reply, "Successfully deleted")
+
+	mu.Lock()
+	assert.Empty(t, deleted, "a refused delete publishes no rule_deleted event")
+	mu.Unlock()
+	rule, err := repo.GetAutomationRule(idorScope(t, owner), 1)
+	require.NoError(t, err)
+	require.NotNil(t, rule, "the owner's rule is untouched")
+
+	// A rule that does not exist at all is refused the same way.
+	_, err = mod.Execute(ctx, ownerCtx, "delete_automation_rule", map[string]interface{}{"rule_id": 99})
+	assert.Error(t, err)
 }

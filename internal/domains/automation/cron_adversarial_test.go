@@ -3,16 +3,17 @@ package automation_test
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/testutil"
 	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/scheduler"
+	"github.com/nivik/mypa/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -94,6 +95,7 @@ func TestAdversarial_CronAutomationRule_SchedulerExecution(t *testing.T) {
 
 	testUser := "adv_cron_user"
 	testFam := "adv_cron_fam"
+	household := householdtest.Household(t, client, testFam)
 
 	// Cleanup
 	defer func() {
@@ -128,6 +130,7 @@ func TestAdversarial_CronAutomationRule_SchedulerExecution(t *testing.T) {
 	// 1. Insert Active Cron Rule
 	activeRule := models.AutomationRule{
 		UserID:            testUser,
+		HouseholdID:       household.ID,
 		FamilyGroup:       testFam,
 		Name:              "Active Weekly Sync",
 		TriggerType:       "cron",
@@ -142,6 +145,7 @@ func TestAdversarial_CronAutomationRule_SchedulerExecution(t *testing.T) {
 	// 2. Insert Inactive Cron Rule (MUST NOT be scheduled)
 	inactiveRule := models.AutomationRule{
 		UserID:            testUser,
+		HouseholdID:       household.ID,
 		FamilyGroup:       testFam,
 		Name:              "Inactive Monthly Report",
 		TriggerType:       "cron",
@@ -156,6 +160,7 @@ func TestAdversarial_CronAutomationRule_SchedulerExecution(t *testing.T) {
 	// 3. Insert Invalid Cron Rule (Malformed cron string -> skipped gracefully without crash)
 	malformedRule := models.AutomationRule{
 		UserID:            testUser,
+		HouseholdID:       household.ID,
 		FamilyGroup:       testFam,
 		Name:              "Malformed Bad Cron",
 		TriggerType:       "cron",
@@ -179,6 +184,7 @@ func TestAdversarial_CronAutomationRule_SchedulerExecution(t *testing.T) {
 		EntityType:  "AutomationRule",
 		EntityID:    fmt.Sprint(activeRule.ID),
 		ActorUserID: activeRule.UserID,
+		HouseholdID: activeRule.HouseholdID,
 		FamilyGroup: activeRule.FamilyGroup,
 		Summary:     fmt.Sprintf("Cron trigger fired for rule %q", activeRule.Name),
 		Timestamp:   time.Now(),

@@ -57,7 +57,7 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inb
 	if err == nil && len(embedding) > 0 {
 		// P2-4: single memory store. Visibility (own personal + family-shared) is enforced by
 		// the repository's tenant filter, so no per-member user ID list is needed.
-		memories, searchErr := e.db.SearchSimilarMemories(ctx, msg.Sender, user.FamilyGroup, pgvector.NewVector(embedding), 5)
+		memories, searchErr := e.db.SearchSimilarMemories(ctx, e.scopeOf(ctx, user), pgvector.NewVector(embedding), 5)
 		if searchErr != nil {
 			slog.Warn("memory retrieval failed; continuing without memories", "user_id", msg.Sender, "error", searchErr)
 		}
@@ -78,15 +78,17 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inb
 	}
 
 	// Build the system prompt, most-stable sections first (P2-6, see prompt.go)
+	scope := e.scopeOf(ctx, user)
 	systemPrompt := buildSystemPrompt(promptInputs{
 		UserName:       user.Name,
 		Role:           user.Role,
-		FamilyGroup:    user.FamilyGroup,
+		Household:      scope.HouseholdName(),
+		Language:       scope.Language(),
 		ActiveTools:    activeToolNames,
 		ModuleSections: moduleSections,
 		Memories:       memoryLines,
 		Now:            time.Now(),
-		Location:       e.location(),
+		Location:       e.location(scope),
 		Calendar:       e.calendar,
 	})
 

@@ -15,6 +15,7 @@ type ScheduleEvent struct {
 	ExternalGoogleEventID string    `json:"external_google_event_id" gorm:"index"`
 	PartnerGoogleEventID  string    `json:"partner_google_event_id" gorm:"index"`
 	UserID                string    `json:"user_id" gorm:"index;index:idx_schedule_events_user_start,priority:1"`
+	HouseholdID           string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup           string    `json:"family_group" gorm:"index;index:idx_schedule_events_family_start,priority:1"`
 	Topic                 string    `json:"topic" gorm:"index"`
 	TagsJSON              string    `json:"tags_json" gorm:"type:jsonb"`

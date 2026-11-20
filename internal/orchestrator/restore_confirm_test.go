@@ -58,7 +58,7 @@ func newRestoreHarness(t *testing.T) *restoreHarness {
 	t.Setenv("DATABASE_URL", "postgres://test")
 
 	dbMock.EXPECT().GetUser("admin-1").DoAndReturn(func(string) (*models.User, error) {
-		return &models.User{PlatformID: "admin-1", Role: h.role, FamilyGroup: "fam"}, nil
+		return inHousehold(&models.User{PlatformID: "admin-1", Role: h.role, FamilyGroup: "fam"}), nil
 	}).AnyTimes()
 
 	record := func(_ context.Context, _ string, text string) error {

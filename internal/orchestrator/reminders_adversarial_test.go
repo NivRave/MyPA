@@ -9,9 +9,10 @@ import (
 
 	"github.com/nivik/mypa/internal/channel/adapters/adapterstest"
 	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/testutil"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/testutil"
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,6 +91,9 @@ func TestAdversarial_SharedTaskRemindersDelivery(t *testing.T) {
 		nil, nil, client, nil, adapterstest.Registry(spyTg, nil), nil, nil, nil, nil, nil, nil, nil, "UTC",
 	)
 
+	// The family's household (V4-30); the reminders are created in it.
+	scope := householdtest.Scope(t, client, famGroup, testMom, "family")
+
 	// Scenario 1: Past Due Reminder (Due 15 minutes ago, IsSent=false) -> MUST BE DISPATCHED
 	pastDue := time.Now().Add(-15 * time.Minute)
 	remDue := models.SharedTaskReminder{
@@ -103,7 +107,7 @@ func TestAdversarial_SharedTaskRemindersDelivery(t *testing.T) {
 		IsSent:           false,
 		CreatedAt:        time.Now().Add(-1 * time.Hour),
 	}
-	require.NoError(t, client.CreateSharedReminder(&remDue))
+	require.NoError(t, client.CreateSharedReminder(scope, &remDue))
 
 	// Scenario 2: Future Due Reminder (Due in 2 hours) -> MUST NOT BE DISPATCHED
 	futureDue := time.Now().Add(2 * time.Hour)
@@ -118,7 +122,7 @@ func TestAdversarial_SharedTaskRemindersDelivery(t *testing.T) {
 		IsSent:           false,
 		CreatedAt:        time.Now(),
 	}
-	require.NoError(t, client.CreateSharedReminder(&remFuture))
+	require.NoError(t, client.CreateSharedReminder(scope, &remFuture))
 
 	// Scenario 3: Completed Reminder (Due in past, but IsCompleted=true) -> MUST NOT BE DISPATCHED
 	completedPast := time.Now().Add(-30 * time.Minute)
@@ -134,7 +138,7 @@ func TestAdversarial_SharedTaskRemindersDelivery(t *testing.T) {
 		IsSent:            false,
 		CreatedAt:         time.Now().Add(-2 * time.Hour),
 	}
-	require.NoError(t, client.CreateSharedReminder(&remCompleted))
+	require.NoError(t, client.CreateSharedReminder(scope, &remCompleted))
 
 	// Scenario 4: Already Sent Reminder (Due in past, but IsSent=true) -> MUST NOT BE DISPATCHED AGAIN
 	remAlreadySent := models.SharedTaskReminder{
@@ -148,7 +152,7 @@ func TestAdversarial_SharedTaskRemindersDelivery(t *testing.T) {
 		IsSent:           true,
 		CreatedAt:        time.Now().Add(-3 * time.Hour),
 	}
-	require.NoError(t, client.CreateSharedReminder(&remAlreadySent))
+	require.NoError(t, client.CreateSharedReminder(scope, &remAlreadySent))
 
 	// Scenario 5: Fallback to CreatedByUserID when AssignedToUserID is empty
 	remFallback := models.SharedTaskReminder{
@@ -162,7 +166,7 @@ func TestAdversarial_SharedTaskRemindersDelivery(t *testing.T) {
 		IsSent:           false,
 		CreatedAt:        time.Now().Add(-20 * time.Minute),
 	}
-	require.NoError(t, client.CreateSharedReminder(&remFallback))
+	require.NoError(t, client.CreateSharedReminder(scope, &remFallback))
 
 	// Trigger CheckAndSendReminders
 	engine.CheckAndSendReminders()

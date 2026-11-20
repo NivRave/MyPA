@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"google.golang.org/api/calendar/v3"
@@ -77,6 +78,7 @@ func TestWorkspaceCalendar_Operations(t *testing.T) {
 			FamilyGroup: "family_1",
 		},
 		EventBus: bus,
+		Scope:    identitytest.Scope(t, "family_1", "tg_123", "family"), // V4-30: the tenant
 	}
 
 	// 1. Create Event

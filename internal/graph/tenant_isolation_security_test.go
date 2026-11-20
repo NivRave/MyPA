@@ -3,6 +3,7 @@ package graph_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"strconv"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 
 func TestAdversarial_MaliciousIDParsing(t *testing.T) {
 	client := getTestDBClient(t)
+	householdtest.Household(t, client, "family-test")
 
 	bus := events.NewEventBus()
 	resolver := graph.NewResolver(graph.ResolverConfig{
@@ -138,6 +140,8 @@ func TestAdversarial_MaliciousIDParsing(t *testing.T) {
 
 func TestAdversarial_CrossTenantIsolation_Mutations(t *testing.T) {
 	client := getTestDBClient(t)
+	householdtest.Household(t, client, "FamilyA")
+	householdtest.Household(t, client, "VictimFamily")
 
 	bus := events.NewEventBus()
 	resolver := graph.NewResolver(graph.ResolverConfig{
@@ -273,6 +277,8 @@ func TestAdversarial_CrossTenantIsolation_Mutations(t *testing.T) {
 
 func TestAdversarial_CrossTenantIsolation_Queries(t *testing.T) {
 	client := getTestDBClient(t)
+	householdtest.Household(t, client, "FamilyA")
+	householdtest.Household(t, client, "VictimFamily")
 
 	bus := events.NewEventBus()
 	resolver := graph.NewResolver(graph.ResolverConfig{
@@ -420,6 +426,9 @@ func TestAdversarial_CrossTenant_RecordIDOR(t *testing.T) {
 	// Seed records owned by VictimFamily
 	victimFG := "VictimFamily_IDOR"
 	attackerFG := "AttackerFamily_IDOR"
+	victimHousehold := householdtest.Household(t, client, victimFG)
+	householdtest.Household(t, client, attackerFG)
+	householdtest.Household(t, client, "default")
 
 	adminCtx := graph.WithClaims(context.Background(), &graph.AuthClaims{
 		UserID:      "admin-seeder",
@@ -444,6 +453,7 @@ func TestAdversarial_CrossTenant_RecordIDOR(t *testing.T) {
 	// Seed TopicMemory directly with valid 3072-dim vector for IDOR tests
 	seededMem := models.TopicMemory{
 		UserID:          "victim-usr",
+		HouseholdID:     victimHousehold.ID,
 		FamilyGroup:     victimFG,
 		Topic:           "secret",
 		Subtopic:        "vault",
@@ -497,6 +507,7 @@ func TestAdversarial_CrossTenant_RecordIDOR(t *testing.T) {
 	// 3. Seed a personal AutomationRule owned by victim (familyGroup == "")
 	personalRule := models.AutomationRule{
 		UserID:            "victim-usr",
+		HouseholdID:       householdtest.Household(t, client, "victim-usr").ID, // an unlabelled owner's own household
 		FamilyGroup:       "",
 		Name:              "VictimPersonalRule",
 		TriggerType:       "event_mutation",
@@ -615,6 +626,7 @@ func TestAdversarial_AuditSessions_TenantIsolation(t *testing.T) {
 	})
 
 	victimFG := "VictimFamily"
+	householdtest.Household(t, client, "default")
 
 	// Seed users with real UUIDs to verify uuid::text type casting and tenant scoping
 	victimUser := models.User{
@@ -622,6 +634,7 @@ func TestAdversarial_AuditSessions_TenantIsolation(t *testing.T) {
 		PlatformID:  "victim-plat-" + uuid.New().String()[:8],
 		Name:        "Victim User",
 		Role:        "family",
+		HouseholdID: householdtest.Household(t, client, victimFG).ID,
 		FamilyGroup: victimFG,
 		CreatedAt:   time.Now(),
 	}
@@ -632,6 +645,7 @@ func TestAdversarial_AuditSessions_TenantIsolation(t *testing.T) {
 		PlatformID:  "attacker-plat-" + uuid.New().String()[:8],
 		Name:        "Attacker User",
 		Role:        "family",
+		HouseholdID: householdtest.Household(t, client, "AttackerFamily").ID,
 		FamilyGroup: "AttackerFamily",
 		CreatedAt:   time.Now(),
 	}
@@ -736,6 +750,7 @@ func TestAdversarial_MutationEventEmission_Snapshots(t *testing.T) {
 	})
 
 	fg := "DurabilityTestFamily"
+	durabilityHousehold := householdtest.Household(t, client, fg)
 	adminCtx := graph.WithClaims(context.Background(), &graph.AuthClaims{
 		UserID:      "durability-admin",
 		Role:        "admin",
@@ -745,6 +760,7 @@ func TestAdversarial_MutationEventEmission_Snapshots(t *testing.T) {
 	// 1. TopicMemory Lifecycle: Pin (Update) -> Delete
 	seededMem := models.TopicMemory{
 		UserID:          "durability-admin",
+		HouseholdID:     durabilityHousehold.ID,
 		FamilyGroup:     fg,
 		Topic:           "durability",
 		Subtopic:        "test",

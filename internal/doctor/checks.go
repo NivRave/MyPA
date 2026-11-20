@@ -30,12 +30,13 @@ func hostOf(raw string) string {
 
 // --- Google accounts --------------------------------------------------------------------------
 
-// GoogleAccounts checks, for every member of the admin's family group, whether their Google
+// GoogleAccounts checks, for every member of the admin's household, whether their Google
 // sign-in still works: a stored token exists, can be read, and Google agrees to renew it.
 type GoogleAccounts struct {
 	Configured bool // a Google OAuth client is set up
-	// FamilyMembers lists the users of one family group. It is never called with an empty group.
-	FamilyMembers func(familyGroup string) ([]models.User, error)
+	// HouseholdMembers lists the users of one household, by its ID (V4-30). It is never called
+	// with an empty ID.
+	HouseholdMembers func(householdID string) ([]models.User, error)
 	// Token returns a user's stored Google token as JSON, or nil when they never connected.
 	Token func(ctx context.Context, userID string) ([]byte, error)
 	// Refresh asks Google to renew the token and returns an error when it refuses (see RefreshWith).
@@ -71,11 +72,11 @@ func (c GoogleAccounts) Run(ctx context.Context, scope Scope) []Result {
 		return []Result{{Check: c.Name(), Status: StatusFail, Detail: "Could not tell whose family to check."}}
 	}
 
-	// Tenant scope: the admin's own family group. An admin without one is their own tenant, as
-	// everywhere else in MyPA, so only they are checked.
+	// Tenant scope: the admin's own household. Every user has one since V4-30; an admin row
+	// without one is checked alone rather than listed against an empty key.
 	members := []models.User{*scope.Admin}
-	if group := strings.TrimSpace(scope.Admin.FamilyGroup); group != "" {
-		listed, err := c.FamilyMembers(group)
+	if household := strings.TrimSpace(scope.Admin.HouseholdID); household != "" {
+		listed, err := c.HouseholdMembers(household)
 		if err != nil {
 			return []Result{{
 				Check:    c.Name(),
@@ -317,6 +318,43 @@ func (c Backups) Run(context.Context, Scope) []Result {
 	default:
 		res.Status = StatusOK
 		res.Detail = fmt.Sprintf("The newest backup was taken %s (`%s`). %s", ago(age), name, localOnly)
+	}
+	return []Result{res}
+}
+
+// --- Allowed users ----------------------------------------------------------------------------
+
+// AllowedUsers says whether the ALLOWED_USERS setting still does anything. Since V4-30 it seeds a
+// fresh install only: once a household exists it is ignored (ADR 0002 Decision 6), and an owner
+// who edits it and restarts would otherwise wonder why nothing changed.
+type AllowedUsers struct {
+	// Set reports whether ALLOWED_USERS has any entry.
+	Set bool
+	// Households counts the install's households.
+	Households func(ctx context.Context) (int64, error)
+}
+
+func (AllowedUsers) Name() string { return "Allowed users" }
+
+func (c AllowedUsers) Run(ctx context.Context, _ Scope) []Result {
+	if !c.Set {
+		return nil
+	}
+	res := Result{Check: c.Name()}
+	n, err := c.Households(ctx)
+	switch {
+	case err != nil:
+		res.Status = StatusFail
+		res.Detail = fmt.Sprintf("Could not count the households: %s.", reason(err))
+		res.NextStep = "Check that Postgres is running and that `DATABASE_URL` is right."
+	case n == 0:
+		res.Status = StatusWarn
+		res.Detail = "`ALLOWED_USERS` is set but no household exists, so nobody can use MyPA."
+		res.NextStep = "Restart the app: on a start with no household it creates the households and users from `ALLOWED_USERS`."
+	default:
+		res.Status = StatusInfo
+		res.Detail = "`ALLOWED_USERS` is set but ignored: this install already has its household, so the database decides who may use MyPA."
+		res.NextStep = "Add people with a pairing code from the dashboard. You can remove `ALLOWED_USERS` from the settings file."
 	}
 	return []Result{res}
 }

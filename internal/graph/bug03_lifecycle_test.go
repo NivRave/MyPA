@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"github.com/nivik/mypa/internal/identity"
 	"testing"
 
 	"github.com/nivik/mypa/internal/events"
@@ -18,32 +19,34 @@ type lifecycleAutoRepo struct {
 	rules []models.AutomationRule
 }
 
-func (r *lifecycleAutoRepo) CreateAPIConnector(connector *models.ExternalAPIConnector) error {
+func (r *lifecycleAutoRepo) CreateAPIConnector(s identity.Scope, connector *models.ExternalAPIConnector) error {
+	stampScope(s, &connector.HouseholdID, &connector.FamilyGroup)
 	connector.ID = uint(len(r.apis) + 1)
 	r.apis = append(r.apis, *connector)
 	return nil
 }
 
-func (r *lifecycleAutoRepo) ListAPIConnectors(userID, familyGroup string) ([]models.ExternalAPIConnector, error) {
+func (r *lifecycleAutoRepo) ListAPIConnectors(s identity.Scope) ([]models.ExternalAPIConnector, error) {
 	var result []models.ExternalAPIConnector
 	for _, api := range r.apis {
-		if api.FamilyGroup == familyGroup {
+		if api.HouseholdID == s.HouseholdID() {
 			result = append(result, api)
 		}
 	}
 	return result, nil
 }
 
-func (r *lifecycleAutoRepo) CreateAutomationRule(rule *models.AutomationRule) error {
+func (r *lifecycleAutoRepo) CreateAutomationRule(s identity.Scope, rule *models.AutomationRule) error {
+	stampScope(s, &rule.HouseholdID, &rule.FamilyGroup)
 	rule.ID = uint(len(r.rules) + 1)
 	r.rules = append(r.rules, *rule)
 	return nil
 }
 
-func (r *lifecycleAutoRepo) ListAutomationRules(userID, familyGroup, triggerTopic string) ([]models.AutomationRule, error) {
+func (r *lifecycleAutoRepo) ListAutomationRules(s identity.Scope, triggerTopic string) ([]models.AutomationRule, error) {
 	var result []models.AutomationRule
 	for _, rule := range r.rules {
-		if rule.FamilyGroup == familyGroup {
+		if rule.HouseholdID == s.HouseholdID() {
 			if triggerTopic == "" || rule.TriggerTopic == triggerTopic {
 				result = append(result, rule)
 			}
@@ -64,6 +67,7 @@ func TestBUG03_Lifecycle_RetentionAndImmediateVisibility(t *testing.T) {
 	resolver := NewResolver(ResolverConfig{
 		EventBus:       bus,
 		AutomationRepo: autoRepo,
+		Households:     labelStore("Smith Family", "Jones Family", "admin-system"),
 	})
 
 	tenantFamily := "Smith Family"

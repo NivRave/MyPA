@@ -31,7 +31,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					},
 					"currency": {
 						Type:        genai.TypeString,
-						Description: "3-letter currency code (e.g. 'USD', 'ILS', 'EUR'). Defaults to USD.",
+						Description: "3-letter currency code (e.g. 'USD', 'ILS', 'EUR'). Defaults to the household currency (USD if none is set).",
 					},
 					"transaction_date": {
 						Type:        genai.TypeString,
@@ -94,7 +94,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					},
 					"currency": {
 						Type:        genai.TypeString,
-						Description: "Currency code (default 'USD').",
+						Description: "Currency code (default: the household currency, else 'USD').",
 					},
 					"alert_threshold_pct": {
 						Type:        genai.TypeNumber,
@@ -132,7 +132,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					},
 					"currency": {
 						Type:        genai.TypeString,
-						Description: "Currency code (default 'USD').",
+						Description: "Currency code (default: the household currency, else 'USD').",
 					},
 					"billing_cycle": {
 						Type:        genai.TypeString,

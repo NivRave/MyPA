@@ -3,6 +3,7 @@ package graph_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"testing"
 
 	"github.com/nivik/mypa/internal/events"
@@ -34,6 +35,8 @@ func TestCompleteSharedTask_Snapshots(t *testing.T) {
 
 	familyA := "FamilyAlphaSnapshots"
 	familyB := "FamilyBetaSnapshots"
+	householdtest.Household(t, client, familyA)
+	householdtest.Household(t, client, familyB)
 
 	userA := graph.WithClaims(context.Background(), &graph.AuthClaims{
 		UserID:      "usr-alice",

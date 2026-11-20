@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"testing"
 	"time"
 
@@ -18,15 +19,18 @@ import (
 // GraphQL now does the same, and "all tenants" is an explicit global-admin request only.
 
 func TestResolveTenantAndActor_EmptyFamilyIsPerUser(t *testing.T) {
-	r := &Resolver{}
+	// V4-30: the user's own tenant is the household keyed by their user ID (the migration's rule).
+	r := &Resolver{Households: labelStore("solo-1", "default", "MyFamily", "solo-2")}
 	ctx := WithClaims(context.Background(), &AuthClaims{UserID: "solo-1", Role: "member"})
 
-	_, fg, err := r.resolveTenantAndActor(ctx, nil)
+	_, hs, err := r.resolveTenantAndActor(ctx, nil)
+	fg := hs.LegacyLabel()
 	require.NoError(t, err)
 	assert.Equal(t, "solo-1", fg, "no family group → the user's own tenant, like the orchestrator")
 
 	own := "solo-1"
-	_, fg, err = r.resolveTenantAndActor(ctx, &own)
+	_, hs, err = r.resolveTenantAndActor(ctx, &own)
+	fg = hs.LegacyLabel()
 	require.NoError(t, err)
 	assert.Equal(t, "solo-1", fg)
 
@@ -37,16 +41,17 @@ func TestResolveTenantAndActor_EmptyFamilyIsPerUser(t *testing.T) {
 }
 
 func TestResolveTenantAndActor_GlobalAdminWithoutFamilyIsPerUser(t *testing.T) {
-	r := &Resolver{}
+	r := &Resolver{Households: labelStore("root")}
 	ctx := WithClaims(context.Background(), &AuthClaims{UserID: "root", Role: "admin"})
-	_, fg, err := r.resolveTenantAndActor(ctx, nil)
+	_, hs, err := r.resolveTenantAndActor(ctx, nil)
+	fg := hs.LegacyLabel()
 	require.NoError(t, err)
 	assert.Equal(t, "root", fg, "writes without a target land in the admin's own tenant, never a shared one")
 }
 
 // Without a user ID the per-user fallback would put every such caller into one tenant ("user").
 func TestResolveTenantAndActor_NoIDNoFamilyHasNoTenant(t *testing.T) {
-	r := &Resolver{}
+	r := &Resolver{Households: labelStore("user")}
 	for _, role := range []string{"member", "admin"} {
 		_, _, err := r.resolveTenantAndActor(WithClaims(context.Background(), &AuthClaims{Role: role}), nil)
 		assert.Error(t, err, "role %s without user id and family group must be refused", role)
@@ -55,7 +60,7 @@ func TestResolveTenantAndActor_NoIDNoFamilyHasNoTenant(t *testing.T) {
 
 // "*" means "all tenants" on list queries only; nobody may read from or write into a tenant "*".
 func TestResolveTenantAndActor_StarIsNotATenant(t *testing.T) {
-	r := &Resolver{}
+	r := &Resolver{Households: labelStore("root", "f", "*")}
 	star := "*"
 	for _, c := range []*AuthClaims{
 		{UserID: "root", Role: "admin"},
@@ -74,13 +79,16 @@ func TestEmptyFamilyCaller_SeesNoOtherFamilysPairingCodesOrLogs(t *testing.T) {
 	defer cleanup()
 
 	victimFG := "fam-victim-" + uuid.New().String()
-	code := models.PairingCode{Code: "PAIR-" + uuid.New().String()[:8], Role: "member", FamilyGroup: victimFG, ExpiresAt: time.Now().Add(time.Hour)}
+	victim := householdtest.Household(t, resolver.DB, victimFG)
+	code := models.PairingCode{Code: "PAIR-" + uuid.New().String()[:8], Role: "member", HouseholdID: victim.ID, FamilyGroup: victimFG, ExpiresAt: time.Now().Add(time.Hour)}
 	require.NoError(t, resolver.DB.DB.Create(&code).Error)
-	logRow := models.MutationLog{ID: uuid.New().String(), UserID: "victim-user", FamilyGroup: victimFG, Topic: "baby", Action: "create",
+	logRow := models.MutationLog{ID: uuid.New().String(), UserID: "victim-user", HouseholdID: victim.ID, FamilyGroup: victimFG, Topic: "baby", Action: "create",
 		EntityType: "baby_profile", EntityID: "1", BeforeJSON: "{}", AfterJSON: `{"name":"secret"}`, CreatedAt: time.Now()}
 	require.NoError(t, resolver.DB.DB.Create(&logRow).Error)
 
-	solo := WithClaims(context.Background(), &AuthClaims{UserID: "solo-" + uuid.New().String(), Role: "member"})
+	soloID := "solo-" + uuid.New().String()
+	households(t, resolver.DB, soloID) // an unlabelled user's own household, keyed by their ID
+	solo := WithClaims(context.Background(), &AuthClaims{UserID: soloID, Role: "member"})
 
 	codes, err := resolver.Query().ActivePairingCodes(solo, nil)
 	require.NoError(t, err)
@@ -107,7 +115,9 @@ func TestEmptyFamilyCaller_SeesNoOtherFamilysPairingCodesOrLogs(t *testing.T) {
 	}
 
 	// A tenant-bound admin (the dashboard) stays inside its family.
-	dash := WithClaims(context.Background(), &AuthClaims{UserID: "dashboard-service", Role: "admin", FamilyGroup: "fam-dash-" + uuid.New().String(), TenantBound: true})
+	dashFG := "fam-dash-" + uuid.New().String()
+	households(t, resolver.DB, dashFG)
+	dash := WithClaims(context.Background(), &AuthClaims{UserID: "dashboard-service", Role: "admin", FamilyGroup: dashFG, TenantBound: true})
 	codes, err = resolver.Query().ActivePairingCodes(dash, nil)
 	require.NoError(t, err)
 	assert.False(t, containsCode(codes, code.Code))
@@ -122,6 +132,7 @@ func TestSaveUserPreference_EventCarriesCallerTenant(t *testing.T) {
 
 	fam := "fam-pref-" + uuid.New().String()
 	user := "usr-pref-" + uuid.New().String()
+	households(t, resolver.DB, fam)
 	ctx := WithClaims(context.Background(), &AuthClaims{UserID: user, Role: "member", FamilyGroup: fam})
 
 	lang := "he"

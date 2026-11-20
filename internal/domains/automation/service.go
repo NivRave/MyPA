@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"net/url"
 	"strconv"
@@ -69,8 +70,10 @@ func (m *Module) resolveEventBus(callCtx orchestrator.CallContext) *events.Event
 	return nil
 }
 
-func getUserAndFamily(callCtx orchestrator.CallContext) (string, string) {
-	return callCtx.ActorID(), callCtx.TenantFamilyGroup()
+// getUserAndScope returns the acting user's key and the household scope every repository call is
+// confined to (V4-30). The household never comes from tool arguments.
+func getUserAndScope(callCtx orchestrator.CallContext) (string, identity.Scope) {
+	return callCtx.ActorID(), callCtx.Scope
 }
 
 func getStringArg(args map[string]interface{}, key string) string {

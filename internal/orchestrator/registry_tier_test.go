@@ -24,7 +24,8 @@ func TestRegistry_CombinedSystemPrompt_CacheHit(t *testing.T) {
 
 	reg := NewRegistry().WithPromptCache(store)
 	callCtx := CallContext{
-		User: &models.User{PlatformID: "user_1", FamilyGroup: "family_1"},
+		User:  &models.User{PlatformID: "user_1", FamilyGroup: "family_1"},
+		Scope: idScope("family_1", "user_1", "family"),
 	}
 
 	callCount := 0
@@ -57,7 +58,8 @@ func TestRegistry_CombinedSystemPrompt_CacheMissAndPopulate(t *testing.T) {
 
 	reg := NewRegistry().WithPromptCache(store)
 	callCtx := CallContext{
-		User: &models.User{PlatformID: "user_2", FamilyGroup: "family_2"},
+		User:  &models.User{PlatformID: "user_2", FamilyGroup: "family_2"},
+		Scope: idScope("family_2", "user_2", "family"),
 	}
 
 	mod := &mockToolModule{
@@ -127,6 +129,7 @@ func TestEventBus_PromptInvalidation(t *testing.T) {
 	// Publish mutation event
 	err = bus.Publish(ctx, events.MutationEvent{
 		Topic:       "baby",
+		HouseholdID: "fam1",
 		FamilyGroup: "fam1",
 		ActorUserID: "user1",
 		Action:      "create",
@@ -241,7 +244,8 @@ func TestRegistry_TwoTierToolSelection(t *testing.T) {
 func TestRegistry_CombinedSystemPrompt_PanicRecovery(t *testing.T) {
 	reg := NewRegistry()
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "family_panic"},
+		User:  &models.User{FamilyGroup: "family_panic"},
+		Scope: idScope("family_panic", "", "family"),
 	}
 
 	panickingMod := &mockToolModule{
@@ -275,7 +279,8 @@ func TestRegistry_CombinedSystemPrompt_NegativeCaching(t *testing.T) {
 
 	reg := NewRegistry().WithPromptCache(store)
 	callCtx := CallContext{
-		User: &models.User{FamilyGroup: "family_empty", PlatformID: "user_empty"},
+		User:  &models.User{FamilyGroup: "family_empty", PlatformID: "user_empty"},
+		Scope: idScope("family_empty", "user_empty", "family"),
 	}
 
 	callCount := 0
@@ -347,4 +352,3 @@ func TestRegistry_SelectDeclarations_NoNestedLockDeadlock(t *testing.T) {
 		t.Fatal("Deadlock detected in SelectDeclarations with concurrent Register calls")
 	}
 }
-

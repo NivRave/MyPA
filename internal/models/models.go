@@ -12,8 +12,8 @@ import (
 type CalendarEvent struct {
 	ID          string   `json:"id,omitempty"`
 	Title       string   `json:"title"`
-	StartTime   string   `json:"start_time"`   // ISO 8601
-	EndTime     string   `json:"end_time"`     // ISO 8601
+	StartTime   string   `json:"start_time"` // ISO 8601
+	EndTime     string   `json:"end_time"`   // ISO 8601
 	Description string   `json:"description,omitempty"`
 	Timezone    string   `json:"timezone"`
 	Recurrence  []string `json:"recurrence,omitempty"`
@@ -26,6 +26,7 @@ type Contact struct {
 	Email        string `json:"email,omitempty"`
 	Phone        string `json:"phone,omitempty"`
 }
+
 // ChatMessage represents a single message in conversation history.
 type ChatMessage struct {
 	Role          string             `json:"role"` // "user", "assistant", or "function"
@@ -85,8 +86,9 @@ type User struct {
 	ID          string    `json:"id" gorm:"primarykey;type:uuid;default:gen_random_uuid()"`
 	PlatformID  string    `json:"platform_id" gorm:"uniqueIndex"`
 	Name        string    `json:"name"`
-	Role        string    `json:"role"`         // "admin" or "family"
-	FamilyGroup string    `json:"family_group"` // e.g., "MyFamily"
+	Role        string    `json:"role"`                                         // "admin" or "family"
+	HouseholdID string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
+	FamilyGroup string    `json:"family_group"`                                 // e.g., "MyFamily"
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -95,6 +97,7 @@ type PairingCode struct {
 	ID          string    `json:"id" gorm:"primarykey;type:uuid;default:gen_random_uuid()"`
 	Code        string    `json:"code" gorm:"uniqueIndex"`
 	Role        string    `json:"role"`
+	HouseholdID string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup string    `json:"family_group"`
 	ExpiresAt   time.Time `json:"expires_at"`
 	IsUsed      bool      `json:"is_used" gorm:"default:false"`

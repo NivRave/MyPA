@@ -23,7 +23,7 @@ func (m *mockDBForReminders) SaveReminder(r models.ScheduledReminder) error {
 }
 
 // TestShared_AntiSpoofing verifies that the shared module strictly uses
-// callCtx.ActorID() and callCtx.TenantFamilyGroup() when creating shared spaces,
+// callCtx.ActorID() and callCtx.Scope (V4-30) when creating shared spaces,
 // shared task reminders, and personal scheduled reminders, ignoring foreign spoofed args.
 func TestShared_AntiSpoofing(t *testing.T) {
 	repo := newInMemoryRepo()
@@ -39,6 +39,11 @@ func TestShared_AntiSpoofing(t *testing.T) {
 	})
 
 	mod := NewModule(repo, bus, nil)
+	// The household's members: the assignee named below is one of them (V4-30: an assignee must be).
+	repo.setUsers("shared_legit_family", []models.User{
+		{ID: "uuid-victim", PlatformID: "shared_victim_actor", FamilyGroup: "shared_legit_family"},
+		{ID: "uuid-partner", PlatformID: "partner_user", FamilyGroup: "shared_legit_family"},
+	})
 
 	legitUser := &models.User{
 		ID:          "uuid-victim",
@@ -48,6 +53,7 @@ func TestShared_AntiSpoofing(t *testing.T) {
 	dbMock := &mockDBForReminders{}
 	callCtx := orchestrator.CallContext{
 		User:     legitUser,
+		Scope:    sc(t, "shared_legit_family", "shared_victim_actor"),
 		Message:  channel.Inbound{Sender: "shared_victim_actor"},
 		DB:       dbMock,
 		EventBus: bus,
@@ -70,14 +76,14 @@ func TestShared_AntiSpoofing(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, res, "shared_legit_family")
 
-		spaces, err := repo.GetSharedSpacesForFamily("shared_legit_family")
+		spaces, err := repo.GetSharedSpacesForFamily(sc(t, "shared_legit_family", "shared_victim_actor"))
 		require.NoError(t, err)
 		require.Len(t, spaces, 1)
 		assert.Equal(t, "shared_victim_actor", spaces[0].OwnerUserID, "OwnerUserID must be canonical ActorID")
 		assert.Equal(t, "shared_legit_family", spaces[0].FamilyGroup)
 
 		// Verify no space was created for evil_family_hacker
-		evilSpaces, err := repo.GetSharedSpacesForFamily("evil_family_hacker")
+		evilSpaces, err := repo.GetSharedSpacesForFamily(sc(t, "evil_family_hacker", "hacker_attacker_666"))
 		require.NoError(t, err)
 		assert.Empty(t, evilSpaces)
 
@@ -95,14 +101,14 @@ func TestShared_AntiSpoofing(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, res, "Created shared task/reminder")
 
-		reminders, err := repo.ListSharedReminders("shared_legit_family", "", false)
+		reminders, err := repo.ListSharedReminders(sc(t, "shared_legit_family", "shared_victim_actor"), "", false)
 		require.NoError(t, err)
 		require.Len(t, reminders, 1)
 		assert.Equal(t, "shared_victim_actor", reminders[0].CreatedByUserID, "CreatedByUserID must be canonical ActorID")
 		assert.Equal(t, "shared_legit_family", reminders[0].FamilyGroup)
 
 		// Verify evil family has no reminders
-		evilReminders, err := repo.ListSharedReminders("evil_family_hacker", "", false)
+		evilReminders, err := repo.ListSharedReminders(sc(t, "evil_family_hacker", "hacker_attacker_666"), "", false)
 		require.NoError(t, err)
 		assert.Empty(t, evilReminders)
 

@@ -9,6 +9,7 @@ import (
 type ExternalAPIConnector struct {
 	ID                   uint      `json:"id" gorm:"primaryKey"`
 	UserID               string    `json:"user_id" gorm:"index"`
+	HouseholdID          string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup          string    `json:"family_group" gorm:"index"`
 	Name                 string    `json:"name" gorm:"index"`
 	BaseURL              string    `json:"base_url"`
@@ -23,6 +24,7 @@ type ExternalAPIConnector struct {
 type AutomationRule struct {
 	ID                uint      `json:"id" gorm:"primaryKey"`
 	UserID            string    `json:"user_id" gorm:"index"`
+	HouseholdID       string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup       string    `json:"family_group" gorm:"index"`
 	Name              string    `json:"name"`
 	TriggerType       string    `json:"trigger_type"` // "event_mutation", "cron", "keyword", "threshold"
@@ -52,6 +54,7 @@ type UserPreference struct {
 type PersonalCRMContact struct {
 	ID                 uint      `json:"id" gorm:"primaryKey"`
 	UserID             string    `json:"user_id" gorm:"index"`
+	HouseholdID        string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup        string    `json:"family_group" gorm:"index"`
 	PersonName         string    `json:"person_name" gorm:"index"`
 	Relationship       string    `json:"relationship"`

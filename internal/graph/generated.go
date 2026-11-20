@@ -179,6 +179,14 @@ type ComplexityRoot struct {
 		VendorOrLandlord        func(childComplexity int) int
 	}
 
+	Household struct {
+		Currency func(childComplexity int) int
+		ID       func(childComplexity int) int
+		Language func(childComplexity int) int
+		Name     func(childComplexity int) int
+		TimeZone func(childComplexity int) int
+	}
+
 	Mutation struct {
 		CompleteHomeMaintenance func(childComplexity int, id string) int
 		CompleteSharedTask      func(childComplexity int, id string, completedByUserID string) int
@@ -205,6 +213,7 @@ type ComplexityRoot struct {
 		SetCategoryBudget       func(childComplexity int, familyGroup string, category string, monthlyLimit float64, currency string, alertThresholdPct *float64) int
 		ToggleAutomationRule    func(childComplexity int, id string, isActive bool) int
 		UpdateBabyInventory     func(childComplexity int, familyGroup string, itemName string, quantityRemaining float64, unit string, lowThreshold float64) int
+		UpdateHousehold         func(childComplexity int, name *string, language *string, timeZone *string, currency *string) int
 		UpdateSharedSpace       func(childComplexity int, familyGroup string, topic string, sharedWithUserID string, canView bool, canEdit bool, notifyMode string) int
 		UpsertBabyProfile       func(childComplexity int, familyGroup string, name string, dateOfBirth time.Time, gender string, currentWeightGrams *int, heightCm *float64, pediatricianInfo *string, allergiesNotes *string) int
 		UpsertEntityProfile     func(childComplexity int, topic string, entityType string, entityName string, attributesJSON string, familyGroup *string) int
@@ -260,6 +269,7 @@ type ComplexityRoot struct {
 		FinancialTransactions func(childComplexity int, familyGroup string, category *string, limit *int) int
 		HomeMaintenanceItems  func(childComplexity int, familyGroup string, category *string) int
 		HouseContracts        func(childComplexity int, familyGroup string, recordType *string) int
+		Household             func(childComplexity int) int
 		MutationLogs          func(childComplexity int, familyGroup *string, topic *string, limit *int) int
 		PersonalCrmContacts   func(childComplexity int, familyGroup string) int
 		RecurringBills        func(childComplexity int, familyGroup string) int
@@ -410,6 +420,7 @@ type ComplexityRoot struct {
 
 type MutationResolver interface {
 	GeneratePairingCode(ctx context.Context, role string, familyGroup string) (*model.PairingCode, error)
+	UpdateHousehold(ctx context.Context, name *string, language *string, timeZone *string, currency *string) (*model.Household, error)
 	SaveTopicMemory(ctx context.Context, topic string, subtopic string, fact string, tagsJSON *string, scope *string, familyGroup *string) (*model.TopicMemory, error)
 	DeleteTopicMemory(ctx context.Context, id string) (bool, error)
 	PinTopicMemory(ctx context.Context, id string, isPinned bool) (*model.TopicMemory, error)
@@ -439,6 +450,7 @@ type MutationResolver interface {
 	RollbackMutation(ctx context.Context, mutationID string) (bool, error)
 }
 type QueryResolver interface {
+	Household(ctx context.Context) (*model.Household, error)
 	Users(ctx context.Context) ([]*model.User, error)
 	ActivePairingCodes(ctx context.Context, familyGroup *string) ([]*model.PairingCode, error)
 	TopicMemories(ctx context.Context, topic *string, familyGroup *string, includeSuperseded *bool) ([]*model.TopicMemory, error)
@@ -1142,6 +1154,37 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.HouseContractRecord.VendorOrLandlord(childComplexity), true
 
+	case "Household.currency":
+		if e.ComplexityRoot.Household.Currency == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Household.Currency(childComplexity), true
+	case "Household.id":
+		if e.ComplexityRoot.Household.ID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Household.ID(childComplexity), true
+	case "Household.language":
+		if e.ComplexityRoot.Household.Language == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Household.Language(childComplexity), true
+	case "Household.name":
+		if e.ComplexityRoot.Household.Name == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Household.Name(childComplexity), true
+	case "Household.timeZone":
+		if e.ComplexityRoot.Household.TimeZone == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Household.TimeZone(childComplexity), true
+
 	case "Mutation.completeHomeMaintenance":
 		if e.ComplexityRoot.Mutation.CompleteHomeMaintenance == nil {
 			break
@@ -1417,6 +1460,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.UpdateBabyInventory(childComplexity, args["familyGroup"].(string), args["itemName"].(string), args["quantityRemaining"].(float64), args["unit"].(string), args["lowThreshold"].(float64)), true
+	case "Mutation.updateHousehold":
+		if e.ComplexityRoot.Mutation.UpdateHousehold == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateHousehold_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateHousehold(childComplexity, args["name"].(*string), args["language"].(*string), args["timeZone"].(*string), args["currency"].(*string)), true
 	case "Mutation.updateSharedSpace":
 		if e.ComplexityRoot.Mutation.UpdateSharedSpace == nil {
 			break
@@ -1754,6 +1808,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.HouseContracts(childComplexity, args["familyGroup"].(string), args["recordType"].(*string)), true
+	case "Query.household":
+		if e.ComplexityRoot.Query.Household == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Query.Household(childComplexity), true
 
 	case "Query.mutationLogs":
 		if e.ComplexityRoot.Query.MutationLogs == nil {
@@ -2870,6 +2930,22 @@ func (ec *executionContext) childFields_HouseContractRecord(ctx context.Context,
 		return ec.fieldContext_HouseContractRecord_createdAt(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type HouseContractRecord", field.Name)
+}
+
+func (ec *executionContext) childFields_Household(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "id":
+		return ec.fieldContext_Household_id(ctx, field)
+	case "name":
+		return ec.fieldContext_Household_name(ctx, field)
+	case "language":
+		return ec.fieldContext_Household_language(ctx, field)
+	case "timeZone":
+		return ec.fieldContext_Household_timeZone(ctx, field)
+	case "currency":
+		return ec.fieldContext_Household_currency(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type Household", field.Name)
 }
 
 func (ec *executionContext) childFields_MutationLog(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -4435,6 +4511,44 @@ func (ec *executionContext) field_Mutation_updateBabyInventory_args(ctx context.
 		return nil, err
 	}
 	args["lowThreshold"] = arg4
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateHousehold_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "language",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["language"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "timeZone",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["timeZone"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "currency",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["currency"] = arg3
 	return args, nil
 }
 
@@ -7662,6 +7776,121 @@ func (ec *executionContext) fieldContext_HouseContractRecord_createdAt(_ context
 	return graphql.NewScalarFieldContext("HouseContractRecord", field, false, false, "Time")
 }
 
+func (ec *executionContext) _Household_id(ctx context.Context, field graphql.CollectedField, obj *model.Household) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Household_id(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Household_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Household", field, false, false, "ID")
+}
+
+func (ec *executionContext) _Household_name(ctx context.Context, field graphql.CollectedField, obj *model.Household) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Household_name(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Household_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Household", field, false, false, "String")
+}
+
+func (ec *executionContext) _Household_language(ctx context.Context, field graphql.CollectedField, obj *model.Household) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Household_language(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Language, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Household_language(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Household", field, false, false, "String")
+}
+
+func (ec *executionContext) _Household_timeZone(ctx context.Context, field graphql.CollectedField, obj *model.Household) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Household_timeZone(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TimeZone, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Household_timeZone(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Household", field, false, false, "String")
+}
+
+func (ec *executionContext) _Household_currency(ctx context.Context, field graphql.CollectedField, obj *model.Household) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Household_currency(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Currency, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Household_currency(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Household", field, false, false, "String")
+}
+
 func (ec *executionContext) _Mutation_generatePairingCode(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -7700,6 +7929,50 @@ func (ec *executionContext) fieldContext_Mutation_generatePairingCode(ctx contex
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_generatePairingCode_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateHousehold(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateHousehold(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateHousehold(ctx, fc.Args["name"].(*string), fc.Args["language"].(*string), fc.Args["timeZone"].(*string), fc.Args["currency"].(*string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *model.Household) graphql.Marshaler {
+			return ec.marshalNHousehold2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐHousehold(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateHousehold(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Household(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateHousehold_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -9536,6 +9809,38 @@ func (ec *executionContext) _PersonalCRMContact_updatedAt(ctx context.Context, f
 }
 func (ec *executionContext) fieldContext_PersonalCRMContact_updatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("PersonalCRMContact", field, false, false, "Time")
+}
+
+func (ec *executionContext) _Query_household(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_household(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Query().Household(ctx)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *model.Household) graphql.Marshaler {
+			return ec.marshalNHousehold2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐHousehold(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_household(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Household(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _Query_users(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
@@ -14864,6 +15169,59 @@ func (ec *executionContext) _HouseContractRecord(ctx context.Context, sel ast.Se
 	return out
 }
 
+var householdImplementors = []string{"Household"}
+
+func (ec *executionContext) _Household(ctx context.Context, sel ast.SelectionSet, obj *model.Household) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, householdImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := graphql.NewDeferredGroup(ctx)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Household")
+		case "id":
+			out.Values[i] = ec._Household_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "name":
+			out.Values[i] = ec._Household_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "language":
+			out.Values[i] = ec._Household_language(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "timeZone":
+			out.Values[i] = ec._Household_timeZone(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "currency":
+			out.Values[i] = ec._Household_currency(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	if n := len(deferred.Defers); n > 0 {
+		atomic.AddInt32(&ec.Deferred, int32(min(n, math.MaxInt32)))
+		ec.ProcessDeferredGroup(deferred)
+	}
+
+	return out
+}
+
 var mutationImplementors = []string{"Mutation"}
 
 func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet) graphql.Marshaler {
@@ -14886,6 +15244,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "generatePairingCode":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_generatePairingCode(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateHousehold":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateHousehold(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
@@ -15339,6 +15704,12 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 		switch field.Name {
 		case "__typename":
 			out.Values[i] = graphql.MarshalString("Query")
+		case "household":
+			out.ResolveRootConcurrently(innerCtx, ec.OperationContext, i,
+				true, true,
+				func(ctx context.Context) graphql.Marshaler {
+					return ec._Query_household(ctx, field)
+				})
 		case "users":
 			out.ResolveRootConcurrently(innerCtx, ec.OperationContext, i,
 				true, true,
@@ -16941,6 +17312,14 @@ func (ec *executionContext) marshalNHouseContractRecord2ᚖgithubᚗcomᚋnivik�
 		return graphql.Null
 	}
 	return ec._HouseContractRecord(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNHousehold2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐHousehold(ctx context.Context, sel ast.SelectionSet, v *model.Household) graphql.Marshaler {
+	if v == nil {
+		graphql.AddInvalidNullError(ctx, "Household!")
+		return graphql.Null
+	}
+	return ec._Household(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalNID2string(ctx context.Context, v any) (string, error) {

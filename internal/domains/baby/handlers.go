@@ -36,7 +36,7 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 
 // executeUpsertProfile creates or updates baby profile details.
 func (m *Module) executeUpsertProfile(ctx context.Context, callCtx orchestrator.CallContext, repo db.BabyRepository, args map[string]interface{}) (string, error) {
-	familyGroup, userID := m.resolveContext(callCtx)
+	scope, userID := m.resolveContext(callCtx)
 
 	name := getStringArg(args, "name")
 	if strings.TrimSpace(name) == "" {
@@ -65,12 +65,12 @@ func (m *Module) executeUpsertProfile(ctx context.Context, callCtx orchestrator.
 
 	var existing *models.BabyProfile
 	if profileID > 0 {
-		existing, _ = repo.GetBabyProfile(profileID)
-		if existing != nil && existing.FamilyGroup != familyGroup {
-			return "", fmt.Errorf("baby profile with ID %d not found in family %q", profileID, familyGroup)
+		existing, _ = repo.GetBabyProfile(scope, profileID)
+		if existing != nil && existing.HouseholdID != scope.HouseholdID() {
+			return "", fmt.Errorf("baby profile with ID %d not found in family %q", profileID, scope.LegacyLabel())
 		}
 	} else {
-		existing, _ = repo.GetBabyProfileByName(familyGroup, name)
+		existing, _ = repo.GetBabyProfileByName(scope, name)
 	}
 
 	birthWeight := getIntArg(args, "birth_weight_grams")
@@ -107,7 +107,7 @@ func (m *Module) executeUpsertProfile(ctx context.Context, callCtx orchestrator.
 
 	profile := models.BabyProfile{
 		ID:                 profileID,
-		FamilyGroup:        familyGroup,
+		FamilyGroup:        scope.LegacyLabel(),
 		Name:               strings.TrimSpace(name),
 		DateOfBirth:        dob,
 		DueDate:            dueDatePtr,
@@ -120,7 +120,7 @@ func (m *Module) executeUpsertProfile(ctx context.Context, callCtx orchestrator.
 		UpdatedByUserID:    userID,
 	}
 
-	if err := repo.UpsertBabyProfile(&profile); err != nil {
+	if err := repo.UpsertBabyProfile(scope, &profile); err != nil {
 		return "", fmt.Errorf("failed to save baby profile: %w", err)
 	}
 
@@ -131,7 +131,7 @@ func (m *Module) executeUpsertProfile(ctx context.Context, callCtx orchestrator.
 		action = "update"
 	}
 	summary := fmt.Sprintf("Saved baby profile for %s (Age: %s)", profile.Name, age.FormattedAge)
-	m.publishMutation(ctx, callCtx, action, "BabyProfile", strconv.FormatUint(uint64(profile.ID), 10), familyGroup, userID, summary)
+	m.publishMutation(ctx, callCtx, action, "BabyProfile", strconv.FormatUint(uint64(profile.ID), 10), scope, userID, summary)
 
 	resp := map[string]interface{}{
 		"status":       "success",
@@ -145,7 +145,7 @@ func (m *Module) executeUpsertProfile(ctx context.Context, callCtx orchestrator.
 
 // executeLogCare records feeding, diaper, sleep, med, milestone, or measurement events.
 func (m *Module) executeLogCare(ctx context.Context, callCtx orchestrator.CallContext, repo db.BabyRepository, args map[string]interface{}) (string, error) {
-	familyGroup, userID := m.resolveContext(callCtx)
+	scope, userID := m.resolveContext(callCtx)
 
 	logType := strings.ToLower(strings.TrimSpace(getStringArg(args, "log_type")))
 	if logType == "" {
@@ -155,7 +155,7 @@ func (m *Module) executeLogCare(ctx context.Context, callCtx orchestrator.CallCo
 	babyID := uint(getIntArg(args, "baby_id"))
 	babyName := getStringArg(args, "baby_name")
 
-	profile, err := m.resolveBabyProfile(repo, familyGroup, babyID, babyName)
+	profile, err := m.resolveBabyProfile(repo, scope, babyID, babyName)
 	if err != nil {
 		return "", err
 	}
@@ -182,11 +182,11 @@ func (m *Module) executeLogCare(ctx context.Context, callCtx orchestrator.CallCo
 	// Medication Safety Cooldown Check
 	if logType == "medication" {
 		var lastMedLog *models.BabyCareLog
-		recentMedLogs, err := repo.GetCareLogs(profile.ID, familyGroup, "medication", time.Time{}, time.Time{}, 50)
+		recentMedLogs, err := repo.GetCareLogs(scope, profile.ID, "medication", time.Time{}, time.Time{}, 50)
 		if err == nil && len(recentMedLogs) > 0 {
 			lastMedLog = FindLastMedicationLogForCooldown(recentMedLogs, details)
 		} else {
-			lastMedLog, _ = repo.GetLastMedicationLog(profile.ID, familyGroup, details)
+			lastMedLog, _ = repo.GetLastMedicationLog(scope, profile.ID, details)
 		}
 
 		cd := CheckMedicationCooldown(lastMedLog, details, timestamp, age.Months)
@@ -210,7 +210,7 @@ func (m *Module) executeLogCare(ctx context.Context, callCtx orchestrator.CallCo
 
 	careLog := models.BabyCareLog{
 		BabyID:         profile.ID,
-		FamilyGroup:    familyGroup,
+		FamilyGroup:    scope.LegacyLabel(),
 		LogType:        logType,
 		ValueNumeric:   valueNum,
 		Unit:           unit,
@@ -219,7 +219,7 @@ func (m *Module) executeLogCare(ctx context.Context, callCtx orchestrator.CallCo
 		LoggedByUserID: userID,
 	}
 
-	if err := repo.CreateCareLog(&careLog); err != nil {
+	if err := repo.CreateCareLog(scope, &careLog); err != nil {
 		return "", fmt.Errorf("failed to record care log: %w", err)
 	}
 
@@ -239,13 +239,13 @@ func (m *Module) executeLogCare(ctx context.Context, callCtx orchestrator.CallCo
 			updated = true
 		}
 		if updated {
-			_ = repo.UpsertBabyProfile(profile)
+			_ = repo.UpsertBabyProfile(scope, profile)
 		}
 	}
 
 	// Prepare user-friendly summary
 	summary := formatLogSummary(profile.Name, careLog)
-	m.publishMutation(ctx, callCtx, "create", "BabyCareLog", strconv.FormatUint(uint64(careLog.ID), 10), familyGroup, userID, summary)
+	m.publishMutation(ctx, callCtx, "create", "BabyCareLog", strconv.FormatUint(uint64(careLog.ID), 10), scope, userID, summary)
 
 	resp := map[string]interface{}{
 		"status":    "success",
@@ -267,14 +267,14 @@ func (m *Module) executeLogCare(ctx context.Context, callCtx orchestrator.CallCo
 
 // executeQueryLogsAndTrends fetches logs and aggregated summaries.
 func (m *Module) executeQueryLogsAndTrends(ctx context.Context, callCtx orchestrator.CallContext, repo db.BabyRepository, args map[string]interface{}) (string, error) {
-	familyGroup, _ := m.resolveContext(callCtx)
+	scope, _ := m.resolveContext(callCtx)
 
 	babyID := uint(getIntArg(args, "baby_id"))
 	babyName := getStringArg(args, "baby_name")
 
 	var profile *models.BabyProfile
 	if babyID > 0 || babyName != "" {
-		p, err := m.resolveBabyProfile(repo, familyGroup, babyID, babyName)
+		p, err := m.resolveBabyProfile(repo, scope, babyID, babyName)
 		if err == nil {
 			profile = p
 			babyID = p.ID
@@ -318,19 +318,19 @@ func (m *Module) executeQueryLogsAndTrends(ctx context.Context, callCtx orchestr
 
 	logType := getStringArg(args, "log_type")
 
-	logs, err := repo.GetCareLogs(babyID, familyGroup, logType, startTime, endTime, limit)
+	logs, err := repo.GetCareLogs(scope, babyID, logType, startTime, endTime, limit)
 	if err != nil {
 		return "", fmt.Errorf("failed to retrieve logs: %w", err)
 	}
 
-	summary, err := repo.GetCareStatsSummary(babyID, familyGroup, startTime, endTime)
+	summary, err := repo.GetCareStatsSummary(scope, babyID, startTime, endTime)
 	if err != nil {
 		return "", fmt.Errorf("failed to calculate stats summary: %w", err)
 	}
 
 	resp := map[string]interface{}{
 		"status":        "success",
-		"family_group":  familyGroup,
+		"family_group":  scope.LegacyLabel(),
 		"start_time":    startTime.Format(time.RFC3339),
 		"end_time":      endTime.Format(time.RFC3339),
 		"logs_returned": len(logs),
@@ -348,12 +348,12 @@ func (m *Module) executeQueryLogsAndTrends(ctx context.Context, callCtx orchestr
 
 // executeGetMilestoneSuggestions calculates age-based guidelines and leaps.
 func (m *Module) executeGetMilestoneSuggestions(ctx context.Context, callCtx orchestrator.CallContext, repo db.BabyRepository, args map[string]interface{}) (string, error) {
-	familyGroup, _ := m.resolveContext(callCtx)
+	scope, _ := m.resolveContext(callCtx)
 
 	babyID := uint(getIntArg(args, "baby_id"))
 	babyName := getStringArg(args, "baby_name")
 
-	profile, err := m.resolveBabyProfile(repo, familyGroup, babyID, babyName)
+	profile, err := m.resolveBabyProfile(repo, scope, babyID, babyName)
 	if err != nil {
 		return "", err
 	}
@@ -366,7 +366,7 @@ func (m *Module) executeGetMilestoneSuggestions(ctx context.Context, callCtx orc
 
 	leap, leapStatus := GetDevelopmentalLeapStatus(age.Weeks)
 
-	lastMed, _ := repo.GetLastMedicationLog(profile.ID, familyGroup, "")
+	lastMed, _ := repo.GetLastMedicationLog(scope, profile.ID, "")
 	var medStatus *MedicationCooldownResult
 	if lastMed != nil {
 		cd := CheckMedicationCooldown(lastMed, lastMed.Details, now, age.Months)
@@ -393,21 +393,21 @@ func (m *Module) executeGetMilestoneSuggestions(ctx context.Context, callCtx orc
 
 // executeManageInventory handles supply inventory CRUD and stock checks.
 func (m *Module) executeManageInventory(ctx context.Context, callCtx orchestrator.CallContext, repo db.BabyRepository, args map[string]interface{}) (string, error) {
-	familyGroup, userID := m.resolveContext(callCtx)
+	scope, userID := m.resolveContext(callCtx)
 
 	action := strings.ToLower(strings.TrimSpace(getStringArg(args, "action")))
 	itemName := strings.TrimSpace(getStringArg(args, "item_name"))
 
 	switch action {
 	case "list":
-		items, err := repo.ListBabyInventoryItems(familyGroup)
+		items, err := repo.ListBabyInventoryItems(scope)
 		if err != nil {
 			return "", err
 		}
-		lowItems, _ := repo.GetLowBabyInventoryItems(familyGroup)
+		lowItems, _ := repo.GetLowBabyInventoryItems(scope)
 		resp := map[string]interface{}{
 			"status":          "success",
-			"family_group":    familyGroup,
+			"family_group":    scope.LegacyLabel(),
 			"items":           items,
 			"low_stock_count": len(lowItems),
 			"low_stock_items": lowItems,
@@ -415,13 +415,13 @@ func (m *Module) executeManageInventory(ctx context.Context, callCtx orchestrato
 		return toJSON(resp), nil
 
 	case "check_low":
-		lowItems, err := repo.GetLowBabyInventoryItems(familyGroup)
+		lowItems, err := repo.GetLowBabyInventoryItems(scope)
 		if err != nil {
 			return "", err
 		}
 		resp := map[string]interface{}{
 			"status":          "success",
-			"family_group":    familyGroup,
+			"family_group":    scope.LegacyLabel(),
 			"low_stock_count": len(lowItems),
 			"low_stock_items": lowItems,
 		}
@@ -431,7 +431,7 @@ func (m *Module) executeManageInventory(ctx context.Context, callCtx orchestrato
 		if itemName == "" {
 			return "", fmt.Errorf("item_name is required for action 'get'")
 		}
-		item, err := repo.GetBabyInventoryItemByName(familyGroup, itemName)
+		item, err := repo.GetBabyInventoryItemByName(scope, itemName)
 		if err != nil {
 			return "", err
 		}
@@ -454,18 +454,18 @@ func (m *Module) executeManageInventory(ctx context.Context, callCtx orchestrato
 		threshold := getFloatArg(args, "low_threshold")
 
 		item := models.BabyInventoryItem{
-			FamilyGroup:       familyGroup,
+			FamilyGroup:       scope.LegacyLabel(),
 			ItemName:          itemName,
 			QuantityRemaining: qty,
 			Unit:              unit,
 			LowThreshold:      threshold,
 		}
-		if err := repo.UpsertBabyInventoryItem(&item); err != nil {
+		if err := repo.UpsertBabyInventoryItem(scope, &item); err != nil {
 			return "", fmt.Errorf("failed to update inventory: %w", err)
 		}
 
 		summary := fmt.Sprintf("Updated inventory: %s quantity set to %.1f %s", itemName, qty, unit)
-		m.publishMutation(ctx, callCtx, "update", "BabyInventoryItem", strconv.FormatUint(uint64(item.ID), 10), familyGroup, userID, summary)
+		m.publishMutation(ctx, callCtx, "update", "BabyInventoryItem", strconv.FormatUint(uint64(item.ID), 10), scope, userID, summary)
 
 		resp := map[string]interface{}{
 			"status":  "success",
@@ -484,7 +484,7 @@ func (m *Module) executeManageInventory(ctx context.Context, callCtx orchestrato
 			return "", fmt.Errorf("delta cannot be 0 for action 'adjust'")
 		}
 
-		item, err := repo.GetBabyInventoryItemByName(familyGroup, itemName)
+		item, err := repo.GetBabyInventoryItemByName(scope, itemName)
 		if err != nil {
 			return "", err
 		}
@@ -493,7 +493,7 @@ func (m *Module) executeManageInventory(ctx context.Context, callCtx orchestrato
 			unit := getStringArg(args, "unit")
 			threshold := getFloatArg(args, "low_threshold")
 			item = &models.BabyInventoryItem{
-				FamilyGroup:       familyGroup,
+				FamilyGroup:       scope.LegacyLabel(),
 				ItemName:          itemName,
 				QuantityRemaining: delta,
 				Unit:              unit,
@@ -512,12 +512,12 @@ func (m *Module) executeManageInventory(ctx context.Context, callCtx orchestrato
 			}
 		}
 
-		if err := repo.UpsertBabyInventoryItem(item); err != nil {
+		if err := repo.UpsertBabyInventoryItem(scope, item); err != nil {
 			return "", fmt.Errorf("failed to adjust inventory: %w", err)
 		}
 
 		summary := fmt.Sprintf("Adjusted inventory: %s changed by %+.1f (Now: %.1f %s)", itemName, delta, item.QuantityRemaining, item.Unit)
-		m.publishMutation(ctx, callCtx, "update", "BabyInventoryItem", strconv.FormatUint(uint64(item.ID), 10), familyGroup, userID, summary)
+		m.publishMutation(ctx, callCtx, "update", "BabyInventoryItem", strconv.FormatUint(uint64(item.ID), 10), scope, userID, summary)
 
 		resp := map[string]interface{}{
 			"status":  "success",

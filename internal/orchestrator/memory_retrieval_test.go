@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +19,10 @@ func TestProcessMessage_InjectsTopicMemoriesIntoPrompt(t *testing.T) {
 	defer cleanup()
 
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), "what should I cook?").Return([]float32{0.1}, nil)
-	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), "user-mem", "", gomock.Any(), 5).Return([]models.TopicMemory{
+	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Cond(func(x any) bool {
+		s, ok := x.(identity.Scope)
+		return ok && s.PersonKey() == "user-mem" && s.HouseholdID() == householdID("user-mem")
+	}), gomock.Any(), 5).Return([]models.TopicMemory{
 		{Fact: "Allergic to peanuts", Scope: "personal"},
 		{Fact: "Family dinner is on Fridays", Scope: "family"},
 	}, nil)

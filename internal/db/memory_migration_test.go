@@ -18,8 +18,9 @@ func TestMigrateLegacyMemories(t *testing.T) {
 	ctx := context.Background()
 	gdb := client.DB
 
-	require.NoError(t, gdb.Create(&models.User{PlatformID: "u1", Name: "One", FamilyGroup: "fam_x"}).Error)
-	require.NoError(t, gdb.Create(&models.User{PlatformID: "u2", Name: "Two", FamilyGroup: "fam_x"}).Error)
+	famX := householdFor(t, client, "fam_x").ID
+	require.NoError(t, gdb.Create(&models.User{PlatformID: "u1", Name: "One", FamilyGroup: "fam_x", HouseholdID: famX}).Error)
+	require.NoError(t, gdb.Create(&models.User{PlatformID: "u2", Name: "Two", FamilyGroup: "fam_x", HouseholdID: famX}).Error)
 
 	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	legacy := []models.Memory{
@@ -32,7 +33,7 @@ func TestMigrateLegacyMemories(t *testing.T) {
 		require.NoError(t, gdb.Create(&m).Error)
 	}
 	// The old remember_fact dual-write already stored this one in v2.
-	require.NoError(t, NewMemoryV2Repo(gdb).SaveTopicMemory(ctx, &models.TopicMemory{
+	require.NoError(t, NewMemoryV2Repo(gdb).SaveTopicMemory(ctx, scopeAs(t, client, "fam_x", "u1", "family"), &models.TopicMemory{
 		UserID: "u1", FamilyGroup: "fam_x", Topic: models.TopicPersonal, Subtopic: "fact", Scope: "personal",
 		Fact: "already dual-written", Embedding: mixVec(0.5, 4),
 	}))
@@ -66,7 +67,7 @@ func TestMigrateLegacyMemories(t *testing.T) {
 	assert.Equal(t, int64(0), n)
 
 	// The migrated family memory is visible to another family member via the v2 search.
-	got, err := client.SearchSimilarMemories(ctx, "u2", "fam_x", mixVec(0.8, 2), 5)
+	got, err := client.SearchSimilarMemories(ctx, scopeAs(t, client, "fam_x", "u2", "family"), mixVec(0.8, 2), 5)
 	require.NoError(t, err)
 	var facts []string
 	for _, m := range got {

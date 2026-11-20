@@ -161,7 +161,8 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 			EntityType:  "Contact",
 			EntityID:    name,
 			ActorUserID: actorID,
-			FamilyGroup: callCtx.TenantFamilyGroup(),
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			Summary:     fmt.Sprintf("Created contact '%s'", name),
 		})
 

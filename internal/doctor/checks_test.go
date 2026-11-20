@@ -21,7 +21,7 @@ var testNow = time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC)
 
 func fixedNow() time.Time { return testNow }
 
-var adminScope = Scope{Admin: &models.User{PlatformID: "1001", Name: "Dana", Role: "admin", FamilyGroup: "Levi"}}
+var adminScope = Scope{Admin: &models.User{PlatformID: "1001", Name: "Dana", Role: "admin", FamilyGroup: "Levi", HouseholdID: "Levi"}}
 
 // one runs a check and requires exactly one result.
 func one(t *testing.T, c Check, scope Scope) Result {
@@ -42,19 +42,19 @@ func requireProblem(t *testing.T, r Result, want Status, detailContains string) 
 // --- Google accounts --------------------------------------------------------------------------
 
 type googleFixture struct {
-	members    map[string][]models.User // family group -> members
+	members    map[string][]models.User // household ID -> members
 	tokens     map[string][]byte
 	tokenErr   map[string]error
 	refreshErr map[string]error // keyed by access token
-	asked      []string         // family groups the check listed
+	asked      []string         // households the check listed
 }
 
 func (g *googleFixture) check() GoogleAccounts {
 	return GoogleAccounts{
 		Configured: true,
-		FamilyMembers: func(familyGroup string) ([]models.User, error) {
-			g.asked = append(g.asked, familyGroup)
-			return g.members[familyGroup], nil
+		HouseholdMembers: func(householdID string) ([]models.User, error) {
+			g.asked = append(g.asked, householdID)
+			return g.members[householdID], nil
 		},
 		Token: func(_ context.Context, userID string) ([]byte, error) {
 			return g.tokens[userID], g.tokenErr[userID]
@@ -375,4 +375,28 @@ func TestRefreshWith_ClassifiesFailures(t *testing.T) {
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrSignInRefused)
 	assert.NotErrorIs(t, err, ErrRenewalRejected)
+}
+
+// V4-30 (ADR 0002 Decision 6): once a household exists, ALLOWED_USERS is ignored, and /doctor
+// says so instead of leaving an owner to wonder why editing it changed nothing.
+func TestAllowedUsers_SaysTheSettingIsIgnoredOnceAHouseholdExists(t *testing.T) {
+	count := func(n int64, err error) func(context.Context) (int64, error) {
+		return func(context.Context) (int64, error) { return n, err }
+	}
+
+	assert.Empty(t, AllowedUsers{Set: false, Households: count(1, nil)}.Run(context.Background(), adminScope), "nothing to say when the setting is empty")
+
+	got := AllowedUsers{Set: true, Households: count(1, nil)}.Run(context.Background(), adminScope)
+	require.Len(t, got, 1)
+	assert.Equal(t, StatusInfo, got[0].Status)
+	assert.Contains(t, got[0].Detail, "ignored")
+	assert.Contains(t, got[0].NextStep, "pairing code")
+
+	got = AllowedUsers{Set: true, Households: count(0, nil)}.Run(context.Background(), adminScope)
+	require.Len(t, got, 1)
+	assert.Equal(t, StatusWarn, got[0].Status)
+
+	got = AllowedUsers{Set: true, Households: count(0, errors.New("connection refused"))}.Run(context.Background(), adminScope)
+	require.Len(t, got, 1)
+	assert.Equal(t, StatusFail, got[0].Status)
 }

@@ -127,10 +127,11 @@ func TestEngine_ConfirmCommand_RedeemsStagedMetaTool(t *testing.T) {
 	// assertions below see exactly what the engine wrote.
 	waMock := wamocks.NewMockAPI(ctrl)
 
-	user := &models.User{
+	user := inHousehold(&models.User{
 		PlatformID: "user-alice",
 		Role:       "user",
-	}
+	})
+	expectHouseholds(dbMock)
 	dbMock.EXPECT().GetUser("user-alice").Return(user, nil).AnyTimes()
 	dbMock.EXPECT().SaveWorkflow(gomock.Any()).Return(nil)
 

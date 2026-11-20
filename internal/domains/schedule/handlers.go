@@ -115,7 +115,6 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 
 	ev := &models.ScheduleEvent{
 		UserID:          userID,
-		FamilyGroup:     familyGroup,
 		Topic:           topic,
 		Title:           title,
 		Description:     description,
@@ -167,7 +166,7 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 	// Partner Calendar Sync (Topic 9.3). A partner without Google is normal; a failing one is reported.
 	partnerFailed := false
 	if isShared && syncToGoogle && familyGroup != "" {
-		partnerUsers := m.findPartnerUsers(callCtx, userID, familyGroup)
+		partnerUsers := m.findPartnerUsers(ctx, callCtx, userID)
 		for _, partner := range partnerUsers {
 			partnerCal, pState := m.googleCalendar(ctx, callCtx, partner.PlatformID, "create_partner")
 			if pState == googleFailed {
@@ -205,7 +204,7 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 	}
 
 	// Save to DB
-	if err := repo.CreateScheduleEvent(ev); err != nil {
+	if err := repo.CreateScheduleEvent(callCtx.Scope, ev); err != nil {
 		return "", fmt.Errorf("failed to save schedule event: %w", err)
 	}
 
@@ -219,7 +218,8 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 			EntityType:  "ScheduleEvent",
 			EntityID:    strconv.FormatUint(uint64(ev.ID), 10),
 			ActorUserID: userID,
-			FamilyGroup: familyGroup,
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Scheduled '%s' under topic '%s' for %s", formattedTitle, ev.Topic, ev.StartTime.Format(time.RFC822)),
 			Timestamp:   time.Now(),
@@ -293,19 +293,18 @@ func (m *Module) executeListTopicSchedule(ctx context.Context, callCtx orchestra
 	}
 
 	userID := ""
-	familyGroup := ""
 	if callCtx.User != nil {
 		userID = callCtx.User.PlatformID
 		if userID == "" {
 			userID = callCtx.User.ID
 		}
-		familyGroup = callCtx.User.FamilyGroup
 	}
 	if userID == "" {
 		userID = callCtx.Message.Sender
 	}
 
-	eventsList, err := repo.ListScheduleEvents(userID, familyGroup, topic, startTime, endTime)
+	// The household's shared events plus the caller's own (V4-30: scoped by household ID).
+	eventsList, err := repo.ListScheduleEvents(callCtx.Scope, topic, startTime, endTime)
 	if err != nil {
 		return "", fmt.Errorf("failed to query schedule events: %w", err)
 	}
@@ -492,6 +491,9 @@ func (m *Module) executeConfigureTopicCalendar(ctx context.Context, callCtx orch
 			EntityType:  "TopicCalendarConfig",
 			EntityID:    strconv.FormatUint(uint64(cfg.ID), 10),
 			ActorUserID: userID,
+			// V4-30: without the household the mutation log drops the event, so it could not be undone.
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Configured virtual sub-calendar for topic '%s' (Prefix: [%s], Color: %s)", cfg.Topic, cfg.PrefixTag, cfg.ColorID),
 			Timestamp:   time.Now(),
@@ -514,13 +516,12 @@ func (m *Module) executeDeleteTopicEvent(ctx context.Context, callCtx orchestrat
 	}
 	eventID := uint(eventIDRaw)
 
-	familyGroup := callCtx.TenantFamilyGroup()
-	userID := callCtx.ActorID()
-	existing, err := repo.GetScheduleEvent(eventID)
+	existing, err := repo.GetScheduleEvent(callCtx.Scope, eventID)
 	if err != nil {
 		return "", fmt.Errorf("failed to lookup event %d: %w", eventID, err)
 	}
-	isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.UserID != "" && existing.UserID == userID))
+	// Defence in depth: the repository only finds the household's own events (V4-30).
+	isAuthorized := existing != nil && callCtx.Scope.Valid() && existing.HouseholdID == callCtx.Scope.HouseholdID()
 	if !isAuthorized {
 		return fmt.Sprintf("Event with ID %d not found.", eventID), nil
 	}
@@ -541,8 +542,8 @@ func (m *Module) executeDeleteTopicEvent(ctx context.Context, callCtx orchestrat
 
 	// Delete from Partner Google Calendar if synced
 	partnerCopyLeft := false
-	if existing.PartnerGoogleEventID != "" && existing.FamilyGroup != "" {
-		partnerUsers := m.findPartnerUsers(callCtx, existing.UserID, existing.FamilyGroup)
+	if existing.PartnerGoogleEventID != "" {
+		partnerUsers := m.findPartnerUsers(ctx, callCtx, existing.UserID)
 		for _, partner := range partnerUsers {
 			partnerCal, st := m.googleCalendar(ctx, callCtx, partner.PlatformID, "delete_partner")
 			if st == googleFailed {
@@ -560,7 +561,7 @@ func (m *Module) executeDeleteTopicEvent(ctx context.Context, callCtx orchestrat
 		}
 	}
 
-	if err := repo.DeleteScheduleEvent(eventID); err != nil {
+	if err := repo.DeleteScheduleEvent(callCtx.Scope, eventID); err != nil {
 		return "", fmt.Errorf("failed to delete schedule event %d: %w", eventID, err)
 	}
 
@@ -573,6 +574,7 @@ func (m *Module) executeDeleteTopicEvent(ctx context.Context, callCtx orchestrat
 			EntityType:  "ScheduleEvent",
 			EntityID:    strconv.FormatUint(uint64(eventID), 10),
 			ActorUserID: existing.UserID,
+			HouseholdID: existing.HouseholdID,
 			FamilyGroup: existing.FamilyGroup,
 			BeforeJSON:  string(beforeBytes),
 			Summary:     fmt.Sprintf("Deleted schedule event '%s' (topic: %s)", existing.Title, existing.Topic),
@@ -597,13 +599,12 @@ func (m *Module) executeUpdateTopicEvent(ctx context.Context, callCtx orchestrat
 	}
 	eventID := uint(eventIDRaw)
 
-	familyGroup := callCtx.TenantFamilyGroup()
-	userID := callCtx.ActorID()
-	existing, err := repo.GetScheduleEvent(eventID)
+	existing, err := repo.GetScheduleEvent(callCtx.Scope, eventID)
 	if err != nil {
 		return "", fmt.Errorf("failed to lookup event %d: %w", eventID, err)
 	}
-	isAuthorized := existing != nil && ((familyGroup != "" && existing.FamilyGroup == familyGroup) || (existing.UserID != "" && existing.UserID == userID))
+	// Defence in depth: the repository only finds the household's own events (V4-30).
+	isAuthorized := existing != nil && callCtx.Scope.Valid() && existing.HouseholdID == callCtx.Scope.HouseholdID()
 	if !isAuthorized {
 		return fmt.Sprintf("Event with ID %d not found.", eventID), nil
 	}
@@ -650,7 +651,7 @@ func (m *Module) executeUpdateTopicEvent(ctx context.Context, callCtx orchestrat
 		}
 	}
 
-	if err := repo.UpdateScheduleEvent(existing); err != nil {
+	if err := repo.UpdateScheduleEvent(callCtx.Scope, existing); err != nil {
 		return "", fmt.Errorf("failed to update event: %w", err)
 	}
 
@@ -663,6 +664,7 @@ func (m *Module) executeUpdateTopicEvent(ctx context.Context, callCtx orchestrat
 			EntityType:  "ScheduleEvent",
 			EntityID:    strconv.FormatUint(uint64(eventID), 10),
 			ActorUserID: existing.UserID,
+			HouseholdID: existing.HouseholdID,
 			FamilyGroup: existing.FamilyGroup,
 			BeforeJSON:  string(beforeBytes),
 			AfterJSON:   string(afterBytes),

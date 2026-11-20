@@ -39,7 +39,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					},
 					"currency": {
 						Type:        genai.TypeString,
-						Description: "Currency code (e.g. 'USD', 'EUR', 'ILS'). Default is 'USD'.",
+						Description: "Currency code (e.g. 'USD', 'EUR', 'ILS'). Defaults to the household's currency, else 'USD'.",
 					},
 					"start_date": {
 						Type:        genai.TypeString,

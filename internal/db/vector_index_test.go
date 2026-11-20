@@ -84,10 +84,12 @@ func TestVectorSearch_TenantFilteredRecallWithIndex(t *testing.T) {
 
 	repo := NewMemoryV2Repo(client.DB)
 	query := mixVec(1.0, 0)
+	sOther := scopeFor(t, client, "fam_other")
+	sA := scopeAs(t, client, "fam_a", "user_a", "family")
 
 	// 120 memories close to the query, owned by ANOTHER family.
 	for i := 0; i < 120; i++ {
-		require.NoError(t, repo.SaveTopicMemory(ctx, &models.TopicMemory{
+		require.NoError(t, repo.SaveTopicMemory(ctx, sOther, &models.TopicMemory{
 			UserID: fmt.Sprintf("other-%d", i), FamilyGroup: "fam_other", Scope: "family",
 			Topic: "general", Subtopic: "fact", Fact: fmt.Sprintf("other fact %d", i),
 			Embedding: mixVec(0.9, int64(1000+i)),
@@ -95,7 +97,7 @@ func TestVectorSearch_TenantFilteredRecallWithIndex(t *testing.T) {
 	}
 	// 3 personal memories for our user, farther away.
 	for i := 0; i < 3; i++ {
-		require.NoError(t, repo.SaveTopicMemory(ctx, &models.TopicMemory{
+		require.NoError(t, repo.SaveTopicMemory(ctx, sA, &models.TopicMemory{
 			UserID: "user_a", FamilyGroup: "fam_a", Scope: "personal",
 			Topic: "general", Subtopic: "fact", Fact: fmt.Sprintf("user a fact %d", i),
 			Embedding: mixVec(0.2, int64(5000+i)),
@@ -109,7 +111,7 @@ func TestVectorSearch_TenantFilteredRecallWithIndex(t *testing.T) {
 		query).Scan(&naive).Error)
 	require.Less(t, naive, int64(3), "test setup must reproduce the filtered-HNSW recall loss")
 
-	got, err := repo.SearchSimilarMemories(ctx, "user_a", "fam_a", query, 5)
+	got, err := repo.SearchSimilarMemories(ctx, sA, query, 5)
 	require.NoError(t, err)
 	assert.Len(t, got, 3, "all of the user's memories must be found even when other tenants own the nearest neighbours")
 	for _, m := range got {
@@ -160,21 +162,22 @@ func TestVectorSearch_ReturnsNearestFirst(t *testing.T) {
 	ctx := context.Background()
 	repo := NewMemoryV2Repo(client.DB)
 
+	sO := scopeAs(t, client, "fam_o", "user_o", "family")
 	weights := []float64{0.1, 0.3, 0.5, 0.7, 0.95} // increasing similarity to the query
 	for i, w := range weights {
-		require.NoError(t, repo.SaveTopicMemory(ctx, &models.TopicMemory{
+		require.NoError(t, repo.SaveTopicMemory(ctx, sO, &models.TopicMemory{
 			UserID: "user_o", FamilyGroup: "fam_o", Scope: "personal", Topic: "general", Subtopic: "fact",
 			Fact: fmt.Sprintf("w=%.2f", w), Embedding: mixVec(w, int64(100+i)),
 		}))
 	}
 
-	got, err := repo.SearchSimilarMemories(ctx, "user_o", "fam_o", mixVec(1.0, 0), 3)
+	got, err := repo.SearchSimilarMemories(ctx, sO, mixVec(1.0, 0), 3)
 	require.NoError(t, err)
 	require.Len(t, got, 3)
 	assert.Equal(t, []string{"w=0.95", "w=0.70", "w=0.50"}, []string{got[0].Fact, got[1].Fact, got[2].Fact})
 
 	// The engine's retrieval entry point (Client.SearchSimilarMemories) orders too.
-	top, err := client.SearchSimilarMemories(ctx, "user_o", "fam_o", mixVec(1.0, 0), 1)
+	top, err := client.SearchSimilarMemories(ctx, sO, mixVec(1.0, 0), 1)
 	require.NoError(t, err)
 	require.Len(t, top, 1)
 	assert.Equal(t, "w=0.95", top[0].Fact)

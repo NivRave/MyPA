@@ -3,6 +3,8 @@ package schedule
 import (
 	"context"
 	"fmt"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +19,27 @@ import (
 	"google.golang.org/api/calendar/v3"
 )
 
-// fakeScheduleRepo provides a thread-safe, in-memory implementation of db.ScheduleRepository.
+// households is the in-memory household store the scopes of these tests are built against (V4-30).
+var households = identitytest.NewStore()
+
+// mustScope returns the scope of user in the household labelled label (usable at package level).
+func mustScope(label, user string) identity.Scope {
+	h := households.Household(label)
+	s, err := identity.ForUser(context.Background(), households, &models.User{PlatformID: user, Role: "family", HouseholdID: h.ID})
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+// sc returns the scope of user in the household labelled label.
+func sc(t testing.TB, label, user string) identity.Scope {
+	t.Helper()
+	return mustScope(label, user)
+}
+
+// fakeScheduleRepo provides a thread-safe, in-memory implementation of db.ScheduleRepository,
+// with the same household scoping as the real repository.
 type fakeScheduleRepo struct {
 	mu        sync.RWMutex
 	events    map[uint]*models.ScheduleEvent
@@ -35,9 +57,13 @@ func newFakeScheduleRepo() *fakeScheduleRepo {
 	}
 }
 
-func (r *fakeScheduleRepo) CreateScheduleEvent(ev *models.ScheduleEvent) error {
+func (r *fakeScheduleRepo) CreateScheduleEvent(s identity.Scope, ev *models.ScheduleEvent) error {
+	if !s.Valid() {
+		return identity.ErrNoScope
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	ev.HouseholdID, ev.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	ev.ID = r.nextEvtID
 	r.nextEvtID++
 	if ev.CreatedAt.IsZero() {
@@ -48,36 +74,51 @@ func (r *fakeScheduleRepo) CreateScheduleEvent(ev *models.ScheduleEvent) error {
 	return nil
 }
 
-func (r *fakeScheduleRepo) GetScheduleEvent(id uint, familyGroup ...string) (*models.ScheduleEvent, error) {
+func (r *fakeScheduleRepo) GetScheduleEvent(s identity.Scope, id uint) (*models.ScheduleEvent, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	ev, ok := r.events[id]
-	if !ok {
+	if !ok || ev.HouseholdID != s.HouseholdID() {
 		return nil, nil
 	}
 	cp := *ev
 	return &cp, nil
 }
 
-func (r *fakeScheduleRepo) UpdateScheduleEvent(ev *models.ScheduleEvent) error {
+func (r *fakeScheduleRepo) UpdateScheduleEvent(s identity.Scope, ev *models.ScheduleEvent) error {
+	if !s.Valid() {
+		return identity.ErrNoScope
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.events[ev.ID]; !ok {
+	if cur, ok := r.events[ev.ID]; !ok || cur.HouseholdID != s.HouseholdID() {
 		return fmt.Errorf("event %d not found", ev.ID)
 	}
+	ev.HouseholdID, ev.FamilyGroup = s.HouseholdID(), s.LegacyLabel()
 	cp := *ev
 	r.events[ev.ID] = &cp
 	return nil
 }
 
-func (r *fakeScheduleRepo) DeleteScheduleEvent(id uint, familyGroup ...string) error {
+func (r *fakeScheduleRepo) DeleteScheduleEvent(s identity.Scope, id uint) error {
+	if !s.Valid() {
+		return identity.ErrNoScope
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.events, id)
+	if ev, ok := r.events[id]; ok && ev.HouseholdID == s.HouseholdID() {
+		delete(r.events, id)
+	}
 	return nil
 }
 
-func (r *fakeScheduleRepo) ListScheduleEvents(userID, familyGroup, topic string, start, end time.Time) ([]models.ScheduleEvent, error) {
+func (r *fakeScheduleRepo) ListScheduleEvents(s identity.Scope, topic string, start, end time.Time) ([]models.ScheduleEvent, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -85,14 +126,11 @@ func (r *fakeScheduleRepo) ListScheduleEvents(userID, familyGroup, topic string,
 	normTopic := strings.ToLower(strings.TrimSpace(topic))
 
 	for _, e := range r.events {
-		// User & Family filter
-		if userID != "" && familyGroup != "" {
-			if e.UserID != userID && (e.FamilyGroup != familyGroup || !e.IsShared) {
-				continue
-			}
-		} else if userID != "" && e.UserID != userID {
+		// Household, then shared events plus the person's own
+		if e.HouseholdID != s.HouseholdID() {
 			continue
-		} else if familyGroup != "" && e.FamilyGroup != familyGroup {
+		}
+		if !e.IsShared && (s.PersonKey() == "" || e.UserID != s.PersonKey()) {
 			continue
 		}
 
@@ -226,12 +264,12 @@ func TestScheduleRepository_CRUD(t *testing.T) {
 	require.NoError(t, ev.SetTags([]string{"pediatrician", "checkup"}))
 
 	// Create
-	err := repo.CreateScheduleEvent(ev)
+	err := repo.CreateScheduleEvent(sc(t, "Smiths", "usr_1"), ev)
 	require.NoError(t, err)
 	assert.Equal(t, uint(1), ev.ID)
 
 	// Read
-	got, err := repo.GetScheduleEvent(1)
+	got, err := repo.GetScheduleEvent(sc(t, "Smiths", "usr_1"), 1)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, "Pediatrician Visit", got.Title)
@@ -239,23 +277,23 @@ func TestScheduleRepository_CRUD(t *testing.T) {
 
 	// Update
 	got.Title = "Pediatrician 6-Month Checkup"
-	err = repo.UpdateScheduleEvent(got)
+	err = repo.UpdateScheduleEvent(sc(t, "Smiths", "usr_1"), got)
 	require.NoError(t, err)
 
-	updated, err := repo.GetScheduleEvent(1)
+	updated, err := repo.GetScheduleEvent(sc(t, "Smiths", "usr_1"), 1)
 	require.NoError(t, err)
 	assert.Equal(t, "Pediatrician 6-Month Checkup", updated.Title)
 
 	// List
-	list, err := repo.ListScheduleEvents("usr_1", "Smiths", "baby", now.Add(-1*time.Hour), now.Add(2*time.Hour))
+	list, err := repo.ListScheduleEvents(sc(t, "Smiths", "usr_1"), "baby", now.Add(-1*time.Hour), now.Add(2*time.Hour))
 	require.NoError(t, err)
 	assert.Len(t, list, 1)
 
 	// Delete
-	err = repo.DeleteScheduleEvent(1)
+	err = repo.DeleteScheduleEvent(sc(t, "Smiths", "usr_1"), 1)
 	require.NoError(t, err)
 
-	deleted, err := repo.GetScheduleEvent(1)
+	deleted, err := repo.GetScheduleEvent(sc(t, "Smiths", "usr_1"), 1)
 	require.NoError(t, err)
 	assert.Nil(t, deleted)
 
@@ -311,6 +349,7 @@ func TestModule_VirtualSubCalendar_PrefixingAndColor(t *testing.T) {
 
 	callCtx := orchestrator.CallContext{
 		User:    user,
+		Scope:   sc(t, "AliceFamily", "tg_123"),
 		Message: channel.Inbound{Sender: "tg_123"},
 	}
 
@@ -360,7 +399,8 @@ func TestModule_InternalOnly_Schedules(t *testing.T) {
 	}))
 
 	callCtx := orchestrator.CallContext{
-		User: user,
+		User:  user,
+		Scope: sc(t, "AliceFamily", "tg_123"),
 	}
 
 	res, err := mod.Execute(context.Background(), callCtx, "schedule_topic_event", map[string]interface{}{
@@ -378,7 +418,7 @@ func TestModule_InternalOnly_Schedules(t *testing.T) {
 	assert.Empty(t, calMock.createdEvents)
 
 	// Database should contain the event
-	events, err := repo.ListScheduleEvents("tg_123", "AliceFamily", "baby", time.Time{}, time.Time{})
+	events, err := repo.ListScheduleEvents(sc(t, "AliceFamily", "tg_123"), "baby", time.Time{}, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, "Afternoon Feed 150ml", events[0].Title)
@@ -418,7 +458,8 @@ func TestModule_PartnerCalendarSync(t *testing.T) {
 	}))
 
 	callCtx := orchestrator.CallContext{
-		User: user,
+		User:  user,
+		Scope: sc(t, "Smiths", "tg_alice"),
 		Extra: map[string]interface{}{
 			"partner_user_id": partner.PlatformID,
 		},
@@ -442,7 +483,7 @@ func TestModule_PartnerCalendarSync(t *testing.T) {
 	assert.Equal(t, "[House] Boiler Inspection", partnerCalMock.createdEvents[0].Title)
 
 	// Database record should have both IDs stored
-	events, err := repo.ListScheduleEvents("tg_alice", "Smiths", "house", time.Time{}, time.Time{})
+	events, err := repo.ListScheduleEvents(sc(t, "Smiths", "tg_alice"), "house", time.Time{}, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.NotEmpty(t, events[0].ExternalGoogleEventID)
@@ -467,6 +508,7 @@ func TestModule_EventBus_Mutations(t *testing.T) {
 
 	callCtx := orchestrator.CallContext{
 		User:     &models.User{PlatformID: "usr_alice", FamilyGroup: "Family1"},
+		Scope:    sc(t, "Family1", "usr_alice"),
 		EventBus: bus,
 	}
 
@@ -525,7 +567,7 @@ func TestModule_ListTopicSchedule_Merging(t *testing.T) {
 	now := time.Now().Truncate(time.Hour)
 
 	// DB internal event
-	err := repo.CreateScheduleEvent(&models.ScheduleEvent{
+	err := repo.CreateScheduleEvent(sc(t, "usr_1", "usr_1"), &models.ScheduleEvent{
 		UserID:       "usr_1",
 		Topic:        "baby",
 		Title:        "Morning Feeding",
@@ -558,7 +600,8 @@ func TestModule_ListTopicSchedule_Merging(t *testing.T) {
 	}))
 
 	callCtx := orchestrator.CallContext{
-		User: &models.User{PlatformID: "usr_1"},
+		User:  &models.User{PlatformID: "usr_1"},
+		Scope: sc(t, "usr_1", "usr_1"),
 	}
 
 	// Query for topic 'baby'
@@ -593,7 +636,7 @@ func TestModule_SystemPromptSection(t *testing.T) {
 	})
 
 	// Add upcoming event
-	_ = repo.CreateScheduleEvent(&models.ScheduleEvent{
+	_ = repo.CreateScheduleEvent(sc(t, "MyFamily", "usr_1"), &models.ScheduleEvent{
 		UserID:       "usr_1",
 		Topic:        "baby",
 		Title:        "Pediatrician Checkup",
@@ -603,7 +646,7 @@ func TestModule_SystemPromptSection(t *testing.T) {
 	})
 
 	mod := NewModule(repo)
-	callCtx := orchestrator.CallContext{User: user}
+	callCtx := orchestrator.CallContext{User: user, Scope: sc(t, "MyFamily", "usr_1")}
 
 	prompt := mod.SystemPromptSection(context.Background(), callCtx)
 	assert.Contains(t, prompt, "Multi-Schedule Engine & Virtual Sub-Calendars")
@@ -620,7 +663,7 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 
 	// 1. User Alpha creates an event in family_alpha
 	userAlpha := &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
-	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Message: channel.Inbound{Sender: "user_alpha"}}
+	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Scope: sc(t, "family_alpha", "user_alpha"), Message: channel.Inbound{Sender: "user_alpha"}}
 
 	createResp, err := mod.Execute(ctx, callCtxAlpha, "schedule_topic_event", map[string]interface{}{
 		"topic":      "medical",
@@ -632,14 +675,14 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 	assert.Contains(t, createResp, "Alpha Doctor Appointment")
 
 	// Event 1 exists
-	ev1, err := repo.GetScheduleEvent(1)
+	ev1, err := repo.GetScheduleEvent(sc(t, "family_alpha", "user_alpha"), 1)
 	require.NoError(t, err)
 	require.NotNil(t, ev1)
 	assert.Equal(t, "family_alpha", ev1.FamilyGroup)
 
 	// 2. User Beta (family_beta) attempts to UPDATE Event 1
 	userBeta := &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"}
-	callCtxBeta := orchestrator.CallContext{User: userBeta, Message: channel.Inbound{Sender: "user_beta"}}
+	callCtxBeta := orchestrator.CallContext{User: userBeta, Scope: sc(t, "family_beta", "user_beta"), Message: channel.Inbound{Sender: "user_beta"}}
 
 	updateBetaResp, err := mod.Execute(ctx, callCtxBeta, "update_topic_event", map[string]interface{}{
 		"event_id": 1,
@@ -649,7 +692,7 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 	assert.Contains(t, updateBetaResp, "not found", "Cross-tenant update must return not found without mutating")
 
 	// Verify Event 1 was NOT mutated
-	ev1After, err := repo.GetScheduleEvent(1)
+	ev1After, err := repo.GetScheduleEvent(sc(t, "family_alpha", "user_alpha"), 1)
 	require.NoError(t, err)
 	assert.Equal(t, "Alpha Doctor Appointment", ev1After.Title)
 
@@ -661,7 +704,7 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 	assert.Contains(t, deleteBetaResp, "not found", "Cross-tenant delete must return not found without deleting")
 
 	// Verify Event 1 still exists
-	ev1StillExists, err := repo.GetScheduleEvent(1)
+	ev1StillExists, err := repo.GetScheduleEvent(sc(t, "family_alpha", "user_alpha"), 1)
 	require.NoError(t, err)
 	require.NotNil(t, ev1StillExists)
 
@@ -673,7 +716,7 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, updateAlphaResp, "Alpha Pediatrician Visit")
 
-	ev1Updated, err := repo.GetScheduleEvent(1)
+	ev1Updated, err := repo.GetScheduleEvent(sc(t, "family_alpha", "user_alpha"), 1)
 	require.NoError(t, err)
 	assert.Equal(t, "Alpha Pediatrician Visit", ev1Updated.Title)
 
@@ -684,7 +727,46 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, deleteAlphaResp, "successfully deleted")
 
-	ev1Deleted, err := repo.GetScheduleEvent(1)
+	ev1Deleted, err := repo.GetScheduleEvent(sc(t, "family_alpha", "user_alpha"), 1)
 	require.NoError(t, err)
 	assert.Nil(t, ev1Deleted)
+}
+
+// V4-30 (review finding): every schedule mutation carries the household, or the mutation log
+// drops it and the write cannot be undone.
+func TestModule_EveryMutationEventCarriesTheHousehold(t *testing.T) {
+	repo := newFakeScheduleRepo()
+	bus := events.NewEventBus()
+	var published []events.MutationEvent
+	var mu sync.Mutex
+	bus.SubscribeTopic("schedule", func(ctx context.Context, ev events.MutationEvent) error {
+		mu.Lock()
+		defer mu.Unlock()
+		published = append(published, ev)
+		return nil
+	})
+	mod := NewModule(repo, WithEventBus(bus))
+	scope := sc(t, "Family1", "usr_alice")
+	callCtx := orchestrator.CallContext{User: &models.User{PlatformID: "usr_alice", FamilyGroup: "Family1"}, Scope: scope, EventBus: bus}
+
+	_, err := mod.Execute(context.Background(), callCtx, "schedule_topic_event", map[string]interface{}{
+		"title": "Gym Session", "topic": "health", "start_time": "2026-11-04T07:00:00Z", "sync_to_google": false,
+	})
+	require.NoError(t, err)
+	_, err = mod.Execute(context.Background(), callCtx, "configure_topic_calendar", map[string]interface{}{
+		"topic": "health", "prefix_tag": "Fitness", "color_id": "2",
+	})
+	require.NoError(t, err)
+	_, err = mod.Execute(context.Background(), callCtx, "update_topic_event", map[string]interface{}{"event_id": 1, "title": "Intense"})
+	require.NoError(t, err)
+	_, err = mod.Execute(context.Background(), callCtx, "delete_topic_event", map[string]interface{}{"event_id": 1})
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, published, 4)
+	for _, ev := range published {
+		assert.Equal(t, scope.HouseholdID(), ev.HouseholdID, "%s %s carries the household", ev.Action, ev.EntityType)
+		assert.Equal(t, scope.LegacyLabel(), ev.FamilyGroup, "%s %s carries the legacy label", ev.Action, ev.EntityType)
+	}
 }

@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 
 	gmail "github.com/nivik/mypa/internal/gmail"
+	identity "github.com/nivik/mypa/internal/identity"
 	llm "github.com/nivik/mypa/internal/llm"
 	models "github.com/nivik/mypa/internal/models"
 	pgvector "github.com/pgvector/pgvector-go"
@@ -526,17 +527,17 @@ func (m *MockDBClient) EXPECT() *MockDBClientMockRecorder {
 }
 
 // CreatePairingCode mocks base method.
-func (m *MockDBClient) CreatePairingCode(pc models.PairingCode) error {
+func (m *MockDBClient) CreatePairingCode(s identity.Scope, pc models.PairingCode) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreatePairingCode", pc)
+	ret := m.ctrl.Call(m, "CreatePairingCode", s, pc)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CreatePairingCode indicates an expected call of CreatePairingCode.
-func (mr *MockDBClientMockRecorder) CreatePairingCode(pc any) *gomock.Call {
+func (mr *MockDBClientMockRecorder) CreatePairingCode(s, pc any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreatePairingCode", reflect.TypeOf((*MockDBClient)(nil).CreatePairingCode), pc)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreatePairingCode", reflect.TypeOf((*MockDBClient)(nil).CreatePairingCode), s, pc)
 }
 
 // DeleteWorkflow mocks base method.
@@ -658,19 +659,34 @@ func (mr *MockDBClientMockRecorder) GetUserWorkflows(userID any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserWorkflows", reflect.TypeOf((*MockDBClient)(nil).GetUserWorkflows), userID)
 }
 
-// GetUsersByFamilyGroup mocks base method.
-func (m *MockDBClient) GetUsersByFamilyGroup(familyGroup string) ([]models.User, error) {
+// HouseholdByID mocks base method.
+func (m *MockDBClient) HouseholdByID(ctx context.Context, id string) (*models.Household, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUsersByFamilyGroup", familyGroup)
-	ret0, _ := ret[0].([]models.User)
+	ret := m.ctrl.Call(m, "HouseholdByID", ctx, id)
+	ret0, _ := ret[0].(*models.Household)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetUsersByFamilyGroup indicates an expected call of GetUsersByFamilyGroup.
-func (mr *MockDBClientMockRecorder) GetUsersByFamilyGroup(familyGroup any) *gomock.Call {
+// HouseholdByID indicates an expected call of HouseholdByID.
+func (mr *MockDBClientMockRecorder) HouseholdByID(ctx, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsersByFamilyGroup", reflect.TypeOf((*MockDBClient)(nil).GetUsersByFamilyGroup), familyGroup)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HouseholdByID", reflect.TypeOf((*MockDBClient)(nil).HouseholdByID), ctx, id)
+}
+
+// HouseholdsByLabel mocks base method.
+func (m *MockDBClient) HouseholdsByLabel(ctx context.Context, label string) ([]models.Household, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HouseholdsByLabel", ctx, label)
+	ret0, _ := ret[0].([]models.Household)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// HouseholdsByLabel indicates an expected call of HouseholdsByLabel.
+func (mr *MockDBClientMockRecorder) HouseholdsByLabel(ctx, label any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HouseholdsByLabel", reflect.TypeOf((*MockDBClient)(nil).HouseholdsByLabel), ctx, label)
 }
 
 // MarkReminderSent mocks base method.
@@ -688,17 +704,17 @@ func (mr *MockDBClientMockRecorder) MarkReminderSent(id any) *gomock.Call {
 }
 
 // MarkSharedReminderSent mocks base method.
-func (m *MockDBClient) MarkSharedReminderSent(id uint) error {
+func (m *MockDBClient) MarkSharedReminderSent(s identity.Scope, id uint) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkSharedReminderSent", id)
+	ret := m.ctrl.Call(m, "MarkSharedReminderSent", s, id)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // MarkSharedReminderSent indicates an expected call of MarkSharedReminderSent.
-func (mr *MockDBClientMockRecorder) MarkSharedReminderSent(id any) *gomock.Call {
+func (mr *MockDBClientMockRecorder) MarkSharedReminderSent(s, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkSharedReminderSent", reflect.TypeOf((*MockDBClient)(nil).MarkSharedReminderSent), id)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkSharedReminderSent", reflect.TypeOf((*MockDBClient)(nil).MarkSharedReminderSent), s, id)
 }
 
 // RedeemPairingCode mocks base method.
@@ -744,18 +760,18 @@ func (mr *MockDBClientMockRecorder) SaveWorkflow(w any) *gomock.Call {
 }
 
 // SearchSimilarMemories mocks base method.
-func (m *MockDBClient) SearchSimilarMemories(ctx context.Context, userID, familyGroup string, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
+func (m *MockDBClient) SearchSimilarMemories(ctx context.Context, s identity.Scope, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SearchSimilarMemories", ctx, userID, familyGroup, embedding, limit)
+	ret := m.ctrl.Call(m, "SearchSimilarMemories", ctx, s, embedding, limit)
 	ret0, _ := ret[0].([]models.TopicMemory)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // SearchSimilarMemories indicates an expected call of SearchSimilarMemories.
-func (mr *MockDBClientMockRecorder) SearchSimilarMemories(ctx, userID, familyGroup, embedding, limit any) *gomock.Call {
+func (mr *MockDBClientMockRecorder) SearchSimilarMemories(ctx, s, embedding, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SearchSimilarMemories", reflect.TypeOf((*MockDBClient)(nil).SearchSimilarMemories), ctx, userID, familyGroup, embedding, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SearchSimilarMemories", reflect.TypeOf((*MockDBClient)(nil).SearchSimilarMemories), ctx, s, embedding, limit)
 }
 
 // UpsertUser mocks base method.
@@ -770,6 +786,21 @@ func (m *MockDBClient) UpsertUser(u models.User) error {
 func (mr *MockDBClientMockRecorder) UpsertUser(u any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertUser", reflect.TypeOf((*MockDBClient)(nil).UpsertUser), u)
+}
+
+// UsersInHousehold mocks base method.
+func (m *MockDBClient) UsersInHousehold(ctx context.Context, s identity.Scope) ([]models.User, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UsersInHousehold", ctx, s)
+	ret0, _ := ret[0].([]models.User)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UsersInHousehold indicates an expected call of UsersInHousehold.
+func (mr *MockDBClientMockRecorder) UsersInHousehold(ctx, s any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UsersInHousehold", reflect.TypeOf((*MockDBClient)(nil).UsersInHousehold), ctx, s)
 }
 
 // MockEventPublisher is a mock of EventPublisher interface.

@@ -184,6 +184,7 @@ func TestAdversarial_SEC01_PairingCodeRedemption(t *testing.T) {
 			ID:          "pc-1",
 			Code:        validCode,
 			Role:        "family",
+			HouseholdID: householdID("AdversaryFamily"),
 			FamilyGroup: "AdversaryFamily",
 			ExpiresAt:   time.Now().Add(10 * time.Minute),
 		}, nil)
@@ -214,6 +215,7 @@ func TestAdversarial_SEC01_PairingCodeRedemption(t *testing.T) {
 			ID:          "pc-2",
 			Code:        validCode,
 			Role:        "admin",
+			HouseholdID: householdID("AdminFamily"),
 			FamilyGroup: "AdminFamily",
 			ExpiresAt:   time.Now().Add(10 * time.Minute),
 		}, nil)
@@ -253,6 +255,7 @@ func TestAdversarial_SEC01_RBAC_NonAdminRolesDenied(t *testing.T) {
 				Role:        role,
 				FamilyGroup: "TestFamily",
 			}
+			inHousehold(user)
 
 			// /backup denied
 			dbMock.EXPECT().GetUser(userID).Return(user, nil)

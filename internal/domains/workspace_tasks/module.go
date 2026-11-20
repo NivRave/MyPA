@@ -217,7 +217,8 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 			EntityType:  "TaskList",
 			EntityID:    listID,
 			ActorUserID: actorID,
-			FamilyGroup: callCtx.TenantFamilyGroup(),
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			Summary:     fmt.Sprintf("Created task list '%s'", title),
 		})
 
@@ -260,7 +261,8 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 			EntityType:  "Task",
 			EntityID:    title,
 			ActorUserID: actorID,
-			FamilyGroup: callCtx.TenantFamilyGroup(),
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			Summary:     fmt.Sprintf("Created task '%s'", title),
 		})
 
@@ -286,7 +288,8 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 			EntityType:  "Task",
 			EntityID:    taskID,
 			ActorUserID: actorID,
-			FamilyGroup: callCtx.TenantFamilyGroup(),
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			Summary:     fmt.Sprintf("Completed task '%s'", taskID),
 		})
 
@@ -312,7 +315,8 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 			EntityType:  "Task",
 			EntityID:    taskID,
 			ActorUserID: actorID,
-			FamilyGroup: callCtx.TenantFamilyGroup(),
+			HouseholdID: callCtx.Scope.HouseholdID(),
+			FamilyGroup: callCtx.Scope.LegacyLabel(),
 			Summary:     fmt.Sprintf("Deleted task '%s'", taskID),
 		})
 

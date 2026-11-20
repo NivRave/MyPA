@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
+	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"strconv"
@@ -13,26 +14,26 @@ import (
 	"time"
 )
 
-// resolveContext extracts familyGroup and userID canonically from callCtx.
-func (m *Module) resolveContext(callCtx orchestrator.CallContext) (string, string) {
-	return callCtx.TenantFamilyGroup(), callCtx.ActorID()
+// resolveContext returns the caller's household scope (V4-30) and user ID from callCtx.
+func (m *Module) resolveContext(callCtx orchestrator.CallContext) (identity.Scope, string) {
+	return callCtx.Scope, callCtx.ActorID()
 }
 
 // resolveBabyProfile locates a baby profile by ID, name, or auto-selection if only one baby exists.
-func (m *Module) resolveBabyProfile(repo db.BabyRepository, familyGroup string, babyID uint, babyName string) (*models.BabyProfile, error) {
+func (m *Module) resolveBabyProfile(repo db.BabyRepository, scope identity.Scope, babyID uint, babyName string) (*models.BabyProfile, error) {
 	if babyID > 0 {
-		p, err := repo.GetBabyProfile(babyID)
+		p, err := repo.GetBabyProfile(scope, babyID)
 		if err != nil {
 			return nil, err
 		}
-		if p == nil || p.FamilyGroup != familyGroup {
-			return nil, fmt.Errorf("baby profile with ID %d not found in family %q", babyID, familyGroup)
+		if p == nil || p.HouseholdID != scope.HouseholdID() {
+			return nil, fmt.Errorf("baby profile with ID %d not found in family %q", babyID, scope.LegacyLabel())
 		}
 		return p, nil
 	}
 
 	if strings.TrimSpace(babyName) != "" {
-		p, err := repo.GetBabyProfileByName(familyGroup, babyName)
+		p, err := repo.GetBabyProfileByName(scope, babyName)
 		if err != nil {
 			return nil, err
 		}
@@ -42,7 +43,7 @@ func (m *Module) resolveBabyProfile(repo db.BabyRepository, familyGroup string, 
 	}
 
 	// Auto-select if family only has 1 baby
-	profiles, err := repo.GetBabyProfilesForFamily(familyGroup)
+	profiles, err := repo.GetBabyProfilesForFamily(scope)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +51,7 @@ func (m *Module) resolveBabyProfile(repo db.BabyRepository, familyGroup string, 
 		return &profiles[0], nil
 	}
 	if len(profiles) == 0 {
-		return nil, fmt.Errorf("no baby profiles registered for family '%s'. Please create a profile first", familyGroup)
+		return nil, fmt.Errorf("no baby profiles registered for family '%s'. Please create a profile first", scope.LegacyLabel())
 	}
 
 	var names []string
@@ -61,7 +62,7 @@ func (m *Module) resolveBabyProfile(repo db.BabyRepository, familyGroup string, 
 }
 
 // publishMutation emits a standardized MutationEvent for audit, undo, and partner notifications.
-func (m *Module) publishMutation(ctx context.Context, callCtx orchestrator.CallContext, action, entityType, entityID, familyGroup, userID, summary string) {
+func (m *Module) publishMutation(ctx context.Context, callCtx orchestrator.CallContext, action, entityType, entityID string, scope identity.Scope, userID, summary string) {
 	bus := m.bus
 	if bus == nil && callCtx.EventBus != nil {
 		bus = callCtx.EventBus
@@ -76,7 +77,8 @@ func (m *Module) publishMutation(ctx context.Context, callCtx orchestrator.CallC
 		EntityType:  entityType,
 		EntityID:    entityID,
 		ActorUserID: userID,
-		FamilyGroup: familyGroup,
+		HouseholdID: scope.HouseholdID(),
+		FamilyGroup: scope.LegacyLabel(),
 		Summary:     summary,
 		Timestamp:   time.Now(),
 	}
