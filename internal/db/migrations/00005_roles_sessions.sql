@@ -7,8 +7,9 @@
 -- and is still written ("admin" for an owner, "family" otherwise), so the release before V4 reads
 -- what it always read; V4-44 drops it with users.
 --
--- Pairing codes still outstanding keep working until they expire (24 hours at most), as an adult,
--- a child or a guest: a code never makes an owner (Decision 5).
+-- Pairing codes still outstanding keep working until they expire (24 hours at most), as an adult
+-- or a child: a code never makes an owner (Decision 5). A code left as guest pairs nobody until
+-- topics can be shared with a guest by name (BL-46).
 
 -- +goose Up
 UPDATE public.memberships m
