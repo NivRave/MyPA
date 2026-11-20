@@ -42,6 +42,7 @@ type Store interface {
 // Scope is who is acting and in which household. The zero value is invalid.
 type Scope struct {
 	household models.Household
+	personID  string
 	personKey string
 	role      Role
 	operator  bool
@@ -78,10 +79,14 @@ func (s Scope) Household() models.Household {
 	return h
 }
 
-// PersonKey is the acting person's key as the modules write it today: the sender's platform ID,
-// the dashboard's actor ID, or a stored row's user ID (ADR 0002 §9: each module keeps writing
-// the key it writes today until V4-32).
+// PersonKey is the acting person's key as the modules write it into the old person columns: the
+// platform ID of the person's users row (the same whichever account they write from, V4-32), the
+// dashboard's actor ID, or a stored row's user ID. The database fills the person_id beside it.
 func (s Scope) PersonKey() string { return s.personKey }
+
+// PersonID is the acting person's people.id (V4-32): the same for every channel account of one
+// person. Empty for a dashboard caller (until V4-35 signs people in) and for a scheduled job.
+func (s Scope) PersonID() string { return s.personID }
 
 // Role is the acting person's role.
 func (s Scope) Role() Role { return s.role }
@@ -119,7 +124,9 @@ func (s Scope) Currency(fallback string) string {
 func (s Scope) Language() string { return strings.TrimSpace(s.household.Language) }
 
 // ForUser builds the scope of a verified sender from their users row. The household is read
-// from the database by the row's household_id.
+// from the database by the row's household_id. Since V4-32 the row is the person's own, found
+// through the channel account the message came from, so every account of one person gets the
+// same scope; the person is the row's ID (a person keeps users.id).
 func ForUser(ctx context.Context, st Store, u *models.User) (Scope, error) {
 	if u == nil {
 		return Scope{}, fmt.Errorf("%w: no user", ErrNoScope)
@@ -129,7 +136,7 @@ func ForUser(ctx context.Context, st Store, u *models.User) (Scope, error) {
 		return Scope{}, err
 	}
 	role := ParseRole(u.Role)
-	return Scope{household: *h, personKey: strings.TrimSpace(u.PlatformID), role: role, operator: role == RoleAdmin, audience: Direct}, nil
+	return Scope{household: *h, personID: strings.TrimSpace(u.ID), personKey: strings.TrimSpace(u.PlatformID), role: role, operator: role == RoleAdmin, audience: Direct}, nil
 }
 
 // ForLabel builds the scope of a dashboard caller bound to a family label (the dashboard secret's

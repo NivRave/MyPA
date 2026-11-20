@@ -24,7 +24,7 @@ func TestBootstrapHouseholds_SeedsOnceThenTheDatabaseDecides(t *testing.T) {
 		{PlatformID: "2002", Name: "Avi", Role: "family", FamilyGroup: "Cohen"},
 		{PlatformID: "3001", Name: "Solo", Role: "family"},
 	}
-	res, err := client.BootstrapHouseholds(ctx, entries, "Asia/Jerusalem")
+	res, err := client.BootstrapHouseholds(ctx, entries, "Asia/Jerusalem", telegramIDs)
 	require.NoError(t, err)
 	assert.False(t, res.Ignored)
 	assert.Equal(t, 3, res.Households)
@@ -62,7 +62,7 @@ func TestBootstrapHouseholds_SeedsOnceThenTheDatabaseDecides(t *testing.T) {
 	require.NoError(t, client.DB.Model(&models.User{}).Where("platform_id = ?", "1002").Update("role", "admin").Error)
 	changed := append(entries, models.User{PlatformID: "9009", Name: "Late", Role: "admin", FamilyGroup: "Levi"})
 	changed[1].Role = "family"
-	res, err = client.BootstrapHouseholds(ctx, changed, "UTC")
+	res, err = client.BootstrapHouseholds(ctx, changed, "UTC", telegramIDs)
 	require.NoError(t, err)
 	assert.True(t, res.Ignored)
 	assert.Zero(t, res.Households)
@@ -75,11 +75,63 @@ func TestBootstrapHouseholds_SeedsOnceThenTheDatabaseDecides(t *testing.T) {
 func TestBootstrapHouseholds_EmptySettingCreatesNothing(t *testing.T) {
 	client, cleanup := setupTestDB(t)
 	defer cleanup()
-	res, err := client.BootstrapHouseholds(context.Background(), nil, "UTC")
+	res, err := client.BootstrapHouseholds(context.Background(), nil, "UTC", telegramIDs)
 	require.NoError(t, err)
 	assert.False(t, res.Ignored)
 	assert.Zero(t, res.Households)
 	n, err := client.CountHouseholds(context.Background())
 	require.NoError(t, err)
 	assert.Zero(t, n)
+}
+
+// telegramIDs names the channel of a test platform ID: a leading '+' is WhatsApp, a "9" prefix is
+// unknown, anything else Telegram.
+func telegramIDs(id string) string {
+	switch {
+	case len(id) > 0 && id[0] == '+':
+		return "whatsapp"
+	case len(id) > 0 && id[0] == '9':
+		return ""
+	default:
+		return "telegram"
+	}
+}
+
+// V4-32: every entry the bootstrap creates is a person (keeping the user's ID), a member of its
+// household and the owner of one channel account, named by the entry's channel; an entry whose
+// channel is unknown is counted and gets no account.
+func TestBootstrapHouseholds_EveryEntryIsAPersonWithAnAccount(t *testing.T) {
+	client, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	entries := []models.User{
+		{PlatformID: "1001", Name: "Dana", Role: "admin", FamilyGroup: "Levi"},
+		{PlatformID: "+15550001002", Name: "Omer", Role: "family", FamilyGroup: "Levi"},
+		{PlatformID: "9003", Name: "Unknown channel", Role: "family", FamilyGroup: "Levi"},
+	}
+	res, err := client.BootstrapHouseholds(ctx, entries, "UTC", telegramIDs)
+	require.NoError(t, err)
+	assert.Equal(t, 3, res.Users)
+	assert.Equal(t, 1, res.NoChannel)
+
+	dana, err := client.UserForAccount(ctx, "telegram", "1001")
+	require.NoError(t, err)
+	assert.Equal(t, "Dana", dana.Name)
+	omer, err := client.UserForAccount(ctx, "whatsapp", "+15550001002")
+	require.NoError(t, err)
+	assert.Equal(t, dana.HouseholdID, omer.HouseholdID)
+
+	for _, u := range []*models.User{dana, omer} {
+		p, err := client.PersonByID(ctx, u.ID)
+		require.NoError(t, err)
+		require.NotNil(t, p, "the person keeps the user's ID")
+		require.NotNil(t, p.PreferredAccountID, "the one account is the preferred one")
+		var m models.Membership
+		require.NoError(t, client.DB.Where("person_id = ?", u.ID).First(&m).Error)
+		assert.Equal(t, u.HouseholdID, m.HouseholdID)
+	}
+	nobody, err := client.UserForAccount(ctx, "telegram", "9003")
+	assert.Error(t, err, "an entry with an unknown channel cannot write until it has an account")
+	assert.Nil(t, nobody)
 }

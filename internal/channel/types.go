@@ -62,7 +62,7 @@ type Inbound struct {
 	// the sender when Conversation.ID is empty); the duplicate claim uses both.
 	MessageID string `json:"message_id"`
 	// Sender is the person's ID on this channel, verified by the adapter and never taken from the
-	// message text. Until V4-32 it is matched against users.platform_id.
+	// message text. It names a channel account, which belongs to one person (V4-32).
 	Sender       string       `json:"sender"`
 	Conversation Conversation `json:"conversation"`
 	Text         string       `json:"text,omitempty"`

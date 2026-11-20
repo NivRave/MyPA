@@ -98,6 +98,11 @@ func AutoMigrateSchema(db *gorm.DB) error {
 		&models.User{},
 		&models.PairingCode{},
 		&models.Workflow{},
+		// V4-32: people and their channel accounts, memberships and access tokens.
+		&models.Person{},
+		&models.ChannelAccount{},
+		&models.Membership{},
+		&models.AccessToken{},
 	}
 	allModels := append(baseModels, GetRegisteredModels()...)
 	if err := db.AutoMigrate(allModels...); err != nil {
@@ -107,6 +112,9 @@ func AutoMigrateSchema(db *gorm.DB) error {
 		return fmt.Errorf("failed to apply custom database indexes: %w", err)
 	}
 	if err := applyHouseholdForeignKeys(db, allModels); err != nil {
+		return err
+	}
+	if err := applyPersonKeys(db); err != nil {
 		return err
 	}
 	if _, err := MigrateLegacyMemories(db); err != nil {
@@ -157,10 +165,12 @@ func (c *Client) InsertAuditEvent(event models.AuditEvent) error {
 	return nil
 }
 
-// GetUniqueUsers returns a list of unique user IDs from the audit sessions.
+// GetUniqueUsers returns the person key of everyone who has written, once per person (V4-32: a
+// person's sessions from several accounts, or from before a merge, count once).
 func (c *Client) GetUniqueUsers() ([]string, error) {
 	var userIDs []string
-	result := c.DB.Model(&models.AuditSession{}).Distinct("user_id").Pluck("user_id", &userIDs)
+	result := c.DB.Raw(`SELECT DISTINCT COALESCE(u.platform_id, a.user_id) FROM audit_sessions a
+		LEFT JOIN users u ON u.id = a.person_id WHERE COALESCE(u.platform_id, a.user_id) <> ''`).Scan(&userIDs)
 	if result.Error != nil {
 		return nil, fmt.Errorf("failed to get unique users: %w", result.Error)
 	}
@@ -170,7 +180,8 @@ func (c *Client) GetUniqueUsers() ([]string, error) {
 // GetLastAuditSessionForUser returns the most recent audit session for a given user.
 func (c *Client) GetLastAuditSessionForUser(userID string) (*models.AuditSession, error) {
 	var session models.AuditSession
-	result := c.DB.Where("user_id = ?", userID).Order("start_time desc").First(&session)
+	where, args := personIs("user_id", "person_id", userID)
+	result := c.DB.Where(where, args...).Order("start_time desc").First(&session)
 	if result.Error != nil {
 		return nil, fmt.Errorf("failed to get last audit session: %w", result.Error)
 	}
@@ -216,17 +227,19 @@ func (c *Client) GetUser(platformID string) (*models.User, error) {
 	return &user, nil
 }
 
-// UpsertUser creates or updates a user. The user must carry the household it belongs to (V4-30);
-// only the bootstrap (ALLOWED_USERS on an install with no household) calls it.
+// UpsertUser creates or updates a user, and the person and membership behind it (V4-32). The
+// user must carry the household it belongs to (V4-30). It knows no channel, so it adds no channel
+// account: accounts come from pairing, the bootstrap and linking.
 func (c *Client) UpsertUser(user models.User) error {
 	if strings.TrimSpace(user.HouseholdID) == "" {
 		return fmt.Errorf("failed to upsert user: no household")
 	}
-	result := c.DB.Where("platform_id = ?", user.PlatformID).Assign(user).FirstOrCreate(&user)
-	if result.Error != nil {
-		return fmt.Errorf("failed to upsert user: %w", result.Error)
-	}
-	return nil
+	return c.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("platform_id = ?", user.PlatformID).Assign(user).FirstOrCreate(&user).Error; err != nil {
+			return fmt.Errorf("failed to upsert user: %w", err)
+		}
+		return ensurePerson(tx, user, "")
+	})
 }
 
 // CreatePairingCode inserts a new pairing code into the scope's household: whoever redeems it
@@ -253,9 +266,10 @@ func (c *Client) GetPairingCode(code string) (*models.PairingCode, error) {
 	return &pc, nil
 }
 
-// RedeemPairingCode marks a code as used and creates the user in a transaction. The new user's
-// household is the code's, read inside the transaction; the caller's value is not trusted.
-func (c *Client) RedeemPairingCode(codeID string, user models.User) error {
+// RedeemPairingCode marks a code as used and creates the user in a transaction, with the person
+// behind it, their membership and the channel account the code was typed on (V4-32). The new
+// user's household is the code's, read inside the transaction; the caller's value is not trusted.
+func (c *Client) RedeemPairingCode(codeID string, user models.User, channelName string) error {
 	return c.DB.Transaction(func(tx *gorm.DB) error {
 		var pc models.PairingCode
 		if err := tx.Where("id = ?", codeID).First(&pc).Error; err != nil {
@@ -274,7 +288,7 @@ func (c *Client) RedeemPairingCode(codeID string, user models.User) error {
 		if err := tx.Create(&user).Error; err != nil {
 			return err
 		}
-		return nil
+		return ensurePerson(tx, user, channelName)
 	})
 }
 
@@ -300,7 +314,8 @@ func (c *Client) GetActiveWorkflows() ([]models.Workflow, error) {
 // GetUserWorkflows fetches all active workflows for a specific user.
 func (c *Client) GetUserWorkflows(userID string) ([]models.Workflow, error) {
 	var workflows []models.Workflow
-	result := c.DB.Where("user_id = ? AND is_active = ?", userID, true).Find(&workflows)
+	where, args := personIs("user_id", "person_id", userID)
+	result := c.DB.Where(where, args...).Where("is_active = ?", true).Find(&workflows)
 	if result.Error != nil {
 		return nil, fmt.Errorf("failed to fetch user workflows: %w", result.Error)
 	}
@@ -309,7 +324,8 @@ func (c *Client) GetUserWorkflows(userID string) ([]models.Workflow, error) {
 
 // DeleteWorkflow deactivates or deletes a workflow.
 func (c *Client) DeleteWorkflow(id uint, userID string) error {
-	result := c.DB.Where("id = ? AND user_id = ?", id, userID).Delete(&models.Workflow{})
+	where, args := personIs("user_id", "person_id", userID)
+	result := c.DB.Where("id = ?", id).Where(where, args...).Delete(&models.Workflow{})
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete workflow: %w", result.Error)
 	}

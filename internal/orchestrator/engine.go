@@ -46,6 +46,8 @@ type Engine struct {
 	intentMatcher      IntentMatcher
 	calendar           CalendarConventions // week start / weekend for the system prompt (P2-6)
 	health             HealthReporter      // the /doctor report (V4-17); nil when not wired
+	accounts           AccountStore        // people's channel accounts and link codes (V4-32); nil when not wired
+	codeKey            []byte              // the server secret typed codes are hashed under (LINK_CODE_SECRET)
 }
 
 var hebrewPrepositionRegex = regexp.MustCompile(`(^|[^\p{Hebrew}\w])([בלמכ])(\d+)`)
@@ -138,16 +140,14 @@ func formatAttachmentMarker(mimeType string, dataLen int) string {
 // buildCallContext constructs a CallContext for the given user and incoming message.
 func (e *Engine) buildCallContext(ctx context.Context, user *models.User, msg channel.Inbound) CallContext {
 	sendNotif := func(nCtx context.Context, targetUserID, text string) error {
-		if targetUserID == msg.Sender {
+		if targetUserID == msg.Sender || (user != nil && targetUserID == user.PlatformID) {
 			return e.sendMessage(nCtx, msg, text)
 		}
-		if e.db != nil {
-			log, err := e.db.GetLastAuditSessionForUser(targetUserID)
-			if err == nil && log != nil && log.Source != "" {
-				return e.sendTo(nCtx, lastAddress(log, targetUserID), text)
-			}
+		// Someone else: where they want notifications (V4-32).
+		if err := e.deliverTo(nCtx, targetUserID, text); err != nil {
+			return fmt.Errorf("no active channel found for user: %s", targetUserID)
 		}
-		return fmt.Errorf("no active channel found for user: %s", targetUserID)
+		return nil
 	}
 
 	callCtx := CallContext{
@@ -271,6 +271,12 @@ func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg channel.Inbo
 		}
 	}
 
+	// A link code from an account that belongs to nobody yet (V4-32).
+	if linkCode, ok := linkCodeArg(msg.Text); ok {
+		_, err := e.redeemLinkCode(ctx, nil, msg, linkCode)
+		return err
+	}
+
 	// Extract potential pairing code from message text
 	code := strings.TrimSpace(msg.Text)
 	code = strings.TrimPrefix(code, "/start ")
@@ -290,7 +296,7 @@ func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg channel.Inbo
 			FamilyGroup: pc.FamilyGroup,
 			CreatedAt:   time.Now(),
 		}
-		if err := e.db.RedeemPairingCode(pc.ID, newUser); err == nil {
+		if err := e.db.RedeemPairingCode(pc.ID, newUser, msg.Channel); err == nil {
 			markSideEffect(ctx) // code consumed: a retry would see it as invalid and count a failed attempt
 			if e.store != nil {
 				_ = e.store.ResetPairingRateLimit(ctx, msg.Sender)
@@ -327,6 +333,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 	logging.LogMessageText(ctx, nil, "processing message", msg.Text, "user_id", msg.Sender, "message_id", msg.MessageID) // P3-3
 
 	var llmResponse string
+	// The audit session is recorded under the person's key once the sender is known (V4-32), so a
+	// person's sessions from every account are one person's; the account is in Source and ChatID.
+	auditUser := msg.Sender
 	sessionID := uuid.New().String()
 	startTime := time.Now()
 	// Per-turn record of side effects and executed tools (P1-4, P2-2, P2-9). Declared before the
@@ -345,7 +354,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 
 			session := models.AuditSession{
 				ID:              sessionID,
-				UserID:          msg.Sender,
+				UserID:          auditUser,
 				ChatID:          msg.Conversation.ID,
 				Source:          msg.Channel,
 				UserPrompt:      msgText,
@@ -383,10 +392,17 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 		claim.finish(ctx, err)
 	}()
 
-	// 1. Pre-Auth Check: Verify user exists and is authenticated
-	user, err := e.db.GetUser(msg.Sender)
+	// 1. Pre-Auth Check: the channel account the message came from must belong to a person
+	// (V4-32); every account of one person resolves to the same users row.
+	user, err := e.db.UserForAccount(ctx, msg.Channel, msg.Sender)
 	if err != nil || user == nil {
 		return e.handleUnauthenticatedUser(ctx, msg)
+	}
+	auditUser = user.PlatformID
+	if e.accounts != nil && !isStartedByAssistant(ctx) {
+		if rerr := e.accounts.RecordInbound(ctx, msg.Channel, msg.Sender); rerr != nil {
+			slog.Warn("could not record the account's last message time", "error", rerr)
+		}
 	}
 	ctx = withTurnUser(ctx, user) // P2-7: resolved once; tool calls reuse it
 	// V4-30: the household is read from the database once per message, from the sender's row.
@@ -397,7 +413,13 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 	}
 	ctx = withTurnScope(ctx, scope)
 
-	// 2. Staged-action confirmation ("CONFIRM [TOOL]") and slash commands (commands.go)
+	// 2. Account linking's own confirmation (V4-32), then staged-action confirmation
+	// ("CONFIRM [TOOL]") and slash commands (commands.go)
+	if identity.IsConfirmLink(msg.Text) {
+		response, cerr := e.confirmLink(ctx, user, msg)
+		llmResponse = response
+		return cerr
+	}
 	if response, handled, cerr := e.handleConfirmation(ctx, user, msg); handled {
 		llmResponse = response
 		return cerr
@@ -430,33 +452,26 @@ func (e *Engine) BroadcastProactiveMessage(ctx context.Context, promptText strin
 	}
 
 	for _, userID := range userIDs {
-		// Mock a message object to pass into processMessage
-		// We'll treat this as a system-triggered prompt that we feed into the LLM on behalf of the user
-
-		// To send the message we need a channel and a chat: the person's most recent audit session
-		// says where they last wrote.
-		log, err := e.db.GetLastAuditSessionForUser(userID)
+		// A system-triggered prompt fed into a turn on behalf of the person, on the account they
+		// want notifications on (V4-32).
+		to, _, err := e.deliveryAddress(ctx, userID)
 		if err != nil {
-			slog.Warn("failed to get last audit session for user", "user_id", userID, "error", err)
+			slog.Warn("no channel to send the briefing on", "user_id", userID, "error", err)
 			continue
 		}
 
-		if log.Source == "" {
-			continue // Should not happen, but safeguard
-		}
-
 		msg := channel.Inbound{
-			Channel:      log.Source,
+			Channel:      to.Channel,
 			MessageID:    fmt.Sprintf("cron-%d", time.Now().Unix()),
-			Sender:       userID,
-			Conversation: channel.Conversation{ID: log.ChatID},
+			Sender:       to.Person,
+			Conversation: channel.Conversation{ID: to.Conversation},
 			Text:         promptText,
 		}
 
 		// Run in a separate goroutine so one user doesn't block another
 		go func(m channel.Inbound) {
 			// Create a background context specifically for this broadcast
-			bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			bgCtx, cancel := context.WithTimeout(startedByAssistant(context.Background()), 2*time.Minute)
 			defer cancel()
 
 			slog.Info("sending proactive message", "user_id", m.Sender)
@@ -476,21 +491,17 @@ func (e *Engine) CheckAndSendReminders() {
 	}
 
 	for _, reminder := range reminders {
-		log, err := e.db.GetLastAuditSessionForUser(reminder.UserID)
-		if err != nil || log == nil {
-			slog.Warn("failed to get last audit log for reminder", "user_id", reminder.UserID, "error", err)
-			continue
-		}
-
-		if log.Source == "" {
-			continue
-		}
-
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+		to, historyKey, err := e.deliveryAddress(ctx, reminder.UserID)
+		if err != nil {
+			slog.Warn("no channel to send the reminder on", "user_id", reminder.UserID, "error", err)
+			cancel()
+			continue
+		}
 
 		formattedMsg := fmt.Sprintf("🔔 *Reminder:*\n\n%s", reminder.Message)
 
-		err = e.sendTo(ctx, lastAddress(log, reminder.UserID), formattedMsg)
+		err = e.sendTo(ctx, to, formattedMsg)
 		if err != nil {
 			slog.Error("failed to send reminder message", "reminder_id", reminder.ID, "error", err)
 			cancel()
@@ -502,7 +513,7 @@ func (e *Engine) CheckAndSendReminders() {
 
 		// Optionally log to history
 		if e.store != nil {
-			_ = e.store.AppendChatHistory(context.Background(), reminder.UserID, models.ChatMessage{Role: "assistant", Content: formattedMsg})
+			_ = e.store.AppendChatHistory(context.Background(), historyKey, models.ChatMessage{Role: "assistant", Content: formattedMsg})
 		}
 	}
 
@@ -518,15 +529,15 @@ func (e *Engine) CheckAndSendReminders() {
 			targetUserID = s.CreatedByUserID
 		}
 
-		log, err := e.db.GetLastAuditSessionForUser(targetUserID)
-		if err != nil || log == nil || log.Source == "" {
-			slog.Warn("failed to get last audit log for shared reminder", "user_id", targetUserID, "shared_reminder_id", s.ID)
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+		to, historyKey, err := e.deliveryAddress(ctx, targetUserID)
+		if err != nil {
+			slog.Warn("no channel to send the shared reminder on", "user_id", targetUserID, "shared_reminder_id", s.ID)
+			cancel()
 			continue
 		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 		formattedMsg := fmt.Sprintf("🔔 *Shared Task Reminder:*\n\n**%s** (Topic: %s)", s.Title, s.Topic)
-		err = e.sendTo(ctx, lastAddress(log, targetUserID), formattedMsg)
+		err = e.sendTo(ctx, to, formattedMsg)
 		if err != nil {
 			slog.Error("failed to send shared reminder message", "shared_reminder_id", s.ID, "error", err)
 			cancel()
@@ -541,7 +552,7 @@ func (e *Engine) CheckAndSendReminders() {
 			slog.Error("shared reminder has no usable household", "shared_reminder_id", s.ID, "error", serr)
 		}
 		if e.store != nil {
-			_ = e.store.AppendChatHistory(context.Background(), targetUserID, models.ChatMessage{Role: "assistant", Content: formattedMsg})
+			_ = e.store.AppendChatHistory(context.Background(), historyKey, models.ChatMessage{Role: "assistant", Content: formattedMsg})
 		}
 	}
 }

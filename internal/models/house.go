@@ -43,6 +43,7 @@ type HouseContractRecord struct {
 	NoticePeriodDays        int        `json:"notice_period_days"`
 	KeyTermsJSON            string     `json:"key_terms_json" gorm:"type:jsonb"`
 	CreatedByUserID         string     `json:"created_by_user_id"`
+	CreatedByPersonID       *string    `json:"created_by_person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind created_by_user_id, filled by the database (migration 4)
 	CreatedAt               time.Time  `json:"created_at"`
 }
 
@@ -93,17 +94,18 @@ func (c *HouseContractRecord) IsExpiringSoon(now time.Time, withinDays int) bool
 // HomeMaintenanceItem tracks recurring or seasonal home upkeep items with intervals,
 // contractor info, and last-completed timestamps.
 type HomeMaintenanceItem struct {
-	ID              uint       `json:"id" gorm:"primaryKey"`
-	HouseholdID     string     `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
-	FamilyGroup     string     `json:"family_group" gorm:"index"`
-	TaskName        string     `json:"task_name"`
-	Category        string     `json:"category"` // hvac, plumbing, appliance, pest_control, general
-	IntervalDays    int        `json:"interval_days"`
-	LastCompletedAt *time.Time `json:"last_completed_at,omitempty"`
-	NextDueAt       time.Time  `json:"next_due_at" gorm:"index"`
-	ContractorInfo  string     `json:"contractor_info"`
-	Notes           string     `json:"notes"`
-	UpdatedByUserID string     `json:"updated_by_user_id"`
+	ID                uint       `json:"id" gorm:"primaryKey"`
+	HouseholdID       string     `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
+	FamilyGroup       string     `json:"family_group" gorm:"index"`
+	TaskName          string     `json:"task_name"`
+	Category          string     `json:"category"` // hvac, plumbing, appliance, pest_control, general
+	IntervalDays      int        `json:"interval_days"`
+	LastCompletedAt   *time.Time `json:"last_completed_at,omitempty"`
+	NextDueAt         time.Time  `json:"next_due_at" gorm:"index"`
+	ContractorInfo    string     `json:"contractor_info"`
+	Notes             string     `json:"notes"`
+	UpdatedByUserID   string     `json:"updated_by_user_id"`
+	UpdatedByPersonID *string    `json:"updated_by_person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind updated_by_user_id, filled by the database (migration 4)
 }
 
 // IsOverdue checks if the maintenance task is past its next due date.

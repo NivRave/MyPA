@@ -25,7 +25,7 @@ func TestAdversarial_SEC01_UnauthenticatedCommandsBlocked(t *testing.T) {
 	for i, cmd := range blockedCommands {
 		t.Run("BlockedCommand_"+cmd, func(t *testing.T) {
 			unauthUserID := fmt.Sprintf("adversary-cmd-user-%d", i)
-			dbMock.EXPECT().GetUser(unauthUserID).Return(nil, errors.New("user not found"))
+			dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), unauthUserID).Return(nil, errors.New("user not found"))
 			tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 				s, ok := x.(string)
 				return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
@@ -43,7 +43,7 @@ func TestAdversarial_SEC01_UnauthenticatedCommandsBlocked(t *testing.T) {
 
 	t.Run("BlockedVoiceMessage", func(t *testing.T) {
 		unauthUserID := "adversary-voice-user"
-		dbMock.EXPECT().GetUser(unauthUserID).Return(nil, errors.New("user not found"))
+		dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), unauthUserID).Return(nil, errors.New("user not found"))
 		tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 			s, ok := x.(string)
 			return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
@@ -60,7 +60,7 @@ func TestAdversarial_SEC01_UnauthenticatedCommandsBlocked(t *testing.T) {
 
 	t.Run("BlockedPhotoMessage", func(t *testing.T) {
 		unauthUserID := "adversary-photo-user"
-		dbMock.EXPECT().GetUser(unauthUserID).Return(nil, errors.New("user not found"))
+		dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), unauthUserID).Return(nil, errors.New("user not found"))
 		tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 			s, ok := x.(string)
 			return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
@@ -87,7 +87,7 @@ func TestAdversarial_SEC01_BruteForceLockout(t *testing.T) {
 
 	// Attempts 1 to 4: decreasing remaining attempts
 	for attempt := 1; attempt <= 4; attempt++ {
-		dbMock.EXPECT().GetUser(bruteForceUserID).Return(nil, errors.New("user not found"))
+		dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), bruteForceUserID).Return(nil, errors.New("user not found"))
 		expectedRemaining := 5 - attempt
 		expectedMsg := fmt.Sprintf("(%d attempts remaining before 1-hour lockout)", expectedRemaining)
 		tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
@@ -105,7 +105,7 @@ func TestAdversarial_SEC01_BruteForceLockout(t *testing.T) {
 	}
 
 	// Attempt 5: triggers lockout
-	dbMock.EXPECT().GetUser(bruteForceUserID).Return(nil, errors.New("user not found"))
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), bruteForceUserID).Return(nil, errors.New("user not found"))
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 		s, ok := x.(string)
 		return ok && strings.Contains(s, "Too many failed attempts (5/5). Your account has been locked for 1 hour.")
@@ -120,7 +120,7 @@ func TestAdversarial_SEC01_BruteForceLockout(t *testing.T) {
 	require.NoError(t, err)
 
 	// Attempt 6: locked out directly
-	dbMock.EXPECT().GetUser(bruteForceUserID).Return(nil, errors.New("user not found"))
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), bruteForceUserID).Return(nil, errors.New("user not found"))
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 		s, ok := x.(string)
 		return ok && strings.Contains(s, "Too many failed pairing attempts. You are temporarily locked out.")
@@ -144,7 +144,7 @@ func TestAdversarial_SEC01_PairingCodeRedemption(t *testing.T) {
 
 	// 1. 5-digit code should NOT trigger pairing code lookup
 	t.Run("FiveDigitCodeRejected", func(t *testing.T) {
-		dbMock.EXPECT().GetUser(unauthUserID).Return(nil, errors.New("user not found"))
+		dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), unauthUserID).Return(nil, errors.New("user not found"))
 		tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 			s, ok := x.(string)
 			return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
@@ -161,7 +161,7 @@ func TestAdversarial_SEC01_PairingCodeRedemption(t *testing.T) {
 
 	// 2. 7-digit code should NOT trigger pairing code lookup
 	t.Run("SevenDigitCodeRejected", func(t *testing.T) {
-		dbMock.EXPECT().GetUser(unauthUserID).Return(nil, errors.New("user not found"))
+		dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), unauthUserID).Return(nil, errors.New("user not found"))
 		tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 			s, ok := x.(string)
 			return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
@@ -179,7 +179,7 @@ func TestAdversarial_SEC01_PairingCodeRedemption(t *testing.T) {
 	// 3. Valid 6-digit code redemption succeeds
 	t.Run("ValidSixDigitCodeRedeemed", func(t *testing.T) {
 		validCode := "654321"
-		dbMock.EXPECT().GetUser(unauthUserID).Return(nil, errors.New("user not found"))
+		dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), unauthUserID).Return(nil, errors.New("user not found"))
 		dbMock.EXPECT().GetPairingCode(validCode).Return(&models.PairingCode{
 			ID:          "pc-1",
 			Code:        validCode,
@@ -191,7 +191,7 @@ func TestAdversarial_SEC01_PairingCodeRedemption(t *testing.T) {
 		dbMock.EXPECT().RedeemPairingCode("pc-1", gomock.Cond(func(x any) bool {
 			u, ok := x.(models.User)
 			return ok && u.PlatformID == unauthUserID && u.Role == "family" && u.FamilyGroup == "AdversaryFamily"
-		})).Return(nil)
+		}), gomock.Any()).Return(nil)
 
 		tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 			s, ok := x.(string)
@@ -210,7 +210,7 @@ func TestAdversarial_SEC01_PairingCodeRedemption(t *testing.T) {
 	// 4. Valid /start 6-digit code redemption succeeds
 	t.Run("ValidStartPrefixedCodeRedeemed", func(t *testing.T) {
 		validCode := "987654"
-		dbMock.EXPECT().GetUser(unauthUserID).Return(nil, errors.New("user not found"))
+		dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), unauthUserID).Return(nil, errors.New("user not found"))
 		dbMock.EXPECT().GetPairingCode(validCode).Return(&models.PairingCode{
 			ID:          "pc-2",
 			Code:        validCode,
@@ -222,7 +222,7 @@ func TestAdversarial_SEC01_PairingCodeRedemption(t *testing.T) {
 		dbMock.EXPECT().RedeemPairingCode("pc-2", gomock.Cond(func(x any) bool {
 			u, ok := x.(models.User)
 			return ok && u.PlatformID == unauthUserID && u.Role == "admin"
-		})).Return(nil)
+		}), gomock.Any()).Return(nil)
 
 		tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 			s, ok := x.(string)
@@ -258,7 +258,7 @@ func TestAdversarial_SEC01_RBAC_NonAdminRolesDenied(t *testing.T) {
 			inHousehold(user)
 
 			// /backup denied
-			dbMock.EXPECT().GetUser(userID).Return(user, nil)
+			dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), userID).Return(user, nil)
 			tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 				s, ok := x.(string)
 				return ok && strings.Contains(s, "Permission denied: administrative privileges required")
@@ -273,7 +273,7 @@ func TestAdversarial_SEC01_RBAC_NonAdminRolesDenied(t *testing.T) {
 			require.NoError(t, err)
 
 			// /restore denied
-			dbMock.EXPECT().GetUser(userID).Return(user, nil)
+			dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), userID).Return(user, nil)
 			tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 				s, ok := x.(string)
 				return ok && strings.Contains(s, "Permission denied: administrative privileges required")

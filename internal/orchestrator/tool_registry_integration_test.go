@@ -210,7 +210,10 @@ func (m *mockDBClient) CreatePairingCode(s identity.Scope, pc models.PairingCode
 func (m *mockDBClient) GetPairingCode(code string) (*models.PairingCode, error) {
 	return nil, nil
 }
-func (m *mockDBClient) RedeemPairingCode(codeID string, u models.User) error { return nil }
+func (m *mockDBClient) RedeemPairingCode(codeID string, u models.User, _ string) error { return nil }
+func (m *mockDBClient) UserForAccount(_ context.Context, _, externalID string) (*models.User, error) {
+	return m.GetUser(externalID)
+}
 func (m *mockDBClient) SaveWorkflow(w models.Workflow) error {
 	m.savedWorkflows = append(m.savedWorkflows, w)
 	return nil

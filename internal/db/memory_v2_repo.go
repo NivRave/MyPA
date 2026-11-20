@@ -41,7 +41,8 @@ type MemoryV2Repository interface {
 // memories, plus the scope person's own personal ones.
 func memoryVisibility(q *gorm.DB, s identity.Scope) *gorm.DB {
 	if p := s.PersonKey(); p != "" {
-		return q.Where("(scope = 'family' OR (user_id = ? AND scope = 'personal'))", p)
+		where, args := personIs("user_id", "person_id", p)
+		return q.Where("(scope = 'family' OR (scope = 'personal' AND "+where+"))", args...)
 	}
 	return q.Where("scope = 'family'")
 }

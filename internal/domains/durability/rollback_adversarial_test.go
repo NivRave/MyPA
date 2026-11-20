@@ -47,6 +47,11 @@ func TestAdversarial_SystemEntitiesVeto(t *testing.T) {
 		"AuditSession", "audit_sessions", "audit_session",
 		"AuditEvent", "audit_events", "audit_event",
 		"SchemaMigration", "schema_migrations", "schema_migration",
+		// V4-32: people, their accounts and memberships, and link codes (ADR 0002 §10).
+		"Person", "people", "person",
+		"ChannelAccount", "channel_accounts", "channel_account",
+		"Membership", "memberships", "membership",
+		"AccessToken", "access_tokens", "access_token",
 	}
 
 	for _, entity := range systemEntities {
@@ -328,14 +333,8 @@ func TestAdversarial_EngineProcessMessageUndo(t *testing.T) {
 	client.DB.Where("platform_id = ?", testUser).Delete(&models.User{})
 
 	scope := householdtest.Scope(t, client, testFam, testUser, "family") // V4-30: the tenant
-	user := models.User{
-		PlatformID:  testUser,
-		HouseholdID: scope.HouseholdID(),
-		FamilyGroup: testFam,
-		Role:        "family",
-	}
-	err := client.DB.Create(&user).Error
-	require.NoError(t, err)
+	// A member who can write: the person and their account, as pairing makes them (V4-32).
+	householdtest.Member(t, client, testUser, "", "family", testFam, "telegram")
 	defer client.DB.Where("platform_id = ?", testUser).Delete(&models.User{})
 	defer client.DB.Where("user_id = ?", testUser).Delete(&models.MutationLog{})
 
@@ -349,7 +348,7 @@ func TestAdversarial_EngineProcessMessageUndo(t *testing.T) {
 		Timestamp:      time.Now(),
 		LoggedByUserID: testUser,
 	}
-	err = client.DB.Create(&babyLog).Error
+	err := client.DB.Create(&babyLog).Error
 	require.NoError(t, err)
 	defer client.DB.Delete(&models.BabyCareLog{}, "id = ?", babyLog.ID)
 

@@ -51,6 +51,7 @@ type FunctionResponse struct {
 type AuditSession struct {
 	ID              string    `json:"id" gorm:"primarykey;type:uuid"`
 	UserID          string    `json:"user_id" gorm:"index;index:idx_audit_sessions_user_start,priority:1"`
+	PersonID        *string   `json:"person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind user_id, filled by the database (migration 4)
 	ChatID          string    `json:"chat_id"`
 	Source          string    `json:"source"`
 	UserPrompt      string    `json:"user_prompt"`
@@ -108,7 +109,8 @@ type PairingCode struct {
 type Memory struct {
 	ID        uint            `json:"id" gorm:"primarykey"`
 	UserID    string          `json:"user_id" gorm:"index"`
-	Scope     string          `json:"scope" gorm:"index;default:'personal'"` // "personal" or "family"
+	PersonID  *string         `json:"person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind user_id, filled by the database (migration 4)
+	Scope     string          `json:"scope" gorm:"index;default:'personal'"`      // "personal" or "family"
 	Fact      string          `json:"fact"`
 	Embedding pgvector.Vector `json:"embedding" gorm:"type:vector(3072)"`
 	CreatedAt time.Time       `json:"created_at"`
@@ -118,6 +120,7 @@ type Memory struct {
 type ScheduledReminder struct {
 	ID        uint      `json:"id" gorm:"primarykey"`
 	UserID    string    `json:"user_id" gorm:"index"`
+	PersonID  *string   `json:"person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind user_id, filled by the database (migration 4)
 	Message   string    `json:"message"`
 	DueTime   time.Time `json:"due_time" gorm:"index"`
 	IsSent    bool      `json:"is_sent" gorm:"index"`
@@ -128,6 +131,7 @@ type ScheduledReminder struct {
 type Workflow struct {
 	ID             uint      `json:"id" gorm:"primarykey"`
 	UserID         string    `json:"user_id" gorm:"index"`
+	PersonID       *string   `json:"person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind user_id, filled by the database (migration 4)
 	Name           string    `json:"name"`
 	CronExpression string    `json:"cron_expression"`
 	Instruction    string    `json:"instruction"`

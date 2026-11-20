@@ -167,7 +167,8 @@ func (r *FinanceRepo) ListTransactions(ctx context.Context, s identity.Scope, fi
 	q = q.Model(&models.FinancialTransaction{})
 
 	if filter.UserID != "" {
-		q = q.Where("user_id = ?", filter.UserID)
+		where, args := personIs("user_id", "person_id", filter.UserID)
+		q = q.Where(where, args...)
 	}
 	if filter.Category != "" {
 		q = q.Where("category = ?", models.NormalizeFinanceCategory(filter.Category))

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -77,4 +78,21 @@ func TestDeliveryKey(t *testing.T) {
 	assert.Equal(t, "telegram:42", deliveryKey("telegram", "42"))
 	assert.Equal(t, "whatsapp:+9725", deliveryKey("whatsapp", "+9725"))
 	assert.Equal(t, ":", deliveryKey("", ""), "unknown sender still gets a deterministic key")
+}
+
+// V4-32 (ADR 0002 §9): one processing lane per person, whichever channel a message comes from;
+// a sender the lane function does not know keeps its own channel-and-sender lane, which a
+// person's lane can never collide with.
+func TestConsumer_LanePerPerson(t *testing.T) {
+	persons := map[string]string{"telegram|42": "p-1", "whatsapp|+9725": "p-1", "telegram|43": "p-2"}
+	c := &Consumer{laneOf: func(m channel.Inbound) string { return persons[m.Channel+"|"+m.Sender] }}
+	tg := c.lane(channel.Inbound{Channel: "telegram", Sender: "42"})
+	wa := c.lane(channel.Inbound{Channel: "whatsapp", Sender: "+9725"})
+	other := c.lane(channel.Inbound{Channel: "telegram", Sender: "43"})
+	unknown := c.lane(channel.Inbound{Channel: "telegram", Sender: "99"})
+	assert.Equal(t, tg, wa, "one person, one lane across channels")
+	assert.NotEqual(t, tg, other)
+	assert.Equal(t, "telegram:99", unknown, "an unknown sender keeps one lane per channel and sender")
+	assert.NotEqual(t, "telegram:99", c.lane(channel.Inbound{Channel: "x", Sender: "y"}))
+	assert.Equal(t, "telegram:42", (&Consumer{}).lane(channel.Inbound{Channel: "telegram", Sender: "42"}), "without a lane function, as before")
 }

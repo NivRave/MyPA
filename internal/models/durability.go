@@ -8,7 +8,8 @@ import (
 // as a durable fallback in PostgreSQL when Redis is flushed or unavailable.
 type EncryptedCredential struct {
 	UserID     string    `json:"user_id" gorm:"primaryKey"`
-	Provider   string    `json:"provider" gorm:"primaryKey"` // e.g. "google_oauth" | "session"
+	PersonID   *string   `json:"person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind user_id, filled by the database (migration 4)
+	Provider   string    `json:"provider" gorm:"primaryKey"`                 // e.g. "google_oauth" | "session"
 	Ciphertext []byte    `json:"ciphertext" gorm:"type:bytea"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
@@ -18,6 +19,7 @@ type EncryptedCredential struct {
 type MutationLog struct {
 	ID          string    `json:"id" gorm:"primaryKey"`
 	UserID      string    `json:"user_id" gorm:"index;index:idx_mutation_logs_user_created,priority:1"`
+	PersonID    *string   `json:"person_id,omitempty" gorm:"type:uuid;index"`   // V4-32: the person behind user_id, filled by the database (migration 4)
 	HouseholdID string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup string    `json:"family_group" gorm:"index;index:idx_mutation_logs_family_created,priority:1;index:idx_mutation_logs_family_topic_created,priority:1"`
 	Topic       string    `json:"topic" gorm:"index;index:idx_mutation_logs_family_topic_created,priority:2"` // e.g. "baby", "house", "finance", "schedule", "memory"
@@ -36,6 +38,7 @@ type MutationLog struct {
 type IdempotencyRecord struct {
 	Key             string    `json:"key" gorm:"primaryKey"`
 	UserID          string    `json:"user_id" gorm:"index"`
+	PersonID        *string   `json:"person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind user_id, filled by the database (migration 4)
 	ToolName        string    `json:"tool_name"`
 	ResponseSummary string    `json:"response_summary"`
 	ExpiresAt       time.Time `json:"expires_at" gorm:"index"`

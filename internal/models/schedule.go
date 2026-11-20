@@ -15,6 +15,7 @@ type ScheduleEvent struct {
 	ExternalGoogleEventID string    `json:"external_google_event_id" gorm:"index"`
 	PartnerGoogleEventID  string    `json:"partner_google_event_id" gorm:"index"`
 	UserID                string    `json:"user_id" gorm:"index;index:idx_schedule_events_user_start,priority:1"`
+	PersonID              *string   `json:"person_id,omitempty" gorm:"type:uuid;index"`   // V4-32: the person behind user_id, filled by the database (migration 4)
 	HouseholdID           string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup           string    `json:"family_group" gorm:"index;index:idx_schedule_events_family_start,priority:1"`
 	Topic                 string    `json:"topic" gorm:"index"`
@@ -27,6 +28,7 @@ type ScheduleEvent struct {
 	SyncToGoogle          bool      `json:"sync_to_google" gorm:"default:true"`
 	IsShared              bool      `json:"is_shared" gorm:"default:false"`
 	CreatedByUserID       string    `json:"created_by_user_id"`
+	CreatedByPersonID     *string   `json:"created_by_person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind created_by_user_id, filled by the database (migration 4)
 	CreatedAt             time.Time `json:"created_at"`
 }
 
@@ -35,6 +37,7 @@ type ScheduleEvent struct {
 type TopicCalendarConfig struct {
 	ID                       uint      `json:"id" gorm:"primaryKey"`
 	UserID                   string    `json:"user_id" gorm:"index:idx_user_topic,unique"`
+	PersonID                 *string   `json:"person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind user_id, filled by the database (migration 4)
 	Topic                    string    `json:"topic" gorm:"index:idx_user_topic,unique"`
 	ColorID                  string    `json:"color_id"`
 	PrefixTag                string    `json:"prefix_tag"`

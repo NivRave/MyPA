@@ -308,7 +308,8 @@ func (c *Client) GetUserPreference(userID string) (*models.UserPreference, error
 		return nil, fmt.Errorf("user_id cannot be empty")
 	}
 	var pref models.UserPreference
-	result := c.DB.Where("user_id = ?", userID).First(&pref)
+	where, args := personIs("user_id", "person_id", userID)
+	result := c.DB.Where(where, args...).Order("person_id IS NULL").First(&pref)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, nil

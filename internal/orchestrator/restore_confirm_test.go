@@ -57,7 +57,7 @@ func newRestoreHarness(t *testing.T) *restoreHarness {
 	}
 	t.Setenv("DATABASE_URL", "postgres://test")
 
-	dbMock.EXPECT().GetUser("admin-1").DoAndReturn(func(string) (*models.User, error) {
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), "admin-1").DoAndReturn(func(context.Context, string, string) (*models.User, error) {
 		return inHousehold(&models.User{PlatformID: "admin-1", Role: h.role, FamilyGroup: "fam"}), nil
 	}).AnyTimes()
 

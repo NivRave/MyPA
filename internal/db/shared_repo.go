@@ -52,7 +52,8 @@ func (r *SharedRepository) UpsertSharedSpace(s identity.Scope, space *models.Sha
 	var existing models.SharedSpace
 	query := q.Where("topic = ?", space.Topic)
 	if space.SharedWithUserID != "" && space.SharedWithUserID != "*" {
-		query = query.Where("shared_with_user_id = ?", space.SharedWithUserID)
+		where, args := personIs("shared_with_user_id", "shared_with_person_id", space.SharedWithUserID)
+		query = query.Where(where, args...)
 	}
 
 	err = query.First(&existing).Error

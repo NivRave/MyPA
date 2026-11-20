@@ -25,7 +25,13 @@ var personKeyedTables = map[string]string{
 	"idempotency_records":    "per-user duplicate-execution guard",
 	"topic_calendar_configs": "one person's calendar preferences per topic",
 	"user_preferences":       "one person's preferences (moves to the person in V4-27)",
+	"people":                 "the person itself; the household comes through the membership (V4-32)",
+	"channel_accounts":       "a person's accounts on the channels; the household comes through the membership (V4-32)",
 }
+
+// identityHouseholdTables carry household_id from the start (V4-32): a membership names its
+// household, and a token is issued inside one. They are held to the same rules.
+var identityHouseholdTables = []string{"access_tokens", "memberships"}
 
 // ADR 0002 Decision 2: a test fails if a table has a household_id that is nullable, has no
 // foreign key, or has no index starting with it — and, so that coverage does not depend on
@@ -46,9 +52,9 @@ func TestHouseholdSchema_EveryHouseholdColumnIsGuarded(t *testing.T) {
 		assert.Equal(t, "uuid", udt, "%s.household_id must be a uuid", table)
 	}
 	require.NoError(t, rows.Close())
-	want := append([]string(nil), labelledTables...)
+	want := append(append([]string(nil), labelledTables...), identityHouseholdTables...)
 	sort.Strings(want)
-	assert.Equal(t, want, tables, "household_id is on exactly the 20 tables that carried a family label")
+	assert.Equal(t, want, tables, "household_id is on exactly the 20 tables that carried a family label and the identity tables of V4-32")
 
 	for _, table := range tables {
 		var fks int
@@ -72,6 +78,7 @@ func TestHouseholdSchema_EveryHouseholdColumnIsGuarded(t *testing.T) {
 	all := append([]interface{}{
 		&models.Household{}, &models.AuditSession{}, &models.AuditEvent{}, &models.Memory{},
 		&models.ScheduledReminder{}, &models.User{}, &models.PairingCode{}, &models.Workflow{},
+		&models.Person{}, &models.ChannelAccount{}, &models.Membership{}, &models.AccessToken{},
 	}, GetRegisteredModels()...)
 	RegisterWave1Models()
 	RegisterWave2Models()

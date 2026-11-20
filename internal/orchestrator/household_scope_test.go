@@ -28,7 +28,7 @@ func TestProcessMessage_SenderWithoutAHouseholdIsRefused(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			engine, tgMock, dbMock, cleanup := setupUnauthTestEngine(t)
 			defer cleanup()
-			dbMock.EXPECT().GetUser("orphan").Return(&models.User{PlatformID: "orphan", Role: "admin", HouseholdID: hh}, nil)
+			dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), "orphan").Return(&models.User{PlatformID: "orphan", Role: "admin", HouseholdID: hh}, nil)
 
 			reg := NewRegistry()
 			reg.Register(&mockToolModule{
@@ -63,7 +63,7 @@ func promptFor(t *testing.T, h models.Household) string {
 	require.True(t, ok)
 	testHouseholds.Put(h)
 
-	dbMock.EXPECT().GetUser("u-hh").Return(&models.User{PlatformID: "u-hh", Name: "Hila", Role: "family", HouseholdID: h.ID}, nil).AnyTimes()
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), "u-hh").Return(&models.User{PlatformID: "u-hh", Name: "Hila", Role: "family", HouseholdID: h.ID}, nil).AnyTimes()
 	dbMock.EXPECT().SearchSimilarMemories(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	llmMock.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return([]float32{0.1}, nil).AnyTimes()
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -122,7 +122,7 @@ func TestOperatorCommands_FollowTheScopesRole(t *testing.T) {
 				defer cleanup()
 				t.Setenv("DATABASE_URL", "")
 				user := inHousehold(&models.User{PlatformID: "op-" + role, Role: role, FamilyGroup: "Ops"})
-				dbMock.EXPECT().GetUser(user.PlatformID).Return(user, nil).AnyTimes()
+				dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), user.PlatformID).Return(user, nil).AnyTimes()
 				var sent []string
 				tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 					func(_ context.Context, _ string, text string) error { sent = append(sent, text); return nil }).AnyTimes()

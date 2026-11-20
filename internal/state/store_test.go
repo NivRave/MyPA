@@ -403,3 +403,48 @@ func TestPromptCache_InvalidateFamily_AllUsersOneModule(t *testing.T) {
 		assert.True(t, found)
 	}
 }
+
+// ADR 0002 Decision 4: a limit on wrong codes across all senders. Until the limit, codes are
+// accepted; at the limit, every code is refused until the window ends.
+func TestCodesBlocked_AfterTheInstallWideLimit(t *testing.T) {
+	store, mr, cleanup := setupTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	assert.False(t, store.CodesBlocked(ctx))
+	for i := 0; i < GlobalCodeFailureLimit-1; i++ {
+		require.NoError(t, store.RecordFailedCodeAttempt(ctx))
+	}
+	assert.False(t, store.CodesBlocked(ctx))
+	require.NoError(t, store.RecordFailedCodeAttempt(ctx))
+	assert.True(t, store.CodesBlocked(ctx))
+	mr.FastForward(GlobalCodeWindow + time.Second)
+	assert.False(t, store.CodesBlocked(ctx), "the window ends")
+}
+
+// V4-32: a person's Google sign-in is found through all their accounts, preferred first, until
+// V4-23 keys sign-ins by person.
+func TestGetOAuthToken_FoundThroughThePersonsAccounts(t *testing.T) {
+	store, _, cleanup := setupTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	t.Setenv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef")
+	require.NoError(t, store.SetOAuthToken(ctx, "+15550001001", []byte(`{"access_token":"wa"}`)))
+
+	tok, err := store.GetOAuthToken(ctx, "7001")
+	require.NoError(t, err)
+	assert.Nil(t, tok, "without account keys, only the exact key is read")
+
+	store.SetAccountKeys(func(_ context.Context, key string) ([]string, error) {
+		if key == "7001" {
+			return []string{"7001", "+15550001001"}, nil
+		}
+		return nil, nil
+	})
+	tok, err = store.GetOAuthToken(ctx, "7001")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"access_token":"wa"}`, string(tok), "found under the person's other account")
+
+	tok, err = store.GetOAuthToken(ctx, "7999")
+	require.NoError(t, err)
+	assert.Nil(t, tok, "another person's sign-in is never found")
+}

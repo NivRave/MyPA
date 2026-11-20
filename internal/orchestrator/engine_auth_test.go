@@ -19,7 +19,7 @@ func TestProcessMessage_PreAuthGate_DisallowsBackupAndRestore(t *testing.T) {
 	unauthUserID := "unauth-user-999"
 
 	// 1. /backup from unauthenticated user
-	dbMock.EXPECT().GetUser(unauthUserID).Return(nil, errors.New("user not found"))
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), unauthUserID).Return(nil, errors.New("user not found"))
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 		s, ok := x.(string)
 		return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
@@ -34,7 +34,7 @@ func TestProcessMessage_PreAuthGate_DisallowsBackupAndRestore(t *testing.T) {
 	require.NoError(t, err)
 
 	// 2. /restore from unauthenticated user
-	dbMock.EXPECT().GetUser(unauthUserID).Return(nil, errors.New("user not found"))
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), unauthUserID).Return(nil, errors.New("user not found"))
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 		s, ok := x.(string)
 		return ok && strings.Contains(s, "Unauthorized access. Please provide a valid 6-digit pairing code")
@@ -55,7 +55,7 @@ func TestProcessMessage_PreAuthGate_DisallowsMediaDownloads(t *testing.T) {
 
 	unauthUserID := "unauth-media-user"
 
-	dbMock.EXPECT().GetUser(unauthUserID).Return(nil, errors.New("user not found"))
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), unauthUserID).Return(nil, errors.New("user not found"))
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 		s, ok := x.(string)
 		return ok && strings.Contains(s, "Unauthorized access")
@@ -83,7 +83,7 @@ func TestProcessMessage_AdminRBAC_FamilyRoleRejected(t *testing.T) {
 	inHousehold(familyUser)
 
 	// 1. /backup from family member rejected
-	dbMock.EXPECT().GetUser(familyUserID).Return(familyUser, nil)
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), familyUserID).Return(familyUser, nil)
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 		s, ok := x.(string)
 		return ok && strings.Contains(s, "Permission denied: administrative privileges required")
@@ -98,7 +98,7 @@ func TestProcessMessage_AdminRBAC_FamilyRoleRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	// 2. /restore from family member rejected
-	dbMock.EXPECT().GetUser(familyUserID).Return(familyUser, nil)
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), familyUserID).Return(familyUser, nil)
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 		s, ok := x.(string)
 		return ok && strings.Contains(s, "Permission denied: administrative privileges required")

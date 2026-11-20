@@ -194,3 +194,42 @@ func TestEnvExampleListsEveryRequiredKey(t *testing.T) {
 		assert.Contains(t, content, key+"=", ".env.example must list %s", key)
 	}
 }
+
+// LINK_CODE_SECRET (V4-32) is optional; when set it must be long, real and its own.
+func TestValidate_LinkCodeSecret(t *testing.T) {
+	long := strings.Repeat("k", MinLinkCodeSecretLen)
+	cases := map[string]struct {
+		secret string
+		want   string
+	}{
+		"unset":       {"", ""},
+		"good":        {long, ""},
+		"short":       {"short-secret", "at least 32 characters"},
+		"placeholder": {"your-link-code-secret-" + long, "placeholder"},
+		"reused":      {"enc-key-ghi" + strings.Repeat("x", 0), "must differ"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := workerOK()
+			c.Server.LinkCodeSecret = tc.secret
+			if name == "reused" {
+				c.Encryption.Key = long
+				c.Server.LinkCodeSecret = long
+			}
+			errs := c.validateLinkCodeSecret()
+			if tc.want == "" {
+				assert.Empty(t, errs)
+				return
+			}
+			require.Len(t, errs, 1)
+			assert.Contains(t, errs[0].Error(), tc.want)
+		})
+	}
+}
+
+// The optional fifth field of ALLOWED_USERS names the entry's channel (V4-32).
+func TestAllowedUserChannels_FifthField(t *testing.T) {
+	c := Config{Server: ServerConfig{AllowedUsersRaw: "111:Dana:admin:Levi:Telegram, +15550001002:Omer:family:Levi, 333:Rina:family::whatsapp"}}
+	assert.Equal(t, map[string]string{"111": "telegram", "333": "whatsapp"}, c.AllowedUserChannels())
+	assert.Len(t, c.ParseAllowedUsers(), 3, "the fifth field does not change the entries")
+}

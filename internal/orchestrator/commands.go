@@ -31,13 +31,31 @@ var commands = map[string]commandHandler{
 	"/restore": (*Engine).cmdRestore,
 	"/undo":    (*Engine).cmdUndo,
 	"/doctor":  (*Engine).cmdDoctor,
+	// V4-32: people and their channel accounts (link.go).
+	"/link":     (*Engine).cmdLinkIssue,
+	"/accounts": (*Engine).cmdAccounts,
+	"/unlink":   (*Engine).cmdUnlink,
+	"/notify":   (*Engine).cmdNotify,
 }
+
+// prefixCommands are the commands that take an argument ("/undo <id>", "/link CODE", ...).
+var prefixCommands = []string{"/undo", "/unlink", "/notify"}
 
 // dispatchCommand runs the slash command in msg, if any. handled=false means msg is not a command.
 func (e *Engine) dispatchCommand(ctx context.Context, user *models.User, msg channel.Inbound) (response string, handled bool, err error) {
 	h, ok := commands[msg.Text]
-	if !ok && strings.HasPrefix(msg.Text, "/undo ") {
-		h, ok = commands["/undo"], true
+	if !ok {
+		if code, isLink := linkCodeArg(msg.Text); isLink {
+			// "/link CODE" from an account that already is a person: the merge path (V4-32).
+			response, err = e.redeemLinkCode(ctx, user, msg, code)
+			return response, true, err
+		}
+		for _, p := range prefixCommands {
+			if strings.HasPrefix(msg.Text, p+" ") {
+				h, ok = commands[p], true
+				break
+			}
+		}
 	}
 	if !ok {
 		return "", false, nil
@@ -48,7 +66,7 @@ func (e *Engine) dispatchCommand(ctx context.Context, user *models.User, msg cha
 
 // handleConfirmation redeems a staged action ("CONFIRM [TOOL]"). handled=false means msg is not
 // a confirmation.
-func (e *Engine) handleConfirmation(ctx context.Context, _ *models.User, msg channel.Inbound) (response string, handled bool, err error) {
+func (e *Engine) handleConfirmation(ctx context.Context, user *models.User, msg channel.Inbound) (response string, handled bool, err error) {
 	trimmedText := strings.TrimSpace(msg.Text)
 	if !strings.HasPrefix(strings.ToUpper(trimmedText), "CONFIRM") || e.store == nil {
 		return "", false, nil
@@ -59,7 +77,9 @@ func (e *Engine) handleConfirmation(ctx context.Context, _ *models.User, msg cha
 		expectedTool = strings.ToLower(parts[1])
 	}
 
-	pending, err := e.store.GetAndClearPendingMetaTool(ctx, msg.Sender)
+	// An approval belongs to the person and the conversation it was raised in (V4-32).
+	key := approvalKey(user, msg)
+	pending, err := e.store.GetAndClearPendingMetaTool(ctx, key)
 	if err != nil {
 		slog.Error("failed to retrieve pending meta tool action", "error", err)
 		return "", true, e.sendMessage(ctx, msg, "❌ Error retrieving pending confirmation. Please try again.")
@@ -74,7 +94,7 @@ func (e *Engine) handleConfirmation(ctx context.Context, _ *models.User, msg cha
 		return "", true, e.sendMessage(ctx, msg, "⚠️ No pending confirmation found or it has expired.")
 	}
 	if expectedTool != "" && strings.ToLower(pending.ToolName) != expectedTool {
-		_ = e.store.StagePendingMetaTool(ctx, msg.Sender, *pending, 5*time.Minute)
+		_ = e.store.StagePendingMetaTool(ctx, key, *pending, 5*time.Minute)
 		return "", true, e.sendMessage(ctx, msg, fmt.Sprintf("⚠️ Confirmation mismatch. Pending action is '%s', but you confirmed '%s'.", pending.ToolName, expectedTool))
 	}
 	slog.Info("executing confirmed meta tool action", "user_id", msg.Sender, "tool", pending.ToolName)
@@ -96,6 +116,8 @@ func (e *Engine) cmdHelp(ctx context.Context, _ *models.User, msg channel.Inboun
 	sb.WriteString("• `/restore` - Show how to restore the newest backup from the terminal; restores nothing itself (admins only)\n")
 	sb.WriteString("• `/undo` - Revert your most recent action or specify mutation ID\n")
 	sb.WriteString("• `/doctor` - Check the health of this install: channels, Google sign-ins, queues, backups, database (admins only)\n")
+	sb.WriteString("• `/link` - Add another app (account) to you, with the same data; `/accounts` lists them\n")
+	sb.WriteString("• `/notify N` - Send notifications to your account N; `/unlink N` removes account N\n")
 	sb.WriteString("• `/help` - Show this help message\n\n")
 	sb.WriteString("*AI Capabilities:*\n")
 	sb.WriteString("I am an AI assistant. You can speak to me naturally. Here are my underlying capabilities:\n\n")
@@ -131,18 +153,24 @@ func (e *Engine) cmdUndo(ctx context.Context, user *models.User, msg channel.Inb
 	return "", e.handleUndo(ctx, user, msg, mutID)
 }
 
-func (e *Engine) cmdConnect(ctx context.Context, _ *models.User, msg channel.Inbound) (string, error) {
+func (e *Engine) cmdConnect(ctx context.Context, user *models.User, msg channel.Inbound) (string, error) {
+	// The sign-in is stored under the person's key, so every account of the person finds it
+	// (V4-32); the confirmation goes to where they want notifications.
+	owner := msg.Sender
+	if user != nil && strings.TrimSpace(user.PlatformID) != "" {
+		owner = strings.TrimSpace(user.PlatformID)
+	}
 	nonce := ""
 	if e.store != nil {
 		nonceBytes := make([]byte, 32)
 		if _, err := io.ReadFull(rand.Reader, nonceBytes); err == nil {
 			nonce = hex.EncodeToString(nonceBytes)
-			_ = e.store.SaveOAuthState(ctx, nonce, msg.Sender, 10*time.Minute)
+			_ = e.store.SaveOAuthState(ctx, nonce, owner, 10*time.Minute)
 		}
 	}
 	stateParam := nonce
 	if stateParam == "" {
-		stateParam = msg.Sender
+		stateParam = owner
 	}
 	url := e.oauthCfg.AuthCodeURL(stateParam)
 	response := fmt.Sprintf("🔗 [Click here to connect your Google Calendar](%s)", url)

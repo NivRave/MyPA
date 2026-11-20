@@ -160,6 +160,19 @@ var readOnlyBuiltinTools = map[string]bool{
 	"get_current_time": true,
 }
 
+// startedByAssistantKey marks a turn the assistant started itself (a briefing): it is not a
+// message from the person, so it does not count as their account's last message (V4-32).
+type startedByAssistantKey struct{}
+
+func startedByAssistant(ctx context.Context) context.Context {
+	return context.WithValue(ctx, startedByAssistantKey{}, true)
+}
+
+func isStartedByAssistant(ctx context.Context) bool {
+	v, _ := ctx.Value(startedByAssistantKey{}).(bool)
+	return v
+}
+
 // turnUserKey carries the user resolved once at the start of a turn (P2-7), so tool calls don't
 // each re-query the database for the same row.
 type turnUserKey struct{}

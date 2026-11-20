@@ -64,7 +64,7 @@ func TestAdversarial_Engine_LockoutBlocksValidCode(t *testing.T) {
 	userID := "adv-lockout-attacker"
 
 	// Mock DB: user not found initially
-	dbMock.EXPECT().GetUser(userID).Return(nil, assert.AnError).AnyTimes()
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), userID).Return(nil, assert.AnError).AnyTimes()
 	// Mock DB: invalid codes return error
 	dbMock.EXPECT().GetPairingCode("000000").Return(nil, assert.AnError).AnyTimes()
 
@@ -159,7 +159,7 @@ func TestAdversarial_Engine_SuccessfulPairingResetsCounter(t *testing.T) {
 	userID := "adv-success-reset-user"
 
 	// Mock DB: user not found initially
-	dbMock.EXPECT().GetUser(userID).Return(nil, assert.AnError).Times(4)
+	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), userID).Return(nil, assert.AnError).Times(4)
 	// Failed codes
 	dbMock.EXPECT().GetPairingCode("000000").Return(nil, assert.AnError).Times(3)
 
@@ -192,7 +192,7 @@ func TestAdversarial_Engine_SuccessfulPairingResetsCounter(t *testing.T) {
 		FamilyGroup: "family-adv",
 	}
 	dbMock.EXPECT().GetPairingCode("999888").Return(validPC, nil).Times(1)
-	dbMock.EXPECT().RedeemPairingCode("pc-uuid-123", gomock.Any()).Return(nil).Times(1)
+	dbMock.EXPECT().RedeemPairingCode("pc-uuid-123", gomock.Any(), gomock.Any()).Return(nil).Times(1)
 
 	tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 		str, ok := x.(string)

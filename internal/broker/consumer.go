@@ -24,7 +24,14 @@ type Consumer struct {
 	prefetch   int
 	isClosed   bool
 	closedChan chan struct{}
+	// laneOf names the processing lane of a message; nil keeps one lane per channel and sender.
+	laneOf LaneFunc
 }
+
+// LaneFunc names the processing lane of an inbound message. Messages with one lane are processed
+// one at a time, in order; different lanes run in parallel. It returns "" to fall back to one
+// lane per channel and sender.
+type LaneFunc func(msg channel.Inbound) string
 
 // DefaultPrefetch bounds how many deliveries are processed concurrently (P2-8). Messages from
 // the same sender are still processed one at a time, in order.
@@ -40,6 +47,12 @@ func WithPrefetch(n int) ConsumerOption {
 			c.prefetch = n
 		}
 	}
+}
+
+// WithLanes sets how messages are put in processing lanes. The app keeps one lane per person, so
+// one person's messages from all their accounts are processed in order (V4-32, ADR 0002 §9).
+func WithLanes(f LaneFunc) ConsumerOption {
+	return func(c *Consumer) { c.laneOf = f }
 }
 
 // WithMaxRetries sets the number of delivery attempts before dead-lettering.
@@ -146,8 +159,9 @@ func (c *Consumer) ConsumeWithInfo(handler func(channel.Inbound, DeliveryInfo) e
 				_ = d.Reject(false)
 			}
 		}
-		// One serial lane per sender: parallel across users, ordered within a user.
-		return deliveryKey(msg.Channel, msg.Sender), func() {
+		// One serial lane per person (or per sender when the person is not known): parallel across
+		// people, ordered within one.
+		return c.lane(msg), func() {
 			err := callContained(func() error {
 				return handler(msg, deliveryInfo(getRetryCount(d.Headers), c.maxRetries))
 			})
@@ -404,4 +418,15 @@ func (c *Consumer) Close() error {
 		return fmt.Errorf("errors closing consumer: %v", errs)
 	}
 	return nil
+}
+
+// lane is the processing lane of msg: the LaneFunc's answer, or one lane per channel and sender.
+// A person's lane is prefixed so it can never equal a channel-and-sender key.
+func (c *Consumer) lane(msg channel.Inbound) string {
+	if c.laneOf != nil {
+		if l := c.laneOf(msg); l != "" {
+			return "person|" + l
+		}
+	}
+	return deliveryKey(msg.Channel, msg.Sender)
 }

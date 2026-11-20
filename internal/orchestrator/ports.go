@@ -83,14 +83,39 @@ type DBClient interface {
 	GetDueSharedReminders() ([]models.SharedTaskReminder, error)
 	MarkSharedReminderSent(s identity.Scope, id uint) error
 	GetUser(platformID string) (*models.User, error)
+	// UserForAccount returns the users row of the person who owns the channel account the message
+	// came from (V4-32), or an error when the account belongs to nobody. Every account of one
+	// person returns the same row.
+	UserForAccount(ctx context.Context, channelName, externalID string) (*models.User, error)
 	UpsertUser(u models.User) error
 	CreatePairingCode(s identity.Scope, pc models.PairingCode) error
 	GetPairingCode(code string) (*models.PairingCode, error)
-	RedeemPairingCode(codeID string, u models.User) error
+	// RedeemPairingCode creates the user, their person and the channel account the code was
+	// typed on.
+	RedeemPairingCode(codeID string, u models.User, channelName string) error
 	UsersInHousehold(ctx context.Context, s identity.Scope) ([]models.User, error)
 	SaveWorkflow(w models.Workflow) error
 	GetUserWorkflows(userID string) ([]models.Workflow, error)
 	DeleteWorkflow(id uint, userID string) error
+}
+
+// AccountStore holds people's channel accounts and the link codes that join them (V4-32, ADR 0002
+// Decision 4). db.Client implements it. Without one (WithAccounts not called) the link commands
+// answer that linking is not available, and messages the assistant starts go where the person
+// last wrote, as before V4-32.
+type AccountStore interface {
+	AccountOf(ctx context.Context, channelName, externalID string) (*models.ChannelAccount, error)
+	RecordInbound(ctx context.Context, channelName, externalID string) error
+	AccountsOfPerson(ctx context.Context, personID string) ([]models.ChannelAccount, error)
+	PersonByID(ctx context.Context, id string) (*models.Person, error)
+	DeliveryAccount(ctx context.Context, key string) (*models.ChannelAccount, error)
+	SetPreferredAccount(ctx context.Context, personID, accountID string) error
+	RemoveAccount(ctx context.Context, actorAccountID, targetAccountID string) error
+	IssueLinkCode(ctx context.Context, s identity.Scope, issuer models.ChannelAccount, codeHash string) error
+	ClaimLinkCode(ctx context.Context, codeHash, channelName, externalID string) (*models.AccessToken, error)
+	PendingLink(ctx context.Context, issuerAccountID string) (*models.AccessToken, error)
+	ConfirmLink(ctx context.Context, tokenID, issuerAccountID string) (*models.ChannelAccount, error)
+	MergeOnLink(ctx context.Context, tokenID, issuerAccountID string) (*identity.MergeResult, error)
 }
 
 // EventPublisher defines the interface for publishing telemetry events.

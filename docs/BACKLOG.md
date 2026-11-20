@@ -50,6 +50,9 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-37 | Low | `go test ./...` on the Windows host, without `-p 1`, fails the Postgres-backed tests after about 3 s | open |
 | BL-38 | Low | The dashboard's `logBabyCare` does not check that the baby ID belongs to the caller's household | open |
 | BL-39 | Low | Deleting an automation rule that is not in the caller's household reports success | open |
+| BL-40 | Low | `/doctor` does not say that linking is off when `LINK_CODE_SECRET` is not set | open |
+| BL-41 | Medium | An owner cannot yet remove a member's channel account | open — needs owner roles (V4-35) |
+| BL-42 | Low | Wrong pairing codes do not count toward the install-wide limit on typed codes | open — pairing codes end with V4-36 |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -555,6 +558,34 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Impact:** none today; a trap for a future caller.
 - **Fix:** return not-found on zero rows, as every other delete by ID does since V4-30, and change that test's
   expectation deliberately.
+
+### BL-40 — `/doctor` does not say that linking is off when `LINK_CODE_SECRET` is not set (Low)
+- **Found:** 2026-11-20, while building V4-32.
+- **Evidence:** without `LINK_CODE_SECRET` the app starts, logs a warning once, and answers `/link` with
+  "Linking accounts is not set up on this install". `/doctor` has no line for it.
+- **Impact:** an owner who never reads the start-up log finds out only when someone tries to link.
+- **Fix:** an Info line in the `/doctor` report ("linking accounts is off: set LINK_CODE_SECRET"), pinned by
+  the `doctor` conformance transcript.
+
+### BL-41 — An owner cannot yet remove a member's channel account (Medium)
+- **Found:** 2026-11-20, while building V4-32.
+- **Evidence:** ADR 0002 Decision 4 lets "an owner or any older account" remove an account that a stolen,
+  unlocked phone added. V4-32 builds the older-account path (`/unlink N`, `db.RemoveAccount`). Owners do not
+  exist until V4-35 (today's admins become owners there), and the dashboard has no member page that could
+  do it.
+- **Impact:** if the person has lost every older account, only an operator with database access can remove
+  the thief's account until V4-35.
+- **Fix:** with V4-35, an owner action (dashboard, and later chat) that removes a member's account under the
+  same last-account rule, announced like every other change.
+
+### BL-42 — Wrong pairing codes do not count toward the install-wide limit on typed codes (Low)
+- **Found:** 2026-11-20, while building V4-32.
+- **Evidence:** V4-32 adds an install-wide limit on wrong link codes (`rate_limit:codes:global`, ADR 0002
+  Decision 4). The 6-digit pairing codes keep only the per-sender lockout, so many senders can still share
+  the guessing of a pairing code (ADR 0002 §1).
+- **Impact:** a 6-digit code has 20 bits; spread across senders it is guessable within its 24 hours.
+- **Fix:** count wrong pairing codes against the same limit, or end pairing codes as V4-36 plans (invites in
+  `access_tokens`, keyed hash, owner approval).
 
 ## Operations (owner)
 

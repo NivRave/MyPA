@@ -9,6 +9,7 @@ import (
 type ExternalAPIConnector struct {
 	ID                   uint      `json:"id" gorm:"primaryKey"`
 	UserID               string    `json:"user_id" gorm:"index"`
+	PersonID             *string   `json:"person_id,omitempty" gorm:"type:uuid;index"`   // V4-32: the person behind user_id, filled by the database (migration 4)
 	HouseholdID          string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup          string    `json:"family_group" gorm:"index"`
 	Name                 string    `json:"name" gorm:"index"`
@@ -24,6 +25,7 @@ type ExternalAPIConnector struct {
 type AutomationRule struct {
 	ID                uint      `json:"id" gorm:"primaryKey"`
 	UserID            string    `json:"user_id" gorm:"index"`
+	PersonID          *string   `json:"person_id,omitempty" gorm:"type:uuid;index"`   // V4-32: the person behind user_id, filled by the database (migration 4)
 	HouseholdID       string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup       string    `json:"family_group" gorm:"index"`
 	Name              string    `json:"name"`
@@ -39,6 +41,7 @@ type AutomationRule struct {
 // quiet hours, and standing instructions dynamically injected into LLM system prompts.
 type UserPreference struct {
 	UserID               string    `json:"user_id" gorm:"primaryKey"`
+	PersonID             *string   `json:"person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind user_id, filled by the database (migration 4)
 	PreferredLanguage    string    `json:"preferred_language"`
 	TonePersona          string    `json:"tone_persona"`
 	DefaultCurrency      string    `json:"default_currency"`
@@ -54,6 +57,7 @@ type UserPreference struct {
 type PersonalCRMContact struct {
 	ID                 uint      `json:"id" gorm:"primaryKey"`
 	UserID             string    `json:"user_id" gorm:"index"`
+	PersonID           *string   `json:"person_id,omitempty" gorm:"type:uuid;index"`   // V4-32: the person behind user_id, filled by the database (migration 4)
 	HouseholdID        string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup        string    `json:"family_group" gorm:"index"`
 	PersonName         string    `json:"person_name" gorm:"index"`

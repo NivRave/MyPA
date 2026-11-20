@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/99designs/gqlgen/graphql/handler"
@@ -38,6 +39,7 @@ import (
 	"github.com/nivik/mypa/internal/gmail"
 	"github.com/nivik/mypa/internal/graph"
 	"github.com/nivik/mypa/internal/llm"
+	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"github.com/nivik/mypa/internal/scheduler"
 	"github.com/nivik/mypa/internal/state"
@@ -95,9 +97,12 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 
 	// 5. Initialize RabbitMQ Consumer
 	var consumer *broker.Consumer
+	var lanes personLanes // filled once the database is open, below
 	for i := 0; i < 5; i++ {
-		// Parallel across users, ordered per user; RABBITMQ_PREFETCH bounds concurrent turns (P2-8).
-		consumer, err = broker.NewConsumerWithOptions(cfg.RabbitMQ.URL, broker.InboundMessagesQueue, broker.WithPrefetch(cfg.RabbitMQ.Prefetch))
+		// Parallel across people, ordered per person whichever account they write from (V4-32);
+		// RABBITMQ_PREFETCH bounds concurrent turns (P2-8).
+		consumer, err = broker.NewConsumerWithOptions(cfg.RabbitMQ.URL, broker.InboundMessagesQueue,
+			broker.WithPrefetch(cfg.RabbitMQ.Prefetch), broker.WithLanes(lanes.of))
 		if err == nil {
 			break
 		}
@@ -153,6 +158,9 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 	if err = db.EnsureMigrated(ctx, sqlDB); err != nil {
 		return w, err
 	}
+	lanes.set(dbClient)
+	// A person's Google sign-in is found through all their accounts, preferred first (V4-32).
+	store.SetAccountKeys(dbClient.AccountKeysOf)
 
 	gmailClient := gmail.NewClient(oauthCfg, store)
 	tasksClient := tasks.NewClient(oauthCfg, store)
@@ -169,7 +177,8 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 	// ALLOWED_USERS seeds the first households on a fresh install only (V4-30, ADR 0002
 	// Decision 6); once a household exists the database is the single source of truth.
 	allowed := cfg.ParseAllowedUsers()
-	boot, err := dbClient.BootstrapHouseholds(context.Background(), allowed, cfg.Server.DefaultTimezone)
+	boot, err := dbClient.BootstrapHouseholds(context.Background(), allowed, cfg.Server.DefaultTimezone,
+		bootstrapChannelOf(cfg.AllowedUserChannels(), channels))
 	if err != nil {
 		return w, err
 	}
@@ -197,9 +206,9 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 	memoryModule := memory.NewModule(memoryRepo)
 
 	// Proactive Notification Sender for Shared Spaces and Automations: these callers hold only the
-	// recipient's ID, so the adapter that recognizes it sends (V4-31; V4-32 replaces the guess with
-	// the person's linked channel accounts).
-	notifier := channelNotifier{channels: channels}
+	// recipient's person key, so the message goes to the account that person wants notifications
+	// on (V4-32).
+	notifier := channelNotifier{channels: channels, accounts: dbClient}
 	notificationSender := notifier.SendMessage
 
 	// Track 1C: Shared Spaces & Partner Sync Notifier
@@ -254,7 +263,11 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 		WithToolRegistry(registry).
 		WithEventBus(eventBus).
 		WithCalendarConventions(orchestrator.ParseCalendarConventions(cfg.Server.WeekStartDay, cfg.Server.WeekendDays)).
-		WithHealthReporter(newHealthReporter(cfg, channels, store, dbClient, oauthCfg, doctorBackupDir)) // /doctor (V4-17)
+		WithHealthReporter(newHealthReporter(cfg, channels, store, dbClient, oauthCfg, doctorBackupDir)). // /doctor (V4-17)
+		WithAccounts(dbClient, []byte(strings.TrimSpace(cfg.Server.LinkCodeSecret)))                      // /link (V4-32)
+	if strings.TrimSpace(cfg.Server.LinkCodeSecret) == "" {
+		slog.Warn("LINK_CODE_SECRET is not set: linking a second app to a person (/link) is off")
+	}
 
 	// Start Cron jobs
 	c := scheduler.StartCronJobs(engine, dbClient, automationRunner, cfg.Server.DefaultTimezone)
@@ -307,18 +320,82 @@ type AuthNotifier interface {
 	SendMessage(ctx context.Context, userID string, text string) error
 }
 
-// channelNotifier sends to a person known only by their ID, on the channel whose adapter
-// recognizes it.
+// deliveryAccounts finds the account a person wants messages the assistant starts on.
+type deliveryAccounts interface {
+	DeliveryAccount(ctx context.Context, key string) (*models.ChannelAccount, error)
+}
+
+// channelNotifier sends to a person known only by their person key (partner notifications,
+// automations, the Google sign-in confirmation): to the account they want notifications on
+// (V4-32). A key that names no person falls back to the channel whose adapter recognizes it.
 type channelNotifier struct {
 	channels *channel.Registry
+	accounts deliveryAccounts
 }
 
 func (n channelNotifier) SendMessage(ctx context.Context, recipientID, text string) error {
+	if n.accounts != nil {
+		a, err := n.accounts.DeliveryAccount(ctx, recipientID)
+		if err != nil {
+			return fmt.Errorf("find the recipient's account: %w", err)
+		}
+		if a != nil {
+			return n.channels.SendText(ctx, channel.Address{Channel: a.Channel, Person: a.ExternalID}, text)
+		}
+	}
 	to, ok := n.channels.Recognize(recipientID)
 	if !ok {
 		return fmt.Errorf("no channel recognizes the recipient %q", recipientID)
 	}
 	return n.channels.SendText(ctx, to, text)
+}
+
+// personLanes names the processing lane of an inbound message: its person (V4-32). Until the
+// database is open, and for an account nobody owns, it answers "" (one lane per sender).
+type personLanes struct {
+	mu sync.RWMutex
+	db *db.Client
+}
+
+func (l *personLanes) set(c *db.Client) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.db = c
+}
+
+func (l *personLanes) of(msg channel.Inbound) string {
+	l.mu.RLock()
+	c := l.db
+	l.mu.RUnlock()
+	if c == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	person, err := c.PersonOfAccount(ctx, msg.Channel, msg.Sender)
+	if err != nil {
+		slog.Warn("could not find the sender's person for ordering; using the sender's own lane", "error", err)
+		return ""
+	}
+	return person
+}
+
+// bootstrapChannelOf names the channel of an ALLOWED_USERS entry: its fifth field when that names
+// a registered channel, else the channel whose adapter recognizes the ID (V4-32).
+func bootstrapChannelOf(fifth map[string]string, channels *channel.Registry) func(string) string {
+	return func(platformID string) string {
+		if ch, ok := fifth[platformID]; ok {
+			if _, known := channels.Get(ch); known {
+				return ch
+			}
+			slog.Warn("an ALLOWED_USERS entry names a channel that is not registered", "channel", ch)
+			return ""
+		}
+		if to, ok := channels.Recognize(platformID); ok {
+			return to.Channel
+		}
+		return ""
+	}
 }
 
 type CredentialFallbackSaver interface {
