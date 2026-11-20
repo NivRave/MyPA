@@ -185,6 +185,23 @@ func TestUserPreferences_RefusesUnreadableQuietHours(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, pref)
 	assert.Equal(t, "22:00", pref.QuietHoursStart, "the stored window is kept")
+
+	// A window stored before V4-05 that cannot be read does not block another change.
+	pref.QuietHoursStart = "10pm"
+	require.NoError(t, repo.UpsertUserPreference(pref))
+	_, err = mod.Execute(context.Background(), callCtx, "update_user_preferences", map[string]interface{}{
+		"tone_persona": "Warm",
+	})
+	require.NoError(t, err, "changing the tone does not re-check stored quiet hours")
+	pref, err = repo.GetUserPreference("u_quiet")
+	require.NoError(t, err)
+	assert.Equal(t, "Warm", pref.TonePersona)
+
+	// Replacing the bad start makes the window readable again.
+	_, err = mod.Execute(context.Background(), callCtx, "update_user_preferences", map[string]interface{}{
+		"quiet_hours_start": "23:00",
+	})
+	require.NoError(t, err)
 }
 
 func TestPersonalCRM_UpsertQueryAndUpcomingAlerts(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	dbmodels "github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,4 +35,13 @@ func TestSaveUserPreference_RefusesUnreadableQuietHours(t *testing.T) {
 	got, err = resolver.Mutation().SaveUserPreference(ctx, "quiet-owner", nil, nil, nil, &none, &none, nil)
 	require.NoError(t, err)
 	assert.Empty(t, got.QuietHoursStart, "quiet hours can be cleared")
+
+	// A window stored before V4-05 that cannot be read does not block another change.
+	require.NoError(t, resolver.DB.UpsertUserPreference(&dbmodels.UserPreference{
+		UserID: "quiet-owner", QuietHoursStart: "10pm", QuietHoursEnd: "07:00",
+	}))
+	lang := "he"
+	got, err = resolver.Mutation().SaveUserPreference(ctx, "quiet-owner", &lang, nil, nil, nil, nil, nil)
+	require.NoError(t, err, "changing the language does not re-check stored quiet hours")
+	assert.Equal(t, "he", got.PreferredLanguage)
 }
