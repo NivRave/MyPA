@@ -16,6 +16,7 @@ import (
 	"github.com/nivik/mypa/internal/broker"
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/channel/adapters"
+	"github.com/nivik/mypa/internal/twilio"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/doctor"
 	"github.com/nivik/mypa/internal/models"
@@ -178,9 +179,14 @@ func doctorReport(t *testing.T, i *install, amqpURL, adminID string) doctor.Repo
 	cfg.Channels.WhatsApp.AccountSID = "ACtest"
 	cfg.Channels.WhatsApp.FromNumber = "whatsapp:+12025550199"
 	cfg.Channels.WhatsApp.StatusCallbackURL = "https://mypa.example/webhook/twilio/status"
+	// A registered sender (V4-41) whose two templates WhatsApp approved.
+	cfg.Channels.WhatsApp.TemplateSIDs = map[string]string{
+		twilio.TemplateReminder: "HX00000000000000000000000000000001",
+		twilio.TemplateBriefing: "HX00000000000000000000000000000002",
+	}
 	cfg.RabbitMQ.URL = amqpURL
 	channels, err := adapters.Build(cfg.Channels, adapters.WithHTTPClient(&http.Client{
-		Transport: telegramAPI{t: t, webhookInfo: `{"url":"https://mypa.example/webhook/telegram","pending_update_count":0}`},
+		Transport: approvedTemplates{next: telegramAPI{t: t, webhookInfo: `{"url":"https://mypa.example/webhook/telegram","pending_update_count":0}`}},
 	}))
 	require.NoError(t, err)
 

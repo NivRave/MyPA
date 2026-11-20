@@ -537,7 +537,8 @@ func TestTransfer_BaselineDumpRestoresAndMigrates(t *testing.T) {
 			passed[r.Check] = true
 		}
 	}
-	for _, check := range []string{"Telegram webhook", "Google account: Dana", "WhatsApp", "Queue inbound.messages", "Queue audit.events", "Backups", "Database schema"} {
+	for _, check := range []string{"Telegram webhook", "Google account: Dana", "WhatsApp delivery reports", "WhatsApp template mypa_reminder",
+		"WhatsApp template mypa_briefing", "Queue inbound.messages", "Queue audit.events", "Backups", "Database schema"} {
 		assert.True(t, passed[check], "%s must pass after the restore", check)
 	}
 }

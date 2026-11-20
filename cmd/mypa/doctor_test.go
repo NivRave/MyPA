@@ -275,3 +275,22 @@ func TestChannelChecks_EveryAdapterHasOne(t *testing.T) {
 	}
 	assert.Len(t, channelChecks(reg, nil), len(reg.All()))
 }
+
+// approvedTemplates answers Twilio's Content API as for a registered sender whose templates
+// WhatsApp approved (V4-41), and hands every other request to next.
+type approvedTemplates struct{ next http.RoundTripper }
+
+func (a approvedTemplates) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Host != "content.twilio.com" {
+		return a.next.RoundTrip(req)
+	}
+	if req.Method != http.MethodGet || !strings.HasSuffix(req.URL.Path, "/ApprovalRequests") {
+		return nil, fmt.Errorf("unexpected Content API call %s %s", req.Method, req.URL.Path)
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader(`{"whatsapp":{"status":"approved","rejection_reason":""}}`)),
+		Request:    req,
+	}, nil
+}
