@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/nivik/mypa/internal/models"
+	"golang.org/x/oauth2"
 	"google.golang.org/api/calendar/v3"
 	"google.golang.org/api/option"
-	"golang.org/x/oauth2"
 )
 
 // Client wraps the Google Calendar API client.
@@ -26,7 +26,8 @@ func NewClient(ctx context.Context, ts oauth2.TokenSource, opts ...option.Client
 	return &Client{svc: svc}, nil
 }
 
-// CreateEvent inserts a new event into the primary calendar.
+// CreateEvent inserts a new event into the primary calendar and returns its event ID, which
+// UpdateEvent and DeleteEvent take (V4-08: it returned the web link, which they cannot use).
 func (c *Client) CreateEvent(ctx context.Context, ev models.CalendarEvent) (string, error) {
 	// Build the Google Calendar event structure
 	event := &calendar.Event{
@@ -49,7 +50,7 @@ func (c *Client) CreateEvent(ctx context.Context, ev models.CalendarEvent) (stri
 		return "", fmt.Errorf("calendar api error: %w", err)
 	}
 
-	return res.HtmlLink, nil
+	return res.Id, nil
 }
 
 // Helper functions to convert local time formats into RFC3339 if needed
@@ -86,7 +87,7 @@ func (c *Client) ListEvents(ctx context.Context, timeMin, timeMax string, q stri
 // UpdateEvent updates an existing event in the primary calendar using Patch for partial updates.
 func (c *Client) UpdateEvent(ctx context.Context, eventID string, ev models.CalendarEvent) error {
 	event := &calendar.Event{}
-	
+
 	if ev.Title != "" {
 		event.Summary = ev.Title
 	}

@@ -203,6 +203,7 @@ type fakeCalendarClient struct {
 	updatedEvents  map[string]models.CalendarEvent
 	deletedEvents  []string
 	eventsToList   []*calendar.Event
+	lastQuery      string
 	nextEventIndex int
 }
 
@@ -229,6 +230,7 @@ func (c *fakeCalendarClient) CreateEventWithColor(ctx context.Context, ev models
 func (c *fakeCalendarClient) ListEvents(ctx context.Context, timeMin, timeMax string, q string) ([]*calendar.Event, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.lastQuery = q
 	return c.eventsToList, nil
 }
 
@@ -354,7 +356,7 @@ func TestModule_VirtualSubCalendar_PrefixingAndColor(t *testing.T) {
 	}
 
 	// 1. Title without prefix should receive [Baby]
-	res, err := mod.Execute(context.Background(), callCtx, "schedule_topic_event", map[string]interface{}{
+	res, err := mod.Execute(context.Background(), callCtx, "create_calendar_event", map[string]interface{}{
 		"title":          "Pediatrician Checkup",
 		"topic":          "baby",
 		"start_time":     "2026-11-04T10:00:00Z",
@@ -371,7 +373,7 @@ func TestModule_VirtualSubCalendar_PrefixingAndColor(t *testing.T) {
 	assert.Equal(t, "4", calMock.createdColors[0])
 
 	// 2. Title already containing a bracket prefix should NOT be double prefixed
-	_, err = mod.Execute(context.Background(), callCtx, "schedule_topic_event", map[string]interface{}{
+	_, err = mod.Execute(context.Background(), callCtx, "create_calendar_event", map[string]interface{}{
 		"title":          "[Baby] Vaccine Shot",
 		"topic":          "baby",
 		"start_time":     "2026-11-05T10:00:00Z",
@@ -403,7 +405,7 @@ func TestModule_InternalOnly_Schedules(t *testing.T) {
 		Scope: sc(t, "AliceFamily", "tg_123"),
 	}
 
-	res, err := mod.Execute(context.Background(), callCtx, "schedule_topic_event", map[string]interface{}{
+	res, err := mod.Execute(context.Background(), callCtx, "create_calendar_event", map[string]interface{}{
 		"title":          "Afternoon Feed 150ml",
 		"topic":          "baby",
 		"start_time":     "2026-11-04T14:30:00Z",
@@ -465,7 +467,7 @@ func TestModule_PartnerCalendarSync(t *testing.T) {
 		},
 	}
 
-	res, err := mod.Execute(context.Background(), callCtx, "schedule_topic_event", map[string]interface{}{
+	res, err := mod.Execute(context.Background(), callCtx, "create_calendar_event", map[string]interface{}{
 		"title":          "Boiler Inspection",
 		"topic":          "house",
 		"start_time":     "2026-11-06T09:00:00Z",
@@ -513,7 +515,7 @@ func TestModule_EventBus_Mutations(t *testing.T) {
 	}
 
 	// 1. Create event
-	_, err := mod.Execute(context.Background(), callCtx, "schedule_topic_event", map[string]interface{}{
+	_, err := mod.Execute(context.Background(), callCtx, "create_calendar_event", map[string]interface{}{
 		"title":          "Gym Session",
 		"topic":          "health",
 		"start_time":     "2026-11-04T07:00:00Z",
@@ -530,14 +532,14 @@ func TestModule_EventBus_Mutations(t *testing.T) {
 	require.NoError(t, err)
 
 	// 3. Update event
-	_, err = mod.Execute(context.Background(), callCtx, "update_topic_event", map[string]interface{}{
+	_, err = mod.Execute(context.Background(), callCtx, "update_calendar_event", map[string]interface{}{
 		"event_id": 1,
 		"title":    "Intense Gym Session",
 	})
 	require.NoError(t, err)
 
 	// 4. Delete event
-	_, err = mod.Execute(context.Background(), callCtx, "delete_topic_event", map[string]interface{}{
+	_, err = mod.Execute(context.Background(), callCtx, "delete_calendar_event", map[string]interface{}{
 		"event_id": 1,
 	})
 	require.NoError(t, err)
@@ -605,7 +607,7 @@ func TestModule_ListTopicSchedule_Merging(t *testing.T) {
 	}
 
 	// Query for topic 'baby'
-	res, err := mod.Execute(context.Background(), callCtx, "list_topic_schedule", map[string]interface{}{
+	res, err := mod.Execute(context.Background(), callCtx, "list_calendar_events", map[string]interface{}{
 		"topic":          "baby",
 		"include_google": true,
 	})
@@ -665,7 +667,7 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 	userAlpha := &models.User{ID: "u_alpha", PlatformID: "user_alpha", FamilyGroup: "family_alpha"}
 	callCtxAlpha := orchestrator.CallContext{User: userAlpha, Scope: sc(t, "family_alpha", "user_alpha"), Message: channel.Inbound{Sender: "user_alpha"}}
 
-	createResp, err := mod.Execute(ctx, callCtxAlpha, "schedule_topic_event", map[string]interface{}{
+	createResp, err := mod.Execute(ctx, callCtxAlpha, "create_calendar_event", map[string]interface{}{
 		"topic":      "medical",
 		"title":      "Alpha Doctor Appointment",
 		"start_time": "2026-11-10T10:00:00Z",
@@ -684,7 +686,7 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 	userBeta := &models.User{ID: "u_beta", PlatformID: "user_beta", FamilyGroup: "family_beta"}
 	callCtxBeta := orchestrator.CallContext{User: userBeta, Scope: sc(t, "family_beta", "user_beta"), Message: channel.Inbound{Sender: "user_beta"}}
 
-	updateBetaResp, err := mod.Execute(ctx, callCtxBeta, "update_topic_event", map[string]interface{}{
+	updateBetaResp, err := mod.Execute(ctx, callCtxBeta, "update_calendar_event", map[string]interface{}{
 		"event_id": 1,
 		"title":    "Hacked Event Title",
 	})
@@ -697,7 +699,7 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 	assert.Equal(t, "Alpha Doctor Appointment", ev1After.Title)
 
 	// 3. User Beta (family_beta) attempts to DELETE Event 1
-	deleteBetaResp, err := mod.Execute(ctx, callCtxBeta, "delete_topic_event", map[string]interface{}{
+	deleteBetaResp, err := mod.Execute(ctx, callCtxBeta, "delete_calendar_event", map[string]interface{}{
 		"event_id": 1,
 	})
 	require.NoError(t, err)
@@ -709,7 +711,7 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 	require.NotNil(t, ev1StillExists)
 
 	// 4. Legitimate same-family update (non-regression)
-	updateAlphaResp, err := mod.Execute(ctx, callCtxAlpha, "update_topic_event", map[string]interface{}{
+	updateAlphaResp, err := mod.Execute(ctx, callCtxAlpha, "update_calendar_event", map[string]interface{}{
 		"event_id": 1,
 		"title":    "Alpha Pediatrician Visit",
 	})
@@ -721,7 +723,7 @@ func TestSEC04_CrossTenant_ScheduleEvents_Blocked(t *testing.T) {
 	assert.Equal(t, "Alpha Pediatrician Visit", ev1Updated.Title)
 
 	// 5. Legitimate same-family delete (non-regression)
-	deleteAlphaResp, err := mod.Execute(ctx, callCtxAlpha, "delete_topic_event", map[string]interface{}{
+	deleteAlphaResp, err := mod.Execute(ctx, callCtxAlpha, "delete_calendar_event", map[string]interface{}{
 		"event_id": 1,
 	})
 	require.NoError(t, err)
@@ -749,7 +751,7 @@ func TestModule_EveryMutationEventCarriesTheHousehold(t *testing.T) {
 	scope := sc(t, "Family1", "usr_alice")
 	callCtx := orchestrator.CallContext{User: &models.User{PlatformID: "usr_alice", FamilyGroup: "Family1"}, Scope: scope, EventBus: bus}
 
-	_, err := mod.Execute(context.Background(), callCtx, "schedule_topic_event", map[string]interface{}{
+	_, err := mod.Execute(context.Background(), callCtx, "create_calendar_event", map[string]interface{}{
 		"title": "Gym Session", "topic": "health", "start_time": "2026-11-04T07:00:00Z", "sync_to_google": false,
 	})
 	require.NoError(t, err)
@@ -757,9 +759,9 @@ func TestModule_EveryMutationEventCarriesTheHousehold(t *testing.T) {
 		"topic": "health", "prefix_tag": "Fitness", "color_id": "2",
 	})
 	require.NoError(t, err)
-	_, err = mod.Execute(context.Background(), callCtx, "update_topic_event", map[string]interface{}{"event_id": 1, "title": "Intense"})
+	_, err = mod.Execute(context.Background(), callCtx, "update_calendar_event", map[string]interface{}{"event_id": 1, "title": "Intense"})
 	require.NoError(t, err)
-	_, err = mod.Execute(context.Background(), callCtx, "delete_topic_event", map[string]interface{}{"event_id": 1})
+	_, err = mod.Execute(context.Background(), callCtx, "delete_calendar_event", map[string]interface{}{"event_id": 1})
 	require.NoError(t, err)
 
 	mu.Lock()

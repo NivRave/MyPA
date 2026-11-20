@@ -380,7 +380,6 @@ var ModuleDomainMapping = map[string]DomainGroup{
 	"baby":               DomainBaby,
 	"finance":            DomainFinance,
 	"house":              DomainHouse,
-	"workspace_calendar": DomainCalendar,
 	"schedule":           DomainCalendar,
 	"workspace_gmail":    DomainGmail,
 	"workspace_tasks":    DomainTasks,

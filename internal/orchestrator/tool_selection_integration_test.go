@@ -18,7 +18,6 @@ import (
 	"github.com/nivik/mypa/internal/domains/schedule"
 	"github.com/nivik/mypa/internal/domains/shared"
 	"github.com/nivik/mypa/internal/domains/web_research"
-	"github.com/nivik/mypa/internal/domains/workspace_calendar"
 	"github.com/nivik/mypa/internal/domains/workspace_contacts"
 	"github.com/nivik/mypa/internal/domains/workspace_gmail"
 	"github.com/nivik/mypa/internal/domains/workspace_tasks"
@@ -30,16 +29,15 @@ import (
 )
 
 // TestFull13Modules_TokenReduction verifies SCALE-01:
-// 1. All 13 production domain modules register >= 66 total tool declarations.
+// 1. All 13 production domain modules register >= 62 total tool declarations.
 // 2. CoreDeclarations() strictly returns the 7 Tier 1 core tools (8 before V4-06 removed remember_fact).
 // 3. SelectDeclarations for DomainBaby injects exactly 12 tools (7 core + 5 baby).
-// 4. Achieves >= 80% token reduction (12 / 66 tools).
+// 4. Achieves >= 80% token reduction (12 / 62 tools).
 // 5. Ambient default selection (no matched domain) injects only Core + Calendar + Tasks tools.
 func TestFull13Modules_TokenReduction(t *testing.T) {
 	reg := orchestrator.NewRegistry()
 
 	// Register all 13 production modules
-	reg.Register(workspace_calendar.NewModule(nil))
 	reg.Register(workspace_gmail.NewModule())
 	reg.Register(workspace_tasks.NewModule())
 	reg.Register(workspace_contacts.NewModule())
@@ -58,8 +56,8 @@ func TestFull13Modules_TokenReduction(t *testing.T) {
 	allDecls := reg.AllDeclarations()
 	totalTools := len(allDecls)
 	t.Logf("Total registered tool declarations across all 13 modules: %d", totalTools)
-	// 66 since V4-06 removed remember_fact (67 before).
-	assert.GreaterOrEqual(t, totalTools, 66, "Expected at least 66 total declarations across 13 modules")
+	// 62 since V4-08 merged the calendar tools (66 after V4-06 removed remember_fact, 67 before).
+	assert.GreaterOrEqual(t, totalTools, 62, "Expected at least 62 total declarations across 13 modules")
 
 	// 2. Verify Tier 1 Core Tools: must be exactly 7 tools
 	coreDecls := reg.CoreDeclarations()
@@ -105,7 +103,7 @@ func TestFull13Modules_TokenReduction(t *testing.T) {
 	assert.Equal(t, 7, coreToolCount, "Must contain all 7 core tools")
 
 	// 4. Token reduction math:
-	// 12 tools injected instead of >= 66 tools
+	// 12 tools injected instead of >= 62 tools
 	reductionPercent := (1.0 - (float64(len(babySelected)) / float64(totalTools))) * 100.0
 	t.Logf("Empirical token reduction: %.2f%% (%d tools injected out of %d)", reductionPercent, len(babySelected), totalTools)
 	assert.GreaterOrEqual(t, reductionPercent, 80.0, "Token reduction must be >= 80%%")

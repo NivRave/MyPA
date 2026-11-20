@@ -29,7 +29,7 @@ func TestProcessMessage_ConcurrentTurnsForDifferentUsers(t *testing.T) {
 	actorsSeen := map[string]string{} // tool arg "for" → ActorID that executed it
 	reg := NewRegistry()
 	reg.Register(&mockToolModule{
-		name:         "workspace_calendar",
+		name:         "schedule",
 		declarations: []*genai.FunctionDeclaration{{Name: "create_calendar_event"}},
 		executeFunc: func(_ context.Context, callCtx CallContext, _ string, args map[string]interface{}) (string, error) {
 			mu.Lock()

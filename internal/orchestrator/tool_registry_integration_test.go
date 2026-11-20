@@ -14,7 +14,7 @@ import (
 	"github.com/nivik/mypa/internal/domains/preferences"
 	"github.com/nivik/mypa/internal/domains/shared"
 	"github.com/nivik/mypa/internal/domains/web_research"
-	"github.com/nivik/mypa/internal/domains/workspace_calendar"
+	"github.com/nivik/mypa/internal/domains/schedule"
 	"github.com/nivik/mypa/internal/domains/workspace_contacts"
 	"github.com/nivik/mypa/internal/domains/workspace_gmail"
 	"github.com/nivik/mypa/internal/domains/workspace_tasks"
@@ -49,6 +49,73 @@ func (m *mockCalClient) UpdateEvent(ctx context.Context, id string, ev models.Ca
 }
 func (m *mockCalClient) DeleteEvent(ctx context.Context, id string) error {
 	return nil
+}
+
+// memScheduleRepo is the smallest household-scoped db.ScheduleRepository the calendar module
+// needs here (V4-08: the calendar tools keep every event in MyPA).
+type memScheduleRepo struct {
+	mu     sync.Mutex
+	events map[uint]*models.ScheduleEvent
+	nextID uint
+}
+
+func newMemScheduleRepo() *memScheduleRepo {
+	return &memScheduleRepo{events: map[uint]*models.ScheduleEvent{}}
+}
+
+func (r *memScheduleRepo) CreateScheduleEvent(s identity.Scope, ev *models.ScheduleEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.nextID++
+	ev.ID, ev.HouseholdID, ev.FamilyGroup = r.nextID, s.HouseholdID(), s.LegacyLabel()
+	cp := *ev
+	r.events[ev.ID] = &cp
+	return nil
+}
+
+func (r *memScheduleRepo) GetScheduleEvent(s identity.Scope, id uint) (*models.ScheduleEvent, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ev, ok := r.events[id]; ok && ev.HouseholdID == s.HouseholdID() {
+		cp := *ev
+		return &cp, nil
+	}
+	return nil, nil
+}
+
+func (r *memScheduleRepo) UpdateScheduleEvent(s identity.Scope, ev *models.ScheduleEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := *ev
+	r.events[ev.ID] = &cp
+	return nil
+}
+
+func (r *memScheduleRepo) DeleteScheduleEvent(s identity.Scope, id uint) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.events, id)
+	return nil
+}
+
+func (r *memScheduleRepo) ListScheduleEvents(s identity.Scope, topic string, start, end time.Time) ([]models.ScheduleEvent, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []models.ScheduleEvent
+	for _, ev := range r.events {
+		if ev.HouseholdID == s.HouseholdID() {
+			out = append(out, *ev)
+		}
+	}
+	return out, nil
+}
+
+func (r *memScheduleRepo) UpsertTopicCalendarConfig(*models.TopicCalendarConfig) error { return nil }
+func (r *memScheduleRepo) GetTopicCalendarConfig(string, string) (*models.TopicCalendarConfig, error) {
+	return nil, nil
+}
+func (r *memScheduleRepo) ListTopicCalendarConfigs(string) ([]models.TopicCalendarConfig, error) {
+	return nil, nil
 }
 
 type mockGmailClient struct {
@@ -269,7 +336,8 @@ func TestARCH01_28Tools_ModularizationAndDynamicDispatch(t *testing.T) {
 	tavilyMock := &mockTavilyClient{}
 
 	// Register the 8 domain modules containing the 28 Wave 0 base tools
-	modCal := workspace_calendar.NewModule(calFactory, workspace_calendar.WithEventBus(eventBus))
+	// V4-08: the calendar domain is the schedule module.
+	modCal := schedule.NewModule(newMemScheduleRepo(), schedule.WithCalendarFactory(calFactory), schedule.WithEventBus(eventBus))
 	modGmail := workspace_gmail.NewModule(workspace_gmail.WithClient(gmailMock), workspace_gmail.WithEventBus(eventBus))
 	modTasks := workspace_tasks.NewModule(workspace_tasks.WithClient(tasksMock), workspace_tasks.WithEventBus(eventBus))
 	modContacts := workspace_contacts.NewModule(workspace_contacts.WithClient(contactsMock), workspace_contacts.WithEventBus(eventBus))
@@ -289,7 +357,7 @@ func TestARCH01_28Tools_ModularizationAndDynamicDispatch(t *testing.T) {
 	reg.Register(modAuto)
 
 	expectedToolDistribution := map[string][]string{
-		"workspace_calendar": {
+		"schedule": {
 			"create_calendar_event",
 			"list_calendar_events",
 			"update_calendar_event",
@@ -381,11 +449,11 @@ func TestARCH01_28Tools_ModularizationAndDynamicDispatch(t *testing.T) {
 
 		ctx := context.Background()
 
-		// 1. Dispatch workspace_calendar tool
+		// 1. Dispatch a calendar tool
 		res, handled, err := reg.Execute(ctx, callCtx, "list_calendar_events", map[string]interface{}{"query": "standup"})
 		require.NoError(t, err)
 		assert.True(t, handled)
-		assert.Contains(t, res, "Here are the calendar events I found")
+		assert.Contains(t, res, "Event 1", "the Google event is listed")
 		assert.Equal(t, "canonical_user_42", calMock.calledUser)
 
 		// 2. Dispatch workspace_gmail tool
@@ -482,7 +550,7 @@ func TestARCH04_All28Tools_AntiIDOR_IdentitySpoofingStress(t *testing.T) {
 	mockLLM := &mockLLMClient{}
 
 	reg := orchestrator.NewRegistry()
-	reg.Register(workspace_calendar.NewModule(calFactory, workspace_calendar.WithEventBus(eventBus)))
+	reg.Register(schedule.NewModule(newMemScheduleRepo(), schedule.WithCalendarFactory(calFactory), schedule.WithEventBus(eventBus)))
 	reg.Register(workspace_gmail.NewModule(workspace_gmail.WithClient(gmailMock), workspace_gmail.WithEventBus(eventBus)))
 	reg.Register(workspace_tasks.NewModule(workspace_tasks.WithClient(tasksMock), workspace_tasks.WithEventBus(eventBus)))
 	reg.Register(workspace_contacts.NewModule(workspace_contacts.WithClient(contactsMock), workspace_contacts.WithEventBus(eventBus)))
@@ -531,7 +599,7 @@ func TestARCH04_All28Tools_AntiIDOR_IdentitySpoofingStress(t *testing.T) {
 
 	// 2. Calendar: delete_calendar_event
 	args = copyMap(spoofedPayload)
-	args["id"] = "event-123"
+	args["google_event_id"] = "event-123"
 	_, _, err = reg.Execute(ctx, callCtx, "delete_calendar_event", args)
 	require.NoError(t, err)
 	assert.Equal(t, "canonical_victim_platform_id", calMock.calledUser)

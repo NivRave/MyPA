@@ -21,7 +21,6 @@ import (
 	"github.com/nivik/mypa/internal/domains/schedule"
 	"github.com/nivik/mypa/internal/domains/shared"
 	"github.com/nivik/mypa/internal/domains/web_research"
-	"github.com/nivik/mypa/internal/domains/workspace_calendar"
 	"github.com/nivik/mypa/internal/domains/workspace_contacts"
 	"github.com/nivik/mypa/internal/domains/workspace_gmail"
 	"github.com/nivik/mypa/internal/domains/workspace_tasks"
@@ -35,7 +34,6 @@ import (
 // TestProductionModulesMatchTheWorkerWiring keeps this list in sync with worker.go.
 func ProductionModules() []orchestrator.ToolModule {
 	return []orchestrator.ToolModule{
-		workspace_calendar.NewModule(nil),
 		workspace_gmail.NewModule(),
 		workspace_tasks.NewModule(),
 		workspace_contacts.NewModule(),

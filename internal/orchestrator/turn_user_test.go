@@ -36,7 +36,7 @@ func TestProcessMessage_ResolvesUserOncePerTurn(t *testing.T) {
 	var seenFamily []string
 	reg := NewRegistry()
 	reg.Register(&mockToolModule{
-		name:         "workspace_calendar",
+		name:         "schedule",
 		declarations: []*genai.FunctionDeclaration{{Name: "t1"}, {Name: "t2"}, {Name: "t3"}},
 		executeFunc: func(_ context.Context, callCtx CallContext, _ string, _ map[string]interface{}) (string, error) {
 			mu.Lock()

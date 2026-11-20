@@ -39,7 +39,8 @@ func WithEventBus(bus *events.EventBus) Option {
 	}
 }
 
-// Module implements orchestrator.ToolModule for multi-schedule and virtual sub-calendar management.
+// Module implements orchestrator.ToolModule for the calendar domain: MyPA's events, Google
+// Calendar sync and virtual sub-calendars. Since V4-08 it is the only calendar module.
 type Module struct {
 	repo            db.ScheduleRepository
 	calendarFactory CalendarFactory
@@ -100,21 +101,14 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 	sb.WriteString("### Multi-Schedule Engine & Virtual Sub-Calendars:\n")
 	// V4-27: the topics are the household's (Core plus its packs'), never a fixed list.
 	topics := callCtx.Packs().Topics()
-	sb.WriteString(fmt.Sprintf("• You manage distinct topic-based schedules (%s) using `schedule_topic_event`, `list_topic_schedule`, and `configure_topic_calendar`.\n", backticked(topics)))
-	sb.WriteString("• Virtual sub-calendars: Prefix event titles with `[Topic]` (e.g. `[Health] Dentist Checkup`, `[Work] Quarterly Review`) and assign distinct Google Calendar colors.\n")
+	// V4-08: one tool set for the calendar; Google sync is a flag, not a second set of tools.
+	sb.WriteString("• One set of calendar tools: `create_calendar_event`, `list_calendar_events`, `update_calendar_event`, `delete_calendar_event` and `configure_topic_calendar`. Events are kept in MyPA and added to Google Calendar unless `sync_to_google` is false.\n")
+	sb.WriteString(fmt.Sprintf("• Virtual sub-calendars: a topic (%s) files an event under its sub-calendar, and its Google title gets a `[Topic]` prefix (e.g. `[Health] Dentist Checkup`) and the topic's colour. Leave the topic out for a plain event.\n", backticked(topics)))
+	sb.WriteString("• To change or delete an event use its MyPA `event_id`; an event that exists only in Google Calendar has a `google_event_id` instead. `list_calendar_events` shows both.\n")
 	sb.WriteString("• Internal-only schedules: For high-frequency routine logs (daily medication, workouts), set `sync_to_google: false` to store purely in the database without cluttering the primary calendar.\n")
 	sb.WriteString(fmt.Sprintf("• Partner Calendar Sync: Topics %s default to shared (`is_shared: true`). Synced shared events automatically duplicate onto the partner's Google Calendar with attribution.\n", backticked(models.DefaultSharedTopics(topics))))
 
-	userID := ""
-	if callCtx.User != nil {
-		userID = callCtx.User.PlatformID
-		if userID == "" {
-			userID = callCtx.User.ID
-		}
-	}
-	if userID == "" {
-		userID = callCtx.Message.Sender
-	}
+	userID := callerID(callCtx)
 
 	repo, err := m.resolveRepo(callCtx)
 	if err == nil && repo != nil && userID != "" {

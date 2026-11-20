@@ -4,88 +4,158 @@ import (
 	"google.golang.org/genai"
 )
 
-// Declarations returns the Gemini FunctionDeclaration schemas for schedule tools.
+// recurrenceSchema is one or more RFC 5545 recurrence lines (a single string is accepted too).
+var recurrenceSchema = &genai.Schema{
+	Type:        genai.TypeArray,
+	Items:       &genai.Schema{Type: genai.TypeString},
+	Description: "Optional recurrence rules for repeating events, as RFC 5545 RRULE strings. For example: ['RRULE:FREQ=WEEKLY;BYDAY=TU'] for every Tuesday.",
+}
+
+// timezoneSchema says how a time without an offset is read.
+var timezoneSchema = &genai.Schema{
+	Type:        genai.TypeString,
+	Description: "The user's IANA time zone (e.g. 'Asia/Jerusalem'). A time without an offset is read in this zone, and Google Calendar shows the event in it.",
+}
+
+// eventRefSchemas are the two ways to name an event: MyPA's ID, or Google's for an event made in Google.
+var eventRefSchemas = map[string]*genai.Schema{
+	"event_id": {
+		Type:        genai.TypeInteger,
+		Description: "The MyPA ID of the event, as shown by list_calendar_events.",
+	},
+	"google_event_id": {
+		Type:        genai.TypeString,
+		Description: "The Google ID of an event that exists only in Google Calendar, as shown by list_calendar_events. Use it only when the event has no MyPA ID.",
+	},
+}
+
+func withEventRef(props map[string]*genai.Schema) map[string]*genai.Schema {
+	for k, v := range eventRefSchemas {
+		props[k] = v
+	}
+	return props
+}
+
+// Declarations returns the calendar domain's tools (V4-08: one set; Google sync is a flag).
 func (m *Module) Declarations() []*genai.FunctionDeclaration {
 	return []*genai.FunctionDeclaration{
 		{
-			Name:        "schedule_topic_event",
-			Description: "Create a topic-tagged schedule event with virtual sub-calendar support. Events can be synchronized with Google Calendar (with topic prefix e.g. [Health], [Work] and custom color coding) or kept internal-only for high-frequency routines (meds, workouts). If shared, also synchronizes to partner's calendar.",
+			Name:        "create_calendar_event",
+			Description: "Creates a calendar event. Call this when the user asks to schedule a meeting, block time, add an appointment, or create an event. The event is saved in MyPA and, unless sync_to_google is false, added to the user's Google Calendar. A topic files it under a virtual sub-calendar (its Google title gets a [Topic] prefix and the topic's colour); shared events are also added to the partner's calendar.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
 					"title": {
 						Type:        genai.TypeString,
-						Description: "Title or summary of the event (e.g. 'Pediatrician Checkup', 'Plumber Visit', 'Morning Feeding').",
-					},
-					"topic": {
-						Type:        genai.TypeString,
-						Description: "Life domain or topic: one of the household's topics (e.g. 'family', 'health', 'work', 'personal').",
+						Description: "Title or summary of the event (e.g. 'Pediatrician Checkup', 'Plumber Visit').",
 					},
 					"start_time": {
 						Type:        genai.TypeString,
-						Description: "Start time in ISO 8601 / RFC3339 format (e.g. '2026-11-04T10:00:00Z').",
+						Description: "Start time in ISO 8601 format (e.g. '2026-11-04T10:00:00').",
 					},
 					"end_time": {
 						Type:        genai.TypeString,
-						Description: "Optional end time in ISO 8601 / RFC3339 format. If omitted, defaults to 1 hour after start time.",
+						Description: "Optional end time in ISO 8601 format. Defaults to one hour after the start.",
 					},
+					"timezone": timezoneSchema,
 					"description": {
 						Type:        genai.TypeString,
 						Description: "Optional notes or details about the event.",
 					},
+					"topic": {
+						Type:        genai.TypeString,
+						Description: "Optional life domain: one of the household's topics (e.g. 'family', 'health', 'work'). Leave it out for a plain calendar event.",
+					},
 					"tags": {
-						Type: genai.TypeArray,
-						Items: &genai.Schema{
-							Type: genai.TypeString,
-						},
-						Description: "Optional sub-tags for filtering (e.g. ['pediatrician', 'vaccine'], ['maintenance', 'plumber']).",
+						Type:        genai.TypeArray,
+						Items:       &genai.Schema{Type: genai.TypeString},
+						Description: "Optional sub-tags for filtering (e.g. ['pediatrician', 'vaccine']).",
 					},
 					"sync_to_google": {
 						Type:        genai.TypeBoolean,
-						Description: "Whether to sync to Google Calendar. Set to false for internal-only schedules that shouldn't clutter the primary calendar.",
+						Description: "Whether to add the event to Google Calendar (default true, or the topic's setting). Set false for internal-only routines (daily medication, workouts) that should not clutter the calendar.",
 					},
 					"is_shared": {
 						Type:        genai.TypeBoolean,
-						Description: "Whether this event is shared with family/partner. When true, syncs to partner's Google calendar as well.",
+						Description: "Whether the event is shared with the family; a shared, synced event is also added to the partner's Google Calendar.",
 					},
-					"recurrence": {
-						Type:        genai.TypeString,
-						Description: "Optional recurrence rule in RRULE format (e.g. 'RRULE:FREQ=DAILY;INTERVAL=1').",
-					},
+					"recurrence": recurrenceSchema,
 				},
-				Required: []string{"title", "topic", "start_time"},
+				Required: []string{"title", "start_time", "timezone"},
 			},
 		},
 		{
-			Name:        "list_topic_schedule",
-			Description: "Query and list schedule events filtered by topic, tags, and time range. Merges database schedule events with Google Calendar events.",
+			Name:        "list_calendar_events",
+			Description: "Lists the user's calendar: MyPA's events merged with Google Calendar. Call this when the user asks what is on their schedule, whether they have meetings, or to find an event. Each event shows the ID to use with update_calendar_event and delete_calendar_event.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
-					"topic": {
-						Type:        genai.TypeString,
-						Description: "Topic to filter by: one of the household's topics (e.g. 'work') or 'all'.",
-					},
-					"tags": {
-						Type: genai.TypeArray,
-						Items: &genai.Schema{
-							Type: genai.TypeString,
-						},
-						Description: "Optional tags to filter by.",
-					},
 					"start_time": {
 						Type:        genai.TypeString,
-						Description: "Start time range in ISO 8601 / RFC3339 format. Defaults to start of today.",
+						Description: "Start of the range in ISO 8601 format. Defaults to the start of today.",
 					},
 					"end_time": {
 						Type:        genai.TypeString,
-						Description: "End time range in ISO 8601 / RFC3339 format. Defaults to 30 days ahead.",
+						Description: "End of the range in ISO 8601 format. Defaults to 30 days after the start.",
+					},
+					"query": {
+						Type:        genai.TypeString,
+						Description: "Optional free-text search terms to find specific events.",
+					},
+					"topic": {
+						Type:        genai.TypeString,
+						Description: "Optional topic to filter by: one of the household's topics (e.g. 'work') or 'all'.",
+					},
+					"tags": {
+						Type:        genai.TypeArray,
+						Items:       &genai.Schema{Type: genai.TypeString},
+						Description: "Optional tags to filter by.",
 					},
 					"include_google": {
 						Type:        genai.TypeBoolean,
-						Description: "Whether to merge events directly from Google Calendar (default true).",
+						Description: "Whether to include events from Google Calendar (default true).",
 					},
 				},
+			},
+		},
+		{
+			Name:        "update_calendar_event",
+			Description: "Changes an existing calendar event (title, time, notes, tags or recurrence) in MyPA and in Google Calendar. Call this when the user asks to change, reschedule, or modify an event. Give event_id, or google_event_id for an event that exists only in Google.",
+			Parameters: &genai.Schema{
+				Type: genai.TypeObject,
+				Properties: withEventRef(map[string]*genai.Schema{
+					"title": {
+						Type:        genai.TypeString,
+						Description: "The new title.",
+					},
+					"start_time": {
+						Type:        genai.TypeString,
+						Description: "The new start time in ISO 8601 format.",
+					},
+					"end_time": {
+						Type:        genai.TypeString,
+						Description: "The new end time in ISO 8601 format.",
+					},
+					"timezone": timezoneSchema,
+					"description": {
+						Type:        genai.TypeString,
+						Description: "The new description or notes.",
+					},
+					"tags": {
+						Type:        genai.TypeArray,
+						Items:       &genai.Schema{Type: genai.TypeString},
+						Description: "The new tags.",
+					},
+					"recurrence": recurrenceSchema,
+				}),
+			},
+		},
+		{
+			Name:        "delete_calendar_event",
+			Description: "Deletes a calendar event from MyPA and from every Google Calendar it was added to (including the partner's). Call this when the user asks to cancel, remove, or delete an event. Give event_id, or google_event_id for an event that exists only in Google.",
+			Parameters: &genai.Schema{
+				Type:       genai.TypeObject,
+				Properties: withEventRef(map[string]*genai.Schema{}),
 			},
 		},
 		{
@@ -120,57 +190,6 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					},
 				},
 				Required: []string{"topic"},
-			},
-		},
-		{
-			Name:        "delete_topic_event",
-			Description: "Delete a topic-tagged schedule event by ID, removing it from the database and any synced Google Calendars (including partner's calendar).",
-			Parameters: &genai.Schema{
-				Type: genai.TypeObject,
-				Properties: map[string]*genai.Schema{
-					"event_id": {
-						Type:        genai.TypeInteger,
-						Description: "The numeric ID of the schedule event to delete.",
-					},
-				},
-				Required: []string{"event_id"},
-			},
-		},
-		{
-			Name:        "update_topic_event",
-			Description: "Update an existing schedule event's title, time, notes, tags, or sync status across database and Google Calendars.",
-			Parameters: &genai.Schema{
-				Type: genai.TypeObject,
-				Properties: map[string]*genai.Schema{
-					"event_id": {
-						Type:        genai.TypeInteger,
-						Description: "The numeric ID of the schedule event to update.",
-					},
-					"title": {
-						Type:        genai.TypeString,
-						Description: "Updated event title.",
-					},
-					"start_time": {
-						Type:        genai.TypeString,
-						Description: "Updated start time in ISO 8601 format.",
-					},
-					"end_time": {
-						Type:        genai.TypeString,
-						Description: "Updated end time in ISO 8601 format.",
-					},
-					"description": {
-						Type:        genai.TypeString,
-						Description: "Updated description or notes.",
-					},
-					"tags": {
-						Type: genai.TypeArray,
-						Items: &genai.Schema{
-							Type: genai.TypeString,
-						},
-						Description: "Updated tags.",
-					},
-				},
-				Required: []string{"event_id"},
 			},
 		},
 	}

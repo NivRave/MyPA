@@ -10,12 +10,24 @@ import (
 	"time"
 
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/domains/toolutil"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
 )
 
-// Execute dispatches and runs tools provided by the schedule module.
+// generalTopic is the topic of a plain calendar event: no [Topic] prefix in Google.
+const generalTopic = "general"
+
+// Replies of the Google-only paths (events that exist only in Google), kept from the
+// workspace_calendar module these tools replaced (V4-08).
+const (
+	msgGoogleNotConfigured = "⚠️ Google Calendar integration is not configured."
+	msgGoogleNotConnected  = "⚠️ I don't have access to your Google Calendar. Please send /connect to authorize me, then try again."
+	msgGoogleExpired       = "⚠️ Your Google connection expired or is invalid. Please send /connect again."
+)
+
+// Execute dispatches and runs the calendar domain's tools.
 func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, toolName string, args map[string]interface{}) (string, error) {
 	repo, err := m.resolveRepo(callCtx)
 	if err != nil {
@@ -23,22 +35,22 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 	}
 
 	switch toolName {
-	case "schedule_topic_event":
-		return m.executeScheduleTopicEvent(ctx, callCtx, repo, args)
-	case "list_topic_schedule":
-		return m.executeListTopicSchedule(ctx, callCtx, repo, args)
+	case "create_calendar_event":
+		return m.executeCreateEvent(ctx, callCtx, repo, args)
+	case "list_calendar_events":
+		return m.executeListEvents(ctx, callCtx, repo, args)
 	case "configure_topic_calendar":
 		return m.executeConfigureTopicCalendar(ctx, callCtx, repo, args)
-	case "delete_topic_event":
-		return m.executeDeleteTopicEvent(ctx, callCtx, repo, args)
-	case "update_topic_event":
-		return m.executeUpdateTopicEvent(ctx, callCtx, repo, args)
+	case "delete_calendar_event":
+		return m.executeDeleteEvent(ctx, callCtx, repo, args)
+	case "update_calendar_event":
+		return m.executeUpdateEvent(ctx, callCtx, repo, args)
 	default:
 		return "", fmt.Errorf("schedule: unknown tool %q", toolName)
 	}
 }
 
-func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestrator.CallContext, repo db.ScheduleRepository, args map[string]interface{}) (string, error) {
+func (m *Module) executeCreateEvent(ctx context.Context, callCtx orchestrator.CallContext, repo db.ScheduleRepository, args map[string]interface{}) (string, error) {
 	title := strings.TrimSpace(getStringArg(args, "title"))
 	if title == "" {
 		return "", fmt.Errorf("title is required")
@@ -46,14 +58,19 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 
 	topic := strings.ToLower(strings.TrimSpace(getStringArg(args, "topic")))
 	if topic == "" {
-		topic = "general"
+		topic = generalTopic
+	}
+
+	loc, err := locationArg(args)
+	if err != nil {
+		return "", err
 	}
 
 	startTimeStr := strings.TrimSpace(getStringArg(args, "start_time"))
 	if startTimeStr == "" {
 		return "", fmt.Errorf("start_time is required")
 	}
-	startTime, err := parseFlexibleTime(startTimeStr)
+	startTime, err := parseFlexibleTimeIn(startTimeStr, loc)
 	if err != nil {
 		return "", fmt.Errorf("invalid start_time %q: %w", startTimeStr, err)
 	}
@@ -61,7 +78,7 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 	endTimeStr := strings.TrimSpace(getStringArg(args, "end_time"))
 	var endTime time.Time
 	if endTimeStr != "" {
-		endTime, err = parseFlexibleTime(endTimeStr)
+		endTime, err = parseFlexibleTimeIn(endTimeStr, loc)
 		if err != nil {
 			return "", fmt.Errorf("invalid end_time %q: %w", endTimeStr, err)
 		}
@@ -71,20 +88,12 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 
 	description := strings.TrimSpace(getStringArg(args, "description"))
 	tags := getStringSliceArg(args, "tags")
-	recurrence := strings.TrimSpace(getStringArg(args, "recurrence"))
+	recurrence := getRecurrenceArg(args)
 
-	// Resolve user identity
-	userID := ""
+	userID := callerID(callCtx)
 	familyGroup := ""
 	if callCtx.User != nil {
-		userID = callCtx.User.PlatformID
-		if userID == "" {
-			userID = callCtx.User.ID
-		}
 		familyGroup = callCtx.User.FamilyGroup
-	}
-	if userID == "" {
-		userID = callCtx.Message.Sender
 	}
 
 	// Topic configuration lookup
@@ -120,7 +129,7 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 		Description:     description,
 		StartTime:       startTime,
 		EndTime:         endTime,
-		RecurrenceRule:  recurrence,
+		RecurrenceRule:  strings.Join(recurrence, "\n"),
 		SyncToGoogle:    syncToGoogle,
 		IsShared:        isShared,
 		CreatedByUserID: userID,
@@ -128,7 +137,8 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 	}
 	_ = ev.SetTags(tags)
 
-	formattedTitle := ev.FormattedTitle(prefixTag)
+	formattedTitle := calendarTitle(ev, prefixTag)
+	calEv := googleEvent(formattedTitle, description, startTime, endTime, loc, recurrence)
 
 	// Virtual Sub-Calendar: Google Calendar sync for primary user
 	gState := googleOff
@@ -136,17 +146,6 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 		var calClient orchestrator.CalendarClient
 		calClient, gState = m.googleCalendar(ctx, callCtx, userID, "create")
 		if calClient != nil {
-			calEv := models.CalendarEvent{
-				Title:       formattedTitle,
-				Description: description,
-				StartTime:   startTime.Format(time.RFC3339),
-				EndTime:     endTime.Format(time.RFC3339),
-				Timezone:    "UTC",
-			}
-			if recurrence != "" {
-				calEv.Recurrence = []string{recurrence}
-			}
-
 			var googleID string
 			if coloredCal, ok := calClient.(ColoredCalendarClient); ok && colorID != "" {
 				googleID, err = coloredCal.CreateEventWithColor(ctx, calEv, colorID)
@@ -173,17 +172,6 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 				partnerFailed = true
 			}
 			if partnerCal != nil {
-				calEv := models.CalendarEvent{
-					Title:       formattedTitle,
-					Description: description,
-					StartTime:   startTime.Format(time.RFC3339),
-					EndTime:     endTime.Format(time.RFC3339),
-					Timezone:    "UTC",
-				}
-				if recurrence != "" {
-					calEv.Recurrence = []string{recurrence}
-				}
-
 				var partnerID string
 				if coloredCal, ok := partnerCal.(ColoredCalendarClient); ok && colorID != "" {
 					partnerID, err = coloredCal.CreateEventWithColor(ctx, calEv, colorID)
@@ -231,8 +219,8 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 	sb.WriteString(fmt.Sprintf("📅 **Scheduled Event Created** (ID: %d)\n", ev.ID))
 	sb.WriteString(fmt.Sprintf("• **Title**: %s\n", formattedTitle))
 	sb.WriteString(fmt.Sprintf("• **Topic**: %s\n", ev.Topic))
-	sb.WriteString(fmt.Sprintf("• **Start**: %s\n", ev.StartTime.Format(time.RFC1123)))
-	sb.WriteString(fmt.Sprintf("• **End**: %s\n", ev.EndTime.Format(time.RFC1123)))
+	sb.WriteString(fmt.Sprintf("• **Start**: %s\n", ev.StartTime.In(loc).Format(time.RFC1123)))
+	sb.WriteString(fmt.Sprintf("• **End**: %s\n", ev.EndTime.In(loc).Format(time.RFC1123)))
 
 	if len(tags) > 0 {
 		sb.WriteString(fmt.Sprintf("• **Tags**: %s\n", strings.Join(tags, ", ")))
@@ -269,9 +257,16 @@ func (m *Module) executeScheduleTopicEvent(ctx context.Context, callCtx orchestr
 	return sb.String(), nil
 }
 
-func (m *Module) executeListTopicSchedule(ctx context.Context, callCtx orchestrator.CallContext, repo db.ScheduleRepository, args map[string]interface{}) (string, error) {
+// matchesQuery is the free-text filter for MyPA's own events (Google filters its own).
+func matchesQuery(e models.ScheduleEvent, query string) bool {
+	q := strings.ToLower(query)
+	return strings.Contains(strings.ToLower(e.Title), q) || strings.Contains(strings.ToLower(e.Description), q)
+}
+
+func (m *Module) executeListEvents(ctx context.Context, callCtx orchestrator.CallContext, repo db.ScheduleRepository, args map[string]interface{}) (string, error) {
 	topic := strings.ToLower(strings.TrimSpace(getStringArg(args, "topic")))
 	tagFilter := getStringSliceArg(args, "tags")
+	query := strings.TrimSpace(getStringArg(args, "query"))
 	includeGoogle := getBoolArg(args, "include_google", true)
 
 	startTimeStr := strings.TrimSpace(getStringArg(args, "start_time"))
@@ -292,16 +287,7 @@ func (m *Module) executeListTopicSchedule(ctx context.Context, callCtx orchestra
 		endTime = startTime.Add(30 * 24 * time.Hour)
 	}
 
-	userID := ""
-	if callCtx.User != nil {
-		userID = callCtx.User.PlatformID
-		if userID == "" {
-			userID = callCtx.User.ID
-		}
-	}
-	if userID == "" {
-		userID = callCtx.Message.Sender
-	}
+	userID := callerID(callCtx)
 
 	// The household's shared events plus the caller's own (V4-30: scoped by household ID).
 	eventsList, err := repo.ListScheduleEvents(callCtx.Scope, topic, startTime, endTime)
@@ -309,14 +295,17 @@ func (m *Module) executeListTopicSchedule(ctx context.Context, callCtx orchestra
 		return "", fmt.Errorf("failed to query schedule events: %w", err)
 	}
 
-	// Filter by tags if specified
-	if len(tagFilter) > 0 {
+	// Filter by tags and free text if specified
+	if len(tagFilter) > 0 || query != "" {
 		var filtered []models.ScheduleEvent
 		for _, e := range eventsList {
-			eventTags := e.Tags()
-			if hasAnyTag(eventTags, tagFilter) {
-				filtered = append(filtered, e)
+			if len(tagFilter) > 0 && !hasAnyTag(e.Tags(), tagFilter) {
+				continue
 			}
+			if query != "" && !matchesQuery(e, query) {
+				continue
+			}
+			filtered = append(filtered, e)
 		}
 		eventsList = filtered
 	}
@@ -327,20 +316,22 @@ func (m *Module) executeListTopicSchedule(ctx context.Context, callCtx orchestra
 		var calClient orchestrator.CalendarClient
 		calClient, gState = m.googleCalendar(ctx, callCtx, userID, "list")
 		if calClient != nil {
-			gEvents, err := calClient.ListEvents(ctx, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339), "")
+			gEvents, err := calClient.ListEvents(ctx, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339), query)
 			if err != nil {
 				logGoogleFailure("list", userID, err)
 				gState = googleFailed
 			} else {
+				// Rows written before V4-08 hold the web link, newer rows the ID: match both.
 				knownIDs := make(map[string]bool)
 				for _, e := range eventsList {
-					if e.ExternalGoogleEventID != "" {
-						knownIDs[e.ExternalGoogleEventID] = true
-					}
-					if e.PartnerGoogleEventID != "" {
-						knownIDs[e.PartnerGoogleEventID] = true
+					for _, ref := range []string{e.ExternalGoogleEventID, e.PartnerGoogleEventID} {
+						if ref != "" {
+							knownIDs[ref] = true
+							knownIDs[googleEventRef(ref)] = true
+						}
 					}
 				}
+				delete(knownIDs, "")
 
 				for _, ge := range gEvents {
 					if ge == nil || knownIDs[ge.Id] || knownIDs[ge.HtmlLink] {
@@ -349,7 +340,7 @@ func (m *Module) executeListTopicSchedule(ctx context.Context, callCtx orchestra
 
 					// Extract topic from [Topic] prefix if present
 					summary := strings.TrimSpace(ge.Summary)
-					evTopic := "general"
+					evTopic := generalTopic
 					if strings.HasPrefix(summary, "[") && strings.Contains(summary, "]") {
 						endIdx := strings.Index(summary, "]")
 						evTopic = strings.ToLower(strings.TrimSpace(summary[1:endIdx]))
@@ -410,6 +401,9 @@ func (m *Module) executeListTopicSchedule(ctx context.Context, callCtx orchestra
 		if e.SyncToGoogle {
 			status = "Google Synced"
 		}
+		if e.ID == 0 {
+			status = "Google Calendar only"
+		}
 		if e.PartnerGoogleEventID != "" {
 			status += " + Partner Synced"
 		}
@@ -423,8 +417,11 @@ func (m *Module) executeListTopicSchedule(ctx context.Context, callCtx orchestra
 		if e.Description != "" {
 			sb.WriteString(fmt.Sprintf("   • **Notes**: %s\n", e.Description))
 		}
-		if e.ID > 0 {
+		switch {
+		case e.ID > 0:
 			sb.WriteString(fmt.Sprintf("   • **ID**: `%d`\n", e.ID))
+		case e.ExternalGoogleEventID != "":
+			sb.WriteString(fmt.Sprintf("   • **Google ID**: `%s`\n", e.ExternalGoogleEventID))
 		}
 		sb.WriteString("\n")
 	}
@@ -438,16 +435,7 @@ func (m *Module) executeConfigureTopicCalendar(ctx context.Context, callCtx orch
 		return "", fmt.Errorf("topic is required")
 	}
 
-	userID := ""
-	if callCtx.User != nil {
-		userID = callCtx.User.PlatformID
-		if userID == "" {
-			userID = callCtx.User.ID
-		}
-	}
-	if userID == "" {
-		userID = callCtx.Message.Sender
-	}
+	userID := callerID(callCtx)
 
 	cfg, _ := repo.GetTopicCalendarConfig(userID, topic)
 	if cfg == nil {
@@ -509,12 +497,96 @@ func (m *Module) executeConfigureTopicCalendar(ctx context.Context, callCtx orch
 		cfg.Topic, cfg.PrefixTag, cfg.ColorID, cfg.TargetCalendarID, syncDefaultStr, cfg.IncludeInMorningBriefing), nil
 }
 
-func (m *Module) executeDeleteTopicEvent(ctx context.Context, callCtx orchestrator.CallContext, repo db.ScheduleRepository, args map[string]interface{}) (string, error) {
-	eventIDRaw, ok := getIntArg(args, "event_id")
-	if !ok || eventIDRaw <= 0 {
-		return "", fmt.Errorf("valid event_id is required")
+// googleOnlyClient is the caller's Google Calendar for an event that exists only in Google, or
+// the reply explaining why there is none.
+func (m *Module) googleOnlyClient(ctx context.Context, callCtx orchestrator.CallContext, op string) (orchestrator.CalendarClient, string) {
+	client, st := m.googleCalendar(ctx, callCtx, callerID(callCtx), op)
+	switch st {
+	case googleOK:
+		return client, ""
+	case googleNotConnected:
+		return nil, msgGoogleNotConnected
+	case googleFailed:
+		return nil, msgGoogleExpired
+	default:
+		return nil, msgGoogleNotConfigured
 	}
-	eventID := uint(eventIDRaw)
+}
+
+// publishGoogleOnly records a change to an event MyPA does not store. It is not undoable: there
+// is no row to restore (CalendarEvent is not in the rollback allowlist).
+func (m *Module) publishGoogleOnly(ctx context.Context, callCtx orchestrator.CallContext, action, googleID, afterJSON, summary string) {
+	_ = toolutil.PublishMutation(ctx, m.resolveEventBus(callCtx), events.MutationEvent{
+		Topic:       "schedule",
+		Action:      action,
+		EntityType:  "CalendarEvent",
+		EntityID:    googleID,
+		ActorUserID: callerID(callCtx),
+		HouseholdID: callCtx.Scope.HouseholdID(),
+		FamilyGroup: callCtx.Scope.LegacyLabel(),
+		AfterJSON:   afterJSON,
+		Summary:     summary,
+	})
+}
+
+func (m *Module) deleteGoogleOnlyEvent(ctx context.Context, callCtx orchestrator.CallContext, googleID string) (string, error) {
+	client, reply := m.googleOnlyClient(ctx, callCtx, "delete")
+	if client == nil {
+		return reply, nil
+	}
+	if err := client.DeleteEvent(ctx, googleID); err != nil {
+		logGoogleFailure("delete", callerID(callCtx), err)
+		return "❌ Failed to delete event: " + err.Error(), nil
+	}
+	m.publishGoogleOnly(ctx, callCtx, "delete", googleID, "", fmt.Sprintf("Deleted calendar event '%s'", googleID))
+	return "Event Deleted Successfully!", nil
+}
+
+func (m *Module) updateGoogleOnlyEvent(ctx context.Context, callCtx orchestrator.CallContext, googleID string, args map[string]interface{}) (string, error) {
+	loc, err := locationArg(args)
+	if err != nil {
+		return "", err
+	}
+	patch := models.CalendarEvent{
+		ID:          googleID,
+		Title:       strings.TrimSpace(getStringArg(args, "title")),
+		Description: strings.TrimSpace(getStringArg(args, "description")),
+		Recurrence:  getRecurrenceArg(args),
+	}
+	for key, dst := range map[string]*string{"start_time": &patch.StartTime, "end_time": &patch.EndTime} {
+		raw := strings.TrimSpace(getStringArg(args, key))
+		if raw == "" {
+			continue
+		}
+		t, err := parseFlexibleTimeIn(raw, loc)
+		if err != nil {
+			return "", fmt.Errorf("invalid %s %q: %w", key, raw, err)
+		}
+		*dst = t.In(loc).Format(time.RFC3339)
+		patch.Timezone = loc.String()
+	}
+
+	client, reply := m.googleOnlyClient(ctx, callCtx, "update")
+	if client == nil {
+		return reply, nil
+	}
+	if err := client.UpdateEvent(ctx, googleID, patch); err != nil {
+		logGoogleFailure("update", callerID(callCtx), err)
+		return "❌ Failed to update event: " + err.Error(), nil
+	}
+	after, _ := json.Marshal(patch)
+	m.publishGoogleOnly(ctx, callCtx, "update", googleID, string(after), fmt.Sprintf("Updated calendar event '%s'", googleID))
+	return "Event Updated Successfully!", nil
+}
+
+func (m *Module) executeDeleteEvent(ctx context.Context, callCtx orchestrator.CallContext, repo db.ScheduleRepository, args map[string]interface{}) (string, error) {
+	eventID, googleID, err := eventRefArg(args)
+	if err != nil {
+		return "", err
+	}
+	if googleID != "" {
+		return m.deleteGoogleOnlyEvent(ctx, callCtx, googleID)
+	}
 
 	existing, err := repo.GetScheduleEvent(callCtx.Scope, eventID)
 	if err != nil {
@@ -531,7 +603,9 @@ func (m *Module) executeDeleteTopicEvent(ctx context.Context, callCtx orchestrat
 	if existing.ExternalGoogleEventID != "" {
 		calClient, st := m.googleCalendar(ctx, callCtx, existing.UserID, "delete")
 		if calClient != nil {
-			if err := calClient.DeleteEvent(ctx, existing.ExternalGoogleEventID); err != nil {
+			if ref := googleEventRef(existing.ExternalGoogleEventID); ref == "" {
+				googleCopyLeft = true
+			} else if err := calClient.DeleteEvent(ctx, ref); err != nil {
 				logGoogleFailure("delete", existing.UserID, err)
 				googleCopyLeft = true
 			}
@@ -550,7 +624,9 @@ func (m *Module) executeDeleteTopicEvent(ctx context.Context, callCtx orchestrat
 				partnerCopyLeft = true
 			}
 			if partnerCal != nil {
-				if err := partnerCal.DeleteEvent(ctx, existing.PartnerGoogleEventID); err != nil {
+				if ref := googleEventRef(existing.PartnerGoogleEventID); ref == "" {
+					partnerCopyLeft = true
+				} else if err := partnerCal.DeleteEvent(ctx, ref); err != nil {
 					logGoogleFailure("delete_partner", partner.PlatformID, err)
 					partnerCopyLeft = true
 				} else {
@@ -592,12 +668,18 @@ func (m *Module) executeDeleteTopicEvent(ctx context.Context, callCtx orchestrat
 	return res, nil
 }
 
-func (m *Module) executeUpdateTopicEvent(ctx context.Context, callCtx orchestrator.CallContext, repo db.ScheduleRepository, args map[string]interface{}) (string, error) {
-	eventIDRaw, ok := getIntArg(args, "event_id")
-	if !ok || eventIDRaw <= 0 {
-		return "", fmt.Errorf("valid event_id is required")
+func (m *Module) executeUpdateEvent(ctx context.Context, callCtx orchestrator.CallContext, repo db.ScheduleRepository, args map[string]interface{}) (string, error) {
+	eventID, googleID, err := eventRefArg(args)
+	if err != nil {
+		return "", err
 	}
-	eventID := uint(eventIDRaw)
+	if googleID != "" {
+		return m.updateGoogleOnlyEvent(ctx, callCtx, googleID, args)
+	}
+	loc, err := locationArg(args)
+	if err != nil {
+		return "", err
+	}
 
 	existing, err := repo.GetScheduleEvent(callCtx.Scope, eventID)
 	if err != nil {
@@ -615,12 +697,12 @@ func (m *Module) executeUpdateTopicEvent(ctx context.Context, callCtx orchestrat
 		existing.Title = title
 	}
 	if startStr := strings.TrimSpace(getStringArg(args, "start_time")); startStr != "" {
-		if st, err := parseFlexibleTime(startStr); err == nil {
+		if st, err := parseFlexibleTimeIn(startStr, loc); err == nil {
 			existing.StartTime = st
 		}
 	}
 	if endStr := strings.TrimSpace(getStringArg(args, "end_time")); endStr != "" {
-		if et, err := parseFlexibleTime(endStr); err == nil {
+		if et, err := parseFlexibleTimeIn(endStr, loc); err == nil {
 			existing.EndTime = et
 		}
 	}
@@ -630,19 +712,20 @@ func (m *Module) executeUpdateTopicEvent(ctx context.Context, callCtx orchestrat
 	if tags := getStringSliceArg(args, "tags"); len(tags) > 0 {
 		_ = existing.SetTags(tags)
 	}
+	recurrence := getRecurrenceArg(args)
+	if len(recurrence) > 0 {
+		existing.RecurrenceRule = strings.Join(recurrence, "\n")
+	}
 
 	// Update on Google Calendar if event was synced; a stale Google copy is reported (BL-1).
 	googleStale := false
 	if existing.ExternalGoogleEventID != "" {
 		calClient, st := m.googleCalendar(ctx, callCtx, existing.UserID, "update")
 		if calClient != nil {
-			if err := calClient.UpdateEvent(ctx, existing.ExternalGoogleEventID, models.CalendarEvent{
-				Title:       existing.FormattedTitle(""),
-				Description: existing.Description,
-				StartTime:   existing.StartTime.Format(time.RFC3339),
-				EndTime:     existing.EndTime.Format(time.RFC3339),
-				Timezone:    "UTC",
-			}); err != nil {
+			patch := googleEvent(calendarTitle(existing, ""), existing.Description, existing.StartTime, existing.EndTime, loc, recurrence)
+			if ref := googleEventRef(existing.ExternalGoogleEventID); ref == "" {
+				googleStale = true
+			} else if err := calClient.UpdateEvent(ctx, ref, patch); err != nil {
 				logGoogleFailure("update", existing.UserID, err)
 				googleStale = true
 			}
