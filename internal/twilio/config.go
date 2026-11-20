@@ -55,7 +55,8 @@ type Config struct {
 	SandboxJoin string
 	// TemplateSIDs maps a template key (TemplateReminder, TemplateBriefing) to the Content SID of
 	// the owner's template (TWILIO_TEMPLATE_REMINDER_SID, TWILIO_TEMPLATE_BRIEFING_SID). Sender
-	// mode only; /doctor reports their approval, and sending with them is V4-33.
+	// mode only; /doctor reports their approval, and the delivery policy sends them outside the
+	// 24-hour window (V4-33).
 	TemplateSIDs map[string]string
 }
 

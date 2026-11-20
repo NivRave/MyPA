@@ -38,10 +38,24 @@ func (e *Engine) SweepDeliveries(ctx context.Context) {
 }
 
 // deliveredNow reports whether a delivery reached the person in this attempt, so the message
-// belongs in their chat history now. A held one is added when it is released, by the turn that
-// releases it.
+// belongs in their chat history now. One that goes out later (released when the person writes,
+// retried, or re-sent after a refusal) is added then, by RecordLateDelivery.
 func deliveredNow(d *models.ProactiveDelivery) bool {
 	return d != nil && (d.State == models.DeliveryDelivered || d.State == models.DeliveryMoved)
+}
+
+// RecordLateDelivery puts a reminder that went out after its first attempt into the person's
+// chat history, as a reminder sent at once always was, so the next turn knows about it. The
+// policy calls it (proactive.WithLateSend); it runs before the turn that released the message
+// reads the history. A briefing's answer is already in the history of the turn that wrote it, and
+// notifications never were.
+func (e *Engine) RecordLateDelivery(ctx context.Context, d models.ProactiveDelivery) {
+	if e.store == nil || d.Category != proactive.Reminder || d.PersonID == "" {
+		return
+	}
+	if err := e.store.AppendChatHistory(ctx, personStateKey(d.PersonID), models.ChatMessage{Role: "assistant", Content: d.Text}); err != nil {
+		slog.Warn("late reminder not added to the chat history", "delivery_id", d.ID, "error", err)
+	}
 }
 
 // reminderTitle is a reminder's text as the one short line a template carries (ADR 0003 §11):

@@ -81,7 +81,7 @@ func TestStatusCallback_RequiresValidSignature(t *testing.T) {
 			}
 		})
 	}
-	assert.Empty(t, pub.Published, "a status callback never publishes a message")
+	assert.Empty(t, pub.Published, "a rejected status callback publishes nothing")
 }
 
 func TestStatusCallback_FailedDeliveryIsWarnedWithHint(t *testing.T) {

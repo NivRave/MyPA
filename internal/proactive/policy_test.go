@@ -468,3 +468,82 @@ func TestSweep_RetriesARowLeftSending(t *testing.T) {
 	assert.Equal(t, models.DeliveryDelivered, w.only().State)
 	assert.Len(t, w.chat.messages(), 1)
 }
+
+// lateRecorder collects what the policy reports through WithLateSend.
+type lateRecorder struct {
+	mu   sync.Mutex
+	rows []models.ProactiveDelivery
+}
+
+func (l *lateRecorder) record(_ context.Context, d models.ProactiveDelivery) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.rows = append(l.rows, d)
+}
+
+func (l *lateRecorder) states() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []string
+	for _, d := range l.rows {
+		out = append(out, d.State)
+	}
+	return out
+}
+
+func (w *world) withLateSend(l *lateRecorder) {
+	reg := channel.NewRegistry()
+	require.NoError(w.t, reg.Register(w.chat))
+	require.NoError(w.t, reg.Register(w.mail))
+	w.policy = proactive.New(w.store, w.people, reg, proactive.WithClock(func() time.Time { return w.now }), proactive.WithLateSend(l.record))
+}
+
+// A message that goes out after its first attempt is reported, so the engine can put it in the
+// person's chat history; one sent at once is the caller's to record and is not.
+func TestLateSend_ReportsEveryMessageSentAfterItsFirstAttempt(t *testing.T) {
+	// Sent at once: not reported.
+	w := newWorld(t, sender, false)
+	late := &lateRecorder{}
+	w.withLateSend(late)
+	w.people.wrote("chat", w.now.Add(-time.Hour))
+	w.deliver(reminder())
+	assert.Empty(t, late.states())
+
+	// Re-sent as the template after a later refusal: reported.
+	require.NoError(t, w.policy.Report(context.Background(), "chat", channel.Report{Ref: w.chat.messages()[0].Ref, Reason: channel.WindowClosed}))
+	assert.Equal(t, []string{models.DeliveryDelivered}, late.states())
+
+	// Held, then released when the person writes: reported.
+	w = newWorld(t, sandbox, false)
+	late = &lateRecorder{}
+	w.withLateSend(late)
+	w.people.wrote("chat", w.now.Add(-30*time.Hour))
+	w.deliver(reminder())
+	assert.Empty(t, late.states())
+	w.people.wrote("chat", w.now)
+	w.policy.Release(context.Background(), "chat", "+100")
+	assert.Equal(t, []string{models.DeliveryLate}, late.states())
+
+	// Retried by the minute tick after an error: reported.
+	w = newWorld(t, window, false)
+	late = &lateRecorder{}
+	w.withLateSend(late)
+	w.people.wrote("chat", w.now.Add(-time.Hour))
+	w.chat.set("", errors.New("connection reset"))
+	w.deliver(reminder())
+	w.chat.set("", nil)
+	w.now = w.now.Add(time.Minute)
+	w.policy.Sweep(context.Background())
+	assert.Equal(t, []string{models.DeliveryDelivered}, late.states())
+
+	// A briefing's template is only a notice: reported once the briefing itself goes out.
+	w = newWorld(t, sender, false)
+	late = &lateRecorder{}
+	w.withLateSend(late)
+	w.people.wrote("chat", w.now.Add(-2*24*time.Hour))
+	w.deliver(proactive.Request{Category: proactive.Briefing, Text: "b", TemplateKey: channel.TemplateBriefing})
+	require.NoError(t, w.policy.Report(context.Background(), "chat", channel.Report{Ref: "nothing", Reason: channel.WindowClosed}))
+	assert.Empty(t, late.states())
+	w.policy.Release(context.Background(), "chat", "+100")
+	assert.Equal(t, []string{models.DeliveryDelivered}, late.states())
+}

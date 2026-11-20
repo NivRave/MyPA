@@ -123,6 +123,7 @@ type Policy struct {
 	channels Channels
 	now      func() time.Time
 	zone     func(ctx context.Context, personID string) *time.Location
+	lateSend func(ctx context.Context, d models.ProactiveDelivery)
 }
 
 // Option configures a Policy.
@@ -134,6 +135,13 @@ func WithClock(now func() time.Time) Option { return func(p *Policy) { p.now = n
 // WithZone gives the person's time zone, for the note on a late message. Without it, UTC.
 func WithZone(zone func(ctx context.Context, personID string) *time.Location) Option {
 	return func(p *Policy) { p.zone = zone }
+}
+
+// WithLateSend is called for every message accepted after its first attempt: released when the
+// person wrote, retried by the minute tick, or re-sent after a later refusal. A message accepted
+// on its first attempt is the caller's to record (Deliver returns it), so it is not reported here.
+func WithLateSend(f func(ctx context.Context, d models.ProactiveDelivery)) Option {
+	return func(p *Policy) { p.lateSend = f }
 }
 
 // New returns a policy over the store, the people and the channels.
@@ -181,7 +189,7 @@ func (p *Policy) Deliver(ctx context.Context, req Request) (*models.ProactiveDel
 	if err := p.store.CreateDelivery(ctx, d); err != nil {
 		return nil, fmt.Errorf("proactive: record the message: %w", err)
 	}
-	p.attempt(ctx, d)
+	p.attempt(ctx, d, false)
 	return d, nil
 }
 
@@ -297,8 +305,9 @@ func (p *Policy) rejoinNote(channelName string) string {
 	return ""
 }
 
-// attempt runs the chain for a row in DeliverySending and saves where it ended.
-func (p *Policy) attempt(ctx context.Context, d *models.ProactiveDelivery) {
+// attempt runs the chain for a row in DeliverySending and saves where it ended. late is true for
+// every attempt after the first (WithLateSend).
+func (p *Policy) attempt(ctx context.Context, d *models.ProactiveDelivery, late bool) {
 	now := p.now()
 	accts, err := p.accounts(ctx, d.PersonID, now)
 	if err != nil {
@@ -311,6 +320,9 @@ func (p *Policy) attempt(ctx context.Context, d *models.ProactiveDelivery) {
 		switch {
 		case err == nil:
 			p.sent(ctx, d, r, rcpt, now)
+			if late {
+				p.reportLate(ctx, d)
+			}
 			return
 		case errors.As(err, &refused):
 			d.Reason = string(refused.Reason)
@@ -441,7 +453,16 @@ func (p *Policy) Release(ctx context.Context, channelName, externalID string) {
 			d.State = models.DeliveryDelivered
 		}
 		p.save(ctx, d)
+		p.reportLate(ctx, d)
 		slog.Info("held proactive message sent", "delivery_id", d.ID, "category", d.Category, "person_id", d.PersonID, "channel", channelName, "state", d.State)
+	}
+}
+
+// reportLate hands a message accepted after its first attempt to WithLateSend. A briefing's
+// template is only a notice, so it is reported when the briefing itself goes out.
+func (p *Policy) reportLate(ctx context.Context, d *models.ProactiveDelivery) {
+	if p.lateSend != nil && d.State != models.DeliveryHeld {
+		p.lateSend(ctx, *d)
 	}
 }
 
@@ -482,7 +503,7 @@ func (p *Policy) Report(ctx context.Context, channelName string, r channel.Repor
 		refused.kind = models.RouteDirect // free text on that account
 	}
 	d.Skip = addSkip(d.Skip, skipKeysFor(refused, r.Reason)...)
-	p.attempt(ctx, d)
+	p.attempt(ctx, d, true)
 	return nil
 }
 
@@ -510,7 +531,7 @@ func (p *Policy) Sweep(ctx context.Context) {
 		d := &due[i]
 		if ok, err := p.store.ClaimDelivery(ctx, d.ID, []string{models.DeliveryPending}); err == nil && ok {
 			d.State = models.DeliverySending
-			p.attempt(ctx, d)
+			p.attempt(ctx, d, true)
 		}
 	}
 	if _, err := p.store.PurgeDeliveries(ctx, now.Add(-keepFor)); err != nil {

@@ -223,7 +223,16 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 
 	// V4-33: every message the assistant starts itself goes through the delivery policy, which
 	// records it, chooses a route from each channel's rule and holds what no channel takes yet.
-	delivery := proactive.New(dbClient, dbClient, channels, proactive.WithZone(personZone(dbClient, cfg.Server.DefaultTimezone)))
+	// A reminder that goes out late joins the person's chat history through the engine, which is
+	// built below; nothing is delivered before the engine starts.
+	var recordLate func(ctx context.Context, d models.ProactiveDelivery)
+	delivery := proactive.New(dbClient, dbClient, channels,
+		proactive.WithZone(personZone(dbClient, cfg.Server.DefaultTimezone)),
+		proactive.WithLateSend(func(ctx context.Context, d models.ProactiveDelivery) {
+			if recordLate != nil {
+				recordLate(ctx, d)
+			}
+		}))
 
 	// Proactive Notification Sender for Shared Spaces and Automations: these callers hold only the
 	// recipient's person key, so the message goes to the account that person wants notifications
@@ -291,6 +300,7 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 		WithSignIn(dbClient, cfg.Server.DashboardURL).                                                    // /dashboard (V4-35)
 		WithQuietHours(dbClient).                                                                         // each person's zone and quiet hours (V4-05)
 		WithDelivery(delivery)                                                                            // reminders, briefings and notifications (V4-33)
+	recordLate = engine.RecordLateDelivery
 	if strings.TrimSpace(cfg.Server.LinkCodeSecret) == "" {
 		slog.Warn("LINK_CODE_SECRET is not set: linking a second app to a person (/link) is off")
 	}

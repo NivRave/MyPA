@@ -134,3 +134,26 @@ func TestDelivery_BriefingAnswerIsHandedToThePolicy(t *testing.T) {
 	}
 	assert.Empty(t, sentTexts(spy), "the answer goes through the policy, not straight to the chat")
 }
+
+// A reminder that went out late joins the person's chat history, as one sent at once always did;
+// a briefing (already in its turn's history) and a notification do not.
+func TestDelivery_LateReminderJoinsTheChatHistory(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store, err := state.NewStore("redis://" + mr.Addr())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	engine := orchestrator.NewEngine(nil, store, nil, nil, adapterstest.Registry(&spyTelegramClient{}, nil),
+		nil, nil, nil, nil, nil, nil, nil, "UTC")
+
+	const person = "22222222-2222-2222-2222-222222222222"
+	ctx := context.Background()
+	engine.RecordLateDelivery(ctx, models.ProactiveDelivery{PersonID: person, Category: proactive.Briefing, Text: "briefing"})
+	engine.RecordLateDelivery(ctx, models.ProactiveDelivery{PersonID: person, Category: proactive.Notification, Text: "notice"})
+	engine.RecordLateDelivery(ctx, models.ProactiveDelivery{PersonID: person, Category: proactive.Reminder, Text: "🔔 Reminder: water the plants"})
+
+	history, err := store.GetChatHistory(ctx, "person:"+person)
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, "assistant", history[0].Role)
+	assert.Equal(t, "🔔 Reminder: water the plants", history[0].Content)
+}
