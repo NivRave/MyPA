@@ -124,6 +124,7 @@ type ScheduledReminder struct {
 	Message   string    `json:"message"`
 	DueTime   time.Time `json:"due_time" gorm:"index"`
 	IsSent    bool      `json:"is_sent" gorm:"index"`
+	Urgent    bool      `json:"urgent" gorm:"not null;default:false"` // V4-05: delivered even during quiet hours; any other reminder due then waits until they end
 	CreatedAt time.Time `json:"created_at"`
 }
 

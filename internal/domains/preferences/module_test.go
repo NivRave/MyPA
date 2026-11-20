@@ -160,6 +160,33 @@ func TestUserPreferences_UpdateGetAndPromptInjection(t *testing.T) {
 	assert.Contains(t, promptUpdated, "Always include nutritional breakdown when discussing meals.")
 }
 
+// V4-05: quiet hours are enforced by the scheduler, which ignores a window it cannot read, so
+// the tool refuses one and keeps what was stored.
+func TestUserPreferences_RefusesUnreadableQuietHours(t *testing.T) {
+	repo := newFakePreferencesRepo()
+	mod := NewModule(repo)
+	callCtx := orchestrator.CallContext{
+		User:  &models.User{PlatformID: "u_quiet", FamilyGroup: "family_alpha"},
+		Scope: identitytest.Scope(t, "family_alpha", "u_quiet", "family"),
+	}
+
+	_, err := mod.Execute(context.Background(), callCtx, "update_user_preferences", map[string]interface{}{
+		"quiet_hours_start": "22:00", "quiet_hours_end": "07:00",
+	})
+	require.NoError(t, err)
+
+	_, err = mod.Execute(context.Background(), callCtx, "update_user_preferences", map[string]interface{}{
+		"quiet_hours_start": "10pm",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "24-hour")
+
+	pref, err := repo.GetUserPreference("u_quiet")
+	require.NoError(t, err)
+	require.NotNil(t, pref)
+	assert.Equal(t, "22:00", pref.QuietHoursStart, "the stored window is kept")
+}
+
 func TestPersonalCRM_UpsertQueryAndUpcomingAlerts(t *testing.T) {
 	repo := newFakePreferencesRepo()
 	bus := events.NewEventBus()

@@ -112,7 +112,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 				sb.WriteString(fmt.Sprintf("• Active Briefing Topics: %s\n", pref.BriefingTopicsJSON))
 			}
 			if pref.QuietHoursStart != "" && pref.QuietHoursEnd != "" {
-				sb.WriteString(fmt.Sprintf("• Quiet Hours: %s to %s (suppress non-urgent alerts)\n", pref.QuietHoursStart, pref.QuietHoursEnd))
+				sb.WriteString(fmt.Sprintf("• Quiet Hours: %s to %s (reminders, the morning briefing and automation messages due then wait until they end; a reminder marked urgent goes out anyway)\n", pref.QuietHoursStart, pref.QuietHoursEnd))
 			}
 			if pref.StandingInstructions != "" {
 				// P3-1: framed as user-provided data, never as a system-level "STRICT REQUIREMENT":

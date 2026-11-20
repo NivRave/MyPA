@@ -11,6 +11,7 @@ import (
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/quiet"
 )
 
 func (m *Module) executeUpdateUserPreferences(ctx context.Context, callCtx orchestrator.CallContext, repo db.PreferencesRepository, args map[string]interface{}) (string, error) {
@@ -46,6 +47,11 @@ func (m *Module) executeUpdateUserPreferences(ctx context.Context, callCtx orche
 	}
 	if qEnd := strings.TrimSpace(getStringArg(args, "quiet_hours_end")); qEnd != "" {
 		pref.QuietHoursEnd = qEnd
+	}
+	// Quiet hours are enforced by the scheduler (V4-05), which ignores a window it cannot read:
+	// refuse one here, so a typo is not silently a night of alerts.
+	if _, err := quiet.ParseWindow(pref.QuietHoursStart, pref.QuietHoursEnd); err != nil {
+		return "", fmt.Errorf("%w; use 24-hour times such as 22:00 and 07:30", err)
 	}
 	if inst := strings.TrimSpace(getStringArg(args, "standing_instructions")); inst != "" {
 		pref.StandingInstructions = inst
