@@ -3,9 +3,11 @@ import { Share2, Users, Bell, CheckCircle2, Clock, Plus, ShieldCheck } from "luc
 import {
   graphqlFetch,
   getHouseholdName,
+  getMe,
   type SharedSpace,
   type SharedTaskReminder,
 } from "@/lib/graphql";
+import { defaultSharedTopics, householdTopics, topicLabel } from "@/lib/packs";
 
 export const dynamic = "force-dynamic";
 
@@ -104,6 +106,10 @@ async function getSharedData(): Promise<{
 
 export default async function SharedSpacesPage() {
   const familyGroup = await getHouseholdName();
+  // V4-27: the household's topics (Core plus its packs'), not a fixed list.
+  const me = await getMe();
+  const topics = householdTopics(me);
+  const sharedByDefault = defaultSharedTopics(me).map(topicLabel).join(", ");
   const { spaces, tasks } = await getSharedData();
 
   async function updatePermission(formData: FormData) {
@@ -189,7 +195,7 @@ export default async function SharedSpacesPage() {
               </div>
             </div>
             <p className="text-xs text-neutral-500 mb-4">
-              Events, baby routines, and house tasks are synchronized between the connected chat accounts.
+              Events, routines and tasks in shared topics are synchronized between the connected chat accounts.
             </p>
           </div>
           <div className="bg-neutral-50 rounded-lg p-3 text-xs space-y-1.5 border border-neutral-100">
@@ -214,11 +220,12 @@ export default async function SharedSpacesPage() {
             <div>
               <label className="block text-xs font-medium text-neutral-700 mb-1">Topic</label>
               <select name="topic" className="w-full border border-neutral-300 rounded-md p-2 text-sm bg-white">
-                <option value="baby">Baby Care</option>
-                <option value="house">House & Maintenance</option>
-                <option value="finance">Family Finance</option>
+                {topics.map((t) => (
+                  <option key={t} value={t}>
+                    {topicLabel(t)}
+                  </option>
+                ))}
                 <option value="schedule">Schedule & Calendar</option>
-                <option value="health">Family Health</option>
               </select>
             </div>
             <div>
@@ -295,7 +302,7 @@ export default async function SharedSpacesPage() {
               {spaces.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-6 py-8 text-center text-neutral-500">
-                    No custom rules defined. Topics default to shared family access (Baby, House, Finance).
+                    No custom rules defined. Topics default to shared family access ({sharedByDefault}).
                   </td>
                 </tr>
               )}
@@ -313,9 +320,11 @@ export default async function SharedSpacesPage() {
           </div>
           <form action={addTask} className="flex items-center space-x-2">
             <select name="topic" className="border border-neutral-300 rounded-md p-1.5 text-xs bg-white">
-              <option value="baby">Baby</option>
-              <option value="house">House</option>
-              <option value="finance">Finance</option>
+              {topics.map((t) => (
+                <option key={t} value={t}>
+                  {topicLabel(t)}
+                </option>
+              ))}
             </select>
             <input
               type="text"

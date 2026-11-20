@@ -103,6 +103,7 @@ func joinAnd(items []string) string {
 type promptInputs struct {
 	UserName, Role, Household string
 	Language                  string          // the household's language; "" = none set (V4-30)
+	Topics                    []string        // the household's topics: Core plus its packs' (V4-27)
 	ActiveTools               map[string]bool // nil = no registry → include all guidance
 	ModuleSections            string          // per user, cached 10 min
 	Memories                  []string        // per message, pre-formatted "- fact"
@@ -129,6 +130,13 @@ func buildSystemPrompt(in promptInputs) string {
 	fmt.Fprintf(&b, "\n\nYou are assisting %s (Role: %s, Household: %s).", name, in.Role, in.Household)
 	if in.Language != "" {
 		fmt.Fprintf(&b, " The household's language is %s: reply in it unless the user writes in another language or has set their own preference.", in.Language)
+	}
+
+	if len(in.Topics) > 0 {
+		// V4-27: topics are data. The tools describe a topic argument with Core examples only;
+		// this line names the household's own topics, which include its packs' topics.
+		fmt.Fprintf(&b, "\n\nTopics in this household: %s. Use one of these wherever a tool asks for a topic, unless the user names another.",
+			strings.Join(in.Topics, ", "))
 	}
 
 	var guidance []string

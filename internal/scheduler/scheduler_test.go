@@ -1,6 +1,10 @@
 package scheduler
 
 import (
+	"context"
+
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/packs"
 	"github.com/nivik/mypa/internal/testutil/householdtest"
 	"sync"
 	"testing"
@@ -55,6 +59,9 @@ func TestReloadWorkflows_WithPostgres(t *testing.T) {
 	}()
 
 	runner := automation.NewRunner(client, nil)
+	// The workflow's person, in the rule's household (with every pack on): since V4-27 a workflow
+	// runs only for a person whose household has the Automations pack.
+	householdtest.User(t, client, "test-scheduler-user", "Scheduler", "family", "fam-test")
 
 	// 1. Insert active legacy workflow
 	err := client.SaveWorkflow(models.Workflow{
@@ -110,4 +117,37 @@ func TestReloadWorkflows_WithPostgres(t *testing.T) {
 
 	// Should have at least 2 entries
 	assert.GreaterOrEqual(t, len(entries), 2)
+}
+
+// V4-27: workflows and cron rules belong to the Automations pack. A household that switched it off
+// gets none of them scheduled; its rows are kept. Another household's are unaffected.
+func TestReloadWorkflows_SkipsHouseholdsWithAutomationsOff(t *testing.T) {
+	client, cleanup := testutil.NewTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	add := func(label, person string) {
+		u := householdtest.User(t, client, person, person, "family", label)
+		require.NoError(t, client.SaveWorkflow(models.Workflow{UserID: person, Name: "wf-" + person,
+			CronExpression: "0 8 * * *", Instruction: "Check", IsActive: true, CreatedAt: time.Now()}))
+		require.NoError(t, client.DB.Create(&models.AutomationRule{UserID: person, HouseholdID: u.HouseholdID,
+			FamilyGroup: label, Name: "rule-" + person, TriggerType: "cron", ConditionJSON: `{"cron": "0 9 * * 1"}`,
+			ActionInstruction: "notify: hi", IsActive: true, CreatedAt: time.Now()}).Error)
+	}
+	add("fam-on", "person-on")
+	add("fam-off", "person-off")
+	off, err := identity.ForStoredRow(ctx, client, householdtest.Household(t, client, "fam-off").ID, "person-off")
+	require.NoError(t, err)
+	_, err = client.SetHouseholdPacks(ctx, off, packs.Everything().With(packs.Automations, false))
+	require.NoError(t, err)
+
+	ReloadWorkflows(nil, client, automation.NewRunner(client, nil))
+	workflowMu.Lock()
+	entries := len(workflowCron.Entries())
+	workflowMu.Unlock()
+	assert.Equal(t, 2, entries, "only the household with Automations on gets its workflow and its rule")
+
+	var kept int64
+	require.NoError(t, client.DB.Model(&models.Workflow{}).Where("user_id = ?", "person-off").Count(&kept).Error)
+	assert.Equal(t, int64(1), kept, "the switched-off household's workflow is kept")
 }

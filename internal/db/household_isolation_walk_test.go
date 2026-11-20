@@ -33,6 +33,7 @@ var unscopedMethods = map[string]string{
 	"BootstrapHouseholds": "fresh-install seeding, only when no household exists (Decision 6)",
 	// Households and identity: the tenant itself, and the sources a scope is built from.
 	"HouseholdByID": "identity.Store", "HouseholdsByLabel": "identity.Store", "CountHouseholds": "install-level count",
+	"HouseholdPacks":  "a scheduled job reads the packs of the household its stored row names (V4-27)",
 	"CreateHousehold": "creates a tenant", "GetUser": "the sender lookup a scope is built from",
 	"UpsertUser": "bootstrap only, with an explicit household", "GetPairingCode": "an unauthenticated sender redeeming a code",
 	"RedeemPairingCode": "takes the household from the code row",

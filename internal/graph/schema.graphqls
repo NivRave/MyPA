@@ -17,6 +17,21 @@ type Household {
   language: String!
   timeZone: String!
   currency: String!
+  "Every opt-in feature pack, and whether the household has it on (V4-27). Core is always on and is not listed."
+  packs: [Pack!]!
+  "The household's topics: Core's, then those of each pack it has on (V4-27)."
+  topics: [String!]!
+}
+
+# A feature pack (V4-27, DE-6). A pack that is off contributes no tools, prompt text, routing,
+# dashboard page or briefing lines, and its fields here are refused; its data is kept.
+type Pack {
+  id: ID!
+  name: String!
+  description: String!
+  enabled: Boolean!
+  "The dashboard routes the pack owns; the dashboard hides them while the pack is off."
+  pages: [String!]!
 }
 
 type PairingCode {
@@ -380,6 +395,8 @@ type Mutation {
   generatePairingCode(role: String!): PairingCode!
   "Change the caller's own household's settings (owners only). Omitted fields are unchanged; an empty string resets a setting to the install default."
   updateHousehold(name: String, language: String, timeZone: String, currency: String): Household!
+  "Switch one of the caller's own household's feature packs on or off (owners only, V4-27). The pack's data is kept either way."
+  setPackEnabled(pack: ID!, enabled: Boolean!): Household!
   saveTopicMemory(topic: String!, subtopic: String!, fact: String!, tagsJson: String, scope: String): TopicMemory!
   deleteTopicMemory(id: ID!): Boolean!
   pinTopicMemory(id: ID!, isPinned: Boolean!): TopicMemory!

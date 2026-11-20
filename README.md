@@ -7,10 +7,11 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 ## Highlights
 
 - **Channels:** Telegram and WhatsApp (Twilio), voice notes (Groq Whisper) and images/documents (Gemini vision); a Next.js web dashboard for browsing, editing and rolling back data, which each owner or adult signs in to with `/dashboard` in chat (a link valid 10 minutes, once). One person can use several apps as the same user with the same data: `/link` in chat adds another account (confirmed from the first), `/accounts` lists them and `/notify N` picks where notifications go.
-- **Tools:** <!-- gen:tool-summary -->67 tools across 13 modules<!-- /gen:tool-summary -->, offered in two tiers (always-on core tools + domain groups selected per message) to keep prompts small. Full catalogue: [SYSTEM.md §6](./SYSTEM.md#6-complete-ai-agent-tool-catalog).
+- **Tools:** <!-- gen:tool-summary -->67 tools across 14 modules<!-- /gen:tool-summary -->, offered in two tiers (always-on core tools + domain groups selected per message) to keep prompts small. Full catalogue: [SYSTEM.md §6](./SYSTEM.md#6-complete-ai-agent-tool-catalog).
 - **Google Workspace:** Calendar, Gmail, Tasks and Contacts; live web search (Tavily).
 - **Life domains:** baby care (with medication-cooldown guardrails), house contracts and maintenance, vehicles, finance and budgets, a personal CRM, topic-scoped memory and entity profiles, shared family spaces with partner notifications.
 - **Automations:** event-driven rules, scheduled natural-language workflows, and runtime-registered external APIs behind SSRF protection.
+- **Feature packs:** Core (memory, reminders, calendar, tasks and contacts, web search, undo, family sharing, preferences and the personal CRM) is always on. Baby, House and vehicles, Finance, Gmail and Automations are packs an owner switches on or off per household on the dashboard's **Tools & Packs** page; a pack that is off adds no tools, chat guidance, briefing lines or pages, and keeps its data. A new household starts with Core only; an upgraded one keeps every pack it holds data in.
 - **Durability:** every tool write is snapshotted for `/undo` and dashboard rollback; encrypted, age-protected nightly backups (database plus archive files); versioned schema migrations; one documented path to upgrade, move or restore an install.
 - **Roles:** owner, adult, child and guest, plus the install's operator. Owners manage the household and its members and see each member's activity, never another member's chats or personal data; adults see the shared data and their own; children chat only. Pairing codes give adult or child. Guests (only the topics shared with them by name) wait for sharing by name (BL-46).
 - **Health check:** the operator sends `/doctor` in chat and gets the state of the Telegram webhook, each family member's Google sign-in, WhatsApp, the queues, the newest backup and the database schema, with a next step for every problem.
@@ -142,7 +143,7 @@ go test -v -race ./internal/...
 # 2. Run database repository and GraphQL resolver integration tests
 go test -v ./internal/db/... ./internal/graph/...
 
-# 3. Run Next.js Dashboard Vitest component tests (46 tests across 6 test suites)
+# 3. Run Next.js Dashboard Vitest component tests (61 tests across 7 test suites)
 npm test --prefix dashboard
 
 # 4. Verify full multi-stage container build

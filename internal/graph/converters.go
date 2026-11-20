@@ -15,6 +15,7 @@ import (
 	"github.com/nivik/mypa/internal/domains/durability"
 	"github.com/nivik/mypa/internal/graph/model"
 	dbmodels "github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/packs"
 )
 
 func uintToStr(id uint) string {
@@ -365,7 +366,19 @@ func toModelHousehold(h dbmodels.Household) *model.Household {
 		Language: h.Language,
 		TimeZone: h.TimeZone,
 		Currency: h.Currency,
+		Packs:    toModelPacks(packs.Parse(h.Packs)),
+		Topics:   packs.Parse(h.Packs).Topics(),
 	}
+}
+
+// toModelPacks lists every opt-in pack in display order with whether the household has it on.
+func toModelPacks(on packs.Set) []*model.Pack {
+	var out []*model.Pack
+	for _, p := range packs.All() {
+		out = append(out, &model.Pack{ID: string(p.ID), Name: p.Name, Description: p.Description, Enabled: on.Has(p.ID),
+			Pages: append([]string{}, p.Pages...)})
+	}
+	return out
 }
 
 // validateHouseholdSettings checks the settings an admin may change (V4-30). A nil field is left

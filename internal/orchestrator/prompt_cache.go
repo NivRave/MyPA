@@ -50,7 +50,11 @@ func MapEventToModules(event events.MutationEvent) []string {
 	case "shared":
 		mods = append(mods, "shared")
 	case "automation":
-		mods = append(mods, "automation")
+		// Preference and CRM changes keep the topic "automation" they always had (V4-27 moved the
+		// tools to the preferences module, not their history), so both sections are dropped.
+		mods = append(mods, "automation", "preferences")
+	case "preferences":
+		mods = append(mods, "preferences")
 	case "durability":
 		mods = append(mods, "durability")
 	case "tasks", "workspace_tasks":

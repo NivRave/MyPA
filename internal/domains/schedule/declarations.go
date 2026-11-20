@@ -9,7 +9,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 	return []*genai.FunctionDeclaration{
 		{
 			Name:        "schedule_topic_event",
-			Description: "Create a topic-tagged schedule event with virtual sub-calendar support. Events can be synchronized with Google Calendar (with topic prefix e.g. [Baby], [House] and custom color coding) or kept internal-only for high-frequency routines (baby feedings, meds, workouts). If shared, also synchronizes to partner's calendar.",
+			Description: "Create a topic-tagged schedule event with virtual sub-calendar support. Events can be synchronized with Google Calendar (with topic prefix e.g. [Health], [Work] and custom color coding) or kept internal-only for high-frequency routines (meds, workouts). If shared, also synchronizes to partner's calendar.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
@@ -19,7 +19,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					},
 					"topic": {
 						Type:        genai.TypeString,
-						Description: "Life domain or topic (e.g. 'baby', 'house', 'finance', 'health', 'work', 'personal', 'family').",
+						Description: "Life domain or topic: one of the household's topics (e.g. 'family', 'health', 'work', 'personal').",
 					},
 					"start_time": {
 						Type:        genai.TypeString,
@@ -64,7 +64,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 				Properties: map[string]*genai.Schema{
 					"topic": {
 						Type:        genai.TypeString,
-						Description: "Topic to filter by (e.g. 'baby', 'house', 'finance', 'work', 'all').",
+						Description: "Topic to filter by: one of the household's topics (e.g. 'work') or 'all'.",
 					},
 					"tags": {
 						Type: genai.TypeArray,
@@ -96,11 +96,11 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 				Properties: map[string]*genai.Schema{
 					"topic": {
 						Type:        genai.TypeString,
-						Description: "Topic to configure (e.g. 'baby', 'house', 'finance', 'health', 'work').",
+						Description: "Topic to configure: one of the household's topics (e.g. 'health', 'work').",
 					},
 					"prefix_tag": {
 						Type:        genai.TypeString,
-						Description: "Custom prefix bracket tag for calendar event titles (e.g. 'Baby' results in '[Baby] Event Title').",
+						Description: "Custom prefix bracket tag for calendar event titles (e.g. 'Health' results in '[Health] Event Title').",
 					},
 					"color_id": {
 						Type:        genai.TypeString,

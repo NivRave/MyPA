@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { History, RotateCcw, CheckCircle, Clock, AlertTriangle, Filter } from "lucide-react";
-import { graphqlFetch, type MutationLog } from "@/lib/graphql";
+import { getMe, graphqlFetch, type MutationLog } from "@/lib/graphql";
+import { householdTopics, topicLabel } from "@/lib/packs";
 
 export const dynamic = "force-dynamic";
 
@@ -51,11 +52,11 @@ export default async function AuditRollbackPage({
   const currentTopic = params?.topic || "all";
   const logs = await getMutationLogs(currentTopic);
 
+  // V4-27: the household's topics (Core plus its packs'), then schedule and memory.
+  const me = await getMe();
   const topics = [
     { id: "all", label: "All Topics" },
-    { id: "baby", label: "Baby" },
-    { id: "house", label: "House" },
-    { id: "finance", label: "Finance" },
+    ...householdTopics(me).map((t) => ({ id: t, label: topicLabel(t) })),
     { id: "schedule", label: "Schedule" },
     { id: "memory", label: "Memory" },
   ];

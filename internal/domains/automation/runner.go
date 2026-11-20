@@ -22,6 +22,7 @@ import (
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/netguard"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/packs"
 	"github.com/robfig/cron/v3"
 )
 
@@ -130,6 +131,9 @@ type Runner struct {
 	notificationSender      orchestrator.NotificationSender
 	actionExecutor          ActionExecutor
 	allowLoopbackForTesting bool
+	// householdPacks reads a household's packs; when set, a rule runs only while its household
+	// has the Automations pack on (V4-27).
+	householdPacks func(ctx context.Context, householdID string) (packs.Set, error)
 	// stateless runner fields
 }
 
@@ -147,6 +151,15 @@ func WithNotificationSender(sender orchestrator.NotificationSender) RunnerOption
 func WithActionExecutor(executor ActionExecutor) RunnerOption {
 	return func(r *Runner) {
 		r.actionExecutor = executor
+	}
+}
+
+// WithHouseholdPacks makes the runner check, before every action, that the rule's household has
+// the Automations pack switched on (V4-27). A failed lookup counts as off: a rule never runs on a
+// guess.
+func WithHouseholdPacks(lookup func(ctx context.Context, householdID string) (packs.Set, error)) RunnerOption {
+	return func(r *Runner) {
+		r.householdPacks = lookup
 	}
 }
 
@@ -631,8 +644,14 @@ func (r *Runner) HandleMutationEvent(ctx context.Context, ev events.MutationEven
 	return nil
 }
 
-// ExecuteAction performs the action defined on the automation rule.
+// ExecuteAction performs the action defined on the automation rule. Both the event runner and the
+// scheduler's cron rules come through here, so a household with the Automations pack off runs no
+// rule (V4-27): the action is skipped, not failed, and its data is kept.
 func (r *Runner) ExecuteAction(ctx context.Context, rule models.AutomationRule, ev events.MutationEvent) error {
+	if !r.automationsOn(ctx, rule.HouseholdID) {
+		slog.Info("automation rule skipped: the household has the Automations pack off", "rule_id", rule.ID, "household_id", rule.HouseholdID)
+		return nil
+	}
 	// Custom action executor override if registered
 	if r.actionExecutor != nil {
 		return r.actionExecutor(ctx, rule, ev)
@@ -678,6 +697,20 @@ func (r *Runner) ExecuteAction(ctx context.Context, rule models.AutomationRule, 
 	}
 
 	return nil
+}
+
+// automationsOn reports whether rules of the household may run. Without a pack lookup (tests that
+// do not wire one) every household may.
+func (r *Runner) automationsOn(ctx context.Context, householdID string) bool {
+	if r.householdPacks == nil {
+		return true
+	}
+	set, err := r.householdPacks(ctx, householdID)
+	if err != nil {
+		slog.Warn("automation rule skipped: could not read the household's packs", "household_id", householdID, "error", err)
+		return false
+	}
+	return set.Has(packs.Automations)
 }
 
 // ExtractCronSchedule extracts the cron expression from condition JSON or plain string.

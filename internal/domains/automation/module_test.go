@@ -2,7 +2,7 @@ package automation
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/identity/identitytest"
 	"io"
@@ -16,6 +16,7 @@ import (
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/packs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -519,141 +520,25 @@ func TestAutomationRule_MatchingAgainstMutationEvents(t *testing.T) {
 	mu.Unlock()
 }
 
-func TestUserPreferences_UpdateGetAndPromptInjection(t *testing.T) {
-	repo := newFakeAutomationRepo()
-	bus := events.NewEventBus()
-	mod := NewModule(repo, WithEventBus(bus))
-
-	callCtx := orchestrator.CallContext{
-		User: &models.User{
-			PlatformID:  "u_vip",
-			FamilyGroup: "family_alpha",
-		},
-		Scope:    identitytest.Scope(t, "family_alpha", "u_vip", "family"),
-		EventBus: bus,
-	}
-
-	// 1. Initial prompt with no preferences has baseline guidance
-	promptInitial := mod.SystemPromptSection(context.Background(), callCtx)
-	assert.Contains(t, promptInitial, "### Runtime Customization, Preferences & Personal CRM:")
-
-	// 2. Update user preferences
-	_, err := mod.Execute(context.Background(), callCtx, "update_user_preferences", map[string]interface{}{
-		"preferred_language":    "Hebrew",
-		"tone_persona":          "Analytical & Structured",
-		"default_currency":      "EUR",
-		"quiet_hours_start":     "23:00",
-		"quiet_hours_end":       "07:00",
-		"briefing_topics":       `["schedule", "finance", "baby"]`,
-		"standing_instructions": "Always include nutritional breakdown when discussing meals.",
-	})
-	require.NoError(t, err)
-
-	// 3. Get user preferences
-	getRes, err := mod.Execute(context.Background(), callCtx, "get_user_preferences", nil)
-	require.NoError(t, err)
-	assert.Contains(t, getRes, "Analytical & Structured")
-	assert.Contains(t, getRes, "EUR")
-	assert.Contains(t, getRes, "Hebrew")
-
-	// 4. SystemPromptSection dynamically injects updated preferences
-	promptUpdated := mod.SystemPromptSection(context.Background(), callCtx)
-	assert.Contains(t, promptUpdated, "Tone/Persona: Analytical & Structured")
-	assert.Contains(t, promptUpdated, "Default Currency: EUR")
-	assert.Contains(t, promptUpdated, "Preferred Language: Hebrew")
-	assert.Contains(t, promptUpdated, "Quiet Hours: 23:00 to 07:00")
-	assert.Contains(t, promptUpdated, "Always include nutritional breakdown when discussing meals.")
-}
-
-func TestPersonalCRM_UpsertQueryAndUpcomingAlerts(t *testing.T) {
-	repo := newFakeAutomationRepo()
-	bus := events.NewEventBus()
-	mod := NewModule(repo, WithEventBus(bus))
-
-	callCtx := orchestrator.CallContext{
-		User: &models.User{
-			PlatformID:  "u_crm_user",
-			FamilyGroup: "cohen_home",
-		},
-		Scope:    identitytest.Scope(t, "cohen_home", "u_crm_user", "family"),
-		EventBus: bus,
-	}
-
-	// Compute a dynamic birthday 5 days from today
-	now := time.Now()
-	bdayIn5Days := now.Add(5 * 24 * time.Hour)
-	bdayStr := bdayIn5Days.Format("2006-01-02")
-
-	// 1. Upsert Contact A (Birthday in 5 days)
-	datesA := fmt.Sprintf(`[{"label": "Birthday", "date": "%s"}]`, bdayStr)
-	_, err := mod.Execute(context.Background(), callCtx, "upsert_personal_crm", map[string]interface{}{
-		"person_name":          "Dana Cohen",
-		"relationship":         "Sister",
-		"important_dates":      datesA,
-		"gift_ideas_and_sizes": "Loves vintage books, sweater size S, shoe size 38",
-		"medical_notes":        "Mild nut allergy",
-	})
-	require.NoError(t, err)
-
-	// 2. Upsert Contact B (Anniversary 6 months from now - outside 30 days window)
-	futureDate := now.Add(180 * 24 * time.Hour)
-	datesB := fmt.Sprintf(`[{"label": "Wedding Anniversary", "date": "%s"}]`, futureDate.Format("2006-01-02"))
-	_, err = mod.Execute(context.Background(), callCtx, "upsert_personal_crm", map[string]interface{}{
-		"person_name":          "Uncle David",
-		"relationship":         "Uncle",
-		"important_dates":      datesB,
-		"gift_ideas_and_sizes": "Red wine, chess set",
-	})
-	require.NoError(t, err)
-
-	// 3. Query Personal CRM
-	queryRes, err := mod.Execute(context.Background(), callCtx, "query_personal_crm", map[string]interface{}{
-		"query": "vintage books",
-	})
-	require.NoError(t, err)
-	assert.Contains(t, queryRes, "Dana Cohen")
-	assert.NotContains(t, queryRes, "Uncle David")
-
-	// Query by relationship
-	queryRel, err := mod.Execute(context.Background(), callCtx, "query_personal_crm", map[string]interface{}{
-		"relationship": "Uncle",
-	})
-	require.NoError(t, err)
-	assert.Contains(t, queryRel, "Uncle David")
-
-	// 4. SystemPromptSection checks:
-	// Dana's birthday in 5 days MUST appear in alerts
-	// Uncle David's 6-month date MUST NOT appear in the next 30 days alerts
-	prompt := mod.SystemPromptSection(context.Background(), callCtx)
-	assert.Contains(t, prompt, "Dana Cohen")
-	assert.Contains(t, prompt, "Sister")
-	assert.Contains(t, prompt, "Birthday")
-	assert.Contains(t, prompt, "in 5 days")
-	assert.Contains(t, prompt, "vintage books")
-	assert.NotContains(t, prompt, "Uncle David")
-}
-
 func TestAutomation_ToolDeclarations(t *testing.T) {
 	mod := NewModule(newFakeAutomationRepo())
 	assert.Equal(t, "automation", mod.Name())
 
 	decls := mod.Declarations()
-	assert.Len(t, decls, 13)
+	// 9 since V4-27: preferences and the personal CRM moved to the Core preferences module
+	// (TestPreferences_ToolDeclarations).
+	assert.Len(t, decls, 9)
 
 	expectedTools := map[string]bool{
-		"register_external_api":   false,
-		"list_external_apis":      false,
-		"call_external_api":       false,
-		"create_automation_rule":  false,
-		"list_automation_rules":   false,
-		"delete_automation_rule":  false,
-		"update_user_preferences": false,
-		"get_user_preferences":    false,
-		"upsert_personal_crm":     false,
-		"query_personal_crm":      false,
-		"schedule_workflow":       false,
-		"list_workflows":          false,
-		"delete_workflow":         false,
+		"register_external_api":  false,
+		"list_external_apis":     false,
+		"call_external_api":      false,
+		"create_automation_rule": false,
+		"list_automation_rules":  false,
+		"delete_automation_rule": false,
+		"schedule_workflow":      false,
+		"list_workflows":         false,
+		"delete_workflow":        false,
 	}
 
 	for _, d := range decls {
@@ -764,55 +649,6 @@ func TestAutomation_ToolEdgeCases(t *testing.T) {
 	// both are refused alike, never reported as a deletion.
 	_, err = mod.Execute(ctx, callCtx, "delete_automation_rule", map[string]interface{}{"rule_id": 9999})
 	require.Error(t, err)
-
-	// Missing person_name in CRM
-	_, err = mod.Execute(ctx, callCtx, "upsert_personal_crm", map[string]interface{}{})
-	assert.Error(t, err)
-
-	// Update existing CRM contact
-	upsertRes, err := mod.Execute(ctx, callCtx, "upsert_personal_crm", map[string]interface{}{
-		"person_name":  "Tom Hardy",
-		"relationship": "Friend",
-	})
-	require.NoError(t, err)
-	assert.Contains(t, upsertRes, "Successfully saved CRM contact")
-
-	// Update Tom Hardy with ID 1
-	upsertRes2, err := mod.Execute(ctx, callCtx, "upsert_personal_crm", map[string]interface{}{
-		"id":           1,
-		"person_name":  "Tom Hardy",
-		"relationship": "Best Friend",
-	})
-	require.NoError(t, err)
-	assert.Contains(t, upsertRes2, "Best Friend")
-}
-
-func TestCalculateDaysUntil(t *testing.T) {
-	refTime := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
-
-	// Today
-	days, ok := calculateDaysUntil("2026-11-03", refTime)
-	assert.True(t, ok)
-	assert.Equal(t, 0, days)
-
-	// Tomorrow
-	days, ok = calculateDaysUntil("2026-11-04", refTime)
-	assert.True(t, ok)
-	assert.Equal(t, 1, days)
-
-	// In 10 days (Nov 13)
-	days, ok = calculateDaysUntil("11-13", refTime)
-	assert.True(t, ok)
-	assert.Equal(t, 10, days)
-
-	// Past date this year (Oct 10) -> next year occurrence
-	days, ok = calculateDaysUntil("10-10", refTime)
-	assert.True(t, ok)
-	assert.Greater(t, days, 300)
-
-	// Invalid date
-	_, ok = calculateDaysUntil("not-a-date", refTime)
-	assert.False(t, ok)
 }
 
 // TestRunner_RulesReactOnlyToTheirOwnHousehold: an automation rule reacts only to events of its
@@ -857,4 +693,46 @@ func TestRunner_RulesReactOnlyToTheirOwnHousehold(t *testing.T) {
 	mu.Lock()
 	assert.Equal(t, []string{"Alpha watcher"}, executed)
 	mu.Unlock()
+}
+
+// V4-27: a household with the Automations pack off runs none of its rules, on events or on a
+// schedule (both come through ExecuteAction), and a failed pack lookup counts as off. The rules
+// themselves are kept.
+func TestRunner_RulesRunOnlyWhileTheAutomationsPackIsOn(t *testing.T) {
+	repo := newFakeAutomationRepo()
+	store := identitytest.NewStore()
+	home := store.ScopeIn(t, "family_packs", "u_packs", "family")
+	require.NoError(t, repo.CreateAutomationRule(home, &models.AutomationRule{
+		Name: "Watcher", TriggerType: "event_mutation", TriggerTopic: "*", ConditionJSON: `{}`, IsActive: true,
+	}))
+
+	current := packs.Everything()
+	var lookupErr error
+	lookup := func(_ context.Context, householdID string) (packs.Set, error) {
+		assert.Equal(t, home.HouseholdID(), householdID, "the rule's own household is checked")
+		return current, lookupErr
+	}
+	runner := NewRunner(repo, nil, WithHouseholdPacks(lookup))
+	var executed int
+	runner.actionExecutor = func(context.Context, models.AutomationRule, events.MutationEvent) error {
+		executed++
+		return nil
+	}
+	ctx := context.Background()
+	ev := events.MutationEvent{Topic: "finance", Action: "create", HouseholdID: home.HouseholdID()}
+
+	require.NoError(t, runner.HandleMutationEvent(ctx, ev))
+	assert.Equal(t, 1, executed, "with the pack on the rule runs")
+
+	current = packs.Everything().With(packs.Automations, false)
+	require.NoError(t, runner.HandleMutationEvent(ctx, ev))
+	rules, err := repo.ListAutomationRules(home, "")
+	require.NoError(t, err)
+	require.Len(t, rules, 1, "the rule is kept")
+	require.NoError(t, runner.ExecuteAction(ctx, rules[0], ev), "a skipped rule is not a failure")
+	assert.Equal(t, 1, executed, "with the pack off no rule runs, on an event or on its schedule")
+
+	current, lookupErr = packs.Everything(), errors.New("database down")
+	require.NoError(t, runner.HandleMutationEvent(ctx, ev))
+	assert.Equal(t, 1, executed, "a failed lookup runs nothing")
 }

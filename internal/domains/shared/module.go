@@ -58,13 +58,13 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 	return []*genai.FunctionDeclaration{
 		{
 			Name:        "configure_shared_topic",
-			Description: "Configure family sharing rules, access permissions, and notification modes for a topic (e.g., 'baby', 'house', 'finance', 'schedule', 'work', 'personal').",
+			Description: "Configure family sharing rules, access permissions, and notification modes for a topic: one of the household's topics (e.g., 'family', 'work', 'personal') or 'schedule'.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
 					"topic": {
 						Type:        genai.TypeString,
-						Description: "The topic to configure (e.g., 'baby', 'house', 'finance', 'schedule', 'personal', 'work').",
+						Description: "The topic to configure: one of the household's topics (e.g., 'family', 'personal', 'work') or 'schedule'.",
 					},
 					"can_view": {
 						Type:        genai.TypeBoolean,
@@ -88,17 +88,17 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 		},
 		{
 			Name:        "create_shared_reminder",
-			Description: "Create a shared family task or reminder under a topic (e.g. 'baby', 'house', 'finance', 'family') that can be claimed and completed by any family member.",
+			Description: "Create a shared family task or reminder under a topic (one of the household's topics, e.g. 'family', 'health') that can be claimed and completed by any family member.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
 					"title": {
 						Type:        genai.TypeString,
-						Description: "The title or action of the shared reminder/task (e.g., 'Give Vitamin D drops at 19:00', 'Buy baby formula', 'Pay electricity bill').",
+						Description: "The title or action of the shared reminder/task (e.g., 'Give Vitamin D drops at 19:00', 'Buy milk', 'Pay electricity bill').",
 					},
 					"topic": {
 						Type:        genai.TypeString,
-						Description: "The shared topic (e.g., 'baby', 'house', 'finance', 'family'). Default is 'family'.",
+						Description: "The shared topic: one of the household's topics (e.g., 'family', 'health'). Default is 'family'.",
 					},
 					"due_time": {
 						Type:        genai.TypeString,
@@ -134,7 +134,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 				Properties: map[string]*genai.Schema{
 					"topic": {
 						Type:        genai.TypeString,
-						Description: "Optional topic filter (e.g. 'baby', 'house', 'finance'). Omit or pass '*' for all topics.",
+						Description: "Optional topic filter: one of the household's topics (e.g. 'family'). Omit or pass '*' for all topics.",
 					},
 					"include_completed": {
 						Type:        genai.TypeBoolean,
@@ -214,7 +214,8 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("### Family Shared Spaces & Collaboration\nFamily Group: %s\n", callCtx.Scope.LegacyLabel()))
-	sb.WriteString("Default shared topics: baby, house, finance, family (instant partner notifications).\n")
+	// V4-27: the default-shared topics the household has (Core plus its packs'), not a fixed list.
+	sb.WriteString(fmt.Sprintf("Default shared topics: %s (instant partner notifications).\n", strings.Join(models.DefaultSharedTopics(callCtx.Packs().Topics()), ", ")))
 	sb.WriteString("Private by default: personal, work.\n")
 	if len(customPolicies) > 0 {
 		sb.WriteString("Active configured sharing policies:\n")
@@ -222,7 +223,7 @@ func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.C
 			sb.WriteString(p + "\n")
 		}
 	}
-	sb.WriteString("When the user logs events, baby care, home repairs, or expenses under shared topics, cross-user partner notifications are automatically routed.\n")
+	sb.WriteString("When the user logs events, care notes, chores, or other entries under shared topics, cross-user partner notifications are automatically routed.\n")
 	sb.WriteString("Use create_shared_reminder and complete_shared_reminder for collaborative tasks and hand-offs.")
 
 	return sb.String()
@@ -464,7 +465,7 @@ func (m *Module) executeListSharedActivity(ctx context.Context, callCtx orchestr
 
 	sb.WriteString("Shared Spaces:\n")
 	if len(spaces) == 0 {
-		sb.WriteString("  No custom shared spaces configured. Using default policy (baby, house, finance, family shared with instant notifications).\n")
+		sb.WriteString(fmt.Sprintf("  No custom shared spaces configured. Using default policy (%s shared with instant notifications).\n", strings.Join(models.DefaultSharedTopics(callCtx.Packs().Topics()), ", ")))
 	} else {
 		for _, sp := range spaces {
 			sb.WriteString(fmt.Sprintf("  - [%s] view: %v, edit: %v, notify: %s\n", sp.Topic, sp.CanView, sp.CanEdit, sp.NotifyMode))

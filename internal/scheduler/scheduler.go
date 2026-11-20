@@ -14,6 +14,7 @@ import (
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/packs"
 	"github.com/nivik/mypa/internal/transfer"
 	"github.com/robfig/cron/v3"
 )
@@ -128,7 +129,14 @@ func ReloadWorkflows(engine *orchestrator.Engine, dbClient *db.Client, runner *a
 		} else {
 			for _, wf := range workflows {
 				wfCopy := wf // prevent loop variable capture issue
+				// V4-27: a workflow is part of the Automations pack of its person's household.
+				if !workflowMayRun(dbClient, wfCopy.UserID) {
+					continue
+				}
 				_, schedErr := workflowCron.AddFunc(wfCopy.CronExpression, func() {
+					if !workflowMayRun(dbClient, wfCopy.UserID) { // switched off since the last reload
+						return
+					}
 					slog.Info("Running legacy workflow", "id", wfCopy.ID, "name", wfCopy.Name)
 					executeWorkflowMessage(engine, dbClient, wfCopy.UserID, wfCopy.Instruction, fmt.Sprintf("wf-%d-%d", wfCopy.ID, time.Now().Unix()))
 				})
@@ -146,6 +154,11 @@ func ReloadWorkflows(engine *orchestrator.Engine, dbClient *db.Client, runner *a
 		if findErr := dbClient.DB.Where("LOWER(trigger_type) = ? AND is_active = ?", "cron", true).Find(&cronRules).Error; findErr == nil {
 			for _, rule := range cronRules {
 				ruleCopy := rule
+				// V4-27: a rule of a household with the Automations pack off is not scheduled; the
+				// runner checks again when one fires (a switch-off since the last reload).
+				if !automationsOn(dbClient, ruleCopy.HouseholdID) {
+					continue
+				}
 				cronExpr, parseErr := automation.ExtractCronSchedule(ruleCopy.ConditionJSON)
 				if parseErr != nil {
 					slog.Warn("skipping automation rule with invalid cron condition", "rule_id", ruleCopy.ID, "error", parseErr)
@@ -190,6 +203,32 @@ func ReloadWorkflows(engine *orchestrator.Engine, dbClient *db.Client, runner *a
 
 	workflowCron.Start()
 	slog.Info("Workflows and cron rules reloaded", "legacy_count", len(workflows), "cron_rule_count", len(cronRules))
+}
+
+// automationsOn reports whether the household has the Automations pack on (V4-27). A failed
+// lookup counts as off: nothing runs on a guess.
+func automationsOn(dbClient *db.Client, householdID string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	set, err := dbClient.HouseholdPacks(ctx, householdID)
+	if err != nil {
+		slog.Warn("automation skipped: could not read the household's packs", "household_id", householdID, "error", err)
+		return false
+	}
+	return set.Has(packs.Automations)
+}
+
+// workflowMayRun reports whether a legacy workflow of this person may run: workflows carry no
+// household, so it is the household of the person's users row.
+func workflowMayRun(dbClient *db.Client, userID string) bool {
+	if dbClient == nil {
+		return false
+	}
+	u, err := dbClient.GetUser(userID)
+	if err != nil || u == nil {
+		return false
+	}
+	return automationsOn(dbClient, u.HouseholdID)
 }
 
 func executeWorkflowMessage(engine *orchestrator.Engine, dbClient *db.Client, userID, instruction, msgID string) {

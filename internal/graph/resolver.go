@@ -33,6 +33,9 @@ type Resolver struct {
 	SharedRepo     *db.SharedRepository
 	MemoryRepo     db.MemoryV2Repository
 	AutomationRepo db.AutomationRepository
+	// PromptCache drops cached prompt sections when the household's packs change (V4-27); nil
+	// leaves them to expire.
+	PromptCache PromptInvalidator
 }
 
 // ResolverConfig holds dependencies for constructing a fully decoupled Resolver.
@@ -48,6 +51,7 @@ type ResolverConfig struct {
 	SharedRepo     *db.SharedRepository
 	MemoryRepo     db.MemoryV2Repository
 	AutomationRepo db.AutomationRepository
+	PromptCache    PromptInvalidator
 }
 
 // NewResolver constructs a Resolver instance with injected repository interfaces.
@@ -64,6 +68,7 @@ func NewResolver(cfg ResolverConfig) *Resolver {
 		SharedRepo:     cfg.SharedRepo,
 		MemoryRepo:     cfg.MemoryRepo,
 		AutomationRepo: cfg.AutomationRepo,
+		PromptCache:    cfg.PromptCache,
 	}
 
 	if r.DB != nil {

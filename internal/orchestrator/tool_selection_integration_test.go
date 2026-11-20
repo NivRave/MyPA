@@ -14,6 +14,7 @@ import (
 	"github.com/nivik/mypa/internal/domains/finance"
 	"github.com/nivik/mypa/internal/domains/house"
 	"github.com/nivik/mypa/internal/domains/memory"
+	"github.com/nivik/mypa/internal/domains/preferences"
 	"github.com/nivik/mypa/internal/domains/schedule"
 	"github.com/nivik/mypa/internal/domains/shared"
 	"github.com/nivik/mypa/internal/domains/web_research"
@@ -51,8 +52,9 @@ func TestFull13Modules_TokenReduction(t *testing.T) {
 	reg.Register(house.NewModule(nil))
 	reg.Register(finance.NewModule(nil))
 	reg.Register(automation.NewModule(nil))
+	reg.Register(preferences.NewModule(nil)) // V4-27: the four preference/CRM tools left automation
 
-	// 1. Verify total declarations across all 13 modules
+	// 1. Verify total declarations across all 13 modules (14 since V4-27 split automation)
 	allDecls := reg.AllDeclarations()
 	totalTools := len(allDecls)
 	t.Logf("Total registered tool declarations across all 13 modules: %d", totalTools)
@@ -149,10 +151,10 @@ func (t *testRewriteTransport) RoundTrip(req *http.Request) (*http.Response, err
 }
 
 // TestLLMChat_WithActiveTools_BypassesStaticTools verifies that:
-// 1. When WithActiveTools is set in context, Client.Chat passes ONLY the scoped tools to Gemini,
-//    bypassing the static 28-tool CalendarEventTool.
-// 2. When WithNoTools is set in context, Client.Chat passes tools: nil.
-// 3. When neither is set, Client.Chat falls back to the static tools.
+//  1. When WithActiveTools is set in context, Client.Chat passes ONLY the scoped tools to Gemini,
+//     bypassing the static 28-tool CalendarEventTool.
+//  2. When WithNoTools is set in context, Client.Chat passes tools: nil.
+//  3. When neither is set, Client.Chat falls back to the static tools.
 func TestLLMChat_WithActiveTools_BypassesStaticTools(t *testing.T) {
 	var lastCapturedReq capturedRequest
 

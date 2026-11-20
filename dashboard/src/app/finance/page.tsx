@@ -1,11 +1,15 @@
 import { revalidatePath } from "next/cache";
 import { DollarSign, PieChart, RefreshCw, AlertCircle, Plus, ArrowUpRight, ArrowDownLeft } from "lucide-react";
 import {
+  getMe,
   graphqlFetch,
   type FinancialTransaction,
   type CategoryBudget,
   type RecurringBill,
 } from "@/lib/graphql";
+import { householdTopics } from "@/lib/packs";
+import { packOfPage, pageEnabled } from "@/lib/packs";
+import { PackOff } from "@/components/PackOff";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +83,13 @@ async function getFinanceData(): Promise<{
 }
 
 export default async function FinancePage() {
+  // V4-27: a switched-off pack's page reads none of its data.
+  const me = await getMe();
+  // V4-27: "baby" is a category while the household has that topic (the Baby pack).
+  const babyCategory = householdTopics(me).includes("baby");
+  if (!pageEnabled(me, "/finance")) {
+    return <PackOff name={packOfPage(me?.household.packs ?? [], "/finance")?.name ?? "Finance"} />;
+  }
   const { transactions, budgets, bills } = await getFinanceData();
 
   // Compute spend totals by category
@@ -237,7 +248,7 @@ export default async function FinancePage() {
             })}
             {budgets.length === 0 && (
               <div className="text-center text-xs text-neutral-400 py-6">
-                No budgets set. Configure monthly limits for Baby, House, Groceries, or Dining below.
+                No budgets set. Configure monthly limits for Groceries, House, or Dining below.
               </div>
             )}
           </div>
@@ -247,7 +258,7 @@ export default async function FinancePage() {
             <form action={saveBudget} className="flex flex-wrap gap-3 text-xs">
               <select name="category" className="border border-neutral-300 rounded p-1.5 bg-white">
                 <option value="groceries">Groceries</option>
-                <option value="baby">Baby Care</option>
+                {babyCategory && <option value="baby">Baby Care</option>}
                 <option value="house">House & Maintenance</option>
                 <option value="utilities">Utilities</option>
                 <option value="dining">Dining & Takeout</option>
@@ -292,7 +303,7 @@ export default async function FinancePage() {
                   <label className="block text-neutral-600 mb-1">Category</label>
                   <select name="category" className="w-full border border-neutral-300 rounded p-2 bg-white">
                     <option value="groceries">Groceries</option>
-                    <option value="baby">Baby</option>
+                    {babyCategory && <option value="baby">Baby</option>}
                     <option value="house">House</option>
                     <option value="utilities">Utilities</option>
                     <option value="dining">Dining</option>

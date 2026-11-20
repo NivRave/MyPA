@@ -1,11 +1,14 @@
 import { revalidatePath } from "next/cache";
 import { Home, FileText, Wrench, Car, AlertTriangle, CheckCircle, Plus } from "lucide-react";
 import {
+  getMe,
   graphqlFetch,
   type HouseContractRecord,
   type HomeMaintenanceItem,
   type VehicleAsset,
 } from "@/lib/graphql";
+import { packOfPage, pageEnabled } from "@/lib/packs";
+import { PackOff } from "@/components/PackOff";
 
 export const dynamic = "force-dynamic";
 
@@ -99,6 +102,11 @@ async function getHouseData(): Promise<{
 }
 
 export default async function HousePage() {
+  // V4-27: a switched-off pack's page reads none of its data.
+  const me = await getMe();
+  if (!pageEnabled(me, "/house")) {
+    return <PackOff name={packOfPage(me?.household.packs ?? [], "/house")?.name ?? "House and vehicles"} />;
+  }
   const { contracts, maintenance, vehicles } = await getHouseData();
 
   async function completeTask(formData: FormData) {

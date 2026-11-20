@@ -1,12 +1,15 @@
 import { revalidatePath } from "next/cache";
 import { Baby, Heart, Scale, Ruler, AlertCircle, Plus, Sparkles, Check, Package, Clock } from "lucide-react";
 import {
+  getMe,
   graphqlFetch,
   getHouseholdName,
   type BabyProfile,
   type BabyCareLog,
   type BabyInventoryItem,
 } from "@/lib/graphql";
+import { packOfPage, pageEnabled } from "@/lib/packs";
+import { PackOff } from "@/components/PackOff";
 
 export const dynamic = "force-dynamic";
 
@@ -160,6 +163,11 @@ async function getBabyData(): Promise<{
 }
 
 export default async function BabyTrackerPage() {
+  // V4-27: a switched-off pack's page reads none of its data.
+  const me = await getMe();
+  if (!pageEnabled(me, "/baby")) {
+    return <PackOff name={packOfPage(me?.household.packs ?? [], "/baby")?.name ?? "Baby"} />;
+  }
   const familyGroup = await getHouseholdName();
   const { profile, logs, inventory, dob, ageString, milestoneSuggestions } = await getBabyData();
 

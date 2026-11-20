@@ -56,6 +56,18 @@ type SharedTaskReminder struct {
 	CreatedAt           time.Time  `json:"created_at"`
 }
 
+// DefaultSharedTopics returns the topics of the list that default to shared, in list order: the
+// household's topic list (V4-27) names only the topics its packs give it.
+func DefaultSharedTopics(topics []string) []string {
+	var out []string
+	for _, t := range topics {
+		if IsDefaultSharedTopic(t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // IsDefaultSharedTopic returns true if the topic defaults to shared within a family group
 // per docs/PLAN.md (baby, house, finance, family).
 func IsDefaultSharedTopic(topic string) bool {

@@ -40,6 +40,13 @@ type AutomationRepository interface {
 	UpdateAutomationRule(s identity.Scope, rule *models.AutomationRule) error
 	DeleteAutomationRule(s identity.Scope, id uint) error
 
+	// The automation repository also serves preferences and the CRM; the tables are unchanged.
+	PreferencesRepository
+}
+
+// PreferencesRepository is the storage of the Core preferences module (V4-27): a person's
+// preferences and the household's personal CRM.
+type PreferencesRepository interface {
 	// UserPreference CRUD (person-keyed, no household column)
 	UpsertUserPreference(pref *models.UserPreference) error
 	GetUserPreference(userID string) (*models.UserPreference, error)

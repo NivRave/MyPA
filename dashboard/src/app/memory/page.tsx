@@ -1,10 +1,12 @@
 import { revalidatePath } from "next/cache";
 import { Brain, Pin, Trash2, Tag, ShieldAlert, Sparkles, Filter } from "lucide-react";
 import {
+  getMe,
   graphqlFetch,
   type TopicMemory,
   type EntityProfile,
 } from "@/lib/graphql";
+import { householdTopics, topicLabel } from "@/lib/packs";
 
 export const dynamic = "force-dynamic";
 
@@ -80,14 +82,11 @@ export default async function MemoryExplorerPage({
 
   const { memories, profiles } = await getMemoriesAndProfiles(currentTopic, showSuperseded);
 
+  // V4-27: the household's topics (Core plus its packs').
+  const me = await getMe();
   const topics = [
     { id: "all", label: "All Topics" },
-    { id: "baby", label: "Baby" },
-    { id: "house", label: "House" },
-    { id: "finance", label: "Finance" },
-    { id: "health", label: "Health" },
-    { id: "work", label: "Work" },
-    { id: "personal", label: "Personal" },
+    ...householdTopics(me).map((t) => ({ id: t, label: topicLabel(t) })),
   ];
 
   async function togglePin(formData: FormData) {

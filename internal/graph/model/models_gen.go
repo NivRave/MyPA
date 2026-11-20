@@ -153,6 +153,10 @@ type Household struct {
 	Language string `json:"language"`
 	TimeZone string `json:"timeZone"`
 	Currency string `json:"currency"`
+	// Every opt-in feature pack, and whether the household has it on (V4-27). Core is always on and is not listed.
+	Packs []*Pack `json:"packs"`
+	// The household's topics: Core's, then those of each pack it has on (V4-27).
+	Topics []string `json:"topics"`
 }
 
 type Me struct {
@@ -179,6 +183,15 @@ type MutationLog struct {
 	Summary     string    `json:"summary"`
 	IsUndone    bool      `json:"isUndone"`
 	CreatedAt   time.Time `json:"createdAt"`
+}
+
+type Pack struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Enabled     bool   `json:"enabled"`
+	// The dashboard routes the pack owns; the dashboard hides them while the pack is off.
+	Pages []string `json:"pages"`
 }
 
 type PairingCode struct {

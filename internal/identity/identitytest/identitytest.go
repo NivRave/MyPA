@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/packs"
 )
 
 // Store is an in-memory identity.Store.
@@ -83,7 +84,9 @@ func (s *Store) Household(label string) models.Household {
 		return h
 	}
 	l := label
-	h := models.Household{ID: id, Name: label, LegacyLabel: &l}
+	// Every pack is on (V4-27): a fixture stands for a household that uses every feature, as an
+	// upgraded one that holds data in every pack does. A test about packs sets its own with Put.
+	h := models.Household{ID: id, Name: label, LegacyLabel: &l, Packs: packs.Everything().String()}
 	s.households[id] = h
 	return h
 }

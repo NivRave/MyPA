@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -12,6 +14,7 @@ import (
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/packs"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/genai"
 )
@@ -36,6 +39,22 @@ type CallContext struct {
 	HasUntrustedContent bool
 	UntrustedSources    []string
 }
+
+// Packs are the feature packs the call's household has switched on (V4-27). A call without a
+// household (a test, the generated docs) sees every pack; the engine refuses a message without a
+// usable household before any tool or prompt section is reached, so no turn runs that way.
+func (c CallContext) Packs() packs.Set { return packsOf(c.Scope) }
+
+// packsOf is the pack set a scope serves: its household's, or every pack without a household.
+func packsOf(s identity.Scope) packs.Set {
+	if s.Valid() {
+		return s.Packs()
+	}
+	return packs.Everything()
+}
+
+// ErrPackOff is returned for a tool whose pack the household has switched off (V4-27).
+var ErrPackOff = errors.New("pack switched off")
 
 // ActorID returns the canonical external identifier of the active actor on their channel (a user
 // ID or a phone number, whatever the adapter reports as the sender).
@@ -196,6 +215,13 @@ func (r *Registry) Execute(ctx context.Context, callCtx CallContext, toolName st
 	if !ok {
 		return "", false, nil
 	}
+	// V4-27: a tool of a switched-off pack is never run, whatever asked for it (a sticky
+	// follow-up, a hallucinated call, a confirmation replayed after the pack was switched off).
+	if !callCtx.Packs().ModuleEnabled(mod.Name()) {
+		id, _ := packs.OfModule(mod.Name())
+		p, _ := packs.Lookup(string(id))
+		return "", true, fmt.Errorf("%w: %s is part of the %s pack, which this household has switched off; an owner can switch it on in the dashboard", ErrPackOff, toolName, p.Name)
+	}
 
 	result, err := mod.Execute(ctx, callCtx, toolName, args)
 	return result, true, err
@@ -206,8 +232,14 @@ func (r *Registry) Execute(ctx context.Context, callCtx CallContext, toolName st
 // and concurrent errgroup.Group evaluation with an 800ms bounded timeout on cache misses.
 func (r *Registry) CombinedSystemPrompt(ctx context.Context, callCtx CallContext) string {
 	r.mu.RLock()
-	mods := make([]ToolModule, len(r.modules))
-	copy(mods, r.modules)
+	enabled := callCtx.Packs()
+	mods := make([]ToolModule, 0, len(r.modules))
+	for _, m := range r.modules {
+		// V4-27: a switched-off pack contributes no prompt section (and so no briefing lines).
+		if enabled.ModuleEnabled(m.Name()) {
+			mods = append(mods, m)
+		}
+	}
 	cache := r.promptCache
 	r.mu.RUnlock()
 
@@ -354,6 +386,7 @@ var ModuleDomainMapping = map[string]DomainGroup{
 	"workspace_tasks":    DomainTasks,
 	"workspace_contacts": DomainContacts,
 	"automation":         DomainAutomation,
+	"preferences":        DomainPreferences,
 	"shared":             DomainShared,
 	// Core tools of these modules (save_topic_memory, search_topic_memories,
 	// undo_last_action) are always offered; the mapping exposes the remaining ones.
@@ -414,14 +447,38 @@ func (r *Registry) coreDeclarationsLocked() []*genai.FunctionDeclaration {
 	return coreDecls
 }
 
-// SelectDeclarations returns Tier 1 core tools + Tier 2 declarations for the specified domain groups.
-// If matchedDomains is empty, fallbackToAll determines whether all tools or default ambient tools are returned.
+// SelectDeclarations returns Tier 1 core tools + Tier 2 declarations for the specified domain groups,
+// with every pack switched on (no household: tests and generated docs). A turn uses
+// SelectDeclarationsFor with its household's packs.
 func (r *Registry) SelectDeclarations(matchedDomains []DomainGroup, fallbackToAll bool) []*genai.FunctionDeclaration {
+	return r.SelectDeclarationsFor(packs.Everything(), matchedDomains, fallbackToAll)
+}
+
+// SelectDeclarationsFor returns Tier 1 core tools + Tier 2 declarations for the specified domain
+// groups, offering only the modules the household's packs enable (V4-27). A domain served only by
+// switched-off packs is dropped before anything else, so its routing keywords select nothing and a
+// message that matched only such a domain gets the ambient defaults, as an unmatched one does.
+// If no domain remains, fallbackToAll determines whether all tools or default ambient tools are returned.
+func (r *Registry) SelectDeclarationsFor(enabled packs.Set, matchedDomains []DomainGroup, fallbackToAll bool) []*genai.FunctionDeclaration {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	matchedDomains = r.enabledDomainsLocked(enabled, matchedDomains)
 	if len(matchedDomains) == 0 && fallbackToAll {
-		return r.allDeclarationsLocked()
+		var all []*genai.FunctionDeclaration
+		seen := map[string]bool{}
+		for _, m := range r.modules {
+			if !enabled.ModuleEnabled(m.Name()) {
+				continue
+			}
+			for _, d := range m.Declarations() {
+				if d != nil && d.Name != "" && !seen[d.Name] {
+					seen[d.Name] = true
+					all = append(all, d)
+				}
+			}
+		}
+		return all
 	}
 
 	selected := r.coreDeclarationsLocked()
@@ -443,7 +500,7 @@ func (r *Registry) SelectDeclarations(matchedDomains []DomainGroup, fallbackToAl
 
 	for _, m := range r.modules {
 		modDomain, hasDomain := ModuleDomainMapping[m.Name()]
-		if !hasDomain || !domainSet[modDomain] {
+		if !hasDomain || !domainSet[modDomain] || !enabled.ModuleEnabled(m.Name()) {
 			continue
 		}
 
@@ -456,6 +513,29 @@ func (r *Registry) SelectDeclarations(matchedDomains []DomainGroup, fallbackToAl
 	}
 
 	return selected
+}
+
+// enabledDomainsLocked drops the domains whose registered modules all belong to switched-off
+// packs (V4-27). A domain no registered module serves is kept, as before. Caller must hold r.mu.
+func (r *Registry) enabledDomainsLocked(enabled packs.Set, domains []DomainGroup) []DomainGroup {
+	var out []DomainGroup
+	for _, d := range domains {
+		served, on := false, false
+		for _, m := range r.modules {
+			if ModuleDomainMapping[m.Name()] != d {
+				continue
+			}
+			served = true
+			if enabled.ModuleEnabled(m.Name()) {
+				on = true
+				break
+			}
+		}
+		if !served || on {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 func getCurrentTimeDeclaration() *genai.FunctionDeclaration {

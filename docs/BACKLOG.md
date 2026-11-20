@@ -57,6 +57,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-44 | Medium | In chat, the finance tools list the household's unshared transactions of every member, while the dashboard shows each member only their own | open — decide with BL-43 |
 | BL-45 | Low | `dashboard/README.md` documents `NEXT_PUBLIC_GRAPHQL_API_KEY`, which nothing reads | open |
 | BL-46 | Medium | Guests cannot be used yet: a guest sees only the topics shared with them by name, and nothing shares a topic with a guest by name | open — needs a roadmap item (proposal: with V4-36 invites or V4-11 tiers) |
+| BL-47 | Medium | A household settings change goes to the mutation log, so `/undo` stops working until the next undoable change | open |
+| BL-48 | Low | The Shared Spaces dashboard page shows two made-up members ("Dana (Admin)", "Omer (Family)") | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -631,6 +633,22 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Evidence:** `dashboard/README.md` lists `NEXT_PUBLIC_GRAPHQL_API_KEY` ("client-side Bearer token for
   browser mutations"); no code reads it, and since V4-35 no page calls `/graphql` from the browser.
 - **Fix:** remove the row.
+
+### BL-47 — A household settings change blocks `/undo` (Medium)
+- **Found:** 2026-11-20, while building V4-27.
+- **Evidence:** `updateHousehold` publishes a `MutationEvent` (topic `household`), which the durability
+  module records in `mutation_logs`. `/undo` and `undo_last_action` take the household's newest entry
+  (`GetLastMutation`), and `households` is not undoable (`ResolveRollbackTable`), so after a settings change
+  every undo fails until something undoable is written. V4-35 kept sign-ins off the log for this reason, and
+  V4-27's `setPackEnabled` keeps pack switches off it.
+- **Fix:** keep household settings off the mutation log (log them at INFO, as sign-ins and pack switches
+  are), or make `GetLastMutation` skip entity types that cannot be undone.
+
+### BL-48 — Made-up members on the Shared Spaces page (Low)
+- **Found:** 2026-11-20, while building V4-27.
+- **Evidence:** `dashboard/src/app/shared/page.tsx` shows "● 2 Active Members Linked", "Dana (Admin)" and
+  "Omer (Family)" for every household; the names are hard-coded.
+- **Fix:** list the household's members from the `users` query (V4-35), or drop the card until V4-37.
 
 ## Operations (owner)
 

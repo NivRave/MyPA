@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/packs"
 )
 
 // ErrNoScope is returned by every repository method called without a valid scope. A zero Scope
@@ -136,6 +137,10 @@ func (s Scope) Currency(fallback string) string {
 	}
 	return fallback
 }
+
+// Packs are the feature packs the household has switched on (V4-27). Core is always on and is
+// not in the set; the zero scope has no packs.
+func (s Scope) Packs() packs.Set { return packs.Parse(s.household.Packs) }
 
 // Language is the household's language, or "" when it has none.
 func (s Scope) Language() string { return strings.TrimSpace(s.household.Language) }

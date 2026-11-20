@@ -8,6 +8,7 @@ import (
 	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator/mocks"
+	"github.com/nivik/mypa/internal/packs"
 	"go.uber.org/mock/gomock"
 )
 
@@ -45,7 +46,8 @@ func expectHouseholds(m *mocks.MockDBClient) {
 // use readable IDs so the keys they assert stay legible.
 func idScope(id, personKey, role string) identity.Scope {
 	l := id
-	testHouseholds.Put(models.Household{ID: id, Name: id, LegacyLabel: &l})
+	// Every pack is on, as in identitytest.Store.Household (V4-27); a pack test sets its own.
+	testHouseholds.Put(models.Household{ID: id, Name: id, LegacyLabel: &l, Packs: packs.Everything().String()})
 	s, err := identity.ForUser(context.Background(), testHouseholds, &models.User{PlatformID: personKey, Role: role, HouseholdID: id})
 	if err != nil {
 		panic(err)
