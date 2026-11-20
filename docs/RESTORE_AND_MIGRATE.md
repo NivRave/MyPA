@@ -344,6 +344,6 @@ says so; `/backup` takes one.
 - [ ] `transfer export` on the stopped `v3.4.x` install succeeds and reports the Google sign-ins.
 - [ ] The baseline backup (or that export) restores into V4.0 **on a different machine**.
 - [ ] Each person's Google features work there without `/connect`.
-- [ ] Every feature in use is still available (after V4-27: packs that hold data are switched on).
+- [ ] Every feature in use is still available: migration `00006_packs.sql` switches on every pack that holds data for a household (V4-27), and the dashboard's **Tools & Packs** page shows them on.
 - [ ] `/doctor` reports no failures.
 - [ ] A rollback with `--no-migrate` brings `v3.4.x` back up on the old machine.

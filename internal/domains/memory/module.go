@@ -49,7 +49,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 				Properties: map[string]*genai.Schema{
 					"topic": {
 						Type:        genai.TypeString,
-						Description: "Canonical topic domain (e.g. 'baby', 'house', 'finance', 'health', 'work', 'personal').",
+						Description: "Canonical topic domain: one of the household's topics (e.g. 'family', 'health', 'work', 'personal').",
 					},
 					"subtopic": {
 						Type:        genai.TypeString,
@@ -90,7 +90,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 				Properties: map[string]*genai.Schema{
 					"topic": {
 						Type:        genai.TypeString,
-						Description: "Optional topic filter ('baby', 'house', 'finance', 'health', 'work', 'personal').",
+						Description: "Optional topic filter: one of the household's topics (e.g. 'family', 'health', 'work', 'personal').",
 					},
 					"query": {
 						Type:        genai.TypeString,
@@ -112,17 +112,17 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 		},
 		{
 			Name:        "upsert_entity_profile",
-			Description: "Creates or updates a structured living entity profile card (e.g. BabyProfile, Property, Vehicle, FamilyMember) with key-value attributes stored in JSONB.",
+			Description: "Creates or updates a structured living entity profile card (e.g. FamilyMember, Pet, Property, Vehicle) with key-value attributes stored in JSONB.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
 					"topic": {
 						Type:        genai.TypeString,
-						Description: "Canonical topic domain ('baby', 'house', 'finance', 'health', 'work', 'personal').",
+						Description: "Canonical topic domain: one of the household's topics (e.g. 'family', 'health', 'work', 'personal').",
 					},
 					"entity_type": {
 						Type:        genai.TypeString,
-						Description: "Classification of entity ('baby', 'property', 'vehicle', 'person', 'pet').",
+						Description: "Classification of entity (e.g. 'person', 'pet', 'property', 'vehicle').",
 					},
 					"entity_name": {
 						Type:        genai.TypeString,
@@ -144,7 +144,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 				Properties: map[string]*genai.Schema{
 					"topic": {
 						Type:        genai.TypeString,
-						Description: "Topic domain ('baby', 'house', 'finance', 'health', 'work', 'personal').",
+						Description: "Topic domain: one of the household's topics (e.g. 'family', 'health', 'work', 'personal').",
 					},
 					"entity_name": {
 						Type:        genai.TypeString,

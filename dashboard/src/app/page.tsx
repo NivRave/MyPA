@@ -1,11 +1,16 @@
 import Link from "next/link";
 import { 
   Brain, Share2, Baby, Home as HomeIcon, DollarSign, Zap, History,
-  ArrowRight, Users
+  ArrowRight, Users, Sliders
 } from "lucide-react";
+import { getMe } from "@/lib/graphql";
+import { pageEnabled } from "@/lib/packs";
 
-export default function Home() {
-  const domains = [
+export default async function Home() {
+  // V4-27: the cards of a switched-off pack are not shown.
+  const me = await getMe();
+  const packsOn = me ? me.household.packs.filter((p) => p.enabled).map((p) => p.name) : [];
+  const allDomains = [
     {
       title: "Memory Explorer",
       desc: "Topic-isolated memories, living entity cards & conflict resolution.",
@@ -47,8 +52,16 @@ export default function Home() {
       badge: "Topic 6",
     },
     {
+      title: "Preferences & CRM",
+      desc: "Language, tone, quiet hours, standing instructions, and the family's important dates.",
+      href: "/preferences",
+      icon: Sliders,
+      color: "text-purple-600 bg-purple-50",
+      badge: "Core",
+    },
+    {
       title: "Automations & APIs",
-      desc: "On-demand REST/webhook connectors, When→If→Then rules, and Personal CRM.",
+      desc: "On-demand REST/webhook connectors and When→If→Then rules.",
       href: "/automations",
       icon: Zap,
       color: "text-purple-600 bg-purple-50",
@@ -71,6 +84,7 @@ export default function Home() {
       badge: "Core Access",
     },
   ];
+  const domains = allDomains.filter((d) => pageEnabled(me, d.href));
 
   return (
     <>
@@ -86,9 +100,11 @@ export default function Home() {
         {/* KPI Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <div className="bg-white p-6 rounded-xl border border-neutral-200 shadow-sm">
-            <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider">Active Domains</h3>
-            <p className="text-3xl font-bold text-neutral-900 mt-2">7</p>
-            <span className="text-xs text-indigo-600 font-medium">Baby, House, Finance & more</span>
+            <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider">Packs On</h3>
+            <p className="text-3xl font-bold text-neutral-900 mt-2">{me ? packsOn.length : "–"}</p>
+            <span className="text-xs text-indigo-600 font-medium">
+              {!me ? "Sign in to see this household's packs" : packsOn.length ? packsOn.join(", ") : "Core only"}
+            </span>
           </div>
           <div className="bg-white p-6 rounded-xl border border-neutral-200 shadow-sm">
             <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider">Memory Scope</h3>

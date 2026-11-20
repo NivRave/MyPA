@@ -19,7 +19,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					},
 					"category": {
 						Type:        genai.TypeString,
-						Description: "Expense or budget category: 'baby', 'house', 'groceries', 'utilities', 'dining', 'health', 'other'.",
+						Description: "Expense or budget category: 'groceries', 'utilities', 'dining', 'health', 'house', 'other', or one of the household's topics.",
 					},
 					"merchant": {
 						Type:        genai.TypeString,
@@ -86,7 +86,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 				Properties: map[string]*genai.Schema{
 					"category": {
 						Type:        genai.TypeString,
-						Description: "Category to budget (e.g. 'groceries', 'dining', 'baby', 'house', 'utilities', 'health', 'other').",
+						Description: "Category to budget (e.g. 'groceries', 'dining', 'house', 'utilities', 'health', 'other', or one of the household's topics).",
 					},
 					"monthly_limit": {
 						Type:        genai.TypeNumber,
@@ -124,7 +124,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					},
 					"category": {
 						Type:        genai.TypeString,
-						Description: "Category of bill (e.g. 'utilities', 'house', 'baby', 'other').",
+						Description: "Category of bill (e.g. 'utilities', 'house', 'other', or one of the household's topics).",
 					},
 					"expected_amount": {
 						Type:        genai.TypeNumber,

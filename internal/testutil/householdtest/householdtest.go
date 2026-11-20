@@ -13,6 +13,7 @@ import (
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/packs"
 	"gorm.io/gorm"
 )
 
@@ -29,8 +30,10 @@ func Household(t testing.TB, c *db.Client, label string) models.Household {
 			}
 			return h
 		}
+		// Every pack is on (V4-27), as in identitytest: a fixture stands for a household that uses
+		// every feature. A test about packs changes them with db.Client.SetHouseholdPacks.
 		l := label
-		h = models.Household{Name: label, LegacyLabel: &l}
+		h = models.Household{Name: label, LegacyLabel: &l, Packs: packs.Everything().String()}
 		if err := c.DB.Create(&h).Error; err != nil {
 			t.Fatalf("create household %q: %v", label, err)
 		}

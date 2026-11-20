@@ -30,6 +30,10 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inb
 	// LTRIM may have split a tool call from its response; Gemini rejects that (P2-9).
 	history = sanitizeHistory(history)
 
+	// The household's feature packs (V4-27) decide which modules this turn may use.
+	scope := e.scopeOf(ctx, user)
+	enabled := packsOf(scope)
+
 	// 3. Select this turn's tools first: the prompt's tool guidance follows them (P2-6).
 	// Dynamic Two-Tier Tool Context Selection (SCALE-01) + sticky follow-up domains (P2-2)
 	var matchedDomains []DomainGroup
@@ -39,7 +43,7 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inb
 			matchedDomains = e.intentMatcher.MatchDomains(msg.Text)
 		}
 		selected := unionDomains(matchedDomains, e.loadStickyDomains(ctx, stateKey(user, msg)))
-		activeTools := e.toolRegistry.SelectDeclarations(selected, false)
+		activeTools := e.toolRegistry.SelectDeclarationsFor(enabled, selected, false)
 		ctx = llm.WithActiveTools(ctx, activeTools)
 		activeToolNames = make(map[string]bool, len(activeTools))
 		for _, d := range activeTools {
@@ -78,12 +82,12 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inb
 	}
 
 	// Build the system prompt, most-stable sections first (P2-6, see prompt.go)
-	scope := e.scopeOf(ctx, user)
 	systemPrompt := buildSystemPrompt(promptInputs{
 		UserName:       user.Name,
 		Role:           string(scope.Role()),
 		Household:      scope.HouseholdName(),
 		Language:       scope.Language(),
+		Topics:         enabled.Topics(),
 		ActiveTools:    activeToolNames,
 		ModuleSections: moduleSections,
 		Memories:       memoryLines,

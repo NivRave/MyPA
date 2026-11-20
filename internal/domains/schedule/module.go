@@ -77,15 +77,33 @@ func (m *Module) resolveRepo(callCtx orchestrator.CallContext) (db.ScheduleRepos
 	return nil, fmt.Errorf("schedule: no schedule repository available in module or call context")
 }
 
+// backticked renders topics as "`a`, `b` and `c`" for the prompt section.
+func backticked(topics []string) string {
+	quoted := make([]string, len(topics))
+	for i, t := range topics {
+		quoted[i] = "`" + t + "`"
+	}
+	switch len(quoted) {
+	case 0:
+		return "none"
+	case 1:
+		return quoted[0]
+	default:
+		return strings.Join(quoted[:len(quoted)-1], ", ") + " and " + quoted[len(quoted)-1]
+	}
+}
+
 // SystemPromptSection injects topic calendar conventions, configured topics,
 // and upcoming scheduled events into the system prompt.
 func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.CallContext) string {
 	var sb strings.Builder
 	sb.WriteString("### Multi-Schedule Engine & Virtual Sub-Calendars:\n")
-	sb.WriteString("• You manage distinct topic-based schedules (`baby`, `house`, `finance`, `health`, `work`, `personal`) using `schedule_topic_event`, `list_topic_schedule`, and `configure_topic_calendar`.\n")
-	sb.WriteString("• Virtual sub-calendars: Prefix event titles with `[Topic]` (e.g. `[Baby] Pediatrician Checkup`, `[House] Boiler Inspection`) and assign distinct Google Calendar colors.\n")
-	sb.WriteString("• Internal-only schedules: For high-frequency routine logs (baby feedings, diapers, daily medication, workouts), set `sync_to_google: false` to store purely in the database without cluttering the primary calendar.\n")
-	sb.WriteString("• Partner Calendar Sync: Topics `baby`, `house`, `finance`, and `family` default to shared (`is_shared: true`). Synced shared events automatically duplicate onto the partner's Google Calendar with attribution.\n")
+	// V4-27: the topics are the household's (Core plus its packs'), never a fixed list.
+	topics := callCtx.Packs().Topics()
+	sb.WriteString(fmt.Sprintf("• You manage distinct topic-based schedules (%s) using `schedule_topic_event`, `list_topic_schedule`, and `configure_topic_calendar`.\n", backticked(topics)))
+	sb.WriteString("• Virtual sub-calendars: Prefix event titles with `[Topic]` (e.g. `[Health] Dentist Checkup`, `[Work] Quarterly Review`) and assign distinct Google Calendar colors.\n")
+	sb.WriteString("• Internal-only schedules: For high-frequency routine logs (daily medication, workouts), set `sync_to_google: false` to store purely in the database without cluttering the primary calendar.\n")
+	sb.WriteString(fmt.Sprintf("• Partner Calendar Sync: Topics %s default to shared (`is_shared: true`). Synced shared events automatically duplicate onto the partner's Google Calendar with attribution.\n", backticked(models.DefaultSharedTopics(topics))))
 
 	userID := ""
 	if callCtx.User != nil {

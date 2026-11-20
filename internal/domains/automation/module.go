@@ -2,14 +2,11 @@ package automation
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/orchestrator"
-	"strings"
 	"sync"
-	"time"
 )
 
 // Option configures an automation Module instance.
@@ -50,8 +47,8 @@ func WithWorkflowsChanged(fn func()) Option {
 	}
 }
 
-// Module implements orchestrator.ToolModule for on-demand external APIs,
-// event-driven automation rules, user customization preferences, and personal CRM.
+// Module implements orchestrator.ToolModule for on-demand external APIs, event-driven
+// automation rules and scheduled workflows: the Automations pack (V4-27).
 type Module struct {
 	repo             db.AutomationRepository
 	runner           *Runner
@@ -86,89 +83,12 @@ func (m *Module) Name() string {
 	return "automation"
 }
 
-// SystemPromptSection dynamically injects user preferences, persona tone,
-// standing instructions, and personal CRM alerts (upcoming birthdays/anniversaries) into the LLM system prompt.
+// SystemPromptSection describes the module's tools. A person's preferences, standing
+// instructions and the personal CRM moved to the Core preferences module (V4-27), so switching
+// the Automations pack off never drops them.
 func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.CallContext) string {
-	var sb strings.Builder
-	sb.WriteString("### Runtime Customization, Preferences & Personal CRM:\n")
-	sb.WriteString("• You manage on-demand external APIs (`register_external_api`, `call_external_api`), event-driven automations (`create_automation_rule`), user preferences (`update_user_preferences`), and family/personal CRM (`upsert_personal_crm`, `query_personal_crm`).\n")
-
-	userID, s := getUserAndScope(callCtx)
-	repo, err := m.resolveRepo(callCtx)
-	if err == nil && repo != nil && userID != "" {
-		pref, _ := repo.GetUserPreference(userID)
-		if pref != nil {
-			if pref.TonePersona != "" {
-				sb.WriteString(fmt.Sprintf("• Tone/Persona: %s\n", pref.TonePersona))
-			}
-			if pref.DefaultCurrency != "" {
-				sb.WriteString(fmt.Sprintf("• Default Currency: %s\n", pref.DefaultCurrency))
-			}
-			if pref.PreferredLanguage != "" {
-				sb.WriteString(fmt.Sprintf("• Preferred Language: %s\n", pref.PreferredLanguage))
-			}
-			if pref.BriefingTopicsJSON != "" && pref.BriefingTopicsJSON != "[]" {
-				sb.WriteString(fmt.Sprintf("• Active Briefing Topics: %s\n", pref.BriefingTopicsJSON))
-			}
-			if pref.QuietHoursStart != "" && pref.QuietHoursEnd != "" {
-				sb.WriteString(fmt.Sprintf("• Quiet Hours: %s to %s (suppress non-urgent alerts)\n", pref.QuietHoursStart, pref.QuietHoursEnd))
-			}
-			if pref.StandingInstructions != "" {
-				// P3-1: framed as user-provided data, never as a system-level "STRICT REQUIREMENT":
-				// it may have been written from untrusted input and must not carry system authority.
-				sb.WriteString("• User Standing Instructions (preferences):\n")
-				sb.WriteString(orchestrator.WrapUserProvidedData("standing_instructions", pref.StandingInstructions))
-				sb.WriteString("\n")
-			}
-		}
-
-		// Check Personal CRM for upcoming birthdays / anniversaries within 30 days
-		now := time.Now()
-		contacts, _ := repo.ListCRMContacts(s, "")
-		var alerts []string
-
-		for _, contact := range contacts {
-			if contact.ImportantDatesJSON == "" || contact.ImportantDatesJSON == "[]" {
-				continue
-			}
-
-			type dateItem struct {
-				Label string `json:"label"`
-				Date  string `json:"date"`
-			}
-			var dates []dateItem
-			if err := json.Unmarshal([]byte(contact.ImportantDatesJSON), &dates); err == nil {
-				for _, d := range dates {
-					daysAway, ok := calculateDaysUntil(d.Date, now)
-					if ok && daysAway >= 0 && daysAway <= 30 {
-						timeLabel := fmt.Sprintf("in %d days", daysAway)
-						switch daysAway {
-						case 0:
-							timeLabel = "TODAY!"
-						case 1:
-							timeLabel = "tomorrow!"
-						}
-
-						extra := ""
-						if contact.GiftIdeasAndSizes != "" {
-							extra = fmt.Sprintf(" (Gift ideas/sizes: %s)", contact.GiftIdeasAndSizes)
-						}
-						alerts = append(alerts, fmt.Sprintf("%s (%s) - %s on %s (%s)%s",
-							contact.PersonName, contact.Relationship, d.Label, d.Date, timeLabel, extra))
-					}
-				}
-			}
-		}
-
-		if len(alerts) > 0 {
-			sb.WriteString("\n• Upcoming Important Dates & Personal CRM Alerts (Next 30 Days):\n")
-			for _, alert := range alerts {
-				sb.WriteString(fmt.Sprintf("  - %s\n", alert))
-			}
-		}
-	}
-
-	return sb.String()
+	return "### Automations & External APIs:\n" +
+		"• You manage on-demand external APIs (`register_external_api`, `call_external_api`), event-driven and scheduled automation rules (`create_automation_rule`), and scheduled workflows (`schedule_workflow`).\n"
 }
 
 func (m *Module) resolveRepo(callCtx orchestrator.CallContext) (db.AutomationRepository, error) {

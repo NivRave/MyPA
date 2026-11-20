@@ -10,6 +10,7 @@ import (
 
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/packs"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
@@ -104,6 +105,34 @@ func (c *Client) UpdateHouseholdSettings(ctx context.Context, s identity.Scope, 
 		return nil, fmt.Errorf("update household: %w", res.Error)
 	}
 	return c.HouseholdByID(ctx, s.HouseholdID())
+}
+
+// SetHouseholdPacks stores the scope's own household's feature packs (V4-27). Whether the caller
+// may change them is the caller's check (identity.ManageHousehold); the household is never taken
+// from input. The packs' data is never touched: switching a pack off only hides it.
+func (c *Client) SetHouseholdPacks(ctx context.Context, s identity.Scope, set packs.Set) (*models.Household, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
+	res := c.DB.WithContext(ctx).Model(&models.Household{}).Where("id = ?", s.HouseholdID()).
+		Updates(map[string]interface{}{"packs": set.String(), "updated_at": time.Now()})
+	if res.Error != nil {
+		return nil, fmt.Errorf("update household packs: %w", res.Error)
+	}
+	return c.HouseholdByID(ctx, s.HouseholdID())
+}
+
+// HouseholdPacks returns the packs of a household a scheduled job runs for (an automation rule,
+// a workflow). A household that does not exist has no packs.
+func (c *Client) HouseholdPacks(ctx context.Context, householdID string) (packs.Set, error) {
+	h, err := c.HouseholdByID(ctx, householdID)
+	if err != nil {
+		return packs.Set{}, err
+	}
+	if h == nil {
+		return packs.Set{}, nil
+	}
+	return packs.Parse(h.Packs), nil
 }
 
 // UsersInHousehold returns the members of the scope's household.

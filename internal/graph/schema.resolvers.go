@@ -137,6 +137,16 @@ func (r *mutationResolver) UpdateHousehold(ctx context.Context, name *string, la
 	return toModelHousehold(*after), nil
 }
 
+// SetPackEnabled is the resolver for the setPackEnabled field.
+func (r *mutationResolver) SetPackEnabled(ctx context.Context, pack string, enabled bool) (*model.Household, error) {
+	// V4-27: packs are a household setting, changed by an owner in their own household only.
+	_, hs, err := r.callerMay(ctx, identity.ManageHousehold)
+	if err != nil {
+		return nil, err
+	}
+	return r.setPackEnabled(ctx, hs, pack, enabled)
+}
+
 // SaveTopicMemory is the resolver for the saveTopicMemory field.
 func (r *mutationResolver) SaveTopicMemory(ctx context.Context, topic string, subtopic string, fact string, tagsJSON *string, scope *string) (*model.TopicMemory, error) {
 	actorID, hs, err := r.caller(ctx)

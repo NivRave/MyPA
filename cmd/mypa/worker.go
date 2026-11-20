@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/playground"
 
 	"github.com/nivik/mypa/internal/audio"
@@ -28,6 +27,7 @@ import (
 	"github.com/nivik/mypa/internal/domains/finance"
 	"github.com/nivik/mypa/internal/domains/house"
 	"github.com/nivik/mypa/internal/domains/memory"
+	"github.com/nivik/mypa/internal/domains/preferences"
 	"github.com/nivik/mypa/internal/domains/schedule"
 	"github.com/nivik/mypa/internal/domains/shared"
 	"github.com/nivik/mypa/internal/domains/web_research"
@@ -245,8 +245,12 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 	financeModule := finance.NewModule(dbClient, finance.WithEventBus(eventBus))
 
 	// Track 2H: On-Demand External APIs, Automations & Personal CRM
-	automationRunner := automation.NewRunner(dbClient, eventBus, automation.WithNotificationSender(notificationSender))
+	automationRunner := automation.NewRunner(dbClient, eventBus, automation.WithNotificationSender(notificationSender),
+		automation.WithHouseholdPacks(dbClient.HouseholdPacks)) // rules run only with the Automations pack on (V4-27)
 	automationModule := automation.NewModule(dbClient, automation.WithEventBus(eventBus), automation.WithRunner(automationRunner))
+
+	// Core: a person's preferences and the personal CRM, outside every pack (V4-27)
+	preferencesModule := preferences.NewModule(dbClient, preferences.WithEventBus(eventBus))
 
 	// Register all Wave 0, Wave 1, and Wave 2 domain modules in the ToolRegistry
 	workspaceCalendarModule := workspace_calendar.NewModule(calendarFactory, workspace_calendar.WithEventBus(eventBus))
@@ -269,6 +273,7 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 	registry.Register(houseModule)
 	registry.Register(financeModule)
 	registry.Register(automationModule)
+	registry.Register(preferencesModule)
 
 	// Wire registry declarations into llmClient
 	llmClient.AddFunctionDeclarations(registry.AllDeclarations()...)
@@ -480,6 +485,10 @@ func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifier
 		if len(eventBus) > 0 {
 			bus = eventBus[0]
 		}
+		var promptCache graph.PromptInvalidator // no typed nil: a nil store means no cache
+		if store != nil {
+			promptCache = store
+		}
 		resolvers := graph.NewResolver(graph.ResolverConfig{
 			DB:             dbClient,
 			EventBus:       bus,
@@ -491,8 +500,9 @@ func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifier
 			SharedRepo:     db.NewSharedRepository(dbClient.DB),
 			MemoryRepo:     db.NewMemoryV2Repo(dbClient.DB),
 			AutomationRepo: db.NewAutomationRepository(dbClient.DB),
+			PromptCache:    promptCache,
 		})
-		srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: resolvers}))
+		srv := graph.NewServer(resolvers) // with the pack guard (V4-27)
 
 		// V4-35: the only credential is a dashboard session (a person signed in with /dashboard);
 		// the person's role and household are read from the database on every request.

@@ -24,14 +24,15 @@ The **MyPA Web Control Dashboard** is a Next.js 16 (App Router) and React 19 adm
 | `/baby` | **Baby Tracker** | Baby profiles, feeding/sleep/diaper/temperature/medication logs, developmental milestones, and supply inventory |
 | `/house` | **House & Vehicles** | Leases, warranties, insurance contracts, preventive home maintenance checklists, and vehicle asset vault |
 | `/finance` | **Finance & Budgets** | Expense/income transaction ledger, monthly category budget progress bars, and recurring bills |
-| `/automations` | **Automations & CRM** | SSRF-guarded external REST API connectors, `When -> If -> Then` `EventBus` rules, user persona preferences, and Personal CRM |
+| `/preferences` | **Preferences & CRM** | The user's persona preferences, quiet hours and standing instructions, and the Personal CRM (Core) |
+| `/automations` | **Automations & APIs** | SSRF-guarded external REST API connectors and `When -> If -> Then` `EventBus` rules (the Automations pack) |
 | `/audit` | **Audit & Rollback** | Immutable `MutationLog` inspector (`BeforeJSON` / `AfterJSON` diffs) with one-click transactional **Rollback** (`rollbackMutation`) |
 | `/sessions` | **User Sessions** | Multi-channel conversation session summaries across Telegram and WhatsApp |
 | `/logs` | **Telemetry Logs** | End-to-end `AuditSession` latency, token usage, and execution status traces |
 | `/users` | **Users & Pairing** | The household's members and their roles, and 6-digit pairing codes for an adult or a child (owners); an adult sees only themselves |
 | `/signin` | **Sign in** | Signs in with the link from `/dashboard` in chat |
 | `/oauth` | **OAuth Connections** | Google Workspace (Calendar, Gmail, Tasks, Contacts) OAuth connection status |
-| `/tools` | **AI Tool Catalog** | Interactive directory of all 70 registered `ToolModule` declarations |
+| `/tools` | **Tools & Packs** | The household's feature packs, with a switch per pack for owners (`setPackEnabled`). The pages of a pack that is off are hidden from the sidebar and the overview, and show a notice |
 | `/settings` | **System Settings** | Runtime configuration and environment overview |
 
 ---
@@ -55,7 +56,7 @@ npm install
 # Start development server on http://localhost:3000
 npm run dev
 
-# Run Vitest unit & React Testing Library component suites (46 tests across 6 suites)
+# Run Vitest unit & React Testing Library component suites (61 tests across 7 suites)
 npm test
 
 # Build production standalone bundle

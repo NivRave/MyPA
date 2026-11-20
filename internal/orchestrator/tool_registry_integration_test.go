@@ -11,6 +11,7 @@ import (
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/domains/memory"
+	"github.com/nivik/mypa/internal/domains/preferences"
 	"github.com/nivik/mypa/internal/domains/shared"
 	"github.com/nivik/mypa/internal/domains/web_research"
 	"github.com/nivik/mypa/internal/domains/workspace_calendar"
@@ -620,6 +621,7 @@ func TestARCH04_All28Tools_AntiIDOR_IdentitySpoofingStress(t *testing.T) {
 func TestSEC09_AllFourMetaTools_GatedAndInteractiveConfirmation(t *testing.T) {
 	reg := orchestrator.NewRegistry()
 	reg.Register(automation.NewModule(nil))
+	reg.Register(preferences.NewModule(nil)) // update_user_preferences moved here (V4-27)
 
 	metaTools := []string{
 		"update_user_preferences",

@@ -24,6 +24,8 @@ const (
 	DomainMemory DomainGroup = "memory"
 	// DomainHistory carries the non-core durability tools (change log, data export).
 	DomainHistory DomainGroup = "history"
+	// DomainPreferences carries a person's preferences and the personal CRM (Core since V4-27).
+	DomainPreferences DomainGroup = "preferences"
 )
 
 // IntentMatcher inspects text and returns relevant DomainGroups.
@@ -132,9 +134,20 @@ func (m *KeywordIntentMatcher) initPatterns() {
 
 	m.patterns[DomainAutomation] = buildRegex([]string{
 		// English
-		"automation", "automate", "rule", "rules", "workflow", "workflows", "cron", "trigger", "webhook", "api", "connector", "preference", "preferences", "persona", "standing instructions", "quiet hours",
+		"automation", "automate", "rule", "rules", "workflow", "workflows", "cron", "trigger", "webhook", "api", "connector",
 		// Hebrew
-		"אוטומציה", "אוטומציות", "כלל", "כללים", "חוק", "חוקים", "וורקפלו", "קרון", "טריגר", "וובהוק", "ממשק", "העדפה", "העדפות", "פרסונה", "הנחיות קבועות", "שעות שקט",
+		"אוטומציה", "אוטומציות", "כלל", "כללים", "חוק", "חוקים", "וורקפלו", "קרון", "טריגר", "וובהוק", "ממשק",
+	})
+
+	// V4-27: preferences and the personal CRM left the Automations pack for Core, with their
+	// keywords (the preference words were the automation domain's before).
+	m.patterns[DomainPreferences] = buildRegex([]string{
+		// English
+		"preference", "preferences", "persona", "tone", "standing instructions", "quiet hours",
+		"crm", "birthday", "birthdays", "anniversary", "gift idea", "gift ideas", "clothing size", "shoe size",
+		// Hebrew
+		"העדפה", "העדפות", "פרסונה", "הנחיות קבועות", "שעות שקט",
+		"יום הולדת", "יומולדת", "ימי הולדת", "יום נישואין", "מתנה", "רעיון למתנה", "מידה",
 	})
 
 	m.patterns[DomainMemory] = buildRegex([]string{

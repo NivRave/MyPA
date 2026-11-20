@@ -124,19 +124,30 @@ export async function graphqlFetch<TData = unknown, TVariables = Record<string, 
   return json.data;
 }
 
+/** A feature pack (V4-27): opt-in per household; Core is always on and is not a pack. */
+export interface Pack {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  /** The dashboard routes the pack owns; hidden while it is off. */
+  pages: string[];
+}
+
 /** The signed-in person (V4-35). */
 export interface Me {
   personId: string;
   name: string;
   role: "owner" | "adult" | "child" | "guest" | string;
   isOperator: boolean;
-  household: { id: string; name: string };
+  /** topics: Core's, then those of each pack the household has on (V4-27). */
+  household: { id: string; name: string; packs: Pack[]; topics: string[] };
 }
 
 /** The signed-in person, or null when there is no valid session. */
 export async function getMe(): Promise<Me | null> {
   try {
-    const data = await graphqlFetch<{ me: Me }>(`query Me { me { personId name role isOperator household { id name } } }`);
+    const data = await graphqlFetch<{ me: Me }>(`query Me { me { personId name role isOperator household { id name packs { id name description enabled pages } topics } } }`);
     return data.me;
   } catch {
     return null;

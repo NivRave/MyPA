@@ -199,7 +199,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 	return []*genai.FunctionDeclaration{
 		{
 			Name:        "undo_last_action",
-			Description: "Reverts the user's or family's most recent mutation or change (such as an expense, baby feeding log, schedule entry, or task) using the recorded BeforeJSON state and marks it undone.",
+			Description: "Reverts the user's or family's most recent mutation or change (such as a saved memory, schedule entry, reminder, or task) using the recorded BeforeJSON state and marks it undone.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
@@ -216,13 +216,13 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 		},
 		{
 			Name:        "list_recent_changes",
-			Description: "Lists recent data mutations and changes across life domains (baby, house, finance, schedule, memory). Use when user asks 'what did I change recently?', 'show audit log', or 'who updated what?'.",
+			Description: "Lists recent data mutations and changes across life domains (the household's topics, schedule, memory). Use when user asks 'what did I change recently?', 'show audit log', or 'who updated what?'.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
 					"topic": {
 						Type:        genai.TypeString,
-						Description: "Filter by topic: 'baby', 'house', 'finance', 'schedule', 'memory', or 'all' (default).",
+						Description: "Filter by topic: one of the household's topics, 'schedule', 'memory', or 'all' (default).",
 					},
 					"limit": {
 						Type:        genai.TypeInteger,
@@ -233,13 +233,13 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 		},
 		{
 			Name:        "export_topic_data",
-			Description: "Exports structured data and mutation history for a specific topic (baby, house, finance, memory, schedule, or all) as formatted JSON or CSV.",
+			Description: "Exports structured data and mutation history for a specific topic (one of the household's topics, memory, schedule, or all) as formatted JSON or CSV.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
 					"topic": {
 						Type:        genai.TypeString,
-						Description: "The topic domain to export: 'baby', 'house', 'finance', 'memory', 'schedule', or 'all'.",
+						Description: "The topic domain to export: one of the household's topics, 'memory', 'schedule', or 'all'.",
 					},
 					"format": {
 						Type:        genai.TypeString,
@@ -506,7 +506,7 @@ func (m *Module) executeExportTopicData(ctx context.Context, callCtx orchestrato
 // SystemPromptSection returns runtime instructions regarding undo and audit features.
 func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.CallContext) string {
 	return `### Durability, Audit & Undo
-- All data modifications across life domains (baby care, house contracts, finance, schedules, and memories) are tracked in an immutable mutation log.
+- All data modifications across life domains (every topic of the household, schedules, and memories) are tracked in an immutable mutation log.
 - If the user asks to "undo", "cancel that last entry", or "revert that change", use the "undo_last_action" tool.
 - You can inspect change history with "list_recent_changes" and export domain records with "export_topic_data".`
 }

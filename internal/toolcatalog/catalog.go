@@ -17,6 +17,7 @@ import (
 	"github.com/nivik/mypa/internal/domains/finance"
 	"github.com/nivik/mypa/internal/domains/house"
 	"github.com/nivik/mypa/internal/domains/memory"
+	"github.com/nivik/mypa/internal/domains/preferences"
 	"github.com/nivik/mypa/internal/domains/schedule"
 	"github.com/nivik/mypa/internal/domains/shared"
 	"github.com/nivik/mypa/internal/domains/web_research"
@@ -47,6 +48,7 @@ func ProductionModules() []orchestrator.ToolModule {
 		house.NewModule(nil),
 		finance.NewModule(nil),
 		automation.NewModule(nil),
+		preferences.NewModule(nil),
 	}
 }
 
