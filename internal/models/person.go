@@ -82,7 +82,8 @@ type AccessToken struct {
 }
 
 // Session is a dashboard sign-in (V4-35, ADR 0002 Decision 5): the browser holds a random secret in
-// an HttpOnly cookie, and only its SHA-256 is stored here. It ends after identity.SessionIdle
+// an HttpOnly cookie, and only its SHA-256 is stored here. The row is also the sign-in's audit
+// record (who, when, from which address); ended sessions are kept 30 days. It ends after identity.SessionIdle
 // without a request, at ExpiresAt (identity.SessionMax after sign-in), or when revoked (/signout,
 // signing out in the dashboard). The role is read from the membership on every request, never
 // kept here, so a demotion or removal takes effect at once.
@@ -94,4 +95,7 @@ type Session struct {
 	LastSeenAt time.Time  `json:"last_seen_at" gorm:"not null"`
 	ExpiresAt  time.Time  `json:"expires_at" gorm:"not null"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	// RemoteAddress is the browser's address at sign-in, as the dashboard reported it. It is in
+	// this record only, never at INFO (principle 4).
+	RemoteAddress string `json:"remote_address" gorm:"not null;default:''"`
 }

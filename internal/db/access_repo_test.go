@@ -118,8 +118,8 @@ func TestAccessOf_ReadsTheMembershipNotUsersRole(t *testing.T) {
 	assert.ErrorIs(t, err, identity.ErrNoScope)
 }
 
-// A pairing code gives adult, child or guest, never owner, whatever the code row or the caller
-// says; users.role is written as the release before V4 reads it.
+// A pairing code gives adult or child, never owner, whatever the code row or the caller says, and
+// a guest code pairs nobody (BL-46); users.role is written as the release before V4 reads it.
 func TestRedeemPairingCode_GivesTheCodesRoleNeverOwner(t *testing.T) {
 	c, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -127,7 +127,7 @@ func TestRedeemPairingCode_GivesTheCodesRoleNeverOwner(t *testing.T) {
 	owner, _ := personWithAccount(t, c, "Levi", "1001", "Dana", "admin", "telegram", time.Now())
 	s := scopeOfUser(t, c, owner)
 
-	for i, tc := range []struct{ code, want string }{{"child", "child"}, {"guest", "guest"}, {"adult", "adult"}, {"owner", "adult"}, {"admin", "adult"}} {
+	for i, tc := range []struct{ code, want string }{{"child", "child"}, {"adult", "adult"}, {"owner", "adult"}, {"admin", "adult"}} {
 		pc := models.PairingCode{Code: "90000" + string(rune('0'+i)), Role: tc.code, ExpiresAt: time.Now().Add(time.Hour)}
 		require.NoError(t, c.CreatePairingCode(s, pc))
 		got, err := c.GetPairingCode(pc.Code)
@@ -142,6 +142,13 @@ func TestRedeemPairingCode_GivesTheCodesRoleNeverOwner(t *testing.T) {
 		assert.False(t, acc.Operator, "a code never makes an operator")
 		assert.Equal(t, "family", u.Role, "code role %s: users.role is the legacy value", tc.code)
 	}
+	guest := models.PairingCode{Code: "909999", Role: "guest", ExpiresAt: time.Now().Add(time.Hour)}
+	require.NoError(t, c.CreatePairingCode(s, guest))
+	got, err := c.GetPairingCode(guest.Code)
+	require.NoError(t, err)
+	assert.Error(t, c.RedeemPairingCode(got.ID, models.User{PlatformID: "7799", Name: "Sitter"}, "telegram"))
+	_, err = c.GetUser("7799")
+	assert.Error(t, err, "a guest code pairs nobody")
 }
 
 // ADR 0002 Decision 6 with V4-35's roles: admin entries become owners and the operator; a household
@@ -288,7 +295,7 @@ func TestSignIn_TokenIsSingleUseShortLivedAndHashed(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			sec, _ := identity.NewSecret()
-			_, _, err := c.RedeemSignIn(ctx, identity.HashSecret(token), identity.HashSecret(sec))
+			_, _, err := c.RedeemSignIn(ctx, identity.HashSecret(token), identity.HashSecret(sec), "192.0.2.1")
 			results <- err
 		}()
 	}
@@ -306,6 +313,12 @@ func TestSignIn_TokenIsSingleUseShortLivedAndHashed(t *testing.T) {
 	var sessions int64
 	require.NoError(t, c.DB.Model(&models.Session{}).Where("person_id = ?", u.ID).Count(&sessions).Error)
 	assert.Equal(t, int64(1), sessions)
+	var recorded models.Session
+	require.NoError(t, c.DB.Where("person_id = ?", u.ID).First(&recorded).Error)
+	assert.Equal(t, "192.0.2.1", recorded.RemoteAddress, "the session row is the sign-in's audit record")
+	var logs int64
+	require.NoError(t, c.DB.Model(&models.MutationLog{}).Count(&logs).Error)
+	assert.Zero(t, logs, "a sign-in is no undoable change: it never becomes the household's last mutation, which would block /undo")
 
 	// A newer link voids the older one.
 	first, _ := identity.NewSecret()
@@ -315,7 +328,7 @@ func TestSignIn_TokenIsSingleUseShortLivedAndHashed(t *testing.T) {
 	_, err = c.IssueSignIn(ctx, s, identity.HashSecret(second))
 	require.NoError(t, err)
 	sec, _ := identity.NewSecret()
-	_, _, err = c.RedeemSignIn(ctx, identity.HashSecret(first), identity.HashSecret(sec))
+	_, _, err = c.RedeemSignIn(ctx, identity.HashSecret(first), identity.HashSecret(sec), "192.0.2.1")
 	assert.ErrorIs(t, err, identity.ErrSignInInvalid, "the older link no longer works")
 
 	// An expired link does not work.
@@ -323,14 +336,14 @@ func TestSignIn_TokenIsSingleUseShortLivedAndHashed(t *testing.T) {
 	tok, err = c.IssueSignIn(ctx, s, identity.HashSecret(expired))
 	require.NoError(t, err)
 	require.NoError(t, c.DB.Model(&models.AccessToken{}).Where("id = ?", tok.ID).Update("expires_at", time.Now().Add(-time.Second)).Error)
-	_, _, err = c.RedeemSignIn(ctx, identity.HashSecret(expired), identity.HashSecret(sec))
+	_, _, err = c.RedeemSignIn(ctx, identity.HashSecret(expired), identity.HashSecret(sec), "192.0.2.1")
 	assert.ErrorIs(t, err, identity.ErrSignInInvalid)
 
 	// A link code (another purpose) is never a sign-in token.
 	linkHash := identity.HashCode(testCodeKey, "ABCDEFGH")
 	require.NoError(t, c.DB.Create(&models.AccessToken{Purpose: models.TokenPurposeLink, TokenHash: linkHash, HouseholdID: s.HouseholdID(),
 		PersonID: &u.ID, ExpiresAt: time.Now().Add(time.Hour), CreatedAt: time.Now()}).Error)
-	_, _, err = c.RedeemSignIn(ctx, linkHash, identity.HashSecret(sec))
+	_, _, err = c.RedeemSignIn(ctx, linkHash, identity.HashSecret(sec), "192.0.2.1")
 	assert.ErrorIs(t, err, identity.ErrSignInInvalid)
 
 	_, err = c.IssueSignIn(ctx, identity.Scope{}, identity.HashSecret(token))
@@ -350,7 +363,7 @@ func TestSession_IdleLifetimeAndRevocation(t *testing.T) {
 		_, err := c.IssueSignIn(ctx, s, identity.HashSecret(token))
 		require.NoError(t, err)
 		secret, _ := identity.NewSecret()
-		_, sess, err := c.RedeemSignIn(ctx, identity.HashSecret(token), identity.HashSecret(secret))
+		_, sess, err := c.RedeemSignIn(ctx, identity.HashSecret(token), identity.HashSecret(secret), "192.0.2.1")
 		require.NoError(t, err)
 		assert.WithinDuration(t, time.Now().Add(identity.SessionMax), sess.ExpiresAt, 5*time.Second)
 		return secret, sess.ID
@@ -397,7 +410,7 @@ func TestSession_IdleLifetimeAndRevocation(t *testing.T) {
 		_, _, err = c.SessionPerson(ctx, identity.HashSecret(sec))
 		assert.ErrorIs(t, err, identity.ErrNoSession, "/signout ends every session")
 	}
-	_, _, err = c.RedeemSignIn(ctx, identity.HashSecret(pending), identity.HashSecret(a))
+	_, _, err = c.RedeemSignIn(ctx, identity.HashSecret(pending), identity.HashSecret(a), "192.0.2.1")
 	assert.ErrorIs(t, err, identity.ErrSignInInvalid, "/signout voids an outstanding link too")
 
 	purged, err := c.PurgeSignIns(ctx, -time.Minute)

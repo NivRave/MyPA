@@ -497,11 +497,7 @@ func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifier
 		// V4-35: the only credential is a dashboard session (a person signed in with /dashboard);
 		// the person's role and household are read from the database on every request.
 		authMiddleware := graph.NewAuthMiddleware(dbClient, dbClient)
-		var publisher signInPublisher
-		if bus != nil {
-			publisher = bus
-		}
-		mux.Handle(SignInPath, newSignInHandler(dbClient, dbClient, notifier, publisher))
+		mux.Handle(SignInPath, newSignInHandler(dbClient, dbClient, notifier))
 
 		graphqlHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit for GraphQL

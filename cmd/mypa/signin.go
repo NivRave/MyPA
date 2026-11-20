@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
 )
@@ -35,14 +34,9 @@ const signInBodyLimit = 4 << 10
 
 // signInStore turns a sign-in token into a session. db.Client implements it.
 type signInStore interface {
-	RedeemSignIn(ctx context.Context, tokenHash, sessionHash string) (*models.AccessToken, *models.Session, error)
+	RedeemSignIn(ctx context.Context, tokenHash, sessionHash, remoteAddress string) (*models.AccessToken, *models.Session, error)
 	RevokeSession(ctx context.Context, sessionID string) error
 	UserByID(ctx context.Context, id string) (*models.User, error)
-}
-
-// signInPublisher records the sign-in in the mutation log, the household's audit trail.
-type signInPublisher interface {
-	Publish(ctx context.Context, ev events.MutationEvent) error
 }
 
 type signInResponse struct {
@@ -65,8 +59,10 @@ func refuseSignIn(w http.ResponseWriter, status int, reason string) {
 
 // newSignInHandler serves SignInPath. households builds the person's scope, so a person who can
 // no longer sign in (demoted or removed since the link was issued) gets no session; notifier tells
-// the person in chat that a session started; publisher records it.
-func newSignInHandler(st signInStore, households identity.Store, notifier AuthNotifier, publisher signInPublisher) http.HandlerFunc {
+// the person in chat that a session started. The session row is the sign-in's audit record, with
+// the remote address; nothing goes to the mutation log, which holds undoable changes only (a
+// sign-in there would be the household's newest change and block /undo).
+func newSignInHandler(st signInStore, households identity.Store, notifier AuthNotifier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
@@ -95,7 +91,7 @@ func newSignInHandler(st signInStore, households identity.Store, notifier AuthNo
 			refuseSignIn(w, http.StatusInternalServerError, "no randomness")
 			return
 		}
-		tok, sess, err := st.RedeemSignIn(ctx, identity.HashSecret(body.Token), identity.HashSecret(secret))
+		tok, sess, err := st.RedeemSignIn(ctx, identity.HashSecret(body.Token), identity.HashSecret(secret), remoteAddress(r))
 		if err != nil {
 			if !errors.Is(err, identity.ErrSignInInvalid) {
 				slog.Error("dashboard sign-in failed", "error", err)
@@ -116,17 +112,6 @@ func newSignInHandler(st signInStore, households identity.Store, notifier AuthNo
 
 		slog.Info("dashboard session started", "purpose", "signin", "outcome", "used", "token_id", tok.ID,
 			"person_id", scope.PersonID(), "household_id", scope.HouseholdID())
-		if publisher != nil {
-			// The audit record carries the remote address; the INFO line above never does (principle 4).
-			after, _ := json.Marshal(map[string]any{"token_id": tok.ID, "expires_at": sess.ExpiresAt, "remote_address": remoteAddress(r)})
-			if err := publisher.Publish(ctx, events.MutationEvent{
-				Topic: "auth", Action: "create", EntityType: "dashboard_session", EntityID: sess.ID,
-				ActorUserID: u.PlatformID, HouseholdID: scope.HouseholdID(), FamilyGroup: scope.LegacyLabel(),
-				AfterJSON: string(after), Summary: "Signed in to the dashboard", Timestamp: time.Now(),
-			}); err != nil {
-				slog.Warn("dashboard sign-in not recorded in the mutation log", "error", err)
-			}
-		}
 		if notifier != nil {
 			if err := notifier.SendMessage(ctx, u.PlatformID, "🔐 You are now signed in to the MyPA dashboard. If that was not you, send /signout here."); err != nil {
 				slog.Warn("dashboard sign-in not announced in chat", "person_id", scope.PersonID(), "error", err)
@@ -137,7 +122,7 @@ func newSignInHandler(st signInStore, households identity.Store, notifier AuthNo
 }
 
 // remoteAddress is the browser's address as the dashboard's server passed it (X-Forwarded-For,
-// first entry), else the connection's. It is informational only: it goes in the audit record.
+// first entry), else the connection's. It is informational only: it goes on the session row.
 func remoteAddress(r *http.Request) string {
 	if f := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]); f != "" {
 		return f
@@ -145,8 +130,12 @@ func remoteAddress(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// purgeSignInsEvery deletes ended sessions and used sign-in links once an hour, keeping a day of
-// them, until stop is closed (the clean-up ADR 0002 Decision 5 asks for).
+// signInRecordKeep is how long ended sessions (the sign-ins' audit records) and used sign-in links
+// are kept before the hourly clean-up deletes them.
+const signInRecordKeep = 30 * 24 * time.Hour
+
+// purgeSignInsEvery deletes ended sessions and used sign-in links once an hour, keeping
+// signInRecordKeep of them, until stop is closed (the clean-up ADR 0002 Decision 5 asks for).
 func purgeSignInsEvery(purge func(ctx context.Context, keep time.Duration) (int64, error), stop <-chan struct{}) {
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
@@ -155,7 +144,7 @@ func purgeSignInsEvery(purge func(ctx context.Context, keep time.Duration) (int6
 		case <-stop:
 			return
 		case <-t.C:
-			if n, err := purge(context.Background(), 24*time.Hour); err != nil {
+			if n, err := purge(context.Background(), signInRecordKeep); err != nil {
 				slog.Warn("could not purge ended dashboard sessions", "error", err)
 			} else if n > 0 {
 				slog.Info("purged ended dashboard sessions and used sign-in links", "rows", n)

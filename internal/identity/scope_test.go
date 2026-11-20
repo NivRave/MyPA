@@ -21,8 +21,9 @@ func TestCan_WalksEveryRoleAndActionPair(t *testing.T) {
 		identity.ManageHousehold: true, identity.ManageMembers: true, identity.ViewMemberActivity: true}
 	adult := map[identity.Action]bool{identity.UseAssistant: true, identity.SignInDashboard: true, identity.UseDashboard: true}
 	chatOnly := map[identity.Action]bool{identity.UseAssistant: true}
+	// A guest may do nothing until topics can be shared with a guest by name (BL-46).
 	want := map[identity.Role]map[identity.Action]bool{
-		identity.RoleOwner: owner, identity.RoleAdult: adult, identity.RoleChild: chatOnly, identity.RoleGuest: chatOnly,
+		identity.RoleOwner: owner, identity.RoleAdult: adult, identity.RoleChild: chatOnly, identity.RoleGuest: {},
 	}
 	operatorAdds := map[identity.Action]bool{identity.RunBackup: true, identity.RestoreBackup: true, identity.RunDoctor: true, identity.SignInDashboard: true}
 
@@ -74,15 +75,16 @@ func TestParseRole(t *testing.T) {
 	}
 }
 
-// A pairing code gives adult, child or guest, never owner (ADR 0002 Decision 5).
+// A pairing code gives adult or child, never owner (ADR 0002 Decision 5), and no guest until
+// sharing by name exists (BL-46).
 func TestParseInviteRole_NeverGivesOwner(t *testing.T) {
-	for in, want := range map[string]identity.Role{"adult": identity.RoleAdult, "child": identity.RoleChild, "guest": identity.RoleGuest,
+	for in, want := range map[string]identity.Role{"adult": identity.RoleAdult, "child": identity.RoleChild,
 		"family": identity.RoleAdult, "owner": identity.RoleAdult, "admin": identity.RoleAdult} {
 		got, ok := identity.ParseInviteRole(in)
 		assert.True(t, ok, in)
 		assert.Equal(t, want, got, in)
 	}
-	for _, in := range []string{"", "operator", "root"} {
+	for _, in := range []string{"", "operator", "root", "guest", " Guest "} {
 		_, ok := identity.ParseInviteRole(in)
 		assert.False(t, ok, in)
 	}

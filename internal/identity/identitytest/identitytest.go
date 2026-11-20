@@ -44,15 +44,19 @@ func (s *Store) AccessOf(_ context.Context, u *models.User) (identity.Access, er
 }
 
 // LegacyAccess is the access a test fixture's users row stands for, mapped as Migration C maps
-// stored roles: "admin" is an owner and the operator, "family" an adult; the four role names stand
-// for themselves and are no operator.
+// stored roles: "admin" is an owner and the operator; the four role names stand for themselves
+// and are no operator; anything else ("family", no role) is an adult.
 func LegacyAccess(u *models.User) identity.Access {
 	if u == nil {
 		return identity.Access{}
 	}
+	role := identity.ParseRole(u.Role)
+	if role == "" {
+		role = identity.RoleAdult
+	}
 	return identity.Access{
 		HouseholdID: u.HouseholdID,
-		Role:        identity.ParseRole(u.Role),
+		Role:        role,
 		Operator:    strings.EqualFold(strings.TrimSpace(u.Role), "admin"),
 	}
 }

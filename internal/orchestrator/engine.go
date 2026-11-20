@@ -414,6 +414,12 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 		return e.sendMessage(ctx, msg, "🚫 Your account is not attached to a household. Ask an admin to add you again.")
 	}
 	ctx = withTurnScope(ctx, scope)
+	// V4-35: a role that may not use the assistant (a guest, until topics can be shared with a
+	// guest by name, BL-46) gets nothing: no command, no tool, no model.
+	if !scope.Can(identity.UseAssistant) {
+		slog.Info("message refused for the sender's role", "user_id", user.PlatformID, "role", scope.Role())
+		return e.sendMessage(ctx, msg, "🔒 Your access to the assistant is not set up yet. Ask an owner of your household.")
+	}
 
 	// 2. Account linking's own confirmation (V4-32), then staged-action confirmation
 	// ("CONFIRM [TOOL]") and slash commands (commands.go)

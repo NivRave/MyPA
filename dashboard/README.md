@@ -28,7 +28,7 @@ The **MyPA Web Control Dashboard** is a Next.js 16 (App Router) and React 19 adm
 | `/audit` | **Audit & Rollback** | Immutable `MutationLog` inspector (`BeforeJSON` / `AfterJSON` diffs) with one-click transactional **Rollback** (`rollbackMutation`) |
 | `/sessions` | **User Sessions** | Multi-channel conversation session summaries across Telegram and WhatsApp |
 | `/logs` | **Telemetry Logs** | End-to-end `AuditSession` latency, token usage, and execution status traces |
-| `/users` | **Users & Pairing** | The household's members and their roles, and 6-digit pairing codes for an adult, a child or a guest (owners); an adult sees only themselves |
+| `/users` | **Users & Pairing** | The household's members and their roles, and 6-digit pairing codes for an adult or a child (owners); an adult sees only themselves |
 | `/signin` | **Sign in** | Signs in with the link from `/dashboard` in chat |
 | `/oauth` | **OAuth Connections** | Google Workspace (Calendar, Gmail, Tasks, Contacts) OAuth connection status |
 | `/tools` | **AI Tool Catalog** | Interactive directory of all 70 registered `ToolModule` declarations |

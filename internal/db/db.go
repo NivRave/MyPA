@@ -295,7 +295,8 @@ func (c *Client) RedeemPairingCode(codeID string, user models.User, channelName 
 		if pc.HouseholdID == "" || pc.HouseholdID == models.HoldingHouseholdID {
 			return fmt.Errorf("pairing code has no household")
 		}
-		// V4-35: a code gives adult, child or guest, never owner, whatever the caller passed.
+		// V4-35: a code gives adult or child, never owner, whatever the caller passed; a guest code
+		// pairs nobody until sharing by name exists (BL-46).
 		role, ok := identity.ParseInviteRole(pc.Role)
 		if !ok {
 			return fmt.Errorf("pairing code has no valid role")

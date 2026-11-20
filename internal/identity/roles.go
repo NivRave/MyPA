@@ -15,7 +15,9 @@ const (
 	RoleAdult Role = "adult"
 	// RoleChild chats only: no dashboard.
 	RoleChild Role = "child"
-	// RoleGuest chats only, and only in the topics shared with them by name.
+	// RoleGuest chats only, and only in the topics shared with them by name (ADR 0002 Decision 1).
+	// Sharing a topic with a guest by name does not exist yet (BL-46), so until it does a guest
+	// may do nothing at all, and no pairing code makes one (ParseInviteRole).
 	RoleGuest Role = "guest"
 )
 
@@ -40,13 +42,13 @@ func ParseRole(s string) Role {
 	return ""
 }
 
-// ParseInviteRole is the role a pairing code (and later an invite) may give: adult, child or
-// guest, never owner. An owner is made by promoting a member (ADR 0002 Decision 5). The legacy
-// names map as ParseRole maps them, except that "admin" and "owner" give an adult. ok is false
-// for a string that names no role.
+// ParseInviteRole is the role a pairing code (and later an invite) may give: adult or child,
+// never owner. An owner is made by promoting a member (ADR 0002 Decision 5). A guest is refused
+// until topics can be shared with a guest by name (BL-46). The legacy names map as ParseRole maps
+// them, except that "admin" and "owner" give an adult. ok is false for anything else.
 func ParseInviteRole(s string) (Role, bool) {
 	switch r := ParseRole(s); r {
-	case "":
+	case "", RoleGuest:
 		return "", false
 	case RoleOwner:
 		return RoleAdult, true
@@ -102,7 +104,9 @@ var roleActions = map[Role]map[Action]bool{
 		ManageMembers: true, ViewMemberActivity: true},
 	RoleAdult: {UseAssistant: true, SignInDashboard: true, UseDashboard: true},
 	RoleChild: {UseAssistant: true},
-	RoleGuest: {UseAssistant: true},
+	// RoleGuest: nothing until sharing by name exists (BL-46); failing closed is the only way a
+	// guest sees no more than "the topics shared with them by name".
+	RoleGuest: {},
 }
 
 // operatorActions are what the operator flag allows whatever the household role: the install's

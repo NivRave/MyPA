@@ -47,10 +47,11 @@ func (r *mutationResolver) GeneratePairingCode(ctx context.Context, role string)
 	if err != nil {
 		return nil, err
 	}
-	// V4-35: a code gives adult, child or guest; an owner is made by promoting a member.
+	// V4-35: a code gives adult or child; an owner is made by promoting a member, and a guest waits
+	// for sharing by name (BL-46).
 	inviteRole, ok := identity.ParseInviteRole(role)
 	if !ok || identity.ParseRole(role) == identity.RoleOwner {
-		return nil, fmt.Errorf("invalid role %q: a pairing code is for an adult, a child or a guest", role)
+		return nil, fmt.Errorf("invalid role %q: a pairing code is for an adult or a child", role)
 	}
 	role = string(inviteRole)
 

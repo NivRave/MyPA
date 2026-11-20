@@ -78,7 +78,7 @@ func signInAs(t *testing.T, c *db.Client, u models.User) string {
 	require.NoError(t, err)
 	secret, err := identity.NewSecret()
 	require.NoError(t, err)
-	_, _, err = c.RedeemSignIn(ctx, identity.HashSecret(token), identity.HashSecret(secret))
+	_, _, err = c.RedeemSignIn(ctx, identity.HashSecret(token), identity.HashSecret(secret), "192.0.2.1")
 	require.NoError(t, err)
 	return secret
 }
@@ -147,9 +147,9 @@ func TestSessionAuth_EachRoleSeesAndChangesOnlyWhatItMay(t *testing.T) {
 	r = gql(t, h, S["dana"], `mutation { generatePairingCode(role: "child") { role code } }`, nil)
 	require.Empty(t, r.errs)
 	assert.Equal(t, "child", r.data["generatePairingCode"].(map[string]any)["role"])
-	for _, role := range []string{"owner", "admin", "operator"} {
+	for _, role := range []string{"owner", "admin", "operator", "guest"} {
 		r = gql(t, h, S["dana"], `mutation($r: String!) { generatePairingCode(role: $r) { id } }`, map[string]any{"r": role})
-		assert.Contains(t, r.err(), "invalid role", "a pairing code never makes an %s", role)
+		assert.Contains(t, r.err(), "invalid role", "a pairing code never makes an %s (a guest: BL-46)", role)
 	}
 
 	// --- Shared household data: owners and adults read and change it. ---

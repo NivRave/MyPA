@@ -337,9 +337,10 @@ type Me {
 
 # Every field acts as the signed-in person, in their own household (V4-35): the household is never
 # an argument. Owners and adults may use the dashboard; children and guests may not. A row that
-# belongs to one person (a personal memory, an unshared event or transaction, preferences, CRM
-# contacts, automations) is visible and changeable only by that person. Owners also see each
-# member's activity, without the text of their chats.
+# belongs to one person (a personal memory, an unshared event or transaction, preferences and
+# calendar settings) is visible and changeable only by that person; automations, connectors, CRM
+# contacts and entity profiles are the household's, as in chat. Owners also see each member's
+# activity, without the text of their chats.
 type Query {
   "The signed-in person."
   me: Me!
@@ -375,7 +376,7 @@ type Query {
 type Mutation {
   "End the current dashboard session (V4-35)."
   signOut: Boolean!
-  "A pairing code for a new member (owners only): role is adult, child or guest, never owner."
+  "A pairing code for a new member (owners only): role is adult or child, never owner (a guest waits for sharing by name, BL-46)."
   generatePairingCode(role: String!): PairingCode!
   "Change the caller's own household's settings (owners only). Omitted fields are unchanged; an empty string resets a setting to the install default."
   updateHousehold(name: String, language: String, timeZone: String, currency: String): Household!

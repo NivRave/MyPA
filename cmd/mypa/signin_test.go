@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/models"
@@ -31,14 +30,14 @@ type fakeSignIns struct {
 	sessions  []models.Session
 }
 
-func (f *fakeSignIns) RedeemSignIn(_ context.Context, tokenHash, sessionHash string) (*models.AccessToken, *models.Session, error) {
+func (f *fakeSignIns) RedeemSignIn(_ context.Context, tokenHash, sessionHash, remoteAddress string) (*models.AccessToken, *models.Session, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.used || tokenHash != f.tokenHash {
 		return nil, nil, identity.ErrSignInInvalid
 	}
 	f.used = true
-	s := models.Session{ID: "sess-1", SecretHash: sessionHash, PersonID: f.user.ID, ExpiresAt: time.Now().Add(identity.SessionMax)}
+	s := models.Session{ID: "sess-1", SecretHash: sessionHash, PersonID: f.user.ID, ExpiresAt: time.Now().Add(identity.SessionMax), RemoteAddress: remoteAddress}
 	f.sessions = append(f.sessions, s)
 	return &models.AccessToken{ID: "tok-1"}, &s, nil
 }
@@ -70,19 +69,11 @@ func (n *recordingNotifier) SendMessage(_ context.Context, userID, text string) 
 	return nil
 }
 
-type recordingPublisher struct{ evs []events.MutationEvent }
-
-func (p *recordingPublisher) Publish(_ context.Context, ev events.MutationEvent) error {
-	p.evs = append(p.evs, ev)
-	return nil
-}
-
 type signInFixture struct {
-	store     *fakeSignIns
-	notifier  *recordingNotifier
-	publisher *recordingPublisher
-	handler   http.HandlerFunc
-	token     string
+	store    *fakeSignIns
+	notifier *recordingNotifier
+	handler  http.HandlerFunc
+	token    string
 }
 
 func newSignInFixture(t *testing.T, role string) signInFixture {
@@ -92,12 +83,11 @@ func newSignInFixture(t *testing.T, role string) signInFixture {
 	token, err := identity.NewSecret()
 	require.NoError(t, err)
 	f := signInFixture{
-		store:     &fakeSignIns{tokenHash: identity.HashSecret(token), user: models.User{ID: "p-dana", PlatformID: "1001", Role: role, HouseholdID: h.ID}},
-		notifier:  &recordingNotifier{},
-		publisher: &recordingPublisher{},
-		token:     token,
+		store:    &fakeSignIns{tokenHash: identity.HashSecret(token), user: models.User{ID: "p-dana", PlatformID: "1001", Role: role, HouseholdID: h.ID}},
+		notifier: &recordingNotifier{},
+		token:    token,
 	}
-	f.handler = newSignInHandler(f.store, st, f.notifier, f.publisher)
+	f.handler = newSignInHandler(f.store, st, f.notifier)
 	return f
 }
 
@@ -115,7 +105,8 @@ func postSignIn(h http.Handler, contentType, body string, headers ...string) *ht
 }
 
 // ADR 0002 Decision 5: the token becomes a session once; the person is told in chat; the sign-in
-// is recorded with the remote address in the audit record only; the token is never logged.
+// is recorded with the remote address on the session row (its audit record) only; the token is
+// never logged.
 func TestSignIn_ExchangesTheTokenForASessionOnce(t *testing.T) {
 	var logs bytes.Buffer
 	prev := slog.Default()
@@ -138,11 +129,7 @@ func TestSignIn_ExchangesTheTokenForASessionOnce(t *testing.T) {
 	require.Len(t, f.notifier.sent, 1)
 	assert.Contains(t, f.notifier.sent[0], "1001: ")
 	assert.Contains(t, f.notifier.sent[0], "/signout", "the person is told and told how to undo it")
-	require.Len(t, f.publisher.evs, 1)
-	ev := f.publisher.evs[0]
-	assert.Equal(t, "dashboard_session", ev.EntityType)
-	assert.Equal(t, identitytest.HouseholdID("Levi"), ev.HouseholdID)
-	assert.Contains(t, ev.AfterJSON, "192.0.2.7", "the remote address goes in the audit record")
+	assert.Equal(t, "192.0.2.7", f.store.sessions[0].RemoteAddress, "the remote address goes in the audit record")
 
 	out := logs.String()
 	assert.Contains(t, out, "dashboard session started")

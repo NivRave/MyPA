@@ -33,7 +33,8 @@ CREATE TABLE public.sessions (
     created_at timestamp with time zone NOT NULL,
     last_seen_at timestamp with time zone NOT NULL,
     expires_at timestamp with time zone NOT NULL,
-    revoked_at timestamp with time zone
+    revoked_at timestamp with time zone,
+    remote_address text DEFAULT ''::text NOT NULL
 );
 ALTER TABLE ONLY public.sessions ADD CONSTRAINT sessions_pkey PRIMARY KEY (id);
 CREATE UNIQUE INDEX idx_sessions_secret_hash ON public.sessions USING btree (secret_hash);

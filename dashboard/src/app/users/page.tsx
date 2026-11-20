@@ -126,7 +126,6 @@ export default async function UsersPage() {
                 <select name="role" className="w-full border border-neutral-300 rounded-md shadow-sm p-2 text-sm">
                   <option value="adult">Adult</option>
                   <option value="child">Child (chat only)</option>
-                  <option value="guest">Guest (chat only, shared topics by name)</option>
                 </select>
                 <p className="text-xs text-neutral-500 mt-1">A code never makes an owner. The new member joins your household.</p>
               </div>

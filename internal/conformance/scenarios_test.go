@@ -168,7 +168,7 @@ func plainReply(t *testing.T, e *env) {
 
 // pairing: a stranger gets nothing but a request for a code; a valid code typed as plain text
 // makes them a member with the code's role and family; a code works once. Since V4-35 a code gives
-// adult, child or guest, held by the membership; a code never makes an owner.
+// adult or child, held by the membership; a code never makes an owner (nor a guest, BL-46).
 func pairing(t *testing.T, e *env) {
 	expires := time.Now().Add(time.Hour)
 	levi := e.db.adminOf(t, "Levi")

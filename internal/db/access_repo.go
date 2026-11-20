@@ -199,8 +199,9 @@ func (c *Client) IssueSignIn(ctx context.Context, s identity.Scope, tokenHash st
 
 // RedeemSignIn turns a sign-in token into a session. The token is used in one statement (unused,
 // unexpired, a sign-in token, returning the row), so two browsers racing for one link cannot both
-// get a session. The session's secret is stored as its hash only.
-func (c *Client) RedeemSignIn(ctx context.Context, tokenHash, sessionHash string) (*models.AccessToken, *models.Session, error) {
+// get a session. The session's secret is stored as its hash only; remoteAddress is the browser's
+// address, kept on the session as the sign-in's audit record.
+func (c *Client) RedeemSignIn(ctx context.Context, tokenHash, sessionHash, remoteAddress string) (*models.AccessToken, *models.Session, error) {
 	if strings.TrimSpace(tokenHash) == "" || strings.TrimSpace(sessionHash) == "" {
 		return nil, nil, identity.ErrSignInInvalid
 	}
@@ -219,7 +220,7 @@ func (c *Client) RedeemSignIn(ctx context.Context, tokenHash, sessionHash string
 		}
 		now := time.Now()
 		sess = models.Session{SecretHash: sessionHash, PersonID: *tok.PersonID, CreatedAt: now, LastSeenAt: now,
-			ExpiresAt: now.Add(identity.SessionMax)}
+			ExpiresAt: now.Add(identity.SessionMax), RemoteAddress: strings.TrimSpace(remoteAddress)}
 		return tx.Create(&sess).Error
 	})
 	if err != nil {
@@ -281,7 +282,8 @@ func (c *Client) RevokeSessionsOf(ctx context.Context, personID string) (int64, 
 }
 
 // PurgeSignIns deletes sessions that ended and sign-in links that were used or expired more than
-// keep ago (the clean-up ADR 0002 Decision 5 asks for). It returns how many rows it deleted.
+// keep ago (the clean-up ADR 0002 Decision 5 asks for). An ended session is the sign-in's audit
+// record, so the worker keeps them 30 days. It returns how many rows it deleted.
 func (c *Client) PurgeSignIns(ctx context.Context, keep time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-keep)
 	var total int64

@@ -56,6 +56,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-43 | High | A `false` is stored as `true` in every boolean column whose model says `default:true` (`is_shared` on transactions, `can_view` and `can_edit` on shared spaces, `is_active`, `auto_renew`, `sync_to_google`, `include_in_morning_briefing`) | open |
 | BL-44 | Medium | In chat, the finance tools list the household's unshared transactions of every member, while the dashboard shows each member only their own | open — decide with BL-43 |
 | BL-45 | Low | `dashboard/README.md` documents `NEXT_PUBLIC_GRAPHQL_API_KEY`, which nothing reads | open |
+| BL-46 | Medium | Guests cannot be used yet: a guest sees only the topics shared with them by name, and nothing shares a topic with a guest by name | open — needs a roadmap item (proposal: with V4-36 invites or V4-11 tiers) |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -613,6 +614,17 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Impact:** the two surfaces disagree about the same row; chat is the wider one.
 - **Fix:** apply the same rule in the finance repository (`is_shared OR` the person's own), after BL-43, so
   the rows mean what they say.
+
+### BL-46 — Guests cannot be used yet (Medium)
+- **Found:** 2026-11-20, V4-35 review.
+- **Evidence:** ADR 0002 Decision 1: a guest chats "only [in] the topics shared with them by name" (a
+  babysitter and the baby log). `shared_spaces` shares a topic with a member, but nothing limits what a
+  guest's turn reads to those topics, and no item on the roadmap builds it (V4-11 is per-tool tiers).
+- **What V4-35 does meanwhile:** fails closed. The guest row of the role table is empty, the engine refuses
+  a guest's every message before commands and the model, and no pairing code makes a guest
+  (`identity.ParseInviteRole`, `generatePairingCode`, the dashboard form). Migration C makes no guest.
+- **Fix:** a roadmap item (the owner's to add) that scopes a guest's turn to the topics shared with them by
+  name, in every module and in recall; then give the guest row `UseAssistant` and allow guest codes.
 
 ### BL-45 — The dashboard README documents a setting nothing reads (Low)
 - **Found:** 2026-11-20, while building V4-35.
