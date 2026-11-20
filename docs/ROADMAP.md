@@ -145,6 +145,7 @@ None at present. New ones are added here with an ID and what they block.
 | DE-8 | WhatsApp stays on Twilio, supporting both the sandbox and a registered sender. Checked on 2026-11-18: Twilio offers no native WhatsApp group, only a relay through the business number, so group chat is not offered on WhatsApp at first. | 2026-11-18 |
 | DE-9 | A single server running the same stack is the supported deployed path, with one public address on a domain the owner controls. Managed services remain possible through settings. | 2026-11-18 |
 | DE-10 | One upgrade and move path: restore a backup into any V4 install and let the migrations bring it up to date. | 2026-11-18 |
+| DE-11 | "Prerequisite for V4-02" in the V4-03 row means V4-03's merged code (the embedding model is pinned apart from the chat model, proven by its tests), not its check on real data. V4-02 may be built while V4-03 is still "In progress". V4-03 stays "In progress" until the re-embed has been run once on a copy of real data, which is done together with the dry run in OP-12. The V4.0 release still requires V4-03 to be Done. | 2026-11-20 |
 
 ### ADRs required before build
 
