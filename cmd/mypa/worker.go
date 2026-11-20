@@ -159,6 +159,23 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 		return w, err
 	}
 	lanes.set(dbClient)
+	// Accounts Migration B made have no channel yet: no code outside the adapters names a platform,
+	// so the adapter that recognizes each ID names it, before any message is taken (V4-32).
+	resolved, unknown, err := dbClient.ResolveAccountChannels(ctx, func(id string) string {
+		if to, ok := channels.Recognize(id); ok {
+			return to.Channel
+		}
+		return ""
+	})
+	if err != nil {
+		return w, fmt.Errorf("resolve the channels of channel accounts: %w", err)
+	}
+	if resolved > 0 {
+		slog.Info("filled the channel of channel accounts made by the upgrade", "accounts", resolved)
+	}
+	if unknown > 0 {
+		slog.Warn("channel accounts whose ID no adapter recognizes cannot write until fixed", "accounts", unknown)
+	}
 	// A person's Google sign-in is found through all their accounts, preferred first (V4-32).
 	store.SetAccountKeys(dbClient.AccountKeysOf)
 

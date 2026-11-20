@@ -330,7 +330,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 		return nil
 	}
 
-	logging.LogMessageText(ctx, nil, "processing message", msg.Text, "user_id", msg.Sender, "message_id", msg.MessageID) // P3-3
+	logging.LogMessageText(ctx, nil, "processing message", withholdCodes(msg.Text), "user_id", msg.Sender, "message_id", msg.MessageID) // P3-3
 
 	var llmResponse string
 	// The audit session is recorded under the person's key once the sender is known (V4-32), so a
@@ -372,7 +372,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 					slog.Error("failed to publish telemetry session", "error", pubErr)
 				}
 			}
-		}(msg.Text, func() string {
+		}(withholdCodes(msg.Text), func() string {
 			if err != nil {
 				return err.Error()
 			}
@@ -417,6 +417,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 	// ("CONFIRM [TOOL]") and slash commands (commands.go)
 	if identity.IsConfirmLink(msg.Text) {
 		response, cerr := e.confirmLink(ctx, user, msg)
+		llmResponse = response
+		return cerr
+	}
+	if identity.IsConfirmMerge(msg.Text) {
+		response, cerr := e.confirmMerge(ctx, user, msg)
 		llmResponse = response
 		return cerr
 	}

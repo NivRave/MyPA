@@ -223,7 +223,7 @@ func (d *memoryDB) PendingLink(_ context.Context, issuerAccountID string) (*mode
 	for i := len(d.tokens) - 1; i >= 0; i-- {
 		tok := d.tokens[i]
 		if tok.IssuedOnAccountID != nil && *tok.IssuedOnAccountID == issuerAccountID && tok.ClaimedAt != nil &&
-			tok.UsedAt == nil && time.Since(*tok.ClaimedAt) < identity.LinkCodeTTL {
+			tok.UsedAt == nil && tok.IssuerConfirmedAt == nil && time.Since(*tok.ClaimedAt) < identity.LinkCodeTTL {
 			out := *tok
 			return &out, nil
 		}
@@ -234,7 +234,7 @@ func (d *memoryDB) PendingLink(_ context.Context, issuerAccountID string) (*mode
 func (d *memoryDB) useLinkCodeLocked(tokenID, issuerAccountID string) (*models.AccessToken, error) {
 	for _, tok := range d.tokens {
 		if tok.ID == tokenID && tok.IssuedOnAccountID != nil && *tok.IssuedOnAccountID == issuerAccountID &&
-			tok.UsedAt == nil && tok.ClaimedAt != nil && time.Since(*tok.ClaimedAt) < identity.LinkCodeTTL {
+			tok.UsedAt == nil && tok.IssuerConfirmedAt == nil && tok.ClaimedAt != nil && time.Since(*tok.ClaimedAt) < identity.LinkCodeTTL {
 			now := time.Now()
 			tok.UsedAt = &now
 			return tok, nil
@@ -259,13 +259,51 @@ func (d *memoryDB) ConfirmLink(_ context.Context, tokenID, issuerAccountID strin
 	return &out, nil
 }
 
-func (d *memoryDB) MergeOnLink(_ context.Context, tokenID, issuerAccountID string) (*identity.MergeResult, error) {
+func (d *memoryDB) ConfirmMergeByIssuer(_ context.Context, tokenID, issuerAccountID string) (*models.AccessToken, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	tok, err := d.useLinkCodeLocked(tokenID, issuerAccountID)
-	if err != nil {
-		return nil, err
+	for _, tok := range d.tokens {
+		if tok.ID == tokenID && tok.IssuedOnAccountID != nil && *tok.IssuedOnAccountID == issuerAccountID &&
+			tok.UsedAt == nil && tok.IssuerConfirmedAt == nil && tok.ClaimedAt != nil && time.Since(*tok.ClaimedAt) < identity.LinkCodeTTL {
+			now := time.Now()
+			tok.IssuerConfirmedAt = &now
+			out := *tok
+			return &out, nil
+		}
 	}
+	return nil, identity.ErrNothingPending
+}
+
+func (d *memoryDB) PendingMerge(_ context.Context, channelName, externalID string) (*models.AccessToken, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for i := len(d.tokens) - 1; i >= 0; i-- {
+		tok := d.tokens[i]
+		if tok.ClaimedByChannel != nil && *tok.ClaimedByChannel == channelName && tok.ClaimedByExternalID != nil &&
+			*tok.ClaimedByExternalID == externalID && tok.UsedAt == nil && tok.IssuerConfirmedAt != nil &&
+			time.Since(*tok.IssuerConfirmedAt) < identity.LinkCodeTTL {
+			out := *tok
+			return &out, nil
+		}
+	}
+	return nil, identity.ErrNothingPending
+}
+
+func (d *memoryDB) MergeOnLink(_ context.Context, tokenID, claimantChannel, claimantExternalID string) (*identity.MergeResult, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var tok *models.AccessToken
+	for _, t := range d.tokens {
+		if t.ID == tokenID && t.UsedAt == nil && t.IssuerConfirmedAt != nil && t.ClaimedByChannel != nil &&
+			*t.ClaimedByChannel == claimantChannel && t.ClaimedByExternalID != nil && *t.ClaimedByExternalID == claimantExternalID {
+			tok = t
+		}
+	}
+	if tok == nil {
+		return nil, identity.ErrNothingPending
+	}
+	now := time.Now()
+	tok.UsedAt = &now
 	claimed, ok := d.accounts[accountKey(*tok.ClaimedByChannel, *tok.ClaimedByExternalID)]
 	if !ok {
 		return nil, identity.ErrNothingPending

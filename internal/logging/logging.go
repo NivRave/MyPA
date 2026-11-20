@@ -43,6 +43,17 @@ func LogMessageText(ctx context.Context, logger *slog.Logger, msg, text string, 
 	}
 	logger.InfoContext(ctx, msg, append(args, "text_len", utf8.RuneCountInString(text))...)
 	if logger.Enabled(ctx, slog.LevelDebug) {
-		logger.DebugContext(ctx, msg+" (content)", append(args, "text", text)...)
+		logger.DebugContext(ctx, msg+" (content)", append(args, "text", WithholdCodes(text))...)
 	}
+}
+
+// WithholdCodes replaces the code in a typed link command ("/link CODE", or "/start link-CODE"
+// from a deep link) so it is never logged or stored in clear, not even at debug level (ADR 0002
+// Decision 5, V4-32). Any other text is returned unchanged.
+func WithholdCodes(text string) string {
+	t := strings.TrimSpace(text)
+	if strings.HasPrefix(t, "/link ") || strings.HasPrefix(t, "/start link-") {
+		return "/link [code withheld]"
+	}
+	return text
 }

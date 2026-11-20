@@ -232,7 +232,7 @@ func (c *Client) ClaimLinkCode(ctx context.Context, codeHash, channelName, exter
 func (c *Client) PendingLink(ctx context.Context, issuerAccountID string) (*models.AccessToken, error) {
 	var tok models.AccessToken
 	err := c.DB.WithContext(ctx).
-		Where("purpose = ? AND issued_on_account_id = ? AND claimed_at IS NOT NULL AND used_at IS NULL AND claimed_at > ?",
+		Where("purpose = ? AND issued_on_account_id = ? AND claimed_at IS NOT NULL AND used_at IS NULL AND issuer_confirmed_at IS NULL AND claimed_at > ?",
 			models.TokenPurposeLink, issuerAccountID, time.Now().Add(-identity.LinkCodeTTL)).
 		Order("claimed_at DESC").First(&tok).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -251,7 +251,7 @@ func useLinkCode(tx *gorm.DB, tokenID, issuerAccountID string) (*models.AccessTo
 	res := tx.Raw(`
 		UPDATE access_tokens SET used_at = now()
 		WHERE id = ? AND purpose = ? AND issued_on_account_id = ? AND used_at IS NULL
-		  AND claimed_at IS NOT NULL AND claimed_at > ?
+		  AND issuer_confirmed_at IS NULL AND claimed_at IS NOT NULL AND claimed_at > ?
 		RETURNING *`, tokenID, models.TokenPurposeLink, issuerAccountID, time.Now().Add(-identity.LinkCodeTTL)).Scan(&tok)
 	if res.Error != nil {
 		return nil, res.Error
@@ -295,17 +295,66 @@ func (c *Client) ConfirmLink(ctx context.Context, tokenID, issuerAccountID strin
 	return &added, nil
 }
 
+// ConfirmMergeByIssuer records the issuing account's confirmation of a merge: the account that
+// typed the code already is a person. It merges nothing: the merge needs that account's own
+// confirmation too (MergeOnLink), so nobody can pull another person's account into theirs by
+// getting them to type a code (ADR 0002 Decision 4). One statement, only from the issuing account
+// and within the window.
+func (c *Client) ConfirmMergeByIssuer(ctx context.Context, tokenID, issuerAccountID string) (*models.AccessToken, error) {
+	var tok models.AccessToken
+	res := c.DB.WithContext(ctx).Raw(`
+		UPDATE access_tokens SET issuer_confirmed_at = now()
+		WHERE id = ? AND purpose = ? AND issued_on_account_id = ? AND used_at IS NULL
+		  AND issuer_confirmed_at IS NULL AND claimed_at IS NOT NULL AND claimed_at > ?
+		RETURNING *`, tokenID, models.TokenPurposeLink, issuerAccountID, time.Now().Add(-identity.LinkCodeTTL)).Scan(&tok)
+	if res.Error != nil {
+		return nil, fmt.Errorf("confirm merge: %w", res.Error)
+	}
+	if tok.ID == "" {
+		return nil, identity.ErrNothingPending
+	}
+	return &tok, nil
+}
+
+// PendingMerge returns the merge the issuer confirmed that waits for this account's own
+// confirmation, or identity.ErrNothingPending.
+func (c *Client) PendingMerge(ctx context.Context, channelName, externalID string) (*models.AccessToken, error) {
+	var tok models.AccessToken
+	err := c.DB.WithContext(ctx).
+		Where("purpose = ? AND claimed_by_channel = ? AND claimed_by_external_id = ? AND used_at IS NULL AND issuer_confirmed_at > ?",
+			models.TokenPurposeLink, channelName, externalID, time.Now().Add(-identity.LinkCodeTTL)).
+		Order("issuer_confirmed_at DESC").First(&tok).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, identity.ErrNothingPending
+	}
+	if err != nil {
+		return nil, fmt.Errorf("pending merge: %w", err)
+	}
+	return &tok, nil
+}
+
 // MergeOnLink makes the person who typed the code part of the issuing person (ADR 0002 Decision 4,
 // question 4: only when that human links them, inside one household, after a backup — the caller
-// takes the backup first). In one transaction: the code is used, the merged person's accounts
-// and rows move to the survivor, the rows only one of them can keep are resolved (DP-27), and
-// the merged person and their users row are removed.
-func (c *Client) MergeOnLink(ctx context.Context, tokenID, issuerAccountID string) (*identity.MergeResult, error) {
+// takes the backup first). It runs only on the confirmation of the account that typed the code,
+// after the issuing account confirmed (ConfirmMergeByIssuer): both sides. In one transaction: the
+// code is used, the merged person's accounts and rows move to the survivor (the issuer), the rows
+// only one of them can keep are resolved (DP-27), and the merged person and their users row are
+// removed.
+func (c *Client) MergeOnLink(ctx context.Context, tokenID, claimantChannel, claimantExternalID string) (*identity.MergeResult, error) {
 	var out identity.MergeResult
 	err := c.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		tok, err := useLinkCode(tx, tokenID, issuerAccountID)
-		if err != nil {
-			return err
+		var tok models.AccessToken
+		res := tx.Raw(`
+			UPDATE access_tokens SET used_at = now()
+			WHERE id = ? AND purpose = ? AND used_at IS NULL
+			  AND claimed_by_channel = ? AND claimed_by_external_id = ? AND issuer_confirmed_at > ?
+			RETURNING *`, tokenID, models.TokenPurposeLink, claimantChannel, claimantExternalID,
+			time.Now().Add(-identity.LinkCodeTTL)).Scan(&tok)
+		if res.Error != nil {
+			return res.Error
+		}
+		if tok.ID == "" || tok.PersonID == nil || tok.ClaimedByChannel == nil || tok.ClaimedByExternalID == nil {
+			return identity.ErrNothingPending
 		}
 		var claimed models.ChannelAccount
 		if err := tx.Where("channel = ? AND external_id = ?", *tok.ClaimedByChannel, *tok.ClaimedByExternalID).
@@ -326,7 +375,7 @@ func (c *Client) MergeOnLink(ctx context.Context, tokenID, issuerAccountID strin
 		}
 		out = identity.MergeResult{Survivor: survivor, Merged: merged}
 
-		res := tx.Model(&models.ChannelAccount{}).Where("person_id = ?", merged).Update("person_id", survivor)
+		res = tx.Model(&models.ChannelAccount{}).Where("person_id = ?", merged).Update("person_id", survivor)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -378,6 +427,34 @@ func resolveOnePerPerson(tx *gorm.DB, survivor, merged string) error {
 		}
 	}
 	return nil
+}
+
+// ResolveAccountChannels fills the channel of every account that has none, by asking channelOf
+// (the app asks the registered adapters which of them recognizes the ID, the rule the code used
+// before V4-32). Migration B leaves the channel empty because no code outside the adapters names a
+// platform. It returns how many were filled and how many no adapter recognized; the app runs it at
+// start-up, before it takes messages.
+func (c *Client) ResolveAccountChannels(ctx context.Context, channelOf func(externalID string) string) (resolved, unknown int, err error) {
+	var pending []models.ChannelAccount
+	if err := c.DB.WithContext(ctx).Where("channel = ''").Find(&pending).Error; err != nil {
+		return 0, 0, fmt.Errorf("accounts without a channel: %w", err)
+	}
+	for _, a := range pending {
+		ch := ""
+		if channelOf != nil {
+			ch = strings.TrimSpace(channelOf(a.ExternalID))
+		}
+		if ch == "" {
+			unknown++
+			continue
+		}
+		if err := c.DB.WithContext(ctx).Model(&models.ChannelAccount{}).
+			Where("id = ? AND channel = ''", a.ID).Update("channel", ch).Error; err != nil {
+			return resolved, unknown, fmt.Errorf("fill an account's channel: %w", err)
+		}
+		resolved++
+	}
+	return resolved, unknown, nil
 }
 
 // ensurePerson makes the users row a person (same ID), a member of its household, and, when the

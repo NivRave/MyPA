@@ -6,10 +6,12 @@
 -- person keys found no person. This file is embedded, not a goose file: it is migration 4's first
 -- half and never runs on its own. It is frozen with migration 4; change the schema in a new one.
 --
--- Every users row becomes a person with the same ID, one channel account (the channel taken from
--- the rule the code used before V4-32: a leading '+' is a WhatsApp number, anything else a
--- Telegram ID), and one membership of the household V4-30 gave it. Nothing is merged: two rows
--- that are the same human stay two people until that human links them (Decision 4).
+-- Every users row becomes a person with the same ID, one channel account and one membership of
+-- the household V4-30 gave it. The account's channel is left empty here: no code outside the
+-- channel adapters names a platform (V4-31), so the app fills it at start-up by asking the adapters
+-- which of them recognizes the ID (db.ResolveAccountChannels, the rule the code used before
+-- V4-32). Nothing is merged: two rows that are the same human stay two people until that human
+-- links them (Decision 4).
 
 CREATE TABLE public.people (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -66,6 +68,7 @@ CREATE TABLE public.access_tokens (
     claimed_by_channel text,
     claimed_by_external_id text,
     claimed_at timestamp with time zone,
+    issuer_confirmed_at timestamp with time zone,
     expires_at timestamp with time zone NOT NULL,
     used_at timestamp with time zone,
     created_at timestamp with time zone
@@ -90,12 +93,9 @@ INSERT INTO public.people (id, display_name, created_at, updated_at)
 SELECT id, COALESCE(btrim(name), ''), COALESCE(created_at, now()), now()
 FROM public.users;
 
--- 2. One channel account per user, by the leading-'+' rule.
+-- 2. One channel account per user; the channel is filled at start-up (see above).
 INSERT INTO public.channel_accounts (person_id, channel, external_id, linked_at)
-SELECT id,
-       CASE WHEN platform_id LIKE '+%' OR platform_id LIKE 'whatsapp:%' THEN 'whatsapp' ELSE 'telegram' END,
-       platform_id,
-       COALESCE(created_at, now())
+SELECT id, '', platform_id, COALESCE(created_at, now())
 FROM public.users
 WHERE COALESCE(btrim(platform_id), '') <> '';
 
@@ -105,8 +105,8 @@ FROM public.channel_accounts ca WHERE ca.person_id = p.id;
 -- When each account last wrote, from the audit sessions: the assistant starts messages only on an
 -- account the person has written from (as before V4-32, when the latest session chose the channel).
 UPDATE public.channel_accounts ca SET last_inbound_at = s.last
-FROM (SELECT user_id, source, max(start_time) AS last FROM public.audit_sessions GROUP BY user_id, source) s
-WHERE s.user_id = ca.external_id AND s.source = ca.channel;
+FROM (SELECT user_id, max(start_time) AS last FROM public.audit_sessions GROUP BY user_id) s
+WHERE s.user_id = ca.external_id;
 
 -- 3. One membership per person: the household only; the role stays on users until V4-35.
 INSERT INTO public.memberships (person_id, household_id, created_at)

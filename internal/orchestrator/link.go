@@ -12,6 +12,7 @@ import (
 
 	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/logging"
 	"github.com/nivik/mypa/internal/models"
 )
 
@@ -20,8 +21,9 @@ import (
 //
 //	/link          on a linked account: a code, valid 10 minutes
 //	/link CODE     on the new account: asks the first account to confirm
-//	CONFIRM LINK   on the first account: links (or, if the new account already is a person of the
-//	               same household, merges the two after a backup)
+//	CONFIRM LINK   on the first account: links. If the new account already is a person of the same
+//	               household, it only asks that account to confirm a merge:
+//	CONFIRM MERGE  on the new account: merges it into the first account's person, after a backup
 //	/accounts      the person's accounts; /unlink N removes one; /notify N picks where
 //	               notifications go
 //
@@ -62,6 +64,20 @@ func linkCodeArg(text string) (string, bool) {
 		return strings.TrimSpace(strings.TrimPrefix(t, "/start link-")), true
 	}
 	return "", false
+}
+
+// withholdCodes keeps a typed link code out of the audit session's prompt (ADR 0002 Decision 5);
+// logging.LogMessageText withholds it from the logs the same way.
+func withholdCodes(text string) string { return logging.WithholdCodes(text) }
+
+// auditLink records a linking step in the turn's audit session (its tool summary): the purpose,
+// the outcome and the token row, never the code.
+func auditLink(ctx context.Context, outcome, tokenID string) {
+	args := map[string]interface{}{"purpose": "link", "outcome": outcome}
+	if tokenID != "" {
+		args["token_id"] = tokenID
+	}
+	recordToolCall(ctx, "account_link", args, outcome)
 }
 
 // stateKey is the key of a person's conversational state (chat history, follow-up domains): the
@@ -140,6 +156,7 @@ func (e *Engine) cmdLinkIssue(ctx context.Context, user *models.User, msg channe
 	}
 	if !identity.MayIssue(acct.LinkedAt, time.Now()) {
 		slog.Info("link code refused", "purpose", "link", "outcome", "account_too_new", "person_id", acct.PersonID, "channel", msg.Channel)
+		auditLink(ctx, "refused_account_too_new", "")
 		return "", e.sendMessage(ctx, msg, "🔒 This account was added less than 24 hours ago, so it cannot add other accounts yet. Use one of your older accounts.")
 	}
 	code, err := identity.NewLinkCode()
@@ -152,6 +169,7 @@ func (e *Engine) cmdLinkIssue(ctx context.Context, user *models.User, msg channe
 		return "", e.sendMessage(ctx, msg, "❌ I could not make a code. Please try again.")
 	}
 	slog.Info("link code issued", "purpose", "link", "outcome", "issued", "person_id", acct.PersonID, "household_id", e.scopeOf(ctx, user).HouseholdID(), "channel", msg.Channel)
+	auditLink(ctx, "issued", "")
 	return "", e.sendMessage(ctx, msg, fmt.Sprintf(
 		"🔗 To add another account, send this from it to me within 10 minutes:\n\n/link %s\n\n"+
 			"Then confirm here. The code works once. Never send it to anyone: whoever types it asks to join your account.", code))
@@ -163,14 +181,23 @@ func (e *Engine) redeemLinkCode(ctx context.Context, user *models.User, msg chan
 	if ok, err := e.linkingReady(ctx, msg); !ok {
 		return "", err
 	}
+	// The per-sender lockout holds for every sender, a member's account included.
+	if e.store != nil {
+		if locked, remaining, lockErr := e.store.CheckPairingLockout(ctx, msg.Sender); lockErr != nil || locked {
+			auditLink(ctx, "refused_locked_out", "")
+			return "", e.sendMessage(ctx, msg, fmt.Sprintf("🚫 Too many failed attempts. This account is locked out; try again in %d minutes.", int(remaining.Minutes())+1))
+		}
+	}
 	if e.store != nil && e.store.CodesBlocked(ctx) {
 		slog.Warn("link code refused", "purpose", "link", "outcome", "install_limit", "channel", msg.Channel)
+		auditLink(ctx, "refused_install_limit", "")
 		return "", e.sendMessage(ctx, msg, "🚫 Too many wrong codes were typed recently. Please try again in a few minutes.")
 	}
 	markSideEffect(ctx) // a code is claimed or an attempt counted: a retry must not repeat either
 	tok, err := e.accounts.ClaimLinkCode(ctx, identity.HashCode(e.codeKey, code), msg.Channel, msg.Sender)
 	if err != nil {
 		slog.Info("link code refused", "purpose", "link", "outcome", "invalid", "channel", msg.Channel)
+		auditLink(ctx, "refused_invalid", "")
 		if e.store != nil {
 			_ = e.store.RecordFailedCodeAttempt(ctx)
 			attempts, lockedOut, _ := e.store.RecordFailedPairingAttempt(ctx, msg.Sender)
@@ -201,14 +228,15 @@ func (e *Engine) redeemLinkCode(ctx context.Context, user *models.User, msg chan
 		slog.Info("link code refused", "purpose", "link", "outcome", "other_household", "channel", msg.Channel)
 		return "", e.sendMessage(ctx, msg, "🚫 This account belongs to someone in another household, so it cannot be joined to that account.")
 	default:
-		prompt = fmt.Sprintf("🔗 %s already belongs to %s. Merge the two into one person, with the data of both? A backup is taken first.\n\nReply %s within 10 minutes to merge. If you did not ask for this, ignore this message and nothing changes.",
-			desc, displayName(user), identity.ConfirmLinkReply)
+		prompt = fmt.Sprintf("🔗 %s already belongs to %s. Merge the two into one person, with the data of both? A backup is taken first, and %s has to confirm too.\n\nReply %s within 10 minutes. If you did not ask for this, ignore this message and nothing changes.",
+			desc, displayName(user), desc, identity.ConfirmLinkReply)
 	}
 	if err := e.sendTo(ctx, accountAddress(*issuer), prompt); err != nil {
 		slog.Error("link confirmation prompt not delivered", "error", err)
 		return "", e.sendMessage(ctx, msg, "❌ I could not reach your other account. Please try again.")
 	}
 	slog.Info("link code claimed", "purpose", "link", "outcome", "claimed", "token_id", tok.ID, "household_id", tok.HouseholdID, "channel", msg.Channel)
+	auditLink(ctx, "claimed", tok.ID)
 	return "", e.sendMessage(ctx, msg, fmt.Sprintf("⏳ Almost done: confirm on your %s account by replying %s there.", issuer.Channel, identity.ConfirmLinkReply))
 }
 
@@ -257,31 +285,69 @@ func (e *Engine) confirmLink(ctx context.Context, user *models.User, msg channel
 			return "", e.sendMessage(ctx, msg, linkRefusal(err))
 		}
 		slog.Info("account linked", "purpose", "link", "outcome", "used", "token_id", tok.ID, "person_id", added.PersonID, "household_id", tok.HouseholdID, "channel", added.Channel)
+		auditLink(ctx, "used", tok.ID)
 		_ = e.sendTo(ctx, accountAddress(*added), fmt.Sprintf("✅ Linked. You are %s here too, with the same data. Send /accounts to see your accounts.", displayName(user)))
 		e.announceAccountChange(ctx, user, added.PersonID, []string{acct.ID, added.ID}, fmt.Sprintf("🔔 %s was added to %s's account.", desc, displayName(user)))
 		return "", e.sendMessage(ctx, msg, fmt.Sprintf("✅ %s is now linked to your account.", desc))
 	}
 
-	// The account that typed the code already is a person: merge, after a backup.
+	// The account that typed the code already is a person. A merge needs both sides: this is the
+	// issuer's half; the other account must confirm it on its own (ADR 0002 Decision 4: nobody can
+	// pull another person's account into theirs by getting them to type a code).
 	if existing.PersonID == acct.PersonID {
 		return "", e.sendMessage(ctx, msg, "ℹ️ That account is already yours.")
 	}
+	if _, err := e.accounts.ConfirmMergeByIssuer(ctx, tok.ID, acct.ID); err != nil {
+		slog.Info("merge refused", "purpose", "link", "outcome", linkOutcome(err), "token_id", tok.ID)
+		return "", e.sendMessage(ctx, msg, linkRefusal(err))
+	}
+	slog.Info("merge confirmed by the issuer", "purpose", "link", "outcome", "issuer_confirmed", "token_id", tok.ID, "household_id", tok.HouseholdID)
+	auditLink(ctx, "issuer_confirmed", tok.ID)
+	if err := e.sendTo(ctx, accountAddress(claimed), fmt.Sprintf(
+		"⚠️ %s asked to merge this account into theirs. If you confirm, this account and everything it holds become theirs, and you will be %s here.\n\n"+
+			"Only do this if both accounts are yours. Reply %s within 10 minutes to merge; otherwise ignore this message and nothing changes.",
+		displayName(user), displayName(user), identity.ConfirmMergeReply)); err != nil {
+		slog.Error("merge confirmation prompt not delivered", "error", err)
+	}
+	return "", e.sendMessage(ctx, msg, fmt.Sprintf("⏳ Now confirm on %s by replying %s there.", desc, identity.ConfirmMergeReply))
+}
+
+// confirmMerge handles "CONFIRM MERGE" on the account that typed the code, after the issuing
+// account confirmed: the second half of a merge. A backup is taken first; if it fails, nothing is
+// merged. user is the person being merged; the issuer survives.
+func (e *Engine) confirmMerge(ctx context.Context, user *models.User, msg channel.Inbound) (string, error) {
+	if ok, err := e.linkingReady(ctx, msg); !ok {
+		return "", err
+	}
+	tok, err := e.accounts.PendingMerge(ctx, msg.Channel, msg.Sender)
+	if err != nil {
+		return "", e.sendMessage(ctx, msg, "⚠️ Nothing is waiting for your confirmation, or it has expired.")
+	}
+	issuer, err := e.issuingAccount(ctx, tok)
+	if err != nil {
+		return "", e.sendMessage(ctx, msg, "❌ The account that made this code is gone. Nothing was merged.")
+	}
+	markSideEffect(ctx) // a backup and a merge: never repeat them
 	_ = e.sendMessage(ctx, msg, "🔄 Taking a backup before merging...")
 	if path, err := e.backupBeforeMerge(); err != nil {
 		slog.Error("merge refused: backup failed", "token_id", tok.ID, "error", err)
+		auditLink(ctx, "refused_backup_failed", tok.ID)
 		return "", e.sendMessage(ctx, msg, "❌ The backup failed, so nothing was merged. Please try again later.")
 	} else {
 		slog.Info("backup taken before merging people", "token_id", tok.ID, "path", path)
 	}
-	res, err := e.accounts.MergeOnLink(ctx, tok.ID, acct.ID)
+	res, err := e.accounts.MergeOnLink(ctx, tok.ID, msg.Channel, msg.Sender)
 	if err != nil {
 		slog.Info("merge refused", "purpose", "link", "outcome", linkOutcome(err), "token_id", tok.ID)
+		auditLink(ctx, "refused_"+linkOutcome(err), tok.ID)
 		return "", e.sendMessage(ctx, msg, linkRefusal(err))
 	}
 	slog.Info("people merged", "purpose", "link", "outcome", "used", "token_id", tok.ID, "person_id", res.Survivor, "household_id", tok.HouseholdID, "accounts", res.Accounts, "rows", res.Rows)
-	_ = e.sendTo(ctx, accountAddress(claimed), fmt.Sprintf("✅ Merged. You are %s here too, with the data of both accounts.", displayName(user)))
-	e.announceAccountChange(ctx, user, res.Survivor, []string{acct.ID, existing.ID}, fmt.Sprintf("🔔 %s was merged into %s's account.", desc, displayName(user)))
-	return "", e.sendMessage(ctx, msg, fmt.Sprintf("✅ %s is merged into your account.", desc))
+	auditLink(ctx, "merged", tok.ID)
+	desc := identity.Describe(msg.Channel, msg.Sender)
+	_ = e.sendTo(ctx, accountAddress(*issuer), fmt.Sprintf("✅ %s is merged into your account.", desc))
+	e.announceAccountChange(ctx, user, res.Survivor, []string{issuer.ID}, fmt.Sprintf("🔔 %s was merged into another member's account.", desc))
+	return "", e.sendMessage(ctx, msg, "✅ Merged. This account now belongs to the person who asked, with the data of both.")
 }
 
 // backupBeforeMerge takes the backup a merge needs first (ADR 0002 question 4).

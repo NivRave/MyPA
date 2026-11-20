@@ -55,13 +55,16 @@ var unscopedMethods = map[string]string{
 	"RecordInbound": "a verified sender's own account", "PersonOfAccount": "the processing lane of a verified sender",
 	"PersonOfKey": "maps an old person key to its person", "PersonByID": "the acting person's own row",
 	"AccountsOfPerson": "the acting person's own accounts", "DeliveryAccount": "where the person behind a stored key is messaged",
-	"AccountKeysOf":       "the person's own Google sign-in keys",
-	"SetPreferredAccount": "only one of the person's own accounts (checked in the statement)",
-	"RemoveAccount":       "only accounts of the acting account's own person",
-	"ClaimLinkCode":       "an unauthenticated sender redeeming a code; the household comes from the code row",
-	"PendingLink":         "the issuing account's own code",
-	"ConfirmLink":         "only from the issuing account; the person comes from the code row",
-	"MergeOnLink":         "only from the issuing account, inside the code's household (refused otherwise)",
+	"AccountKeysOf":          "the person's own Google sign-in keys",
+	"SetPreferredAccount":    "only one of the person's own accounts (checked in the statement)",
+	"RemoveAccount":          "only accounts of the acting account's own person",
+	"ClaimLinkCode":          "an unauthenticated sender redeeming a code; the household comes from the code row",
+	"PendingLink":            "the issuing account's own code",
+	"ConfirmLink":            "only from the issuing account; the person comes from the code row",
+	"MergeOnLink":            "only from the account that typed the code, after the issuer confirmed, inside the code's household",
+	"ConfirmMergeByIssuer":   "only from the issuing account; merges nothing on its own",
+	"PendingMerge":           "the account that typed the code, its own pending merge",
+	"ResolveAccountChannels": "start-up: names the channel of accounts the upgrade made, by their ID",
 }
 
 var scopeType = reflect.TypeOf(identity.Scope{})

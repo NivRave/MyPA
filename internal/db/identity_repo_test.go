@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -144,9 +145,11 @@ func TestConfirmLink_RefusesAnAccountTakenMeanwhile(t *testing.T) {
 	assert.Equal(t, "Bob", u.Name, "Bob keeps his account")
 }
 
-// ADR 0002 question 4: two people are merged only when that human links them, inside one
-// household. The merged person's accounts and data become the survivor's; the rows only one of
-// them can keep are resolved; the merged person is gone.
+// ADR 0002 question 4 and Decision 4: two people are merged only when that human links them,
+// inside one household, with a confirmation from both sides: neither the issuer nor the account
+// that typed the code can merge alone, so nobody pulls another person's account into theirs by
+// getting them to type a code. The merged person's accounts and data become the survivor's; the
+// rows only one of them can keep are resolved; the merged person is gone.
 func TestMergeOnLink_OneHouseholdOnlyAndTheDataFollows(t *testing.T) {
 	c, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -169,7 +172,9 @@ func TestMergeOnLink_OneHouseholdOnlyAndTheDataFollows(t *testing.T) {
 	require.NoError(t, c.IssueLinkCode(ctx, aliceScope, tg, hash))
 	tok, err := c.ClaimLinkCode(ctx, hash, sx.Channel, sx.ExternalID)
 	require.NoError(t, err)
-	_, err = c.MergeOnLink(ctx, tok.ID, tg.ID)
+	_, err = c.ConfirmMergeByIssuer(ctx, tok.ID, tg.ID)
+	require.NoError(t, err)
+	_, err = c.MergeOnLink(ctx, tok.ID, sx.Channel, sx.ExternalID)
 	assert.ErrorIs(t, err, identity.ErrOtherHousehold)
 	u, err := c.UserForAccount(ctx, sx.Channel, sx.ExternalID)
 	require.NoError(t, err)
@@ -180,8 +185,28 @@ func TestMergeOnLink_OneHouseholdOnlyAndTheDataFollows(t *testing.T) {
 	require.NoError(t, c.IssueLinkCode(ctx, aliceScope, tg, hash))
 	tok, err = c.ClaimLinkCode(ctx, hash, wa.Channel, wa.ExternalID)
 	require.NoError(t, err)
-	res, err := c.MergeOnLink(ctx, tok.ID, tg.ID)
+	_, err = c.MergeOnLink(ctx, tok.ID, wa.Channel, wa.ExternalID)
+	assert.ErrorIs(t, err, identity.ErrNothingPending, "the account that typed the code cannot merge before the issuer confirms")
+	_, err = c.ConfirmMergeByIssuer(ctx, tok.ID, wa.ID)
+	assert.ErrorIs(t, err, identity.ErrNothingPending, "only the issuing account gives the issuer's confirmation")
+	_, err = c.ConfirmMergeByIssuer(ctx, tok.ID, tg.ID)
 	require.NoError(t, err)
+	_, err = c.PendingLink(ctx, tg.ID)
+	assert.ErrorIs(t, err, identity.ErrNothingPending, "the issuer has nothing more to confirm")
+	_, err = c.ConfirmLink(ctx, tok.ID, tg.ID)
+	assert.ErrorIs(t, err, identity.ErrNothingPending, "a code the issuer confirmed for a merge cannot be used as a plain link")
+	_, err = c.MergeOnLink(ctx, tok.ID, tg.Channel, tg.ExternalID)
+	assert.ErrorIs(t, err, identity.ErrNothingPending, "the issuer alone cannot merge")
+	u, err = c.UserForAccount(ctx, wa.Channel, wa.ExternalID)
+	require.NoError(t, err)
+	assert.Equal(t, alias.ID, u.ID, "nothing is merged on the issuer's confirmation alone")
+	pending, err := c.PendingMerge(ctx, wa.Channel, wa.ExternalID)
+	require.NoError(t, err)
+	assert.Equal(t, tok.ID, pending.ID, "the account that typed the code is asked")
+	res, err := c.MergeOnLink(ctx, tok.ID, wa.Channel, wa.ExternalID)
+	require.NoError(t, err)
+	_, err = c.MergeOnLink(ctx, tok.ID, wa.Channel, wa.ExternalID)
+	assert.ErrorIs(t, err, identity.ErrNothingPending, "a merge runs once")
 	assert.Equal(t, alice.ID, res.Survivor)
 	assert.EqualValues(t, 1, res.Accounts)
 
@@ -266,4 +291,55 @@ func TestDeliveryAccount_PreferredAccountThePersonWroteFrom(t *testing.T) {
 	keys, err := c.AccountKeysOf(ctx, alice.PlatformID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{wa.ExternalID, tg.ExternalID}, keys, "every account's key, preferred first")
+}
+
+// Migration B names no platform: its accounts start without a channel, and the app fills each at
+// start-up from the adapter that recognizes the ID. An ID nobody recognizes stays unknown and
+// cannot write; a filled channel is never changed again.
+func TestResolveAccountChannels_FillsOnlyUnknownChannels(t *testing.T) {
+	c, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	h := householdFor(t, c, "Levi")
+	for _, id := range []string{"7001", "+15550007007", "odd-id"} {
+		require.NoError(t, c.UpsertUser(models.User{PlatformID: id, Name: id, Role: "family", HouseholdID: h.ID, FamilyGroup: "Levi"}))
+		u, err := c.GetUser(id)
+		require.NoError(t, err)
+		require.NoError(t, c.DB.Create(&models.ChannelAccount{PersonID: u.ID, Channel: "", ExternalID: id, LinkedAt: time.Now()}).Error)
+	}
+	_, known := personWithAccount(t, c, "Levi", "7002", "Known", "family", "telegram", time.Now())
+
+	recognize := func(id string) string {
+		switch {
+		case strings.HasPrefix(id, "+"):
+			return "whatsapp"
+		case id != "" && id[0] >= '0' && id[0] <= '9':
+			return "telegram"
+		}
+		return ""
+	}
+	resolved, unknown, err := c.ResolveAccountChannels(ctx, recognize)
+	require.NoError(t, err)
+	assert.Equal(t, 2, resolved)
+	assert.Equal(t, 1, unknown)
+
+	u, err := c.UserForAccount(ctx, "whatsapp", "+15550007007")
+	require.NoError(t, err)
+	assert.Equal(t, "+15550007007", u.PlatformID)
+	_, err = c.UserForAccount(ctx, "telegram", "7001")
+	require.NoError(t, err)
+	_, err = c.UserForAccount(ctx, "telegram", "odd-id")
+	assert.Error(t, err, "an ID no adapter recognizes cannot write")
+
+	again, _, err := c.ResolveAccountChannels(ctx, func(id string) string {
+		if id == "odd-id" {
+			return "" // still unknown
+		}
+		return "other" // would rename the known ones, if anything did
+	})
+	require.NoError(t, err)
+	assert.Zero(t, again, "a known channel is never changed")
+	a, err := c.AccountOf(ctx, "telegram", known.ExternalID)
+	require.NoError(t, err)
+	assert.NotNil(t, a)
 }

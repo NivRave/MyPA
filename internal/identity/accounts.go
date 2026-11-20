@@ -55,9 +55,18 @@ const NewAccountQuarantine = 24 * time.Hour
 // or a confirmation naming a tool, never links an account.
 const ConfirmLinkReply = "CONFIRM LINK"
 
+// ConfirmMergeReply is the reply of the account that typed a code, confirming that it merges into
+// the issuing person. A merge needs it as well as the issuer's CONFIRM LINK.
+const ConfirmMergeReply = "CONFIRM MERGE"
+
 // IsConfirmLink reports whether text is the link confirmation (case and spacing ignored).
 func IsConfirmLink(text string) bool {
 	return strings.EqualFold(strings.Join(strings.Fields(text), " "), ConfirmLinkReply)
+}
+
+// IsConfirmMerge reports whether text is the merge confirmation (case and spacing ignored).
+func IsConfirmMerge(text string) bool {
+	return strings.EqualFold(strings.Join(strings.Fields(text), " "), ConfirmMergeReply)
 }
 
 // MayIssue reports whether an account linked at linkedAt may issue link codes at now.

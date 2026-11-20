@@ -5,10 +5,14 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 // householdColumns returns the tables of the schema that have a household_id column.
@@ -144,9 +148,10 @@ func TestPersonKeys_EveryPersonColumnHasAFilledCompanion(t *testing.T) {
 }
 
 // ADR 0002 Decision 2 step 2: Migration B makes a person of every user (keeping the ID), one
-// channel account by the leading-'+' rule, one membership of the user's household, and fills
-// person_id wherever the old value is a known platform ID or users.id; anything else stays empty
-// and is counted.
+// channel account (its channel named at start-up by the adapter that recognizes the ID, so the
+// migration names no platform), one membership of the user's household, and fills person_id
+// wherever the old value is a known platform ID or users.id; anything else stays empty and is
+// counted.
 func TestMigrationB_UpgradesEveryUserIntoAPerson(t *testing.T) {
 	sqlDB := openRaw(t, newEmptyTestDatabase(t))
 	migrateTo(t, sqlDB, 3)
@@ -169,8 +174,27 @@ func TestMigrationB_UpgradesEveryUserIntoAPerson(t *testing.T) {
 	tx("financial_transactions", map[string]any{"user_id": wa}) // finance wrote users.id
 	tx("schedule_events", map[string]any{"user_id": "dashboard-service", "created_by_user_id": "dashboard-service"})
 	tx("shared_spaces", map[string]any{"owner_user_id": "+15550002002", "shared_with_user_id": "*"})
+	insertRow(t, sqlDB, "audit_sessions", map[string]any{"user_id": "2001", "source": "telegram", "start_time": time.Now().Add(-time.Hour)})
 
 	migrateTo(t, sqlDB, 4)
+
+	var unnamed int
+	require.NoError(t, sqlDB.QueryRow(`SELECT count(*) FROM channel_accounts WHERE channel = ''`).Scan(&unnamed))
+	assert.Equal(t, 2, unnamed, "the migration names no platform")
+	var wrote, never sql.NullTime
+	require.NoError(t, sqlDB.QueryRow(`SELECT last_inbound_at FROM channel_accounts WHERE external_id = '2001'`).Scan(&wrote))
+	require.NoError(t, sqlDB.QueryRow(`SELECT last_inbound_at FROM channel_accounts WHERE external_id = '+15550002002'`).Scan(&never))
+	assert.True(t, wrote.Valid, "when the account last wrote comes from the audit sessions")
+	assert.False(t, never.Valid, "an account that never wrote has no time")
+	resolver := &Client{DB: openGorm(t, sqlDB)}
+	_, unknown, err := resolver.ResolveAccountChannels(context.Background(), func(id string) string {
+		if strings.HasPrefix(id, "+") {
+			return "whatsapp"
+		}
+		return "telegram"
+	})
+	require.NoError(t, err)
+	assert.Zero(t, unknown)
 
 	var people, accounts, memberships int
 	require.NoError(t, sqlDB.QueryRow(`SELECT count(*) FROM people p JOIN users u ON u.id = p.id`).Scan(&people))
@@ -215,4 +239,12 @@ func TestMigrationB_UpgradesEveryUserIntoAPerson(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]int64{"schedule_events.user_id": 1, "schedule_events.created_by_user_id": 1}, unmapped,
 		"the rows without a person are counted; '*' is not a person key")
+}
+
+// openGorm wraps an open *sql.DB in GORM, for repository calls on a database built by migrateTo.
+func openGorm(t *testing.T, sqlDB *sql.DB) *gorm.DB {
+	t.Helper()
+	g, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	require.NoError(t, err)
+	return g
 }

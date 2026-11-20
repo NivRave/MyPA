@@ -43,6 +43,8 @@ type memoryDB struct {
 	accounts map[string]*models.ChannelAccount
 	people   map[string]*models.Person
 	tokens   []*models.AccessToken
+	// sessions is every audit session published, in order.
+	sessions []models.AuditSession
 }
 
 var _ orchestrator.DBClient = (*memoryDB)(nil)
@@ -251,6 +253,7 @@ func (a auditSink) Publish(_ context.Context, v any) error {
 	if s, ok := v.(models.AuditSession); ok {
 		a.db.mu.Lock()
 		a.db.lastSession[s.UserID] = s
+		a.db.sessions = append(a.db.sessions, s)
 		a.db.mu.Unlock()
 	}
 	return nil

@@ -1,13 +1,17 @@
 package conformance
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
 	layer "github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/nivik/mypa/internal/telegram"
 	"github.com/nivik/mypa/internal/twilio"
@@ -134,4 +138,117 @@ func TestApproval_ConfirmedOnlyInTheConversationItWasRaisedIn(t *testing.T) {
 
 	e.says(p, "CONFIRM delete_task")
 	assert.Len(t, e.tools.executed("delete_task"), 1, "confirmed where it was raised")
+}
+
+// memberOn adds a paired member whose account is on another channel than the scenario's.
+func (e *env) memberOn(ch channel, n int, role, familyGroup string) person {
+	e.t.Helper()
+	p := ch.person(n)
+	require.NoError(e.t, e.db.UpsertUser(models.User{
+		PlatformID: p.UserID, Name: fmt.Sprintf("Member %d", n), Role: role,
+		HouseholdID: e.db.household(familyGroup), FamilyGroup: familyGroup, CreatedAt: time.Now(),
+	}))
+	u, _ := e.db.user(p.UserID)
+	e.db.addAccount(ch.name, p.UserID, u.ID, time.Now().Add(-48*time.Hour))
+	return p
+}
+
+// "Type my code on your phone" (ADR 0002 Decision 4): a member gets another member of the
+// household to type the member's code, to pull that person's account into theirs. The issuer's
+// confirmation alone merges nothing; the other account is warned and must confirm itself.
+func TestLinking_AMergeNeedsBothSides(t *testing.T) {
+	e := telegramEnv(t)
+	wa, ok := fixtureFor(twilio.Name)
+	require.True(t, ok)
+	attacker := e.member(1, "family", "Levi")
+	victim := e.memberOn(wa, 2, "family", "Levi")
+	ctx := context.Background()
+	victimBefore, err := e.db.UserForAccount(ctx, wa.name, victim.UserID)
+	require.NoError(t, err)
+
+	code := e.issueCode(attacker)
+	require.True(t, e.deliverOn(wa, inbound{From: victim, Text: "/link " + code}))
+	e.says(attacker, "CONFIRM LINK")
+	assert.Contains(t, e.lastText(), identity.ConfirmMergeReply, "the issuer is told the other account must confirm")
+	texts := e.texts()
+	assert.Contains(t, texts[len(texts)-2], "become theirs", "the other account is warned what a merge means")
+
+	now, err := e.db.UserForAccount(ctx, wa.name, victim.UserID)
+	require.NoError(t, err)
+	assert.Equal(t, victimBefore.ID, now.ID, "the issuer's confirmation alone merges nothing")
+
+	e.says(attacker, "CONFIRM MERGE")
+	assert.Contains(t, e.lastText(), "Nothing is waiting", "the issuer cannot give the other side's confirmation")
+	now, err = e.db.UserForAccount(ctx, wa.name, victim.UserID)
+	require.NoError(t, err)
+	assert.Equal(t, victimBefore.ID, now.ID)
+
+	// The other side's own confirmation still needs the backup first: without one, nothing changes.
+	require.True(t, e.deliverOn(wa, inbound{From: victim, Text: "CONFIRM MERGE"}))
+	assert.Contains(t, e.lastText(), "backup failed")
+	now, err = e.db.UserForAccount(ctx, wa.name, victim.UserID)
+	require.NoError(t, err)
+	assert.Equal(t, victimBefore.ID, now.ID, "no merge without a backup")
+	assert.Empty(t, e.model.requests(), "no step reaches the model")
+}
+
+// The per-sender lockout holds for a member's account too: after five wrong codes even a valid one
+// is refused.
+func TestLinking_AMembersWrongCodesLockItOut(t *testing.T) {
+	e := telegramEnv(t)
+	guesser := e.member(1, "family", "Levi")
+	owner := e.member(2, "family", "Cohen")
+	for i := 0; i < 5; i++ {
+		e.says(guesser, "/link ZZZZZZZZ")
+	}
+	assert.Contains(t, e.lastText(), "locked")
+	code := e.issueCode(owner)
+	e.says(guesser, "/link "+code)
+	assert.Contains(t, e.lastText(), "locked out")
+	assert.Nil(t, e.db.tokens[len(e.db.tokens)-1].ClaimedAt, "a locked-out account claims nothing")
+}
+
+// ADR 0002 Decision 5: a code is never logged or stored in clear, at any level, and each step of
+// linking leaves an audit record (in the turn's audit session) with its outcome.
+func TestLinking_CodesNeverLoggedAndEveryStepAudited(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	e := telegramEnv(t)
+	wa, ok := fixtureFor(twilio.Name)
+	require.True(t, ok)
+	p := e.member(1, "family", "Levi")
+	code := e.issueCode(p)
+	newcomer := wa.person(3)
+	require.True(t, e.deliverOn(wa, inbound{From: wa.person(4), Text: "/link ZZZZZZZZ"}))
+	require.True(t, e.deliverOn(wa, inbound{From: newcomer, Text: "/link " + strings.ToLower(code)}))
+	e.says(p, "CONFIRM LINK")
+	_, err := e.db.UserForAccount(context.Background(), wa.name, newcomer.UserID)
+	require.NoError(t, err, "the flow completed")
+
+	hash := identity.HashCode([]byte(conformanceLinkSecret), code)
+	for _, secret := range []string{code, strings.ToLower(code), hash} {
+		assert.NotContains(t, logs.String(), secret, "the code or its hash appears in the logs")
+	}
+	assert.Contains(t, logs.String(), "[code withheld]", "the message was logged, without its code")
+
+	e.db.mu.Lock()
+	sessions := append([]models.AuditSession(nil), e.db.sessions...)
+	e.db.mu.Unlock()
+	var summaries []string
+	for _, s := range sessions {
+		for _, secret := range []string{code, strings.ToLower(code)} {
+			assert.NotContains(t, s.UserPrompt, secret, "the audit session stores no code")
+			assert.NotContains(t, s.FinalResponse, secret)
+			assert.NotContains(t, s.ToolSummary, secret)
+		}
+		summaries = append(summaries, s.ToolSummary)
+	}
+	all := strings.Join(summaries, " | ")
+	for _, outcome := range []string{"issued", "refused_invalid", "claimed", "used"} {
+		assert.Contains(t, all, "account_link", "an audit record of the step")
+		assert.Contains(t, all, outcome, "the audit records name the outcome %q", outcome)
+	}
 }

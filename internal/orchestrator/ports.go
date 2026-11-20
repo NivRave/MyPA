@@ -115,7 +115,9 @@ type AccountStore interface {
 	ClaimLinkCode(ctx context.Context, codeHash, channelName, externalID string) (*models.AccessToken, error)
 	PendingLink(ctx context.Context, issuerAccountID string) (*models.AccessToken, error)
 	ConfirmLink(ctx context.Context, tokenID, issuerAccountID string) (*models.ChannelAccount, error)
-	MergeOnLink(ctx context.Context, tokenID, issuerAccountID string) (*identity.MergeResult, error)
+	ConfirmMergeByIssuer(ctx context.Context, tokenID, issuerAccountID string) (*models.AccessToken, error)
+	PendingMerge(ctx context.Context, channelName, externalID string) (*models.AccessToken, error)
+	MergeOnLink(ctx context.Context, tokenID, claimantChannel, claimantExternalID string) (*identity.MergeResult, error)
 }
 
 // EventPublisher defines the interface for publishing telemetry events.

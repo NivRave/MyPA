@@ -71,7 +71,11 @@ type AccessToken struct {
 	ClaimedByChannel    *string    `json:"claimed_by_channel,omitempty"`
 	ClaimedByExternalID *string    `json:"claimed_by_external_id,omitempty"`
 	ClaimedAt           *time.Time `json:"claimed_at,omitempty"`
-	ExpiresAt           time.Time  `json:"expires_at" gorm:"not null"`
-	UsedAt              *time.Time `json:"used_at,omitempty"`
-	CreatedAt           time.Time  `json:"created_at"`
+	// IssuerConfirmedAt is set when the issuing account confirmed a merge with an account that
+	// already is a person. The merge itself waits for that account's own confirmation: a merge
+	// needs both (ADR 0002 Decision 4).
+	IssuerConfirmedAt *time.Time `json:"issuer_confirmed_at,omitempty"`
+	ExpiresAt         time.Time  `json:"expires_at" gorm:"not null"`
+	UsedAt            *time.Time `json:"used_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
 }

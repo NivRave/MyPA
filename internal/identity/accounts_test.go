@@ -58,6 +58,6 @@ func TestMayIssue_AfterTheQuarantine(t *testing.T) {
 }
 
 func TestDescribe_ShowsOnlyTheEnd(t *testing.T) {
-	assert.Equal(t, "whatsapp ending 0123", Describe("whatsapp", "+972500000123"))
+	assert.Equal(t, "whatsapp ending 0123", Describe("whatsapp", "+12025550123"))
 	assert.Equal(t, "telegram ending 42", Describe("telegram", "42"))
 }
