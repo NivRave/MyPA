@@ -41,8 +41,9 @@ var requiredKeys = map[string][]string{
 }
 
 // conditionalKeys are required only when a related feature is configured: the channel adapters'
-// settings (V4-31), which the adapters validate themselves.
-var conditionalKeys = adapters.ConditionalEnvKeys()
+// settings (V4-31), which the adapters validate themselves, and the settings of a chat model
+// provider that is used (V4-02).
+var conditionalKeys = append(adapters.ConditionalEnvKeys(), llmConditionalKeys()...)
 
 // RequiredEnvKeys returns every env var Validate may demand for any service (sorted, de-duplicated).
 func RequiredEnvKeys() []string {
@@ -104,6 +105,7 @@ func (c *Config) Validate(service string) error {
 		}
 		errs = append(errs, c.validateLinkCodeSecret()...)
 		errs = append(errs, c.validateDashboardURL()...)
+		errs = append(errs, c.validateLLM()...)
 	}
 	// The audit worker runs no channel, so it does not check their settings.
 	errs = append(errs, c.Channels.Validate(servesIngress, runsWorker)...)

@@ -1,6 +1,6 @@
 # MyPA — Multi-Channel Personal & Family AI Operating System
 
-An event-driven, multi-tenant personal and family AI operating system accessible via **WhatsApp**, **Telegram**, and a **Next.js 16 (React 19) Web Control Dashboard**. Built in Go and powered by Google Gemini tool-calling, PostgreSQL (`pgvector`), Redis, and RabbitMQ, MyPA combines core productivity integrations (Google Calendar, Gmail, Google Tasks, Web Search, Voice & Vision) with specialized life-domain intelligence across **Baby & Child Care**, **House & Vehicle Assets**, **Finance & Budgets**, **Shared Family Spaces**, **Topic-Mapped Memory & Living Entity Profiles**, **On-Demand External APIs & Event-Driven Automations**, and **Transactional Durability with Conversational Undo (`/undo`)**.
+An event-driven, multi-tenant personal and family AI operating system accessible via **WhatsApp**, **Telegram**, and a **Next.js 16 (React 19) Web Control Dashboard**. Built in Go and powered by model tool-calling (Google Gemini by default, or Claude, OpenAI, Grok or a local Ollama model), PostgreSQL (`pgvector`), Redis, and RabbitMQ, MyPA combines core productivity integrations (Google Calendar, Gmail, Google Tasks, Web Search, Voice & Vision) with specialized life-domain intelligence across **Baby & Child Care**, **House & Vehicle Assets**, **Finance & Budgets**, **Shared Family Spaces**, **Topic-Mapped Memory & Living Entity Profiles**, **On-Demand External APIs & Event-Driven Automations**, and **Transactional Durability with Conversational Undo (`/undo`)**.
 
 ---
 
@@ -13,6 +13,7 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 - **Automations:** event-driven rules, scheduled natural-language workflows, and runtime-registered external APIs behind SSRF protection.
 - **Quiet hours and time zones:** reminders, the morning briefing and scheduled automations follow each household's time zone, and wait until a person's quiet hours end; a reminder marked urgent goes out anyway.
 - **Feature packs:** Core (memory, reminders, calendar, tasks and contacts, web search, undo, family sharing, preferences and the personal CRM) is always on. Baby, House and vehicles, Finance, Gmail and Automations are packs an owner switches on or off per household on the dashboard's **Tools & Packs** page; a pack that is off adds no tools, chat guidance, briefing lines or pages, and keeps its data. A new household starts with Core only; an upgraded one keeps every pack it holds data in.
+- **Model providers:** Gemini, Anthropic (Claude), OpenAI, Grok or a local Ollama model, chosen with `LLM_PROVIDER`; `LLM_FALLBACK` lists providers tried in order when one is out of quota or down; `LLM_LOCAL_DOMAINS` keeps chosen domains (for example `finance`) on the local model. Memory embeddings stay on Gemini, so `GEMINI_API_KEY` is always needed. What each provider supports: [SYSTEM.md §3.19](./SYSTEM.md#319-chat-model-providers-internalllm-internalllmconformance-v4-02-de-3).
 - **Durability:** every tool write is snapshotted for `/undo` and dashboard rollback; encrypted, age-protected nightly backups (database plus archive files); versioned schema migrations; one documented path to upgrade, move or restore an install.
 - **Roles:** owner, adult, child and guest, plus the install's operator. Owners manage the household and its members and see each member's activity, never another member's chats or personal data; adults see the shared data and their own; children chat only. Pairing codes give adult or child. Guests (only the topics shared with them by name) wait for sharing by name (BL-46).
 - **Health check:** the operator sends `/doctor` in chat and gets the state of the Telegram webhook, each family member's Google sign-in, the WhatsApp mode and its health, the queues, the newest backup and the database schema, with a next step for every problem.
@@ -42,7 +43,8 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 
 - [Go 1.26+](https://go.dev/dl/) and [Node.js 24](https://nodejs.org/) (only for running services or the dashboard outside Docker)
 - [Docker & Docker Compose](https://docs.docker.com/get-docker/)
-- Gemini API key ([Google AI Studio](https://aistudio.google.com/))
+- Gemini API key ([Google AI Studio](https://aistudio.google.com/)), needed for memory embeddings even when another provider chats
+- Optional: an Anthropic, OpenAI or xAI key, or an [Ollama](https://ollama.com/) server, to chat through another provider or fail over to it
 - Telegram bot token ([@BotFather](https://t.me/BotFather)) and/or Twilio account (WhatsApp)
 - Optional: a way to be reached from the internet, needed for WhatsApp but not for Telegram (a domain for a server with Caddy, Cloudflare Tunnel, Tailscale Funnel, your own reverse proxy, or ngrok), Google Cloud OAuth credentials (Workspace tools), Groq (voice), Tavily (web search)
 

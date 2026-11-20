@@ -250,7 +250,7 @@ func TestNewClient_WithoutAModelUsesTheConfiguredDefault(t *testing.T) {
 
 	client, err := NewClient(context.Background(), "mock-key", "", withHTTPClient)
 	require.NoError(t, err)
-	assert.Equal(t, config.DefaultGeminiModel, client.model)
+	assert.Equal(t, config.DefaultGeminiModel, client.Router().Primary().Model())
 
 	_, err = client.Chat(context.Background(), "system", nil, "hi", nil, "")
 	require.NoError(t, err)
@@ -258,5 +258,5 @@ func TestNewClient_WithoutAModelUsesTheConfiguredDefault(t *testing.T) {
 
 	explicit, err := NewClient(context.Background(), "mock-key", "another-model", withHTTPClient)
 	require.NoError(t, err)
-	assert.Equal(t, "another-model", explicit.model, "an explicit model is used as given")
+	assert.Equal(t, "another-model", explicit.Router().Primary().Model(), "an explicit model is used as given")
 }

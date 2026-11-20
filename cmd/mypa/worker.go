@@ -113,11 +113,17 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 	}
 	w.onStop(func() { _ = consumer.Close() })
 
-	// 4. Initialize Gemini LLM Client
-	llmClient, err := llm.NewClient(ctx, cfg.Gemini.APIKey, cfg.Gemini.Model)
+	// 4. The chat client: LLM_PROVIDER, its fallbacks and the local model (V4-02). Embeddings
+	// stay on Gemini (V4-03), set below with UseEmbedder.
+	localDomains, err := orchestrator.ParseDomainGroups(cfg.LocalDomains())
 	if err != nil {
-		return w, fmt.Errorf("gemini client: %w", err)
+		return w, err
 	}
+	llmClient, err := llm.NewFromConfig(ctx, cfg)
+	if err != nil {
+		return w, fmt.Errorf("llm client: %w", err)
+	}
+	slog.Info("chat model providers", "chain", cfg.ProviderChain(), "local_domains", cfg.LocalDomains())
 
 	// 5. Initialize OAuth Config
 	oauthCfg := calendar.NewOAuthConfig(&cfg.Google)
@@ -306,7 +312,8 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 		WithAccounts(dbClient, []byte(strings.TrimSpace(cfg.Server.LinkCodeSecret))).                     // /link (V4-32)
 		WithSignIn(dbClient, cfg.Server.DashboardURL).                                                    // /dashboard (V4-35)
 		WithQuietHours(dbClient).                                                                         // each person's zone and quiet hours (V4-05)
-		WithDelivery(delivery)                                                                            // reminders, briefings and notifications (V4-33)
+		WithDelivery(delivery).                                                                           // reminders, briefings and notifications (V4-33)
+		WithLocalDomains(localDomains)                                                                    // turns kept on the local model (V4-02)
 	recordLate = engine.RecordLateDelivery
 	if strings.TrimSpace(cfg.Server.LinkCodeSecret) == "" {
 		slog.Warn("LINK_CODE_SECRET is not set: linking a second app to a person (/link) is off")

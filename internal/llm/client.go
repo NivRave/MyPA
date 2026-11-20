@@ -3,23 +3,19 @@ package llm
 import (
 	"context"
 	"errors"
-	"fmt"
-	"log/slog"
-	"net/http"
 	"sync"
-	"time"
 
-	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/models"
 	"google.golang.org/genai"
 )
 
-// Client wraps the Gemini API client.
+// Client is the chat client the orchestrator uses (the LLMClient port). It chooses a turn's tools,
+// builds a provider-neutral Request and sends it through its Router, which picks the provider
+// (V4-02). Embeddings never go through the router: they are made by the Embedder (V4-03).
 type Client struct {
-	genaiClient *genai.Client
-	model       string
-	extraTools  []*genai.FunctionDeclaration
-	toolsMu     sync.RWMutex
+	router     *Router
+	extraTools []*genai.FunctionDeclaration
+	toolsMu    sync.RWMutex
 	// embedder makes the embeddings GenerateEmbedding returns. It is set separately (UseEmbedder)
 	// because the embedding model is not the chat model (V4-03).
 	embedder *Embedder
@@ -31,39 +27,26 @@ func (c *Client) UseEmbedder(e *Embedder) *Client {
 	return c
 }
 
-// NewClient initializes a new Gemini client.
+// NewClient builds a client that chats with Gemini only, without failover.
 func NewClient(ctx context.Context, apiKey, model string, opts ...func(*genai.ClientConfig)) (*Client, error) {
-	if apiKey == "" {
-		return nil, fmt.Errorf("gemini api key is required")
-	}
-	if model == "" {
-		model = config.DefaultGeminiModel // the one definition of the default (V4-09)
-	}
-
-	cfg := &genai.ClientConfig{
-		APIKey: apiKey,
-	}
-	for _, opt := range opts {
-		opt(cfg)
-	}
-
-	// Enforce explicit client timeout if not provided via functional options
-	if cfg.HTTPClient == nil {
-		cfg.HTTPClient = &http.Client{
-			Timeout: 90 * time.Second,
-		}
-	}
-
-	client, err := genai.NewClient(ctx, cfg)
+	gemini, err := NewGeminiProvider(ctx, apiKey, model, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create gemini client: %w", err)
+		return nil, err
 	}
-
-	return &Client{
-		genaiClient: client,
-		model:       model,
-	}, nil
+	router, err := NewRouter([]Provider{gemini}, nil)
+	if err != nil {
+		return nil, err
+	}
+	return NewClientWithRouter(router), nil
 }
+
+// NewClientWithRouter builds a client that sends its requests through router.
+func NewClientWithRouter(router *Router) *Client {
+	return &Client{router: router}
+}
+
+// Router is the client's router.
+func (c *Client) Router() *Router { return c.router }
 
 // SetExtraTools sets additional function declarations available to the LLM during Chat.
 func (c *Client) SetExtraTools(tools []*genai.FunctionDeclaration) {
@@ -113,163 +96,46 @@ func isNoTools(ctx context.Context) bool {
 	return IsNoTools(ctx)
 }
 
-
-// ContentBlockedError indicates that Gemini blocked the prompt or output due to a safety or content policy filter.
-type ContentBlockedError struct {
-	BlockReason string
-}
-
-func (e *ContentBlockedError) Error() string {
-	return fmt.Sprintf("gemini blocked prompt: %s", e.BlockReason)
-}
-
-// Response represents the output from the LLM, which could be either a text reply or a tool call.
-type Response struct {
-	Text        string
-	ToolCalls   []*genai.FunctionCall
-	IsError     bool
-}
-
-// Chat sends the conversation history and the new message to the LLM.
-// It provides the LLM with the CalendarEventTool so it can request actions.
+// Chat sends the conversation history and the new message to the model, through the router.
 func (c *Client) Chat(ctx context.Context, systemInstruction string, history []models.ChatMessage, newMessage string, photoData []byte, photoMimeType string) (*Response, error) {
-	// Build the session context
-	contents := []*genai.Content{}
-
-	for _, msg := range history {
-		// Map our internal role ("user", "assistant", or "function") to Gemini roles ("user" or "model")
-		role := msg.Role
-		if role == "assistant" {
-			role = "model"
-		}
-		if role == "function" {
-			role = "user" // Gemini considers function responses as user turns
-		}
-
-		var parts []*genai.Part
-		for _, tc := range msg.ToolCalls {
-			parts = append(parts, genai.NewPartFromFunctionCall(tc.Name, tc.Args))
-		}
-		for _, tr := range msg.ToolResponses {
-			parts = append(parts, genai.NewPartFromFunctionResponse(tr.Name, tr.Response))
-		}
-		if msg.Content != "" {
-			parts = append(parts, genai.NewPartFromText(msg.Content))
-		}
-		if len(msg.PhotoData) > 0 && msg.PhotoMimeType != "" {
-			parts = append(parts, genai.NewPartFromBytes(msg.PhotoData, msg.PhotoMimeType))
-		}
-
-		if len(parts) > 0 {
-			contents = append(contents, &genai.Content{
-				Role:  role,
-				Parts: parts,
-			})
-		}
-	}
-
-	// Add the new message
-	var newParts []*genai.Part
-	if newMessage != "" {
-		newParts = append(newParts, genai.NewPartFromText(newMessage))
-	}
-	if len(photoData) > 0 && photoMimeType != "" {
-		newParts = append(newParts, genai.NewPartFromBytes(photoData, photoMimeType))
-	}
-	if len(newParts) == 0 {
-		newParts = append(newParts, genai.NewPartFromText(" ")) // Fallback to avoid empty parts
-	}
-
-	contents = append(contents, &genai.Content{
-		Role:  "user",
-		Parts: newParts,
+	return c.router.Chat(ctx, Request{
+		System:        systemInstruction,
+		History:       history,
+		Message:       newMessage,
+		PhotoData:     photoData,
+		PhotoMimeType: photoMimeType,
+		Tools:         c.toolsFor(ctx),
 	})
+}
 
-	// Configure tools: check WithNoTools and WithActiveTools first, fallback to extraTools/CalendarEventTool
-	var tools []*genai.Tool
+// toolsFor is the turn's tool declarations: none under WithNoTools, the turn's own under
+// WithActiveTools, and otherwise the client's tools followed by the base tools, each name once.
+func (c *Client) toolsFor(ctx context.Context) []*genai.FunctionDeclaration {
 	if isNoTools(ctx) {
-		tools = nil
-	} else if scopedTools, ok := ActiveToolsFromContext(ctx); ok && len(scopedTools) > 0 {
-		tools = []*genai.Tool{{FunctionDeclarations: scopedTools}}
-	} else {
-		c.toolsMu.RLock()
-		if CalendarEventTool != nil {
-			if len(c.extraTools) > 0 {
-				seenNames := make(map[string]bool)
-				combinedDecls := make([]*genai.FunctionDeclaration, 0, len(CalendarEventTool.FunctionDeclarations)+len(c.extraTools))
-				for _, d := range c.extraTools {
-					if d != nil && d.Name != "" && !seenNames[d.Name] {
-						seenNames[d.Name] = true
-						combinedDecls = append(combinedDecls, d)
-					}
-				}
-				for _, d := range CalendarEventTool.FunctionDeclarations {
-					if d != nil && d.Name != "" && !seenNames[d.Name] {
-						seenNames[d.Name] = true
-						combinedDecls = append(combinedDecls, d)
-					}
-				}
-				tools = []*genai.Tool{{FunctionDeclarations: combinedDecls}}
-			} else {
-				tools = []*genai.Tool{CalendarEventTool}
+		return nil
+	}
+	if scoped, ok := ActiveToolsFromContext(ctx); ok && len(scoped) > 0 {
+		return scoped
+	}
+	c.toolsMu.RLock()
+	defer c.toolsMu.RUnlock()
+	if CalendarEventTool == nil {
+		return nil
+	}
+	if len(c.extraTools) == 0 {
+		return CalendarEventTool.FunctionDeclarations
+	}
+	seen := make(map[string]bool)
+	combined := make([]*genai.FunctionDeclaration, 0, len(CalendarEventTool.FunctionDeclarations)+len(c.extraTools))
+	for _, list := range [][]*genai.FunctionDeclaration{c.extraTools, CalendarEventTool.FunctionDeclarations} {
+		for _, d := range list {
+			if d != nil && d.Name != "" && !seen[d.Name] {
+				seen[d.Name] = true
+				combined = append(combined, d)
 			}
 		}
-		c.toolsMu.RUnlock()
 	}
-
-	config := &genai.GenerateContentConfig{
-		SystemInstruction: &genai.Content{
-			Parts: []*genai.Part{genai.NewPartFromText(systemInstruction)},
-		},
-		Tools:       tools,
-		Temperature: genai.Ptr[float32](0.2), // Low temp for more deterministic tool calling
-	}
-
-	resp, err := c.genaiClient.Models.GenerateContent(ctx, c.model, contents, config)
-	if err != nil {
-		slog.Error("gemini api error", "error", err)
-		return nil, fmt.Errorf("failed to generate content: %w", err)
-	}
-
-	if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "" {
-		return nil, &ContentBlockedError{BlockReason: string(resp.PromptFeedback.BlockReason)}
-	}
-
-	if len(resp.Candidates) == 0 {
-		return nil, fmt.Errorf("no candidates returned from model")
-	}
-
-	if resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
-		if resp.Candidates[0].FinishReason != "" && resp.Candidates[0].FinishReason != "STOP" {
-			if resp.Candidates[0].FinishReason == "SAFETY" || resp.Candidates[0].FinishReason == "BLOCKLIST" || resp.Candidates[0].FinishReason == "PROHIBITED_CONTENT" {
-				return nil, &ContentBlockedError{BlockReason: string(resp.Candidates[0].FinishReason)}
-			}
-			return nil, fmt.Errorf("model candidate finished with reason: %v", resp.Candidates[0].FinishReason)
-		}
-		return nil, fmt.Errorf("no content returned in model candidate")
-	}
-
-	var toolCalls []*genai.FunctionCall
-	var text string
-
-	for _, part := range resp.Candidates[0].Content.Parts {
-		if part.FunctionCall != nil {
-			slog.Info("LLM invoked function", "name", part.FunctionCall.Name)
-			toolCalls = append(toolCalls, part.FunctionCall)
-		} else if part.Text != "" {
-			text += part.Text
-		}
-	}
-
-	if len(toolCalls) > 0 {
-		return &Response{
-			ToolCalls: toolCalls,
-		}, nil
-	}
-
-	return &Response{
-		Text: text,
-	}, nil
+	return combined
 }
 
 // GenerateEmbedding returns the embedding of text, made by the client's embedder (UseEmbedder)

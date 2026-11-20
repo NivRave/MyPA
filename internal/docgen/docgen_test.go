@@ -27,7 +27,7 @@ func TestDocsAreUpToDate(t *testing.T) {
 	}
 	system, err := os.ReadFile(filepath.Join(repoRoot, "SYSTEM.md"))
 	require.NoError(t, err)
-	for _, region := range []string{"tool-catalog", "tool-tiers", ChannelMatrixRegion} {
+	for _, region := range []string{"tool-catalog", "tool-tiers", ChannelMatrixRegion, ProviderMatrixRegion} {
 		assert.True(t, strings.Contains(string(system), "<!-- BEGIN GENERATED: "+region+" -->"), "SYSTEM.md lost its %s region", region)
 	}
 }

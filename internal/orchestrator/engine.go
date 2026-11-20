@@ -45,15 +45,16 @@ type Engine struct {
 	toolRegistry       *Registry
 	eventBus           *events.EventBus
 	intentMatcher      IntentMatcher
-	calendar           CalendarConventions // week start / weekend for the system prompt (P2-6)
-	health             HealthReporter      // the /doctor report (V4-17); nil when not wired
-	accounts           AccountStore        // people's channel accounts and link codes (V4-32); nil when not wired
-	codeKey            []byte              // the server secret typed codes are hashed under (LINK_CODE_SECRET)
-	signIns            SignInStore         // dashboard sign-in links and sessions (V4-35); nil when not wired
-	dashboardURL       string              // where a sign-in link points (DASHBOARD_URL)
-	quietHours         QuietStore          // people's time zones and quiet hours (V4-05); nil = none held back
-	delivery           Delivery            // the proactive delivery policy (V4-33); nil = send directly
-	now                func() time.Time    // the scheduled checks' clock; nil = time.Now
+	calendar           CalendarConventions  // week start / weekend for the system prompt (P2-6)
+	health             HealthReporter       // the /doctor report (V4-17); nil when not wired
+	accounts           AccountStore         // people's channel accounts and link codes (V4-32); nil when not wired
+	codeKey            []byte               // the server secret typed codes are hashed under (LINK_CODE_SECRET)
+	signIns            SignInStore          // dashboard sign-in links and sessions (V4-35); nil when not wired
+	dashboardURL       string               // where a sign-in link points (DASHBOARD_URL)
+	quietHours         QuietStore           // people's time zones and quiet hours (V4-05); nil = none held back
+	delivery           Delivery             // the proactive delivery policy (V4-33); nil = send directly
+	now                func() time.Time     // the scheduled checks' clock; nil = time.Now
+	localDomains       map[DomainGroup]bool // turns kept on the local model (LLM_LOCAL_DOMAINS, V4-02)
 }
 
 var hebrewPrepositionRegex = regexp.MustCompile(`(^|[^\p{Hebrew}\w])([בלמכ])(\d+)`)

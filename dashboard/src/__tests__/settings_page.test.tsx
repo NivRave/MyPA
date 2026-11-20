@@ -20,6 +20,8 @@ describe('Settings page', () => {
     render(<SettingsPage />);
     expect(screen.getByText('Chat model')).toBeInTheDocument();
     expect(screen.getByText('GEMINI_MODEL')).toBeInTheDocument();
+    // V4-02: the provider is chosen on the server too.
+    expect(screen.getByText('LLM_PROVIDER')).toBeInTheDocument();
     expect(screen.getByText(/built-in default/i)).toBeInTheDocument();
   });
 });

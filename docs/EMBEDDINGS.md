@@ -23,7 +23,8 @@ model (V4-03).
 ## Changing the chat model or provider
 
 Nothing to do. The chat model does not touch the stored vectors or the recorded model: change
-`GEMINI_MODEL` (or, after V4-02, the provider) and restart.
+`GEMINI_MODEL`, or the provider (`LLM_PROVIDER` and its own key and model, V4-02), and restart.
+`GEMINI_API_KEY` stays set: embeddings use it whatever the chat provider.
 
 ## Commands
 

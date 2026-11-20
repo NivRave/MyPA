@@ -13,7 +13,7 @@ export default function SettingsPage() {
           <div>
             <h3 className="font-medium text-neutral-900">Chat model</h3>
             <p className="text-sm text-neutral-500">
-              Set on the server with <code className="font-mono text-neutral-700">GEMINI_MODEL</code>. When it is not set, the built-in default applies.
+              Set on the server: <code className="font-mono text-neutral-700">LLM_PROVIDER</code> chooses the provider and that provider&apos;s setting the model; for Gemini, <code className="font-mono text-neutral-700">GEMINI_MODEL</code>. When it is not set, the built-in default applies.
             </p>
           </div>
           <span className="text-sm text-neutral-500">Not changeable here</span>
