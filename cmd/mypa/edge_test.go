@@ -35,6 +35,9 @@ func TestEdgeRouting(t *testing.T) {
 		{name: "Route Twilio to Ingress", path: "/webhook/twilio", expectedBody: "ingress-response", expectedCode: 200},
 		{name: "Route Twilio Status to Ingress", path: "/webhook/twilio/status", expectedBody: "ingress-response", expectedCode: 200},
 		{name: "Route Auth to App", path: "/auth/google/login", expectedBody: "app-response", expectedCode: 200},
+		// V4-35: the dashboard's sign-in exchange, and nothing else under /auth/dashboard.
+		{name: "Route Dashboard Sign-in to App", path: "/auth/dashboard/signin", expectedBody: "app-response", expectedCode: 200},
+		{name: "Route Other Dashboard Auth Path Returns 404", path: "/auth/dashboard/other", expectedBody: "Not found\n", expectedCode: 404},
 		{name: "Route Not Found", path: "/unknown/route", expectedBody: "Not found\n", expectedCode: 404},
 		{name: "Route Playground Returns 404 From Edge", path: "/playground", expectedBody: "Not found\n", expectedCode: 404},
 		{name: "Route Health Returns 404 From Edge", path: "/health", expectedBody: "Not found\n", expectedCode: 404},

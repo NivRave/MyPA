@@ -11,6 +11,7 @@ import (
 
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/identity"
+	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/models"
 	"gorm.io/gorm"
 )
@@ -41,12 +42,21 @@ func Household(t testing.TB, c *db.Client, label string) models.Household {
 	return h
 }
 
-// Scope returns the scope of personKey with role ("admin" or "family") in the household
-// labelled label. The empty label yields the zero, invalid scope.
+// fixtureAccess reads households from the database and a person's access from the test's users
+// row (identitytest.LegacyAccess), for scopes of people the test never stored as members.
+type fixtureAccess struct{ *db.Client }
+
+func (f fixtureAccess) AccessOf(_ context.Context, u *models.User) (identity.Access, error) {
+	return identitytest.LegacyAccess(u), nil
+}
+
+// Scope returns the scope of personKey with role (a role name, or "admin" or "family" as stored
+// before V4-35) in the household labelled label, for a person the test did not store. The empty
+// label yields the zero, invalid scope.
 func Scope(t testing.TB, c *db.Client, label, personKey, role string) identity.Scope {
 	t.Helper()
 	h := Household(t, c, label)
-	s, err := identity.ForUser(context.Background(), c, &models.User{PlatformID: personKey, Role: role, HouseholdID: h.ID})
+	s, err := identity.ForUser(context.Background(), fixtureAccess{c}, &models.User{PlatformID: personKey, Role: role, HouseholdID: h.ID})
 	if err != nil {
 		if errors.Is(err, identity.ErrNoScope) {
 			return identity.Scope{}

@@ -2,7 +2,6 @@ import { revalidatePath } from "next/cache";
 import { DollarSign, PieChart, RefreshCw, AlertCircle, Plus, ArrowUpRight, ArrowDownLeft } from "lucide-react";
 import {
   graphqlFetch,
-  getDashboardFamilyGroup,
   type FinancialTransaction,
   type CategoryBudget,
   type RecurringBill,
@@ -11,8 +10,8 @@ import {
 export const dynamic = "force-dynamic";
 
 const GET_FINANCE_DATA_QUERY = `
-  query GetFinanceData($familyGroup: String!) {
-    financialTransactions(familyGroup: $familyGroup, limit: 50) {
+  query GetFinanceData {
+    financialTransactions(limit: 50) {
       id
       type
       category
@@ -24,14 +23,14 @@ const GET_FINANCE_DATA_QUERY = `
       source
       notes
     }
-    categoryBudgets(familyGroup: $familyGroup) {
+    categoryBudgets {
       id
       category
       monthlyLimit
       currency
       alertThresholdPct
     }
-    recurringBills(familyGroup: $familyGroup) {
+    recurringBills {
       id
       name
       category
@@ -45,18 +44,18 @@ const GET_FINANCE_DATA_QUERY = `
 `;
 
 const LOG_TRANSACTION_MUTATION = `
-  mutation LogTx($familyGroup: String!, $type: String!, $category: String!, $merchant: String!, $amount: Float!, $currency: String!, $notes: String) {
-    logFinancialTransaction(familyGroup: $familyGroup, type: $type, category: $category, merchant: $merchant, amount: $amount, currency: $currency, notes: $notes) { id }
+  mutation LogTx($type: String!, $category: String!, $merchant: String!, $amount: Float!, $currency: String!, $notes: String) {
+    logFinancialTransaction(type: $type, category: $category, merchant: $merchant, amount: $amount, currency: $currency, notes: $notes) { id }
   }
 `;
 
 const SET_BUDGET_MUTATION = `
-  mutation SetBudget($familyGroup: String!, $category: String!, $monthlyLimit: Float!, $currency: String!) {
-    setCategoryBudget(familyGroup: $familyGroup, category: $category, monthlyLimit: $monthlyLimit, currency: $currency) { id }
+  mutation SetBudget($category: String!, $monthlyLimit: Float!, $currency: String!) {
+    setCategoryBudget(category: $category, monthlyLimit: $monthlyLimit, currency: $currency) { id }
   }
 `;
 
-async function getFinanceData(familyGroup: string = getDashboardFamilyGroup()): Promise<{
+async function getFinanceData(): Promise<{
   transactions: FinancialTransaction[];
   budgets: CategoryBudget[];
   bills: RecurringBill[];
@@ -66,7 +65,7 @@ async function getFinanceData(familyGroup: string = getDashboardFamilyGroup()): 
       financialTransactions: FinancialTransaction[];
       categoryBudgets: CategoryBudget[];
       recurringBills: RecurringBill[];
-    }>(GET_FINANCE_DATA_QUERY, { familyGroup });
+    }>(GET_FINANCE_DATA_QUERY);
 
     return {
       transactions: data.financialTransactions || [],
@@ -80,8 +79,7 @@ async function getFinanceData(familyGroup: string = getDashboardFamilyGroup()): 
 }
 
 export default async function FinancePage() {
-  const familyGroup = getDashboardFamilyGroup();
-  const { transactions, budgets, bills } = await getFinanceData(familyGroup);
+  const { transactions, budgets, bills } = await getFinanceData();
 
   // Compute spend totals by category
   const spendByCategory: Record<string, number> = {};
@@ -108,7 +106,6 @@ export default async function FinancePage() {
 
     try {
       await graphqlFetch(LOG_TRANSACTION_MUTATION, {
-        familyGroup: getDashboardFamilyGroup(),
         type: typeArg,
         category,
         merchant,
@@ -130,7 +127,6 @@ export default async function FinancePage() {
 
     try {
       await graphqlFetch(SET_BUDGET_MUTATION, {
-        familyGroup: getDashboardFamilyGroup(),
         category,
         monthlyLimit,
         currency,

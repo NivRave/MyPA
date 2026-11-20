@@ -288,9 +288,8 @@ services:
       # V4-01: the dashboard talks to the app directly.
       - NEXT_PUBLIC_APP_URL=http://localhost:8000
       - GRAPHQL_ENDPOINT=http://app:8000/graphql
-      - DASHBOARD_API_SECRET=${DASHBOARD_API_SECRET:-}
-      # Must match the app's: the dashboard secret is scoped to this family group (P3-2)
-      - DASHBOARD_FAMILY_GROUP=${DASHBOARD_FAMILY_GROUP:-}
+      # V4-35: no shared secret. Each person signs in with /dashboard in chat; the dashboard
+      # forwards their session to the app, which reads their role on every request.
     depends_on:
       app:
         condition: service_started

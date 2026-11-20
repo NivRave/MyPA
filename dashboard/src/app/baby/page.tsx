@@ -2,7 +2,7 @@ import { revalidatePath } from "next/cache";
 import { Baby, Heart, Scale, Ruler, AlertCircle, Plus, Sparkles, Check, Package, Clock } from "lucide-react";
 import {
   graphqlFetch,
-  getDashboardFamilyGroup,
+  getHouseholdName,
   type BabyProfile,
   type BabyCareLog,
   type BabyInventoryItem,
@@ -62,8 +62,8 @@ function getMilestones(dob: Date, now: Date): string[] {
 }
 
 const GET_BABY_DATA_QUERY = `
-  query GetBabyData($familyGroup: String!) {
-    babyProfiles(familyGroup: $familyGroup) {
+  query GetBabyData {
+    babyProfiles {
       id
       name
       dateOfBirth
@@ -75,7 +75,7 @@ const GET_BABY_DATA_QUERY = `
       allergiesNotes
       updatedAt
     }
-    babyInventory(familyGroup: $familyGroup) {
+    babyInventory {
       id
       itemName
       quantityRemaining
@@ -101,18 +101,18 @@ const GET_BABY_LOGS_QUERY = `
 `;
 
 const LOG_CARE_MUTATION = `
-  mutation LogCare($babyId: ID!, $familyGroup: String!, $logType: String!, $valueNumeric: Float, $unit: String, $details: String) {
-    logBabyCare(babyId: $babyId, familyGroup: $familyGroup, logType: $logType, valueNumeric: $valueNumeric, unit: $unit, details: $details) { id }
+  mutation LogCare($babyId: ID!, $logType: String!, $valueNumeric: Float, $unit: String, $details: String) {
+    logBabyCare(babyId: $babyId, logType: $logType, valueNumeric: $valueNumeric, unit: $unit, details: $details) { id }
   }
 `;
 
 const UPDATE_INVENTORY_MUTATION = `
-  mutation UpdateInv($familyGroup: String!, $itemName: String!, $quantityRemaining: Float!, $unit: String!, $lowThreshold: Float!) {
-    updateBabyInventory(familyGroup: $familyGroup, itemName: $itemName, quantityRemaining: $quantityRemaining, unit: $unit, lowThreshold: $lowThreshold) { id }
+  mutation UpdateInv($itemName: String!, $quantityRemaining: Float!, $unit: String!, $lowThreshold: Float!) {
+    updateBabyInventory(itemName: $itemName, quantityRemaining: $quantityRemaining, unit: $unit, lowThreshold: $lowThreshold) { id }
   }
 `;
 
-async function getBabyData(familyGroup: string = getDashboardFamilyGroup()): Promise<{
+async function getBabyData(): Promise<{
   profile: BabyProfile | null;
   logs: BabyCareLog[];
   inventory: BabyInventoryItem[];
@@ -125,7 +125,7 @@ async function getBabyData(familyGroup: string = getDashboardFamilyGroup()): Pro
     const data = await graphqlFetch<{
       babyProfiles: BabyProfile[];
       babyInventory: BabyInventoryItem[];
-    }>(GET_BABY_DATA_QUERY, { familyGroup });
+    }>(GET_BABY_DATA_QUERY);
 
     const baby = data.babyProfiles?.[0] || null;
     let logs: BabyCareLog[] = [];
@@ -160,8 +160,8 @@ async function getBabyData(familyGroup: string = getDashboardFamilyGroup()): Pro
 }
 
 export default async function BabyTrackerPage() {
-  const familyGroup = getDashboardFamilyGroup();
-  const { profile, logs, inventory, dob, ageString, milestoneSuggestions } = await getBabyData(familyGroup);
+  const familyGroup = await getHouseholdName();
+  const { profile, logs, inventory, dob, ageString, milestoneSuggestions } = await getBabyData();
 
   async function logCare(formData: FormData) {
     "use server";
@@ -178,7 +178,6 @@ export default async function BabyTrackerPage() {
     try {
       await graphqlFetch(LOG_CARE_MUTATION, {
         babyId,
-        familyGroup: getDashboardFamilyGroup(),
         logType,
         valueNumeric: value,
         unit,
@@ -199,7 +198,6 @@ export default async function BabyTrackerPage() {
 
     try {
       await graphqlFetch(UPDATE_INVENTORY_MUTATION, {
-        familyGroup: getDashboardFamilyGroup(),
         itemName,
         quantityRemaining: qty,
         unit,

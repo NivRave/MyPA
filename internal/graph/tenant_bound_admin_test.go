@@ -11,7 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// P3-2 end-to-end: the dashboard (tenant-bound admin) may act on members of its own family only.
+// P3-2 end-to-end, as of V4-35: before V4-35 the dashboard (a tenant-bound admin) could change the
+// preferences of a member of its own family and a global admin anyone's. Since V4-35 an owner
+// sees and changes only their own personal data (ADR 0002 Decision 1): a request naming another
+// member, in the household or outside it, acts on the caller's own preferences.
 func TestTenantBoundAdmin_UserPreferenceScopedToFamily(t *testing.T) {
 	resolver, _, cleanup := setupTestResolver(t)
 	defer cleanup()
@@ -24,21 +27,29 @@ func TestTenantBoundAdmin_UserPreferenceScopedToFamily(t *testing.T) {
 	require.NoError(t, resolver.DB.UpsertUser(models.User{PlatformID: alice, Name: "Alice", Role: "family", FamilyGroup: famDash, HouseholdID: householdtest.Household(t, resolver.DB, famDash).ID}))
 	require.NoError(t, resolver.DB.UpsertUser(models.User{PlatformID: bob, Name: "Bob", Role: "family", FamilyGroup: famOther, HouseholdID: householdtest.Household(t, resolver.DB, famOther).ID}))
 
-	dash := WithClaims(context.Background(), &AuthClaims{UserID: "dashboard-service", Role: "admin", FamilyGroup: famDash, TenantBound: true})
+	dash := signedIn(t, resolver, famDash, "dashboard-service", "admin")
 	lang := "he"
 
-	_, err := resolver.Mutation().SaveUserPreference(dash, alice, &lang, nil, nil, nil, nil, nil)
-	require.NoError(t, err, "dashboard may manage a member of its own family")
+	for _, target := range []string{alice, bob} {
+		got, err := resolver.Mutation().SaveUserPreference(dash, target, &lang, nil, nil, nil, nil, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "dashboard-service", got.UserID, "an owner's request for %s acts on the owner's own preferences", target)
+		read, err := resolver.Query().UserPreference(dash, target)
+		require.NoError(t, err)
+		require.NotNil(t, read)
+		assert.Equal(t, "dashboard-service", read.UserID, "an owner never reads another member's preferences")
+	}
+	for _, member := range []string{alice, bob} {
+		var n int64
+		require.NoError(t, resolver.DB.DB.Table("user_preferences").Where("user_id = ?", member).Count(&n).Error)
+		assert.Zero(t, n, "%s's preferences were not written by someone else", member)
+	}
 
-	_, err = resolver.Mutation().SaveUserPreference(dash, bob, &lang, nil, nil, nil, nil, nil)
-	assert.Error(t, err, "dashboard must not modify a user of another family")
-	_, err = resolver.Query().UserPreference(dash, bob)
-	assert.Error(t, err, "dashboard must not read a user of another family")
-
-	// A global admin (JWT role admin, not tenant-bound) keeps cross-family access.
-	root := WithClaims(context.Background(), &AuthClaims{UserID: "root", Role: "admin"})
-	_, err = resolver.Query().UserPreference(root, bob)
-	assert.NoError(t, err)
+	// The global admin is gone: the install's operator, signed in, reads only their own.
+	root := signedIn(t, resolver, "", "root", "admin")
+	read, err := resolver.Query().UserPreference(root, bob)
+	require.NoError(t, err)
+	assert.Nil(t, read, "root has no preferences of its own; bob's are never returned")
 }
 
 // Unauthenticated contexts are rejected rather than defaulting to a tenant or "system".

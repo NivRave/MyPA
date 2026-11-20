@@ -187,36 +187,45 @@ type ComplexityRoot struct {
 		TimeZone func(childComplexity int) int
 	}
 
+	Me struct {
+		Household  func(childComplexity int) int
+		IsOperator func(childComplexity int) int
+		Name       func(childComplexity int) int
+		PersonID   func(childComplexity int) int
+		Role       func(childComplexity int) int
+	}
+
 	Mutation struct {
 		CompleteHomeMaintenance func(childComplexity int, id string) int
 		CompleteSharedTask      func(childComplexity int, id string, completedByUserID string) int
-		CreateScheduleEvent     func(childComplexity int, topic string, title string, description *string, startTime time.Time, endTime time.Time, tagsJSON *string, syncToGoogle *bool, isShared *bool, familyGroup *string) int
-		CreateSharedTask        func(childComplexity int, familyGroup string, topic string, title string, dueTime *time.Time, assignedToUserID *string) int
+		CreateScheduleEvent     func(childComplexity int, topic string, title string, description *string, startTime time.Time, endTime time.Time, tagsJSON *string, syncToGoogle *bool, isShared *bool) int
+		CreateSharedTask        func(childComplexity int, topic string, title string, dueTime *time.Time, assignedToUserID *string) int
 		DeleteAutomationRule    func(childComplexity int, id string) int
 		DeleteScheduleEvent     func(childComplexity int, id string) int
 		DeleteTopicMemory       func(childComplexity int, id string) int
-		GeneratePairingCode     func(childComplexity int, role string, familyGroup string) int
-		LogBabyCare             func(childComplexity int, babyID string, familyGroup string, logType string, valueNumeric *float64, unit *string, details *string, timestamp *time.Time) int
-		LogFinancialTransaction func(childComplexity int, familyGroup string, typeArg string, category string, merchant string, amount float64, currency string, notes *string, isShared *bool) int
+		GeneratePairingCode     func(childComplexity int, role string) int
+		LogBabyCare             func(childComplexity int, babyID string, logType string, valueNumeric *float64, unit *string, details *string, timestamp *time.Time) int
+		LogFinancialTransaction func(childComplexity int, typeArg string, category string, merchant string, amount float64, currency string, notes *string, isShared *bool) int
 		PinTopicMemory          func(childComplexity int, id string, isPinned bool) int
-		RegisterExternalAPI     func(childComplexity int, name string, baseURL string, defaultMethod *string, description *string, familyGroup *string) int
+		RegisterExternalAPI     func(childComplexity int, name string, baseURL string, defaultMethod *string, description *string) int
 		RollbackMutation        func(childComplexity int, mutationID string) int
-		SaveAutomationRule      func(childComplexity int, name string, triggerType string, triggerTopic string, conditionJSON string, actionInstruction string, isActive *bool, familyGroup *string) int
-		SaveHomeMaintenanceItem func(childComplexity int, familyGroup string, taskName string, category string, intervalDays int, nextDueAt time.Time, contractorInfo *string, notes *string) int
-		SaveHouseContract       func(childComplexity int, familyGroup string, recordType string, title string, vendorOrLandlord *string, amount *float64, currency *string, expirationOrRenewalDate *time.Time, noticePeriodDays *int, keyTermsJSON *string) int
-		SavePersonalCrmContact  func(childComplexity int, familyGroup string, personName string, relationship *string, importantDatesJSON *string, giftIdeasAndSizes *string, medicalNotes *string) int
-		SaveRecurringBill       func(childComplexity int, familyGroup string, name string, category string, expectedAmount float64, currency string, billingCycle string, nextDueDay int, autoRenew bool) int
-		SaveTopicCalendarConfig func(childComplexity int, topic string, colorID *string, prefixTag *string, includeInMorningBriefing *bool, syncToGoogleDefault *bool, familyGroup *string) int
-		SaveTopicMemory         func(childComplexity int, topic string, subtopic string, fact string, tagsJSON *string, scope *string, familyGroup *string) int
+		SaveAutomationRule      func(childComplexity int, name string, triggerType string, triggerTopic string, conditionJSON string, actionInstruction string, isActive *bool) int
+		SaveHomeMaintenanceItem func(childComplexity int, taskName string, category string, intervalDays int, nextDueAt time.Time, contractorInfo *string, notes *string) int
+		SaveHouseContract       func(childComplexity int, recordType string, title string, vendorOrLandlord *string, amount *float64, currency *string, expirationOrRenewalDate *time.Time, noticePeriodDays *int, keyTermsJSON *string) int
+		SavePersonalCrmContact  func(childComplexity int, personName string, relationship *string, importantDatesJSON *string, giftIdeasAndSizes *string, medicalNotes *string) int
+		SaveRecurringBill       func(childComplexity int, name string, category string, expectedAmount float64, currency string, billingCycle string, nextDueDay int, autoRenew bool) int
+		SaveTopicCalendarConfig func(childComplexity int, topic string, colorID *string, prefixTag *string, includeInMorningBriefing *bool, syncToGoogleDefault *bool) int
+		SaveTopicMemory         func(childComplexity int, topic string, subtopic string, fact string, tagsJSON *string, scope *string) int
 		SaveUserPreference      func(childComplexity int, userID string, preferredLanguage *string, tonePersona *string, defaultCurrency *string, quietHoursStart *string, quietHoursEnd *string, standingInstructions *string) int
-		SaveVehicleAsset        func(childComplexity int, familyGroup string, name string, licensePlate string, insuranceExpiry *time.Time, annualTestExpiry *time.Time, currentMileageKm *int, nextServiceMileageKm *int, notes *string) int
-		SetCategoryBudget       func(childComplexity int, familyGroup string, category string, monthlyLimit float64, currency string, alertThresholdPct *float64) int
+		SaveVehicleAsset        func(childComplexity int, name string, licensePlate string, insuranceExpiry *time.Time, annualTestExpiry *time.Time, currentMileageKm *int, nextServiceMileageKm *int, notes *string) int
+		SetCategoryBudget       func(childComplexity int, category string, monthlyLimit float64, currency string, alertThresholdPct *float64) int
+		SignOut                 func(childComplexity int) int
 		ToggleAutomationRule    func(childComplexity int, id string, isActive bool) int
-		UpdateBabyInventory     func(childComplexity int, familyGroup string, itemName string, quantityRemaining float64, unit string, lowThreshold float64) int
+		UpdateBabyInventory     func(childComplexity int, itemName string, quantityRemaining float64, unit string, lowThreshold float64) int
 		UpdateHousehold         func(childComplexity int, name *string, language *string, timeZone *string, currency *string) int
-		UpdateSharedSpace       func(childComplexity int, familyGroup string, topic string, sharedWithUserID string, canView bool, canEdit bool, notifyMode string) int
-		UpsertBabyProfile       func(childComplexity int, familyGroup string, name string, dateOfBirth time.Time, gender string, currentWeightGrams *int, heightCm *float64, pediatricianInfo *string, allergiesNotes *string) int
-		UpsertEntityProfile     func(childComplexity int, topic string, entityType string, entityName string, attributesJSON string, familyGroup *string) int
+		UpdateSharedSpace       func(childComplexity int, topic string, sharedWithUserID string, canView bool, canEdit bool, notifyMode string) int
+		UpsertBabyProfile       func(childComplexity int, name string, dateOfBirth time.Time, gender string, currentWeightGrams *int, heightCm *float64, pediatricianInfo *string, allergiesNotes *string) int
+		UpsertEntityProfile     func(childComplexity int, topic string, entityType string, entityName string, attributesJSON string) int
 	}
 
 	MutationLog struct {
@@ -257,31 +266,32 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
-		ActivePairingCodes    func(childComplexity int, familyGroup *string) int
-		AuditSessions         func(childComplexity int, familyGroup *string, limit *int) int
-		AutomationRules       func(childComplexity int, familyGroup *string) int
-		BabyCareLogs          func(childComplexity int, babyID string, familyGroup *string, logType *string, limit *int) int
-		BabyInventory         func(childComplexity int, familyGroup string) int
-		BabyProfiles          func(childComplexity int, familyGroup string) int
-		CategoryBudgets       func(childComplexity int, familyGroup string) int
-		EntityProfiles        func(childComplexity int, topic *string, entityType *string, familyGroup *string) int
-		ExternalAPIConnectors func(childComplexity int, familyGroup *string) int
-		FinancialTransactions func(childComplexity int, familyGroup string, category *string, limit *int) int
-		HomeMaintenanceItems  func(childComplexity int, familyGroup string, category *string) int
-		HouseContracts        func(childComplexity int, familyGroup string, recordType *string) int
+		ActivePairingCodes    func(childComplexity int) int
+		AuditSessions         func(childComplexity int, limit *int) int
+		AutomationRules       func(childComplexity int) int
+		BabyCareLogs          func(childComplexity int, babyID string, logType *string, limit *int) int
+		BabyInventory         func(childComplexity int) int
+		BabyProfiles          func(childComplexity int) int
+		CategoryBudgets       func(childComplexity int) int
+		EntityProfiles        func(childComplexity int, topic *string, entityType *string) int
+		ExternalAPIConnectors func(childComplexity int) int
+		FinancialTransactions func(childComplexity int, category *string, limit *int) int
+		HomeMaintenanceItems  func(childComplexity int, category *string) int
+		HouseContracts        func(childComplexity int, recordType *string) int
 		Household             func(childComplexity int) int
-		MutationLogs          func(childComplexity int, familyGroup *string, topic *string, limit *int) int
-		PersonalCrmContacts   func(childComplexity int, familyGroup string) int
-		RecurringBills        func(childComplexity int, familyGroup string) int
-		ScheduleEvents        func(childComplexity int, topic *string, familyGroup *string, startTime *time.Time, endTime *time.Time) int
-		SharedSpaces          func(childComplexity int, familyGroup string) int
-		SharedTasks           func(childComplexity int, familyGroup string, topic *string, isCompleted *bool) int
-		TopicCalendarConfigs  func(childComplexity int, userID *string, familyGroup *string) int
-		TopicMemories         func(childComplexity int, topic *string, familyGroup *string, includeSuperseded *bool) int
+		Me                    func(childComplexity int) int
+		MutationLogs          func(childComplexity int, topic *string, limit *int) int
+		PersonalCrmContacts   func(childComplexity int) int
+		RecurringBills        func(childComplexity int) int
+		ScheduleEvents        func(childComplexity int, topic *string, startTime *time.Time, endTime *time.Time) int
+		SharedSpaces          func(childComplexity int) int
+		SharedTasks           func(childComplexity int, topic *string, isCompleted *bool) int
+		TopicCalendarConfigs  func(childComplexity int, userID *string) int
+		TopicMemories         func(childComplexity int, topic *string, includeSuperseded *bool) int
 		UserPreference        func(childComplexity int, userID string) int
-		UserSessions          func(childComplexity int, familyGroup *string) int
+		UserSessions          func(childComplexity int) int
 		Users                 func(childComplexity int) int
-		VehicleAssets         func(childComplexity int, familyGroup string) int
+		VehicleAssets         func(childComplexity int) int
 	}
 
 	RecurringBill struct {
@@ -419,62 +429,64 @@ type ComplexityRoot struct {
 // region    ************************** generated!.gotpl **************************
 
 type MutationResolver interface {
-	GeneratePairingCode(ctx context.Context, role string, familyGroup string) (*model.PairingCode, error)
+	SignOut(ctx context.Context) (bool, error)
+	GeneratePairingCode(ctx context.Context, role string) (*model.PairingCode, error)
 	UpdateHousehold(ctx context.Context, name *string, language *string, timeZone *string, currency *string) (*model.Household, error)
-	SaveTopicMemory(ctx context.Context, topic string, subtopic string, fact string, tagsJSON *string, scope *string, familyGroup *string) (*model.TopicMemory, error)
+	SaveTopicMemory(ctx context.Context, topic string, subtopic string, fact string, tagsJSON *string, scope *string) (*model.TopicMemory, error)
 	DeleteTopicMemory(ctx context.Context, id string) (bool, error)
 	PinTopicMemory(ctx context.Context, id string, isPinned bool) (*model.TopicMemory, error)
-	UpsertEntityProfile(ctx context.Context, topic string, entityType string, entityName string, attributesJSON string, familyGroup *string) (*model.EntityProfile, error)
-	UpdateSharedSpace(ctx context.Context, familyGroup string, topic string, sharedWithUserID string, canView bool, canEdit bool, notifyMode string) (*model.SharedSpace, error)
-	CreateSharedTask(ctx context.Context, familyGroup string, topic string, title string, dueTime *time.Time, assignedToUserID *string) (*model.SharedTaskReminder, error)
+	UpsertEntityProfile(ctx context.Context, topic string, entityType string, entityName string, attributesJSON string) (*model.EntityProfile, error)
+	UpdateSharedSpace(ctx context.Context, topic string, sharedWithUserID string, canView bool, canEdit bool, notifyMode string) (*model.SharedSpace, error)
+	CreateSharedTask(ctx context.Context, topic string, title string, dueTime *time.Time, assignedToUserID *string) (*model.SharedTaskReminder, error)
 	CompleteSharedTask(ctx context.Context, id string, completedByUserID string) (*model.SharedTaskReminder, error)
-	CreateScheduleEvent(ctx context.Context, topic string, title string, description *string, startTime time.Time, endTime time.Time, tagsJSON *string, syncToGoogle *bool, isShared *bool, familyGroup *string) (*model.ScheduleEvent, error)
+	CreateScheduleEvent(ctx context.Context, topic string, title string, description *string, startTime time.Time, endTime time.Time, tagsJSON *string, syncToGoogle *bool, isShared *bool) (*model.ScheduleEvent, error)
 	DeleteScheduleEvent(ctx context.Context, id string) (bool, error)
-	SaveTopicCalendarConfig(ctx context.Context, topic string, colorID *string, prefixTag *string, includeInMorningBriefing *bool, syncToGoogleDefault *bool, familyGroup *string) (*model.TopicCalendarConfig, error)
-	UpsertBabyProfile(ctx context.Context, familyGroup string, name string, dateOfBirth time.Time, gender string, currentWeightGrams *int, heightCm *float64, pediatricianInfo *string, allergiesNotes *string) (*model.BabyProfile, error)
-	LogBabyCare(ctx context.Context, babyID string, familyGroup string, logType string, valueNumeric *float64, unit *string, details *string, timestamp *time.Time) (*model.BabyCareLog, error)
-	UpdateBabyInventory(ctx context.Context, familyGroup string, itemName string, quantityRemaining float64, unit string, lowThreshold float64) (*model.BabyInventoryItem, error)
-	SaveHouseContract(ctx context.Context, familyGroup string, recordType string, title string, vendorOrLandlord *string, amount *float64, currency *string, expirationOrRenewalDate *time.Time, noticePeriodDays *int, keyTermsJSON *string) (*model.HouseContractRecord, error)
-	SaveHomeMaintenanceItem(ctx context.Context, familyGroup string, taskName string, category string, intervalDays int, nextDueAt time.Time, contractorInfo *string, notes *string) (*model.HomeMaintenanceItem, error)
+	SaveTopicCalendarConfig(ctx context.Context, topic string, colorID *string, prefixTag *string, includeInMorningBriefing *bool, syncToGoogleDefault *bool) (*model.TopicCalendarConfig, error)
+	UpsertBabyProfile(ctx context.Context, name string, dateOfBirth time.Time, gender string, currentWeightGrams *int, heightCm *float64, pediatricianInfo *string, allergiesNotes *string) (*model.BabyProfile, error)
+	LogBabyCare(ctx context.Context, babyID string, logType string, valueNumeric *float64, unit *string, details *string, timestamp *time.Time) (*model.BabyCareLog, error)
+	UpdateBabyInventory(ctx context.Context, itemName string, quantityRemaining float64, unit string, lowThreshold float64) (*model.BabyInventoryItem, error)
+	SaveHouseContract(ctx context.Context, recordType string, title string, vendorOrLandlord *string, amount *float64, currency *string, expirationOrRenewalDate *time.Time, noticePeriodDays *int, keyTermsJSON *string) (*model.HouseContractRecord, error)
+	SaveHomeMaintenanceItem(ctx context.Context, taskName string, category string, intervalDays int, nextDueAt time.Time, contractorInfo *string, notes *string) (*model.HomeMaintenanceItem, error)
 	CompleteHomeMaintenance(ctx context.Context, id string) (*model.HomeMaintenanceItem, error)
-	SaveVehicleAsset(ctx context.Context, familyGroup string, name string, licensePlate string, insuranceExpiry *time.Time, annualTestExpiry *time.Time, currentMileageKm *int, nextServiceMileageKm *int, notes *string) (*model.VehicleAsset, error)
-	LogFinancialTransaction(ctx context.Context, familyGroup string, typeArg string, category string, merchant string, amount float64, currency string, notes *string, isShared *bool) (*model.FinancialTransaction, error)
-	SetCategoryBudget(ctx context.Context, familyGroup string, category string, monthlyLimit float64, currency string, alertThresholdPct *float64) (*model.CategoryBudget, error)
-	SaveRecurringBill(ctx context.Context, familyGroup string, name string, category string, expectedAmount float64, currency string, billingCycle string, nextDueDay int, autoRenew bool) (*model.RecurringBill, error)
-	RegisterExternalAPI(ctx context.Context, name string, baseURL string, defaultMethod *string, description *string, familyGroup *string) (*model.ExternalAPIConnector, error)
-	SaveAutomationRule(ctx context.Context, name string, triggerType string, triggerTopic string, conditionJSON string, actionInstruction string, isActive *bool, familyGroup *string) (*model.AutomationRule, error)
+	SaveVehicleAsset(ctx context.Context, name string, licensePlate string, insuranceExpiry *time.Time, annualTestExpiry *time.Time, currentMileageKm *int, nextServiceMileageKm *int, notes *string) (*model.VehicleAsset, error)
+	LogFinancialTransaction(ctx context.Context, typeArg string, category string, merchant string, amount float64, currency string, notes *string, isShared *bool) (*model.FinancialTransaction, error)
+	SetCategoryBudget(ctx context.Context, category string, monthlyLimit float64, currency string, alertThresholdPct *float64) (*model.CategoryBudget, error)
+	SaveRecurringBill(ctx context.Context, name string, category string, expectedAmount float64, currency string, billingCycle string, nextDueDay int, autoRenew bool) (*model.RecurringBill, error)
+	RegisterExternalAPI(ctx context.Context, name string, baseURL string, defaultMethod *string, description *string) (*model.ExternalAPIConnector, error)
+	SaveAutomationRule(ctx context.Context, name string, triggerType string, triggerTopic string, conditionJSON string, actionInstruction string, isActive *bool) (*model.AutomationRule, error)
 	ToggleAutomationRule(ctx context.Context, id string, isActive bool) (*model.AutomationRule, error)
 	DeleteAutomationRule(ctx context.Context, id string) (bool, error)
 	SaveUserPreference(ctx context.Context, userID string, preferredLanguage *string, tonePersona *string, defaultCurrency *string, quietHoursStart *string, quietHoursEnd *string, standingInstructions *string) (*model.UserPreference, error)
-	SavePersonalCrmContact(ctx context.Context, familyGroup string, personName string, relationship *string, importantDatesJSON *string, giftIdeasAndSizes *string, medicalNotes *string) (*model.PersonalCRMContact, error)
+	SavePersonalCrmContact(ctx context.Context, personName string, relationship *string, importantDatesJSON *string, giftIdeasAndSizes *string, medicalNotes *string) (*model.PersonalCRMContact, error)
 	RollbackMutation(ctx context.Context, mutationID string) (bool, error)
 }
 type QueryResolver interface {
+	Me(ctx context.Context) (*model.Me, error)
 	Household(ctx context.Context) (*model.Household, error)
 	Users(ctx context.Context) ([]*model.User, error)
-	ActivePairingCodes(ctx context.Context, familyGroup *string) ([]*model.PairingCode, error)
-	TopicMemories(ctx context.Context, topic *string, familyGroup *string, includeSuperseded *bool) ([]*model.TopicMemory, error)
-	EntityProfiles(ctx context.Context, topic *string, entityType *string, familyGroup *string) ([]*model.EntityProfile, error)
-	SharedSpaces(ctx context.Context, familyGroup string) ([]*model.SharedSpace, error)
-	SharedTasks(ctx context.Context, familyGroup string, topic *string, isCompleted *bool) ([]*model.SharedTaskReminder, error)
-	ScheduleEvents(ctx context.Context, topic *string, familyGroup *string, startTime *time.Time, endTime *time.Time) ([]*model.ScheduleEvent, error)
-	TopicCalendarConfigs(ctx context.Context, userID *string, familyGroup *string) ([]*model.TopicCalendarConfig, error)
-	BabyProfiles(ctx context.Context, familyGroup string) ([]*model.BabyProfile, error)
-	BabyCareLogs(ctx context.Context, babyID string, familyGroup *string, logType *string, limit *int) ([]*model.BabyCareLog, error)
-	BabyInventory(ctx context.Context, familyGroup string) ([]*model.BabyInventoryItem, error)
-	HouseContracts(ctx context.Context, familyGroup string, recordType *string) ([]*model.HouseContractRecord, error)
-	HomeMaintenanceItems(ctx context.Context, familyGroup string, category *string) ([]*model.HomeMaintenanceItem, error)
-	VehicleAssets(ctx context.Context, familyGroup string) ([]*model.VehicleAsset, error)
-	FinancialTransactions(ctx context.Context, familyGroup string, category *string, limit *int) ([]*model.FinancialTransaction, error)
-	CategoryBudgets(ctx context.Context, familyGroup string) ([]*model.CategoryBudget, error)
-	RecurringBills(ctx context.Context, familyGroup string) ([]*model.RecurringBill, error)
-	ExternalAPIConnectors(ctx context.Context, familyGroup *string) ([]*model.ExternalAPIConnector, error)
-	AutomationRules(ctx context.Context, familyGroup *string) ([]*model.AutomationRule, error)
+	ActivePairingCodes(ctx context.Context) ([]*model.PairingCode, error)
+	TopicMemories(ctx context.Context, topic *string, includeSuperseded *bool) ([]*model.TopicMemory, error)
+	EntityProfiles(ctx context.Context, topic *string, entityType *string) ([]*model.EntityProfile, error)
+	SharedSpaces(ctx context.Context) ([]*model.SharedSpace, error)
+	SharedTasks(ctx context.Context, topic *string, isCompleted *bool) ([]*model.SharedTaskReminder, error)
+	ScheduleEvents(ctx context.Context, topic *string, startTime *time.Time, endTime *time.Time) ([]*model.ScheduleEvent, error)
+	TopicCalendarConfigs(ctx context.Context, userID *string) ([]*model.TopicCalendarConfig, error)
+	BabyProfiles(ctx context.Context) ([]*model.BabyProfile, error)
+	BabyCareLogs(ctx context.Context, babyID string, logType *string, limit *int) ([]*model.BabyCareLog, error)
+	BabyInventory(ctx context.Context) ([]*model.BabyInventoryItem, error)
+	HouseContracts(ctx context.Context, recordType *string) ([]*model.HouseContractRecord, error)
+	HomeMaintenanceItems(ctx context.Context, category *string) ([]*model.HomeMaintenanceItem, error)
+	VehicleAssets(ctx context.Context) ([]*model.VehicleAsset, error)
+	FinancialTransactions(ctx context.Context, category *string, limit *int) ([]*model.FinancialTransaction, error)
+	CategoryBudgets(ctx context.Context) ([]*model.CategoryBudget, error)
+	RecurringBills(ctx context.Context) ([]*model.RecurringBill, error)
+	ExternalAPIConnectors(ctx context.Context) ([]*model.ExternalAPIConnector, error)
+	AutomationRules(ctx context.Context) ([]*model.AutomationRule, error)
 	UserPreference(ctx context.Context, userID string) (*model.UserPreference, error)
-	PersonalCrmContacts(ctx context.Context, familyGroup string) ([]*model.PersonalCRMContact, error)
-	MutationLogs(ctx context.Context, familyGroup *string, topic *string, limit *int) ([]*model.MutationLog, error)
-	AuditSessions(ctx context.Context, familyGroup *string, limit *int) ([]*model.AuditSession, error)
-	UserSessions(ctx context.Context, familyGroup *string) ([]*model.UserSessionSummary, error)
+	PersonalCrmContacts(ctx context.Context) ([]*model.PersonalCRMContact, error)
+	MutationLogs(ctx context.Context, topic *string, limit *int) ([]*model.MutationLog, error)
+	AuditSessions(ctx context.Context, limit *int) ([]*model.AuditSession, error)
+	UserSessions(ctx context.Context) ([]*model.UserSessionSummary, error)
 }
 
 // endregion ************************** generated!.gotpl **************************
@@ -1185,6 +1197,37 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Household.TimeZone(childComplexity), true
 
+	case "Me.household":
+		if e.ComplexityRoot.Me.Household == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Me.Household(childComplexity), true
+	case "Me.isOperator":
+		if e.ComplexityRoot.Me.IsOperator == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Me.IsOperator(childComplexity), true
+	case "Me.name":
+		if e.ComplexityRoot.Me.Name == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Me.Name(childComplexity), true
+	case "Me.personId":
+		if e.ComplexityRoot.Me.PersonID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Me.PersonID(childComplexity), true
+	case "Me.role":
+		if e.ComplexityRoot.Me.Role == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Me.Role(childComplexity), true
+
 	case "Mutation.completeHomeMaintenance":
 		if e.ComplexityRoot.Mutation.CompleteHomeMaintenance == nil {
 			break
@@ -1217,7 +1260,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.CreateScheduleEvent(childComplexity, args["topic"].(string), args["title"].(string), args["description"].(*string), args["startTime"].(time.Time), args["endTime"].(time.Time), args["tagsJson"].(*string), args["syncToGoogle"].(*bool), args["isShared"].(*bool), args["familyGroup"].(*string)), true
+		return e.ComplexityRoot.Mutation.CreateScheduleEvent(childComplexity, args["topic"].(string), args["title"].(string), args["description"].(*string), args["startTime"].(time.Time), args["endTime"].(time.Time), args["tagsJson"].(*string), args["syncToGoogle"].(*bool), args["isShared"].(*bool)), true
 	case "Mutation.createSharedTask":
 		if e.ComplexityRoot.Mutation.CreateSharedTask == nil {
 			break
@@ -1228,7 +1271,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.CreateSharedTask(childComplexity, args["familyGroup"].(string), args["topic"].(string), args["title"].(string), args["dueTime"].(*time.Time), args["assignedToUserId"].(*string)), true
+		return e.ComplexityRoot.Mutation.CreateSharedTask(childComplexity, args["topic"].(string), args["title"].(string), args["dueTime"].(*time.Time), args["assignedToUserId"].(*string)), true
 	case "Mutation.deleteAutomationRule":
 		if e.ComplexityRoot.Mutation.DeleteAutomationRule == nil {
 			break
@@ -1272,7 +1315,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.GeneratePairingCode(childComplexity, args["role"].(string), args["familyGroup"].(string)), true
+		return e.ComplexityRoot.Mutation.GeneratePairingCode(childComplexity, args["role"].(string)), true
 	case "Mutation.logBabyCare":
 		if e.ComplexityRoot.Mutation.LogBabyCare == nil {
 			break
@@ -1283,7 +1326,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.LogBabyCare(childComplexity, args["babyId"].(string), args["familyGroup"].(string), args["logType"].(string), args["valueNumeric"].(*float64), args["unit"].(*string), args["details"].(*string), args["timestamp"].(*time.Time)), true
+		return e.ComplexityRoot.Mutation.LogBabyCare(childComplexity, args["babyId"].(string), args["logType"].(string), args["valueNumeric"].(*float64), args["unit"].(*string), args["details"].(*string), args["timestamp"].(*time.Time)), true
 	case "Mutation.logFinancialTransaction":
 		if e.ComplexityRoot.Mutation.LogFinancialTransaction == nil {
 			break
@@ -1294,7 +1337,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.LogFinancialTransaction(childComplexity, args["familyGroup"].(string), args["type"].(string), args["category"].(string), args["merchant"].(string), args["amount"].(float64), args["currency"].(string), args["notes"].(*string), args["isShared"].(*bool)), true
+		return e.ComplexityRoot.Mutation.LogFinancialTransaction(childComplexity, args["type"].(string), args["category"].(string), args["merchant"].(string), args["amount"].(float64), args["currency"].(string), args["notes"].(*string), args["isShared"].(*bool)), true
 	case "Mutation.pinTopicMemory":
 		if e.ComplexityRoot.Mutation.PinTopicMemory == nil {
 			break
@@ -1316,7 +1359,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.RegisterExternalAPI(childComplexity, args["name"].(string), args["baseUrl"].(string), args["defaultMethod"].(*string), args["description"].(*string), args["familyGroup"].(*string)), true
+		return e.ComplexityRoot.Mutation.RegisterExternalAPI(childComplexity, args["name"].(string), args["baseUrl"].(string), args["defaultMethod"].(*string), args["description"].(*string)), true
 	case "Mutation.rollbackMutation":
 		if e.ComplexityRoot.Mutation.RollbackMutation == nil {
 			break
@@ -1338,7 +1381,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.SaveAutomationRule(childComplexity, args["name"].(string), args["triggerType"].(string), args["triggerTopic"].(string), args["conditionJson"].(string), args["actionInstruction"].(string), args["isActive"].(*bool), args["familyGroup"].(*string)), true
+		return e.ComplexityRoot.Mutation.SaveAutomationRule(childComplexity, args["name"].(string), args["triggerType"].(string), args["triggerTopic"].(string), args["conditionJson"].(string), args["actionInstruction"].(string), args["isActive"].(*bool)), true
 	case "Mutation.saveHomeMaintenanceItem":
 		if e.ComplexityRoot.Mutation.SaveHomeMaintenanceItem == nil {
 			break
@@ -1349,7 +1392,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.SaveHomeMaintenanceItem(childComplexity, args["familyGroup"].(string), args["taskName"].(string), args["category"].(string), args["intervalDays"].(int), args["nextDueAt"].(time.Time), args["contractorInfo"].(*string), args["notes"].(*string)), true
+		return e.ComplexityRoot.Mutation.SaveHomeMaintenanceItem(childComplexity, args["taskName"].(string), args["category"].(string), args["intervalDays"].(int), args["nextDueAt"].(time.Time), args["contractorInfo"].(*string), args["notes"].(*string)), true
 	case "Mutation.saveHouseContract":
 		if e.ComplexityRoot.Mutation.SaveHouseContract == nil {
 			break
@@ -1360,7 +1403,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.SaveHouseContract(childComplexity, args["familyGroup"].(string), args["recordType"].(string), args["title"].(string), args["vendorOrLandlord"].(*string), args["amount"].(*float64), args["currency"].(*string), args["expirationOrRenewalDate"].(*time.Time), args["noticePeriodDays"].(*int), args["keyTermsJson"].(*string)), true
+		return e.ComplexityRoot.Mutation.SaveHouseContract(childComplexity, args["recordType"].(string), args["title"].(string), args["vendorOrLandlord"].(*string), args["amount"].(*float64), args["currency"].(*string), args["expirationOrRenewalDate"].(*time.Time), args["noticePeriodDays"].(*int), args["keyTermsJson"].(*string)), true
 	case "Mutation.savePersonalCrmContact":
 		if e.ComplexityRoot.Mutation.SavePersonalCrmContact == nil {
 			break
@@ -1371,7 +1414,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.SavePersonalCrmContact(childComplexity, args["familyGroup"].(string), args["personName"].(string), args["relationship"].(*string), args["importantDatesJson"].(*string), args["giftIdeasAndSizes"].(*string), args["medicalNotes"].(*string)), true
+		return e.ComplexityRoot.Mutation.SavePersonalCrmContact(childComplexity, args["personName"].(string), args["relationship"].(*string), args["importantDatesJson"].(*string), args["giftIdeasAndSizes"].(*string), args["medicalNotes"].(*string)), true
 	case "Mutation.saveRecurringBill":
 		if e.ComplexityRoot.Mutation.SaveRecurringBill == nil {
 			break
@@ -1382,7 +1425,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.SaveRecurringBill(childComplexity, args["familyGroup"].(string), args["name"].(string), args["category"].(string), args["expectedAmount"].(float64), args["currency"].(string), args["billingCycle"].(string), args["nextDueDay"].(int), args["autoRenew"].(bool)), true
+		return e.ComplexityRoot.Mutation.SaveRecurringBill(childComplexity, args["name"].(string), args["category"].(string), args["expectedAmount"].(float64), args["currency"].(string), args["billingCycle"].(string), args["nextDueDay"].(int), args["autoRenew"].(bool)), true
 	case "Mutation.saveTopicCalendarConfig":
 		if e.ComplexityRoot.Mutation.SaveTopicCalendarConfig == nil {
 			break
@@ -1393,7 +1436,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.SaveTopicCalendarConfig(childComplexity, args["topic"].(string), args["colorId"].(*string), args["prefixTag"].(*string), args["includeInMorningBriefing"].(*bool), args["syncToGoogleDefault"].(*bool), args["familyGroup"].(*string)), true
+		return e.ComplexityRoot.Mutation.SaveTopicCalendarConfig(childComplexity, args["topic"].(string), args["colorId"].(*string), args["prefixTag"].(*string), args["includeInMorningBriefing"].(*bool), args["syncToGoogleDefault"].(*bool)), true
 	case "Mutation.saveTopicMemory":
 		if e.ComplexityRoot.Mutation.SaveTopicMemory == nil {
 			break
@@ -1404,7 +1447,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.SaveTopicMemory(childComplexity, args["topic"].(string), args["subtopic"].(string), args["fact"].(string), args["tagsJson"].(*string), args["scope"].(*string), args["familyGroup"].(*string)), true
+		return e.ComplexityRoot.Mutation.SaveTopicMemory(childComplexity, args["topic"].(string), args["subtopic"].(string), args["fact"].(string), args["tagsJson"].(*string), args["scope"].(*string)), true
 	case "Mutation.saveUserPreference":
 		if e.ComplexityRoot.Mutation.SaveUserPreference == nil {
 			break
@@ -1426,7 +1469,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.SaveVehicleAsset(childComplexity, args["familyGroup"].(string), args["name"].(string), args["licensePlate"].(string), args["insuranceExpiry"].(*time.Time), args["annualTestExpiry"].(*time.Time), args["currentMileageKm"].(*int), args["nextServiceMileageKm"].(*int), args["notes"].(*string)), true
+		return e.ComplexityRoot.Mutation.SaveVehicleAsset(childComplexity, args["name"].(string), args["licensePlate"].(string), args["insuranceExpiry"].(*time.Time), args["annualTestExpiry"].(*time.Time), args["currentMileageKm"].(*int), args["nextServiceMileageKm"].(*int), args["notes"].(*string)), true
 	case "Mutation.setCategoryBudget":
 		if e.ComplexityRoot.Mutation.SetCategoryBudget == nil {
 			break
@@ -1437,7 +1480,13 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.SetCategoryBudget(childComplexity, args["familyGroup"].(string), args["category"].(string), args["monthlyLimit"].(float64), args["currency"].(string), args["alertThresholdPct"].(*float64)), true
+		return e.ComplexityRoot.Mutation.SetCategoryBudget(childComplexity, args["category"].(string), args["monthlyLimit"].(float64), args["currency"].(string), args["alertThresholdPct"].(*float64)), true
+	case "Mutation.signOut":
+		if e.ComplexityRoot.Mutation.SignOut == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Mutation.SignOut(childComplexity), true
 	case "Mutation.toggleAutomationRule":
 		if e.ComplexityRoot.Mutation.ToggleAutomationRule == nil {
 			break
@@ -1459,7 +1508,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.UpdateBabyInventory(childComplexity, args["familyGroup"].(string), args["itemName"].(string), args["quantityRemaining"].(float64), args["unit"].(string), args["lowThreshold"].(float64)), true
+		return e.ComplexityRoot.Mutation.UpdateBabyInventory(childComplexity, args["itemName"].(string), args["quantityRemaining"].(float64), args["unit"].(string), args["lowThreshold"].(float64)), true
 	case "Mutation.updateHousehold":
 		if e.ComplexityRoot.Mutation.UpdateHousehold == nil {
 			break
@@ -1481,7 +1530,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.UpdateSharedSpace(childComplexity, args["familyGroup"].(string), args["topic"].(string), args["sharedWithUserId"].(string), args["canView"].(bool), args["canEdit"].(bool), args["notifyMode"].(string)), true
+		return e.ComplexityRoot.Mutation.UpdateSharedSpace(childComplexity, args["topic"].(string), args["sharedWithUserId"].(string), args["canView"].(bool), args["canEdit"].(bool), args["notifyMode"].(string)), true
 	case "Mutation.upsertBabyProfile":
 		if e.ComplexityRoot.Mutation.UpsertBabyProfile == nil {
 			break
@@ -1492,7 +1541,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.UpsertBabyProfile(childComplexity, args["familyGroup"].(string), args["name"].(string), args["dateOfBirth"].(time.Time), args["gender"].(string), args["currentWeightGrams"].(*int), args["heightCm"].(*float64), args["pediatricianInfo"].(*string), args["allergiesNotes"].(*string)), true
+		return e.ComplexityRoot.Mutation.UpsertBabyProfile(childComplexity, args["name"].(string), args["dateOfBirth"].(time.Time), args["gender"].(string), args["currentWeightGrams"].(*int), args["heightCm"].(*float64), args["pediatricianInfo"].(*string), args["allergiesNotes"].(*string)), true
 	case "Mutation.upsertEntityProfile":
 		if e.ComplexityRoot.Mutation.UpsertEntityProfile == nil {
 			break
@@ -1503,7 +1552,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.UpsertEntityProfile(childComplexity, args["topic"].(string), args["entityType"].(string), args["entityName"].(string), args["attributesJson"].(string), args["familyGroup"].(*string)), true
+		return e.ComplexityRoot.Mutation.UpsertEntityProfile(childComplexity, args["topic"].(string), args["entityType"].(string), args["entityName"].(string), args["attributesJson"].(string)), true
 
 	case "MutationLog.action":
 		if e.ComplexityRoot.MutationLog.Action == nil {
@@ -1681,12 +1730,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			break
 		}
 
-		args, err := ec.field_Query_activePairingCodes_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.ComplexityRoot.Query.ActivePairingCodes(childComplexity, args["familyGroup"].(*string)), true
+		return e.ComplexityRoot.Query.ActivePairingCodes(childComplexity), true
 	case "Query.auditSessions":
 		if e.ComplexityRoot.Query.AuditSessions == nil {
 			break
@@ -1697,18 +1741,13 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.AuditSessions(childComplexity, args["familyGroup"].(*string), args["limit"].(*int)), true
+		return e.ComplexityRoot.Query.AuditSessions(childComplexity, args["limit"].(*int)), true
 	case "Query.automationRules":
 		if e.ComplexityRoot.Query.AutomationRules == nil {
 			break
 		}
 
-		args, err := ec.field_Query_automationRules_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.ComplexityRoot.Query.AutomationRules(childComplexity, args["familyGroup"].(*string)), true
+		return e.ComplexityRoot.Query.AutomationRules(childComplexity), true
 	case "Query.babyCareLogs":
 		if e.ComplexityRoot.Query.BabyCareLogs == nil {
 			break
@@ -1719,40 +1758,25 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.BabyCareLogs(childComplexity, args["babyId"].(string), args["familyGroup"].(*string), args["logType"].(*string), args["limit"].(*int)), true
+		return e.ComplexityRoot.Query.BabyCareLogs(childComplexity, args["babyId"].(string), args["logType"].(*string), args["limit"].(*int)), true
 	case "Query.babyInventory":
 		if e.ComplexityRoot.Query.BabyInventory == nil {
 			break
 		}
 
-		args, err := ec.field_Query_babyInventory_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.ComplexityRoot.Query.BabyInventory(childComplexity, args["familyGroup"].(string)), true
+		return e.ComplexityRoot.Query.BabyInventory(childComplexity), true
 	case "Query.babyProfiles":
 		if e.ComplexityRoot.Query.BabyProfiles == nil {
 			break
 		}
 
-		args, err := ec.field_Query_babyProfiles_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.ComplexityRoot.Query.BabyProfiles(childComplexity, args["familyGroup"].(string)), true
+		return e.ComplexityRoot.Query.BabyProfiles(childComplexity), true
 	case "Query.categoryBudgets":
 		if e.ComplexityRoot.Query.CategoryBudgets == nil {
 			break
 		}
 
-		args, err := ec.field_Query_categoryBudgets_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.ComplexityRoot.Query.CategoryBudgets(childComplexity, args["familyGroup"].(string)), true
+		return e.ComplexityRoot.Query.CategoryBudgets(childComplexity), true
 	case "Query.entityProfiles":
 		if e.ComplexityRoot.Query.EntityProfiles == nil {
 			break
@@ -1763,18 +1787,13 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.EntityProfiles(childComplexity, args["topic"].(*string), args["entityType"].(*string), args["familyGroup"].(*string)), true
+		return e.ComplexityRoot.Query.EntityProfiles(childComplexity, args["topic"].(*string), args["entityType"].(*string)), true
 	case "Query.externalApiConnectors":
 		if e.ComplexityRoot.Query.ExternalAPIConnectors == nil {
 			break
 		}
 
-		args, err := ec.field_Query_externalApiConnectors_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.ComplexityRoot.Query.ExternalAPIConnectors(childComplexity, args["familyGroup"].(*string)), true
+		return e.ComplexityRoot.Query.ExternalAPIConnectors(childComplexity), true
 	case "Query.financialTransactions":
 		if e.ComplexityRoot.Query.FinancialTransactions == nil {
 			break
@@ -1785,7 +1804,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.FinancialTransactions(childComplexity, args["familyGroup"].(string), args["category"].(*string), args["limit"].(*int)), true
+		return e.ComplexityRoot.Query.FinancialTransactions(childComplexity, args["category"].(*string), args["limit"].(*int)), true
 	case "Query.homeMaintenanceItems":
 		if e.ComplexityRoot.Query.HomeMaintenanceItems == nil {
 			break
@@ -1796,7 +1815,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.HomeMaintenanceItems(childComplexity, args["familyGroup"].(string), args["category"].(*string)), true
+		return e.ComplexityRoot.Query.HomeMaintenanceItems(childComplexity, args["category"].(*string)), true
 	case "Query.houseContracts":
 		if e.ComplexityRoot.Query.HouseContracts == nil {
 			break
@@ -1807,7 +1826,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.HouseContracts(childComplexity, args["familyGroup"].(string), args["recordType"].(*string)), true
+		return e.ComplexityRoot.Query.HouseContracts(childComplexity, args["recordType"].(*string)), true
 	case "Query.household":
 		if e.ComplexityRoot.Query.Household == nil {
 			break
@@ -1815,6 +1834,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Query.Household(childComplexity), true
 
+	case "Query.me":
+		if e.ComplexityRoot.Query.Me == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Query.Me(childComplexity), true
 	case "Query.mutationLogs":
 		if e.ComplexityRoot.Query.MutationLogs == nil {
 			break
@@ -1825,29 +1850,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.MutationLogs(childComplexity, args["familyGroup"].(*string), args["topic"].(*string), args["limit"].(*int)), true
+		return e.ComplexityRoot.Query.MutationLogs(childComplexity, args["topic"].(*string), args["limit"].(*int)), true
 	case "Query.personalCrmContacts":
 		if e.ComplexityRoot.Query.PersonalCrmContacts == nil {
 			break
 		}
 
-		args, err := ec.field_Query_personalCrmContacts_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.ComplexityRoot.Query.PersonalCrmContacts(childComplexity, args["familyGroup"].(string)), true
+		return e.ComplexityRoot.Query.PersonalCrmContacts(childComplexity), true
 	case "Query.recurringBills":
 		if e.ComplexityRoot.Query.RecurringBills == nil {
 			break
 		}
 
-		args, err := ec.field_Query_recurringBills_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.ComplexityRoot.Query.RecurringBills(childComplexity, args["familyGroup"].(string)), true
+		return e.ComplexityRoot.Query.RecurringBills(childComplexity), true
 	case "Query.scheduleEvents":
 		if e.ComplexityRoot.Query.ScheduleEvents == nil {
 			break
@@ -1858,18 +1873,13 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.ScheduleEvents(childComplexity, args["topic"].(*string), args["familyGroup"].(*string), args["startTime"].(*time.Time), args["endTime"].(*time.Time)), true
+		return e.ComplexityRoot.Query.ScheduleEvents(childComplexity, args["topic"].(*string), args["startTime"].(*time.Time), args["endTime"].(*time.Time)), true
 	case "Query.sharedSpaces":
 		if e.ComplexityRoot.Query.SharedSpaces == nil {
 			break
 		}
 
-		args, err := ec.field_Query_sharedSpaces_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.ComplexityRoot.Query.SharedSpaces(childComplexity, args["familyGroup"].(string)), true
+		return e.ComplexityRoot.Query.SharedSpaces(childComplexity), true
 	case "Query.sharedTasks":
 		if e.ComplexityRoot.Query.SharedTasks == nil {
 			break
@@ -1880,7 +1890,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.SharedTasks(childComplexity, args["familyGroup"].(string), args["topic"].(*string), args["isCompleted"].(*bool)), true
+		return e.ComplexityRoot.Query.SharedTasks(childComplexity, args["topic"].(*string), args["isCompleted"].(*bool)), true
 	case "Query.topicCalendarConfigs":
 		if e.ComplexityRoot.Query.TopicCalendarConfigs == nil {
 			break
@@ -1891,7 +1901,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.TopicCalendarConfigs(childComplexity, args["userId"].(*string), args["familyGroup"].(*string)), true
+		return e.ComplexityRoot.Query.TopicCalendarConfigs(childComplexity, args["userId"].(*string)), true
 	case "Query.topicMemories":
 		if e.ComplexityRoot.Query.TopicMemories == nil {
 			break
@@ -1902,7 +1912,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.TopicMemories(childComplexity, args["topic"].(*string), args["familyGroup"].(*string), args["includeSuperseded"].(*bool)), true
+		return e.ComplexityRoot.Query.TopicMemories(childComplexity, args["topic"].(*string), args["includeSuperseded"].(*bool)), true
 	case "Query.userPreference":
 		if e.ComplexityRoot.Query.UserPreference == nil {
 			break
@@ -1919,12 +1929,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			break
 		}
 
-		args, err := ec.field_Query_userSessions_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.ComplexityRoot.Query.UserSessions(childComplexity, args["familyGroup"].(*string)), true
+		return e.ComplexityRoot.Query.UserSessions(childComplexity), true
 	case "Query.users":
 		if e.ComplexityRoot.Query.Users == nil {
 			break
@@ -1936,12 +1941,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			break
 		}
 
-		args, err := ec.field_Query_vehicleAssets_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.ComplexityRoot.Query.VehicleAssets(childComplexity, args["familyGroup"].(string)), true
+		return e.ComplexityRoot.Query.VehicleAssets(childComplexity), true
 
 	case "RecurringBill.autoRenew":
 		if e.ComplexityRoot.RecurringBill.AutoRenew == nil {
@@ -2948,6 +2948,22 @@ func (ec *executionContext) childFields_Household(ctx context.Context, field gra
 	return nil, fmt.Errorf("no field named %q was found under type Household", field.Name)
 }
 
+func (ec *executionContext) childFields_Me(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "personId":
+		return ec.fieldContext_Me_personId(ctx, field)
+	case "name":
+		return ec.fieldContext_Me_name(ctx, field)
+	case "role":
+		return ec.fieldContext_Me_role(ctx, field)
+	case "isOperator":
+		return ec.fieldContext_Me_isOperator(ctx, field)
+	case "household":
+		return ec.fieldContext_Me_household(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type Me", field.Name)
+}
+
 func (ec *executionContext) childFields_MutationLog(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
 	case "id":
@@ -3499,60 +3515,44 @@ func (ec *executionContext) field_Mutation_createScheduleEvent_args(ctx context.
 		return nil, err
 	}
 	args["isShared"] = arg7
-	arg8, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg8
 	return args, nil
 }
 
 func (ec *executionContext) field_Mutation_createSharedTask_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "topic",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "topic",
+	args["topic"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "title",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["topic"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "title",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["title"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "dueTime",
+	args["title"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "dueTime",
 		func(ctx context.Context, v any) (*time.Time, error) {
 			return ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["dueTime"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "assignedToUserId",
+	args["dueTime"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "assignedToUserId",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["assignedToUserId"] = arg4
+	args["assignedToUserId"] = arg3
 	return args, nil
 }
 
@@ -3609,14 +3609,6 @@ func (ec *executionContext) field_Mutation_generatePairingCode_args(ctx context.
 		return nil, err
 	}
 	args["role"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg1
 	return args, nil
 }
 
@@ -3631,124 +3623,108 @@ func (ec *executionContext) field_Mutation_logBabyCare_args(ctx context.Context,
 		return nil, err
 	}
 	args["babyId"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "logType",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "logType",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["logType"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "valueNumeric",
+	args["logType"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "valueNumeric",
 		func(ctx context.Context, v any) (*float64, error) {
 			return ec.unmarshalOFloat2ᚖfloat64(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["valueNumeric"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "unit",
+	args["valueNumeric"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "unit",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["unit"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "details",
+	args["unit"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "details",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["details"] = arg5
-	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "timestamp",
+	args["details"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "timestamp",
 		func(ctx context.Context, v any) (*time.Time, error) {
 			return ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["timestamp"] = arg6
+	args["timestamp"] = arg5
 	return args, nil
 }
 
 func (ec *executionContext) field_Mutation_logFinancialTransaction_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "type",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "type",
+	args["type"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "category",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["type"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "category",
+	args["category"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "merchant",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["category"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "merchant",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["merchant"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "amount",
+	args["merchant"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "amount",
 		func(ctx context.Context, v any) (float64, error) {
 			return ec.unmarshalNFloat2float64(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["amount"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "currency",
+	args["amount"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "currency",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["currency"] = arg5
-	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "notes",
+	args["currency"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "notes",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["notes"] = arg6
-	arg7, err := graphql.ProcessArgField(ctx, rawArgs, "isShared",
+	args["notes"] = arg5
+	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "isShared",
 		func(ctx context.Context, v any) (*bool, error) {
 			return ec.unmarshalOBoolean2ᚖbool(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["isShared"] = arg7
+	args["isShared"] = arg6
 	return args, nil
 }
 
@@ -3809,14 +3785,6 @@ func (ec *executionContext) field_Mutation_registerExternalApi_args(ctx context.
 		return nil, err
 	}
 	args["description"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg4
 	return args, nil
 }
 
@@ -3885,278 +3853,238 @@ func (ec *executionContext) field_Mutation_saveAutomationRule_args(ctx context.C
 		return nil, err
 	}
 	args["isActive"] = arg5
-	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg6
 	return args, nil
 }
 
 func (ec *executionContext) field_Mutation_saveHomeMaintenanceItem_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "taskName",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "taskName",
+	args["taskName"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "category",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["taskName"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "category",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["category"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "intervalDays",
+	args["category"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "intervalDays",
 		func(ctx context.Context, v any) (int, error) {
 			return ec.unmarshalNInt2int(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["intervalDays"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "nextDueAt",
+	args["intervalDays"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "nextDueAt",
 		func(ctx context.Context, v any) (time.Time, error) {
 			return ec.unmarshalNTime2timeᚐTime(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["nextDueAt"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "contractorInfo",
+	args["nextDueAt"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "contractorInfo",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["contractorInfo"] = arg5
-	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "notes",
+	args["contractorInfo"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "notes",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["notes"] = arg6
+	args["notes"] = arg5
 	return args, nil
 }
 
 func (ec *executionContext) field_Mutation_saveHouseContract_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "recordType",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "recordType",
+	args["recordType"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "title",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["recordType"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "title",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["title"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "vendorOrLandlord",
+	args["title"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "vendorOrLandlord",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["vendorOrLandlord"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "amount",
+	args["vendorOrLandlord"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "amount",
 		func(ctx context.Context, v any) (*float64, error) {
 			return ec.unmarshalOFloat2ᚖfloat64(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["amount"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "currency",
+	args["amount"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "currency",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["currency"] = arg5
-	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "expirationOrRenewalDate",
+	args["currency"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "expirationOrRenewalDate",
 		func(ctx context.Context, v any) (*time.Time, error) {
 			return ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["expirationOrRenewalDate"] = arg6
-	arg7, err := graphql.ProcessArgField(ctx, rawArgs, "noticePeriodDays",
+	args["expirationOrRenewalDate"] = arg5
+	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "noticePeriodDays",
 		func(ctx context.Context, v any) (*int, error) {
 			return ec.unmarshalOInt2ᚖint(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["noticePeriodDays"] = arg7
-	arg8, err := graphql.ProcessArgField(ctx, rawArgs, "keyTermsJson",
+	args["noticePeriodDays"] = arg6
+	arg7, err := graphql.ProcessArgField(ctx, rawArgs, "keyTermsJson",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["keyTermsJson"] = arg8
+	args["keyTermsJson"] = arg7
 	return args, nil
 }
 
 func (ec *executionContext) field_Mutation_savePersonalCrmContact_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "personName",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "personName",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["personName"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "relationship",
+	args["personName"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "relationship",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["relationship"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "importantDatesJson",
+	args["relationship"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "importantDatesJson",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["importantDatesJson"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "giftIdeasAndSizes",
+	args["importantDatesJson"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "giftIdeasAndSizes",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["giftIdeasAndSizes"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "medicalNotes",
+	args["giftIdeasAndSizes"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "medicalNotes",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["medicalNotes"] = arg5
+	args["medicalNotes"] = arg4
 	return args, nil
 }
 
 func (ec *executionContext) field_Mutation_saveRecurringBill_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "name",
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "category",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["name"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "category",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["category"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "expectedAmount",
+	args["category"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "expectedAmount",
 		func(ctx context.Context, v any) (float64, error) {
 			return ec.unmarshalNFloat2float64(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["expectedAmount"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "currency",
+	args["expectedAmount"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "currency",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["currency"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "billingCycle",
+	args["currency"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "billingCycle",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["billingCycle"] = arg5
-	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "nextDueDay",
+	args["billingCycle"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "nextDueDay",
 		func(ctx context.Context, v any) (int, error) {
 			return ec.unmarshalNInt2int(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["nextDueDay"] = arg6
-	arg7, err := graphql.ProcessArgField(ctx, rawArgs, "autoRenew",
+	args["nextDueDay"] = arg5
+	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "autoRenew",
 		func(ctx context.Context, v any) (bool, error) {
 			return ec.unmarshalNBoolean2bool(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["autoRenew"] = arg7
+	args["autoRenew"] = arg6
 	return args, nil
 }
 
@@ -4203,14 +4131,6 @@ func (ec *executionContext) field_Mutation_saveTopicCalendarConfig_args(ctx cont
 		return nil, err
 	}
 	args["syncToGoogleDefault"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg5
 	return args, nil
 }
 
@@ -4257,14 +4177,6 @@ func (ec *executionContext) field_Mutation_saveTopicMemory_args(ctx context.Cont
 		return nil, err
 	}
 	args["scope"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg5
 	return args, nil
 }
 
@@ -4333,116 +4245,100 @@ func (ec *executionContext) field_Mutation_saveUserPreference_args(ctx context.C
 func (ec *executionContext) field_Mutation_saveVehicleAsset_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "name",
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "licensePlate",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["name"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "licensePlate",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["licensePlate"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "insuranceExpiry",
+	args["licensePlate"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "insuranceExpiry",
 		func(ctx context.Context, v any) (*time.Time, error) {
 			return ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["insuranceExpiry"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "annualTestExpiry",
+	args["insuranceExpiry"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "annualTestExpiry",
 		func(ctx context.Context, v any) (*time.Time, error) {
 			return ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["annualTestExpiry"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "currentMileageKm",
+	args["annualTestExpiry"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "currentMileageKm",
 		func(ctx context.Context, v any) (*int, error) {
 			return ec.unmarshalOInt2ᚖint(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["currentMileageKm"] = arg5
-	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "nextServiceMileageKm",
+	args["currentMileageKm"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "nextServiceMileageKm",
 		func(ctx context.Context, v any) (*int, error) {
 			return ec.unmarshalOInt2ᚖint(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["nextServiceMileageKm"] = arg6
-	arg7, err := graphql.ProcessArgField(ctx, rawArgs, "notes",
+	args["nextServiceMileageKm"] = arg5
+	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "notes",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["notes"] = arg7
+	args["notes"] = arg6
 	return args, nil
 }
 
 func (ec *executionContext) field_Mutation_setCategoryBudget_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "category",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "category",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["category"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "monthlyLimit",
+	args["category"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "monthlyLimit",
 		func(ctx context.Context, v any) (float64, error) {
 			return ec.unmarshalNFloat2float64(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["monthlyLimit"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "currency",
+	args["monthlyLimit"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "currency",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["currency"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "alertThresholdPct",
+	args["currency"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "alertThresholdPct",
 		func(ctx context.Context, v any) (*float64, error) {
 			return ec.unmarshalOFloat2ᚖfloat64(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["alertThresholdPct"] = arg4
+	args["alertThresholdPct"] = arg3
 	return args, nil
 }
 
@@ -4471,46 +4367,38 @@ func (ec *executionContext) field_Mutation_toggleAutomationRule_args(ctx context
 func (ec *executionContext) field_Mutation_updateBabyInventory_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "itemName",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "itemName",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["itemName"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "quantityRemaining",
+	args["itemName"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "quantityRemaining",
 		func(ctx context.Context, v any) (float64, error) {
 			return ec.unmarshalNFloat2float64(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["quantityRemaining"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "unit",
+	args["quantityRemaining"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "unit",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["unit"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "lowThreshold",
+	args["unit"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "lowThreshold",
 		func(ctx context.Context, v any) (float64, error) {
 			return ec.unmarshalNFloat2float64(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["lowThreshold"] = arg4
+	args["lowThreshold"] = arg3
 	return args, nil
 }
 
@@ -4555,124 +4443,108 @@ func (ec *executionContext) field_Mutation_updateHousehold_args(ctx context.Cont
 func (ec *executionContext) field_Mutation_updateSharedSpace_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "topic",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "topic",
+	args["topic"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sharedWithUserId",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["topic"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "sharedWithUserId",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["sharedWithUserId"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "canView",
+	args["sharedWithUserId"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "canView",
 		func(ctx context.Context, v any) (bool, error) {
 			return ec.unmarshalNBoolean2bool(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["canView"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "canEdit",
+	args["canView"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "canEdit",
 		func(ctx context.Context, v any) (bool, error) {
 			return ec.unmarshalNBoolean2bool(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["canEdit"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "notifyMode",
+	args["canEdit"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "notifyMode",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["notifyMode"] = arg5
+	args["notifyMode"] = arg4
 	return args, nil
 }
 
 func (ec *executionContext) field_Mutation_upsertBabyProfile_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "name",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "name",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["name"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "dateOfBirth",
+	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "dateOfBirth",
 		func(ctx context.Context, v any) (time.Time, error) {
 			return ec.unmarshalNTime2timeᚐTime(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["dateOfBirth"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "gender",
+	args["dateOfBirth"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "gender",
 		func(ctx context.Context, v any) (string, error) {
 			return ec.unmarshalNString2string(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["gender"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "currentWeightGrams",
+	args["gender"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "currentWeightGrams",
 		func(ctx context.Context, v any) (*int, error) {
 			return ec.unmarshalOInt2ᚖint(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["currentWeightGrams"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "heightCm",
+	args["currentWeightGrams"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "heightCm",
 		func(ctx context.Context, v any) (*float64, error) {
 			return ec.unmarshalOFloat2ᚖfloat64(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["heightCm"] = arg5
-	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "pediatricianInfo",
+	args["heightCm"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "pediatricianInfo",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["pediatricianInfo"] = arg6
-	arg7, err := graphql.ProcessArgField(ctx, rawArgs, "allergiesNotes",
+	args["pediatricianInfo"] = arg5
+	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "allergiesNotes",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["allergiesNotes"] = arg7
+	args["allergiesNotes"] = arg6
 	return args, nil
 }
 
@@ -4711,14 +4583,6 @@ func (ec *executionContext) field_Mutation_upsertEntityProfile_args(ctx context.
 		return nil, err
 	}
 	args["attributesJson"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg4
 	return args, nil
 }
 
@@ -4736,53 +4600,17 @@ func (ec *executionContext) field_Query___type_args(ctx context.Context, rawArgs
 	return args, nil
 }
 
-func (ec *executionContext) field_Query_activePairingCodes_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
-	return args, nil
-}
-
 func (ec *executionContext) field_Query_auditSessions_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
 		func(ctx context.Context, v any) (*int, error) {
 			return ec.unmarshalOInt2ᚖint(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["limit"] = arg1
-	return args, nil
-}
-
-func (ec *executionContext) field_Query_automationRules_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
+	args["limit"] = arg0
 	return args, nil
 }
 
@@ -4797,72 +4625,22 @@ func (ec *executionContext) field_Query_babyCareLogs_args(ctx context.Context, r
 		return nil, err
 	}
 	args["babyId"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "logType",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "logType",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["logType"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+	args["logType"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
 		func(ctx context.Context, v any) (*int, error) {
 			return ec.unmarshalOInt2ᚖint(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["limit"] = arg3
-	return args, nil
-}
-
-func (ec *executionContext) field_Query_babyInventory_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
-	return args, nil
-}
-
-func (ec *executionContext) field_Query_babyProfiles_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
-	return args, nil
-}
-
-func (ec *executionContext) field_Query_categoryBudgets_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
+	args["limit"] = arg2
 	return args, nil
 }
 
@@ -4885,160 +4663,78 @@ func (ec *executionContext) field_Query_entityProfiles_args(ctx context.Context,
 		return nil, err
 	}
 	args["entityType"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg2
-	return args, nil
-}
-
-func (ec *executionContext) field_Query_externalApiConnectors_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
 	return args, nil
 }
 
 func (ec *executionContext) field_Query_financialTransactions_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "category",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "category",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["category"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+	args["category"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
 		func(ctx context.Context, v any) (*int, error) {
 			return ec.unmarshalOInt2ᚖint(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["limit"] = arg2
+	args["limit"] = arg1
 	return args, nil
 }
 
 func (ec *executionContext) field_Query_homeMaintenanceItems_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "category",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "category",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["category"] = arg1
+	args["category"] = arg0
 	return args, nil
 }
 
 func (ec *executionContext) field_Query_houseContracts_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "recordType",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "recordType",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["recordType"] = arg1
+	args["recordType"] = arg0
 	return args, nil
 }
 
 func (ec *executionContext) field_Query_mutationLogs_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "topic",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "topic",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["topic"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+	args["topic"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
 		func(ctx context.Context, v any) (*int, error) {
 			return ec.unmarshalOInt2ᚖint(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["limit"] = arg2
-	return args, nil
-}
-
-func (ec *executionContext) field_Query_personalCrmContacts_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
-	return args, nil
-}
-
-func (ec *executionContext) field_Query_recurringBills_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
+	args["limit"] = arg1
 	return args, nil
 }
 
@@ -5053,74 +4749,44 @@ func (ec *executionContext) field_Query_scheduleEvents_args(ctx context.Context,
 		return nil, err
 	}
 	args["topic"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "startTime",
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "startTime",
 		func(ctx context.Context, v any) (*time.Time, error) {
 			return ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["startTime"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "endTime",
+	args["startTime"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "endTime",
 		func(ctx context.Context, v any) (*time.Time, error) {
 			return ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["endTime"] = arg3
-	return args, nil
-}
-
-func (ec *executionContext) field_Query_sharedSpaces_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
+	args["endTime"] = arg2
 	return args, nil
 }
 
 func (ec *executionContext) field_Query_sharedTasks_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "topic",
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "topic",
 		func(ctx context.Context, v any) (*string, error) {
 			return ec.unmarshalOString2ᚖstring(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["topic"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "isCompleted",
+	args["topic"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "isCompleted",
 		func(ctx context.Context, v any) (*bool, error) {
 			return ec.unmarshalOBoolean2ᚖbool(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["isCompleted"] = arg2
+	args["isCompleted"] = arg1
 	return args, nil
 }
 
@@ -5135,14 +4801,6 @@ func (ec *executionContext) field_Query_topicCalendarConfigs_args(ctx context.Co
 		return nil, err
 	}
 	args["userId"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg1
 	return args, nil
 }
 
@@ -5157,22 +4815,14 @@ func (ec *executionContext) field_Query_topicMemories_args(ctx context.Context, 
 		return nil, err
 	}
 	args["topic"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "includeSuperseded",
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "includeSuperseded",
 		func(ctx context.Context, v any) (*bool, error) {
 			return ec.unmarshalOBoolean2ᚖbool(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["includeSuperseded"] = arg2
+	args["includeSuperseded"] = arg1
 	return args, nil
 }
 
@@ -5187,34 +4837,6 @@ func (ec *executionContext) field_Query_userPreference_args(ctx context.Context,
 		return nil, err
 	}
 	args["userId"] = arg0
-	return args, nil
-}
-
-func (ec *executionContext) field_Query_userSessions_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (*string, error) {
-			return ec.unmarshalOString2ᚖstring(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
-	return args, nil
-}
-
-func (ec *executionContext) field_Query_vehicleAssets_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "familyGroup",
-		func(ctx context.Context, v any) (string, error) {
-			return ec.unmarshalNString2string(ctx, v)
-		})
-	if err != nil {
-		return nil, err
-	}
-	args["familyGroup"] = arg0
 	return args, nil
 }
 
@@ -7891,6 +7513,153 @@ func (ec *executionContext) fieldContext_Household_currency(_ context.Context, f
 	return graphql.NewScalarFieldContext("Household", field, false, false, "String")
 }
 
+func (ec *executionContext) _Me_personId(ctx context.Context, field graphql.CollectedField, obj *model.Me) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Me_personId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PersonID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Me_personId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Me", field, false, false, "ID")
+}
+
+func (ec *executionContext) _Me_name(ctx context.Context, field graphql.CollectedField, obj *model.Me) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Me_name(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Me_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Me", field, false, false, "String")
+}
+
+func (ec *executionContext) _Me_role(ctx context.Context, field graphql.CollectedField, obj *model.Me) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Me_role(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Role, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Me_role(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Me", field, false, false, "String")
+}
+
+func (ec *executionContext) _Me_isOperator(ctx context.Context, field graphql.CollectedField, obj *model.Me) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Me_isOperator(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.IsOperator, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Me_isOperator(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Me", field, false, false, "Boolean")
+}
+
+func (ec *executionContext) _Me_household(ctx context.Context, field graphql.CollectedField, obj *model.Me) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Me_household(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Household, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *model.Household) graphql.Marshaler {
+			return ec.marshalNHousehold2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐHousehold(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Me_household(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Me",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Household(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_signOut(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_signOut(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Mutation().SignOut(ctx)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_signOut(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Mutation", field, true, true, "Boolean")
+}
+
 func (ec *executionContext) _Mutation_generatePairingCode(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -7901,7 +7670,7 @@ func (ec *executionContext) _Mutation_generatePairingCode(ctx context.Context, f
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().GeneratePairingCode(ctx, fc.Args["role"].(string), fc.Args["familyGroup"].(string))
+			return ec.Resolvers.Mutation().GeneratePairingCode(ctx, fc.Args["role"].(string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.PairingCode) graphql.Marshaler {
@@ -7989,7 +7758,7 @@ func (ec *executionContext) _Mutation_saveTopicMemory(ctx context.Context, field
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().SaveTopicMemory(ctx, fc.Args["topic"].(string), fc.Args["subtopic"].(string), fc.Args["fact"].(string), fc.Args["tagsJson"].(*string), fc.Args["scope"].(*string), fc.Args["familyGroup"].(*string))
+			return ec.Resolvers.Mutation().SaveTopicMemory(ctx, fc.Args["topic"].(string), fc.Args["subtopic"].(string), fc.Args["fact"].(string), fc.Args["tagsJson"].(*string), fc.Args["scope"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.TopicMemory) graphql.Marshaler {
@@ -8121,7 +7890,7 @@ func (ec *executionContext) _Mutation_upsertEntityProfile(ctx context.Context, f
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().UpsertEntityProfile(ctx, fc.Args["topic"].(string), fc.Args["entityType"].(string), fc.Args["entityName"].(string), fc.Args["attributesJson"].(string), fc.Args["familyGroup"].(*string))
+			return ec.Resolvers.Mutation().UpsertEntityProfile(ctx, fc.Args["topic"].(string), fc.Args["entityType"].(string), fc.Args["entityName"].(string), fc.Args["attributesJson"].(string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.EntityProfile) graphql.Marshaler {
@@ -8165,7 +7934,7 @@ func (ec *executionContext) _Mutation_updateSharedSpace(ctx context.Context, fie
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().UpdateSharedSpace(ctx, fc.Args["familyGroup"].(string), fc.Args["topic"].(string), fc.Args["sharedWithUserId"].(string), fc.Args["canView"].(bool), fc.Args["canEdit"].(bool), fc.Args["notifyMode"].(string))
+			return ec.Resolvers.Mutation().UpdateSharedSpace(ctx, fc.Args["topic"].(string), fc.Args["sharedWithUserId"].(string), fc.Args["canView"].(bool), fc.Args["canEdit"].(bool), fc.Args["notifyMode"].(string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.SharedSpace) graphql.Marshaler {
@@ -8209,7 +7978,7 @@ func (ec *executionContext) _Mutation_createSharedTask(ctx context.Context, fiel
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().CreateSharedTask(ctx, fc.Args["familyGroup"].(string), fc.Args["topic"].(string), fc.Args["title"].(string), fc.Args["dueTime"].(*time.Time), fc.Args["assignedToUserId"].(*string))
+			return ec.Resolvers.Mutation().CreateSharedTask(ctx, fc.Args["topic"].(string), fc.Args["title"].(string), fc.Args["dueTime"].(*time.Time), fc.Args["assignedToUserId"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.SharedTaskReminder) graphql.Marshaler {
@@ -8297,7 +8066,7 @@ func (ec *executionContext) _Mutation_createScheduleEvent(ctx context.Context, f
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().CreateScheduleEvent(ctx, fc.Args["topic"].(string), fc.Args["title"].(string), fc.Args["description"].(*string), fc.Args["startTime"].(time.Time), fc.Args["endTime"].(time.Time), fc.Args["tagsJson"].(*string), fc.Args["syncToGoogle"].(*bool), fc.Args["isShared"].(*bool), fc.Args["familyGroup"].(*string))
+			return ec.Resolvers.Mutation().CreateScheduleEvent(ctx, fc.Args["topic"].(string), fc.Args["title"].(string), fc.Args["description"].(*string), fc.Args["startTime"].(time.Time), fc.Args["endTime"].(time.Time), fc.Args["tagsJson"].(*string), fc.Args["syncToGoogle"].(*bool), fc.Args["isShared"].(*bool))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.ScheduleEvent) graphql.Marshaler {
@@ -8385,7 +8154,7 @@ func (ec *executionContext) _Mutation_saveTopicCalendarConfig(ctx context.Contex
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().SaveTopicCalendarConfig(ctx, fc.Args["topic"].(string), fc.Args["colorId"].(*string), fc.Args["prefixTag"].(*string), fc.Args["includeInMorningBriefing"].(*bool), fc.Args["syncToGoogleDefault"].(*bool), fc.Args["familyGroup"].(*string))
+			return ec.Resolvers.Mutation().SaveTopicCalendarConfig(ctx, fc.Args["topic"].(string), fc.Args["colorId"].(*string), fc.Args["prefixTag"].(*string), fc.Args["includeInMorningBriefing"].(*bool), fc.Args["syncToGoogleDefault"].(*bool))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.TopicCalendarConfig) graphql.Marshaler {
@@ -8429,7 +8198,7 @@ func (ec *executionContext) _Mutation_upsertBabyProfile(ctx context.Context, fie
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().UpsertBabyProfile(ctx, fc.Args["familyGroup"].(string), fc.Args["name"].(string), fc.Args["dateOfBirth"].(time.Time), fc.Args["gender"].(string), fc.Args["currentWeightGrams"].(*int), fc.Args["heightCm"].(*float64), fc.Args["pediatricianInfo"].(*string), fc.Args["allergiesNotes"].(*string))
+			return ec.Resolvers.Mutation().UpsertBabyProfile(ctx, fc.Args["name"].(string), fc.Args["dateOfBirth"].(time.Time), fc.Args["gender"].(string), fc.Args["currentWeightGrams"].(*int), fc.Args["heightCm"].(*float64), fc.Args["pediatricianInfo"].(*string), fc.Args["allergiesNotes"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.BabyProfile) graphql.Marshaler {
@@ -8473,7 +8242,7 @@ func (ec *executionContext) _Mutation_logBabyCare(ctx context.Context, field gra
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().LogBabyCare(ctx, fc.Args["babyId"].(string), fc.Args["familyGroup"].(string), fc.Args["logType"].(string), fc.Args["valueNumeric"].(*float64), fc.Args["unit"].(*string), fc.Args["details"].(*string), fc.Args["timestamp"].(*time.Time))
+			return ec.Resolvers.Mutation().LogBabyCare(ctx, fc.Args["babyId"].(string), fc.Args["logType"].(string), fc.Args["valueNumeric"].(*float64), fc.Args["unit"].(*string), fc.Args["details"].(*string), fc.Args["timestamp"].(*time.Time))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.BabyCareLog) graphql.Marshaler {
@@ -8517,7 +8286,7 @@ func (ec *executionContext) _Mutation_updateBabyInventory(ctx context.Context, f
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().UpdateBabyInventory(ctx, fc.Args["familyGroup"].(string), fc.Args["itemName"].(string), fc.Args["quantityRemaining"].(float64), fc.Args["unit"].(string), fc.Args["lowThreshold"].(float64))
+			return ec.Resolvers.Mutation().UpdateBabyInventory(ctx, fc.Args["itemName"].(string), fc.Args["quantityRemaining"].(float64), fc.Args["unit"].(string), fc.Args["lowThreshold"].(float64))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.BabyInventoryItem) graphql.Marshaler {
@@ -8561,7 +8330,7 @@ func (ec *executionContext) _Mutation_saveHouseContract(ctx context.Context, fie
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().SaveHouseContract(ctx, fc.Args["familyGroup"].(string), fc.Args["recordType"].(string), fc.Args["title"].(string), fc.Args["vendorOrLandlord"].(*string), fc.Args["amount"].(*float64), fc.Args["currency"].(*string), fc.Args["expirationOrRenewalDate"].(*time.Time), fc.Args["noticePeriodDays"].(*int), fc.Args["keyTermsJson"].(*string))
+			return ec.Resolvers.Mutation().SaveHouseContract(ctx, fc.Args["recordType"].(string), fc.Args["title"].(string), fc.Args["vendorOrLandlord"].(*string), fc.Args["amount"].(*float64), fc.Args["currency"].(*string), fc.Args["expirationOrRenewalDate"].(*time.Time), fc.Args["noticePeriodDays"].(*int), fc.Args["keyTermsJson"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.HouseContractRecord) graphql.Marshaler {
@@ -8605,7 +8374,7 @@ func (ec *executionContext) _Mutation_saveHomeMaintenanceItem(ctx context.Contex
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().SaveHomeMaintenanceItem(ctx, fc.Args["familyGroup"].(string), fc.Args["taskName"].(string), fc.Args["category"].(string), fc.Args["intervalDays"].(int), fc.Args["nextDueAt"].(time.Time), fc.Args["contractorInfo"].(*string), fc.Args["notes"].(*string))
+			return ec.Resolvers.Mutation().SaveHomeMaintenanceItem(ctx, fc.Args["taskName"].(string), fc.Args["category"].(string), fc.Args["intervalDays"].(int), fc.Args["nextDueAt"].(time.Time), fc.Args["contractorInfo"].(*string), fc.Args["notes"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.HomeMaintenanceItem) graphql.Marshaler {
@@ -8693,7 +8462,7 @@ func (ec *executionContext) _Mutation_saveVehicleAsset(ctx context.Context, fiel
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().SaveVehicleAsset(ctx, fc.Args["familyGroup"].(string), fc.Args["name"].(string), fc.Args["licensePlate"].(string), fc.Args["insuranceExpiry"].(*time.Time), fc.Args["annualTestExpiry"].(*time.Time), fc.Args["currentMileageKm"].(*int), fc.Args["nextServiceMileageKm"].(*int), fc.Args["notes"].(*string))
+			return ec.Resolvers.Mutation().SaveVehicleAsset(ctx, fc.Args["name"].(string), fc.Args["licensePlate"].(string), fc.Args["insuranceExpiry"].(*time.Time), fc.Args["annualTestExpiry"].(*time.Time), fc.Args["currentMileageKm"].(*int), fc.Args["nextServiceMileageKm"].(*int), fc.Args["notes"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.VehicleAsset) graphql.Marshaler {
@@ -8737,7 +8506,7 @@ func (ec *executionContext) _Mutation_logFinancialTransaction(ctx context.Contex
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().LogFinancialTransaction(ctx, fc.Args["familyGroup"].(string), fc.Args["type"].(string), fc.Args["category"].(string), fc.Args["merchant"].(string), fc.Args["amount"].(float64), fc.Args["currency"].(string), fc.Args["notes"].(*string), fc.Args["isShared"].(*bool))
+			return ec.Resolvers.Mutation().LogFinancialTransaction(ctx, fc.Args["type"].(string), fc.Args["category"].(string), fc.Args["merchant"].(string), fc.Args["amount"].(float64), fc.Args["currency"].(string), fc.Args["notes"].(*string), fc.Args["isShared"].(*bool))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.FinancialTransaction) graphql.Marshaler {
@@ -8781,7 +8550,7 @@ func (ec *executionContext) _Mutation_setCategoryBudget(ctx context.Context, fie
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().SetCategoryBudget(ctx, fc.Args["familyGroup"].(string), fc.Args["category"].(string), fc.Args["monthlyLimit"].(float64), fc.Args["currency"].(string), fc.Args["alertThresholdPct"].(*float64))
+			return ec.Resolvers.Mutation().SetCategoryBudget(ctx, fc.Args["category"].(string), fc.Args["monthlyLimit"].(float64), fc.Args["currency"].(string), fc.Args["alertThresholdPct"].(*float64))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.CategoryBudget) graphql.Marshaler {
@@ -8825,7 +8594,7 @@ func (ec *executionContext) _Mutation_saveRecurringBill(ctx context.Context, fie
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().SaveRecurringBill(ctx, fc.Args["familyGroup"].(string), fc.Args["name"].(string), fc.Args["category"].(string), fc.Args["expectedAmount"].(float64), fc.Args["currency"].(string), fc.Args["billingCycle"].(string), fc.Args["nextDueDay"].(int), fc.Args["autoRenew"].(bool))
+			return ec.Resolvers.Mutation().SaveRecurringBill(ctx, fc.Args["name"].(string), fc.Args["category"].(string), fc.Args["expectedAmount"].(float64), fc.Args["currency"].(string), fc.Args["billingCycle"].(string), fc.Args["nextDueDay"].(int), fc.Args["autoRenew"].(bool))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.RecurringBill) graphql.Marshaler {
@@ -8869,7 +8638,7 @@ func (ec *executionContext) _Mutation_registerExternalApi(ctx context.Context, f
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().RegisterExternalAPI(ctx, fc.Args["name"].(string), fc.Args["baseUrl"].(string), fc.Args["defaultMethod"].(*string), fc.Args["description"].(*string), fc.Args["familyGroup"].(*string))
+			return ec.Resolvers.Mutation().RegisterExternalAPI(ctx, fc.Args["name"].(string), fc.Args["baseUrl"].(string), fc.Args["defaultMethod"].(*string), fc.Args["description"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.ExternalAPIConnector) graphql.Marshaler {
@@ -8913,7 +8682,7 @@ func (ec *executionContext) _Mutation_saveAutomationRule(ctx context.Context, fi
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().SaveAutomationRule(ctx, fc.Args["name"].(string), fc.Args["triggerType"].(string), fc.Args["triggerTopic"].(string), fc.Args["conditionJson"].(string), fc.Args["actionInstruction"].(string), fc.Args["isActive"].(*bool), fc.Args["familyGroup"].(*string))
+			return ec.Resolvers.Mutation().SaveAutomationRule(ctx, fc.Args["name"].(string), fc.Args["triggerType"].(string), fc.Args["triggerTopic"].(string), fc.Args["conditionJson"].(string), fc.Args["actionInstruction"].(string), fc.Args["isActive"].(*bool))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.AutomationRule) graphql.Marshaler {
@@ -9089,7 +8858,7 @@ func (ec *executionContext) _Mutation_savePersonalCrmContact(ctx context.Context
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().SavePersonalCrmContact(ctx, fc.Args["familyGroup"].(string), fc.Args["personName"].(string), fc.Args["relationship"].(*string), fc.Args["importantDatesJson"].(*string), fc.Args["giftIdeasAndSizes"].(*string), fc.Args["medicalNotes"].(*string))
+			return ec.Resolvers.Mutation().SavePersonalCrmContact(ctx, fc.Args["personName"].(string), fc.Args["relationship"].(*string), fc.Args["importantDatesJson"].(*string), fc.Args["giftIdeasAndSizes"].(*string), fc.Args["medicalNotes"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.PersonalCRMContact) graphql.Marshaler {
@@ -9811,6 +9580,38 @@ func (ec *executionContext) fieldContext_PersonalCRMContact_updatedAt(_ context.
 	return graphql.NewScalarFieldContext("PersonalCRMContact", field, false, false, "Time")
 }
 
+func (ec *executionContext) _Query_me(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_me(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Query().Me(ctx)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *model.Me) graphql.Marshaler {
+			return ec.marshalNMe2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐMe(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_me(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Me(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_household(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -9884,8 +9685,7 @@ func (ec *executionContext) _Query_activePairingCodes(ctx context.Context, field
 			return ec.fieldContext_Query_activePairingCodes(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().ActivePairingCodes(ctx, fc.Args["familyGroup"].(*string))
+			return ec.Resolvers.Query().ActivePairingCodes(ctx)
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.PairingCode) graphql.Marshaler {
@@ -9895,7 +9695,7 @@ func (ec *executionContext) _Query_activePairingCodes(ctx context.Context, field
 		true,
 	)
 }
-func (ec *executionContext) fieldContext_Query_activePairingCodes(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Query_activePairingCodes(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -9904,17 +9704,6 @@ func (ec *executionContext) fieldContext_Query_activePairingCodes(ctx context.Co
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_PairingCode(ctx, field)
 		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_activePairingCodes_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
 	}
 	return fc, nil
 }
@@ -9929,7 +9718,7 @@ func (ec *executionContext) _Query_topicMemories(ctx context.Context, field grap
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().TopicMemories(ctx, fc.Args["topic"].(*string), fc.Args["familyGroup"].(*string), fc.Args["includeSuperseded"].(*bool))
+			return ec.Resolvers.Query().TopicMemories(ctx, fc.Args["topic"].(*string), fc.Args["includeSuperseded"].(*bool))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.TopicMemory) graphql.Marshaler {
@@ -9973,7 +9762,7 @@ func (ec *executionContext) _Query_entityProfiles(ctx context.Context, field gra
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().EntityProfiles(ctx, fc.Args["topic"].(*string), fc.Args["entityType"].(*string), fc.Args["familyGroup"].(*string))
+			return ec.Resolvers.Query().EntityProfiles(ctx, fc.Args["topic"].(*string), fc.Args["entityType"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.EntityProfile) graphql.Marshaler {
@@ -10016,8 +9805,7 @@ func (ec *executionContext) _Query_sharedSpaces(ctx context.Context, field graph
 			return ec.fieldContext_Query_sharedSpaces(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().SharedSpaces(ctx, fc.Args["familyGroup"].(string))
+			return ec.Resolvers.Query().SharedSpaces(ctx)
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.SharedSpace) graphql.Marshaler {
@@ -10027,7 +9815,7 @@ func (ec *executionContext) _Query_sharedSpaces(ctx context.Context, field graph
 		true,
 	)
 }
-func (ec *executionContext) fieldContext_Query_sharedSpaces(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Query_sharedSpaces(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -10036,17 +9824,6 @@ func (ec *executionContext) fieldContext_Query_sharedSpaces(ctx context.Context,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_SharedSpace(ctx, field)
 		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_sharedSpaces_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
 	}
 	return fc, nil
 }
@@ -10061,7 +9838,7 @@ func (ec *executionContext) _Query_sharedTasks(ctx context.Context, field graphq
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().SharedTasks(ctx, fc.Args["familyGroup"].(string), fc.Args["topic"].(*string), fc.Args["isCompleted"].(*bool))
+			return ec.Resolvers.Query().SharedTasks(ctx, fc.Args["topic"].(*string), fc.Args["isCompleted"].(*bool))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.SharedTaskReminder) graphql.Marshaler {
@@ -10105,7 +9882,7 @@ func (ec *executionContext) _Query_scheduleEvents(ctx context.Context, field gra
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().ScheduleEvents(ctx, fc.Args["topic"].(*string), fc.Args["familyGroup"].(*string), fc.Args["startTime"].(*time.Time), fc.Args["endTime"].(*time.Time))
+			return ec.Resolvers.Query().ScheduleEvents(ctx, fc.Args["topic"].(*string), fc.Args["startTime"].(*time.Time), fc.Args["endTime"].(*time.Time))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.ScheduleEvent) graphql.Marshaler {
@@ -10149,7 +9926,7 @@ func (ec *executionContext) _Query_topicCalendarConfigs(ctx context.Context, fie
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().TopicCalendarConfigs(ctx, fc.Args["userId"].(*string), fc.Args["familyGroup"].(*string))
+			return ec.Resolvers.Query().TopicCalendarConfigs(ctx, fc.Args["userId"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.TopicCalendarConfig) graphql.Marshaler {
@@ -10192,8 +9969,7 @@ func (ec *executionContext) _Query_babyProfiles(ctx context.Context, field graph
 			return ec.fieldContext_Query_babyProfiles(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().BabyProfiles(ctx, fc.Args["familyGroup"].(string))
+			return ec.Resolvers.Query().BabyProfiles(ctx)
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.BabyProfile) graphql.Marshaler {
@@ -10203,7 +9979,7 @@ func (ec *executionContext) _Query_babyProfiles(ctx context.Context, field graph
 		true,
 	)
 }
-func (ec *executionContext) fieldContext_Query_babyProfiles(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Query_babyProfiles(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -10212,17 +9988,6 @@ func (ec *executionContext) fieldContext_Query_babyProfiles(ctx context.Context,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_BabyProfile(ctx, field)
 		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_babyProfiles_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
 	}
 	return fc, nil
 }
@@ -10237,7 +10002,7 @@ func (ec *executionContext) _Query_babyCareLogs(ctx context.Context, field graph
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().BabyCareLogs(ctx, fc.Args["babyId"].(string), fc.Args["familyGroup"].(*string), fc.Args["logType"].(*string), fc.Args["limit"].(*int))
+			return ec.Resolvers.Query().BabyCareLogs(ctx, fc.Args["babyId"].(string), fc.Args["logType"].(*string), fc.Args["limit"].(*int))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.BabyCareLog) graphql.Marshaler {
@@ -10280,8 +10045,7 @@ func (ec *executionContext) _Query_babyInventory(ctx context.Context, field grap
 			return ec.fieldContext_Query_babyInventory(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().BabyInventory(ctx, fc.Args["familyGroup"].(string))
+			return ec.Resolvers.Query().BabyInventory(ctx)
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.BabyInventoryItem) graphql.Marshaler {
@@ -10291,7 +10055,7 @@ func (ec *executionContext) _Query_babyInventory(ctx context.Context, field grap
 		true,
 	)
 }
-func (ec *executionContext) fieldContext_Query_babyInventory(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Query_babyInventory(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -10300,17 +10064,6 @@ func (ec *executionContext) fieldContext_Query_babyInventory(ctx context.Context
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_BabyInventoryItem(ctx, field)
 		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_babyInventory_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
 	}
 	return fc, nil
 }
@@ -10325,7 +10078,7 @@ func (ec *executionContext) _Query_houseContracts(ctx context.Context, field gra
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().HouseContracts(ctx, fc.Args["familyGroup"].(string), fc.Args["recordType"].(*string))
+			return ec.Resolvers.Query().HouseContracts(ctx, fc.Args["recordType"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.HouseContractRecord) graphql.Marshaler {
@@ -10369,7 +10122,7 @@ func (ec *executionContext) _Query_homeMaintenanceItems(ctx context.Context, fie
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().HomeMaintenanceItems(ctx, fc.Args["familyGroup"].(string), fc.Args["category"].(*string))
+			return ec.Resolvers.Query().HomeMaintenanceItems(ctx, fc.Args["category"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.HomeMaintenanceItem) graphql.Marshaler {
@@ -10412,8 +10165,7 @@ func (ec *executionContext) _Query_vehicleAssets(ctx context.Context, field grap
 			return ec.fieldContext_Query_vehicleAssets(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().VehicleAssets(ctx, fc.Args["familyGroup"].(string))
+			return ec.Resolvers.Query().VehicleAssets(ctx)
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.VehicleAsset) graphql.Marshaler {
@@ -10423,7 +10175,7 @@ func (ec *executionContext) _Query_vehicleAssets(ctx context.Context, field grap
 		true,
 	)
 }
-func (ec *executionContext) fieldContext_Query_vehicleAssets(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Query_vehicleAssets(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -10432,17 +10184,6 @@ func (ec *executionContext) fieldContext_Query_vehicleAssets(ctx context.Context
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_VehicleAsset(ctx, field)
 		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_vehicleAssets_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
 	}
 	return fc, nil
 }
@@ -10457,7 +10198,7 @@ func (ec *executionContext) _Query_financialTransactions(ctx context.Context, fi
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().FinancialTransactions(ctx, fc.Args["familyGroup"].(string), fc.Args["category"].(*string), fc.Args["limit"].(*int))
+			return ec.Resolvers.Query().FinancialTransactions(ctx, fc.Args["category"].(*string), fc.Args["limit"].(*int))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.FinancialTransaction) graphql.Marshaler {
@@ -10500,8 +10241,7 @@ func (ec *executionContext) _Query_categoryBudgets(ctx context.Context, field gr
 			return ec.fieldContext_Query_categoryBudgets(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().CategoryBudgets(ctx, fc.Args["familyGroup"].(string))
+			return ec.Resolvers.Query().CategoryBudgets(ctx)
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.CategoryBudget) graphql.Marshaler {
@@ -10511,7 +10251,7 @@ func (ec *executionContext) _Query_categoryBudgets(ctx context.Context, field gr
 		true,
 	)
 }
-func (ec *executionContext) fieldContext_Query_categoryBudgets(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Query_categoryBudgets(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -10520,17 +10260,6 @@ func (ec *executionContext) fieldContext_Query_categoryBudgets(ctx context.Conte
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_CategoryBudget(ctx, field)
 		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_categoryBudgets_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
 	}
 	return fc, nil
 }
@@ -10544,8 +10273,7 @@ func (ec *executionContext) _Query_recurringBills(ctx context.Context, field gra
 			return ec.fieldContext_Query_recurringBills(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().RecurringBills(ctx, fc.Args["familyGroup"].(string))
+			return ec.Resolvers.Query().RecurringBills(ctx)
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.RecurringBill) graphql.Marshaler {
@@ -10555,7 +10283,7 @@ func (ec *executionContext) _Query_recurringBills(ctx context.Context, field gra
 		true,
 	)
 }
-func (ec *executionContext) fieldContext_Query_recurringBills(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Query_recurringBills(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -10564,17 +10292,6 @@ func (ec *executionContext) fieldContext_Query_recurringBills(ctx context.Contex
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_RecurringBill(ctx, field)
 		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_recurringBills_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
 	}
 	return fc, nil
 }
@@ -10588,8 +10305,7 @@ func (ec *executionContext) _Query_externalApiConnectors(ctx context.Context, fi
 			return ec.fieldContext_Query_externalApiConnectors(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().ExternalAPIConnectors(ctx, fc.Args["familyGroup"].(*string))
+			return ec.Resolvers.Query().ExternalAPIConnectors(ctx)
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.ExternalAPIConnector) graphql.Marshaler {
@@ -10599,7 +10315,7 @@ func (ec *executionContext) _Query_externalApiConnectors(ctx context.Context, fi
 		true,
 	)
 }
-func (ec *executionContext) fieldContext_Query_externalApiConnectors(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Query_externalApiConnectors(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -10608,17 +10324,6 @@ func (ec *executionContext) fieldContext_Query_externalApiConnectors(ctx context
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_ExternalAPIConnector(ctx, field)
 		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_externalApiConnectors_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
 	}
 	return fc, nil
 }
@@ -10632,8 +10337,7 @@ func (ec *executionContext) _Query_automationRules(ctx context.Context, field gr
 			return ec.fieldContext_Query_automationRules(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().AutomationRules(ctx, fc.Args["familyGroup"].(*string))
+			return ec.Resolvers.Query().AutomationRules(ctx)
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.AutomationRule) graphql.Marshaler {
@@ -10643,7 +10347,7 @@ func (ec *executionContext) _Query_automationRules(ctx context.Context, field gr
 		true,
 	)
 }
-func (ec *executionContext) fieldContext_Query_automationRules(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Query_automationRules(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -10652,17 +10356,6 @@ func (ec *executionContext) fieldContext_Query_automationRules(ctx context.Conte
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_AutomationRule(ctx, field)
 		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_automationRules_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
 	}
 	return fc, nil
 }
@@ -10720,8 +10413,7 @@ func (ec *executionContext) _Query_personalCrmContacts(ctx context.Context, fiel
 			return ec.fieldContext_Query_personalCrmContacts(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().PersonalCrmContacts(ctx, fc.Args["familyGroup"].(string))
+			return ec.Resolvers.Query().PersonalCrmContacts(ctx)
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.PersonalCRMContact) graphql.Marshaler {
@@ -10731,7 +10423,7 @@ func (ec *executionContext) _Query_personalCrmContacts(ctx context.Context, fiel
 		true,
 	)
 }
-func (ec *executionContext) fieldContext_Query_personalCrmContacts(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Query_personalCrmContacts(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -10740,17 +10432,6 @@ func (ec *executionContext) fieldContext_Query_personalCrmContacts(ctx context.C
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_PersonalCRMContact(ctx, field)
 		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_personalCrmContacts_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
 	}
 	return fc, nil
 }
@@ -10765,7 +10446,7 @@ func (ec *executionContext) _Query_mutationLogs(ctx context.Context, field graph
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().MutationLogs(ctx, fc.Args["familyGroup"].(*string), fc.Args["topic"].(*string), fc.Args["limit"].(*int))
+			return ec.Resolvers.Query().MutationLogs(ctx, fc.Args["topic"].(*string), fc.Args["limit"].(*int))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.MutationLog) graphql.Marshaler {
@@ -10809,7 +10490,7 @@ func (ec *executionContext) _Query_auditSessions(ctx context.Context, field grap
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().AuditSessions(ctx, fc.Args["familyGroup"].(*string), fc.Args["limit"].(*int))
+			return ec.Resolvers.Query().AuditSessions(ctx, fc.Args["limit"].(*int))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.AuditSession) graphql.Marshaler {
@@ -10852,8 +10533,7 @@ func (ec *executionContext) _Query_userSessions(ctx context.Context, field graph
 			return ec.fieldContext_Query_userSessions(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().UserSessions(ctx, fc.Args["familyGroup"].(*string))
+			return ec.Resolvers.Query().UserSessions(ctx)
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.UserSessionSummary) graphql.Marshaler {
@@ -10863,7 +10543,7 @@ func (ec *executionContext) _Query_userSessions(ctx context.Context, field graph
 		true,
 	)
 }
-func (ec *executionContext) fieldContext_Query_userSessions(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Query_userSessions(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -10872,17 +10552,6 @@ func (ec *executionContext) fieldContext_Query_userSessions(ctx context.Context,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_UserSessionSummary(ctx, field)
 		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_userSessions_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
 	}
 	return fc, nil
 }
@@ -15222,6 +14891,59 @@ func (ec *executionContext) _Household(ctx context.Context, sel ast.SelectionSet
 	return out
 }
 
+var meImplementors = []string{"Me"}
+
+func (ec *executionContext) _Me(ctx context.Context, sel ast.SelectionSet, obj *model.Me) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, meImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := graphql.NewDeferredGroup(ctx)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Me")
+		case "personId":
+			out.Values[i] = ec._Me_personId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "name":
+			out.Values[i] = ec._Me_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "role":
+			out.Values[i] = ec._Me_role(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "isOperator":
+			out.Values[i] = ec._Me_isOperator(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "household":
+			out.Values[i] = ec._Me_household(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	if n := len(deferred.Defers); n > 0 {
+		atomic.AddInt32(&ec.Deferred, int32(min(n, math.MaxInt32)))
+		ec.ProcessDeferredGroup(deferred)
+	}
+
+	return out
+}
+
 var mutationImplementors = []string{"Mutation"}
 
 func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet) graphql.Marshaler {
@@ -15241,6 +14963,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		switch field.Name {
 		case "__typename":
 			out.Values[i] = graphql.MarshalString("Mutation")
+		case "signOut":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_signOut(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "generatePairingCode":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_generatePairingCode(ctx, field)
@@ -15704,6 +15433,12 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 		switch field.Name {
 		case "__typename":
 			out.Values[i] = graphql.MarshalString("Query")
+		case "me":
+			out.ResolveRootConcurrently(innerCtx, ec.OperationContext, i,
+				true, true,
+				func(ctx context.Context) graphql.Marshaler {
+					return ec._Query_me(ctx, field)
+				})
 		case "household":
 			out.ResolveRootConcurrently(innerCtx, ec.OperationContext, i,
 				true, true,
@@ -17348,6 +17083,14 @@ func (ec *executionContext) marshalNInt2int(ctx context.Context, sel ast.Selecti
 		graphql.AddInvalidNullFromMarshaler(ctx, "Int!")
 	}
 	return res
+}
+
+func (ec *executionContext) marshalNMe2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐMe(ctx context.Context, sel ast.SelectionSet, v *model.Me) graphql.Marshaler {
+	if v == nil {
+		graphql.AddInvalidNullError(ctx, "Me!")
+		return graphql.Null
+	}
+	return ec._Me(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalNMutationLog2ᚕᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐMutationLogᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.MutationLog) graphql.Marshaler {

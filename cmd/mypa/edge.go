@@ -24,6 +24,7 @@ const (
 //
 //   - /webhook/*                            → ingress (10 MB): every channel adapter's webhooks
 //   - /auth/google*                         → app (1 MB)
+//   - /auth/dashboard/signin                → app (4 KB, in the handler): the sign-in exchange (V4-35)
 //   - /graphql*                             → app (1 MB), only with an Authorization header
 //   - /favicon.ico                          → 204, quietly (BL-6)
 //   - everything else                       → 404, quietly, including /playground and /health
@@ -46,7 +47,7 @@ func newEdgeRouter(ingress, app http.Handler) (http.Handler, error) {
 			r.Body = http.MaxBytesReader(w, r.Body, webhookBodyLimit)
 			ingress.ServeHTTP(w, r)
 
-		case strings.HasPrefix(path, "/auth/google"):
+		case strings.HasPrefix(path, "/auth/google"), path == SignInPath:
 			r.Body = http.MaxBytesReader(w, r.Body, appBodyLimit)
 			app.ServeHTTP(w, r)
 

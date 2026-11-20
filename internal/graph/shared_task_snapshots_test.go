@@ -38,22 +38,14 @@ func TestCompleteSharedTask_Snapshots(t *testing.T) {
 	householdtest.Household(t, client, familyA)
 	householdtest.Household(t, client, familyB)
 
-	userA := graph.WithClaims(context.Background(), &graph.AuthClaims{
-		UserID:      "usr-alice",
-		Role:        "member",
-		FamilyGroup: familyA,
-	})
-	userB := graph.WithClaims(context.Background(), &graph.AuthClaims{
-		UserID:      "usr-bob",
-		Role:        "member",
-		FamilyGroup: familyB,
-	})
+	userA := signedIn(t, resolver.DB, familyA, "usr-alice", "member")
+	userB := signedIn(t, resolver.DB, familyB, "usr-bob", "member")
 
 	t.Run("SnapshotDurability_BeforeAndAfterJSON_Populated", func(t *testing.T) {
 		publishedEvents = nil
 
 		// Create shared task in FamilyAlpha
-		task, err := resolver.Mutation().CreateSharedTask(userA, familyA, "groceries", "Organic milk", nil, nil)
+		task, err := resolver.Mutation().CreateSharedTask(userA, "groceries", "Organic milk", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, task)
 		require.Len(t, publishedEvents, 1)
@@ -106,7 +98,7 @@ func TestCompleteSharedTask_Snapshots(t *testing.T) {
 		publishedEvents = nil
 
 		// Task created by FamilyAlpha
-		task, err := resolver.Mutation().CreateSharedTask(userA, familyA, "chores", "Mow the lawn", nil, nil)
+		task, err := resolver.Mutation().CreateSharedTask(userA, "chores", "Mow the lawn", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, task)
 

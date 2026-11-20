@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	layer "github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,7 +40,8 @@ var scenarios = []scenario{
 	{"duplicate_delivery", duplicateDelivery},
 	{"doctor", doctorReport},
 	{"fallbacks", fallbacks},
-	{"link_accounts", linkAccounts}, // V4-32: one person on two channels
+	{"link_accounts", linkAccounts},       // V4-32: one person on two channels
+	{"dashboard_signin", dashboardSignIn}, // V4-35: a sign-in link in a direct chat
 }
 
 // TestConformance runs every scenario on every adapter the app registers. An adapter without a
@@ -165,12 +167,13 @@ func plainReply(t *testing.T, e *env) {
 }
 
 // pairing: a stranger gets nothing but a request for a code; a valid code typed as plain text
-// makes them a member with the code's role and family; a code works once.
+// makes them a member with the code's role and family; a code works once. Since V4-35 a code gives
+// adult or child, held by the membership; a code never makes an owner (nor a guest, BL-46).
 func pairing(t *testing.T, e *env) {
 	expires := time.Now().Add(time.Hour)
 	levi := e.db.adminOf(t, "Levi")
-	require.NoError(t, e.db.CreatePairingCode(levi, models.PairingCode{Code: "482913", Role: "family", FamilyGroup: "Levi", ExpiresAt: expires}))
-	require.NoError(t, e.db.CreatePairingCode(levi, models.PairingCode{Code: "771204", Role: "admin", FamilyGroup: "Levi", ExpiresAt: expires}))
+	require.NoError(t, e.db.CreatePairingCode(levi, models.PairingCode{Code: "482913", Role: "adult", FamilyGroup: "Levi", ExpiresAt: expires}))
+	require.NoError(t, e.db.CreatePairingCode(levi, models.PairingCode{Code: "771204", Role: "child", FamilyGroup: "Levi", ExpiresAt: expires}))
 	first, second, third := e.ch.person(1), e.ch.person(2), e.ch.person(3)
 
 	// A stranger is refused and the model is never consulted.
@@ -183,7 +186,8 @@ func pairing(t *testing.T, e *env) {
 	e.says(first, "482913")
 	u, known := e.db.user(first.UserID)
 	require.True(t, known, "a valid code must pair the sender")
-	assert.Equal(t, "family", u.Role)
+	role, _ := e.db.roleOf(first.UserID)
+	assert.Equal(t, identity.RoleAdult, role)
 	assert.Equal(t, "Levi", u.FamilyGroup)
 
 	// From then on the member is served.
@@ -193,9 +197,10 @@ func pairing(t *testing.T, e *env) {
 
 	// The "/start <code>" form (what a Telegram deep link sends) is accepted as typed text too.
 	e.says(second, "/start 771204")
-	u, known = e.db.user(second.UserID)
+	_, known = e.db.user(second.UserID)
 	require.True(t, known)
-	assert.Equal(t, "admin", u.Role)
+	role, _ = e.db.roleOf(second.UserID)
+	assert.Equal(t, identity.RoleChild, role)
 
 	// A used code pairs nobody else.
 	e.says(third, "482913")

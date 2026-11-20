@@ -41,7 +41,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-28 | Low | The one-default-model guard misses a model alias with no version digit (`gemini-flash-latest`) and does not search `.mjs`, `.sh`, `.ps1` or `.sql` files | open |
 | BL-29 | Medium | The LLM client sends `Temperature: 0.2`; Gemini 3.6 Flash ignores sampling parameters and later model generations are to reject them with HTTP 400 | open: resolve before the default moves past 3.6, as part of V4-03 |
 | BL-30 | Low | Tests in `cmd/mypa` (formerly `cmd/orchestrator`) and `internal/crypto` change environment variables and do not put them back exactly | open |
-| BL-31 | Medium | The dashboard `users` query returns the users of every family, not only the caller's | open: ADR 0002 removes the pattern; can be fixed earlier on its own |
+| BL-31 | Medium | The dashboard `users` query returns the users of every family, not only the caller's | done 2026-11-20 by V4-35 (`feat/v4-35-dashboard-signin`): an owner gets the household's members, an adult only themselves |
 | BL-32 | Low | A pairing code can be redeemed by two senders at the same moment | open: ADR 0002 requires a one-statement claim for every code |
 | BL-33 | Low | WhatsApp and Telegram message splitting counts bytes, not characters, so non-Latin text is split at about half the allowed length | open: fix after the channel port (V4-31), not during it |
 | BL-34 | Low | The dashboard home page still shows the label "Orchestrator V3 • Active" | open |
@@ -51,8 +51,12 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-38 | Low | The dashboard's `logBabyCare` does not check that the baby ID belongs to the caller's household | open |
 | BL-39 | Low | Deleting an automation rule that is not in the caller's household reports success | open |
 | BL-40 | Low | `/doctor` does not say that linking is off when `LINK_CODE_SECRET` is not set | open |
-| BL-41 | Medium | An owner cannot yet remove a member's channel account | open — needs owner roles (V4-35) |
+| BL-41 | Medium | An owner cannot yet remove a member's channel account | open — owner roles exist since V4-35 |
 | BL-42 | Low | Wrong pairing codes do not count toward the install-wide limit on typed codes | open — pairing codes end with V4-36 |
+| BL-43 | High | A `false` is stored as `true` in every boolean column whose model says `default:true` (`is_shared` on transactions, `can_view` and `can_edit` on shared spaces, `is_active`, `auto_renew`, `sync_to_google`, `include_in_morning_briefing`) | open |
+| BL-44 | Medium | In chat, the finance tools list the household's unshared transactions of every member, while the dashboard shows each member only their own | open — decide with BL-43 |
+| BL-45 | Low | `dashboard/README.md` documents `NEXT_PUBLIC_GRAPHQL_API_KEY`, which nothing reads | open |
+| BL-46 | Medium | Guests cannot be used yet: a guest sees only the topics shared with them by name, and nothing shares a topic with a guest by name | open — needs a roadmap item (proposal: with V4-36 invites or V4-11 tiers) |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -586,6 +590,47 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Impact:** a 6-digit code has 20 bits; spread across senders it is guessable within its 24 hours.
 - **Fix:** count wrong pairing codes against the same limit, or end pairing codes as V4-36 plans (invites in
   `access_tokens`, keyed hash, owner approval).
+
+### BL-43 — A `false` is stored as `true` where the model's default is `true` (High)
+- **Found:** 2026-11-20, while building V4-35 (`TestSessionAuth_EachRoleSeesAndChangesOnlyWhatItMay`).
+- **Evidence:** `logFinancialTransaction(isShared: false)` stores `is_shared = true`. GORM leaves a zero-valued
+  field out of the INSERT when the field has a `default`, so the column's `DEFAULT true` applies. The same
+  holds for every `bool` with `gorm:"default:true"`: `FinancialTransaction.IsShared`,
+  `SharedSpace.CanView` and `CanEdit`, `AutomationRule.IsActive`, `RecurringBill.AutoRenew`,
+  `ScheduleEvent.SyncToGoogle`, `TopicCalendarConfig.IncludeInMorningBriefing`. Chat writes are affected
+  too (`internal/domains/finance/handlers.go` passes `is_shared` through).
+- **Impact:** a transaction a person marked private is shown to the household as shared; a shared space
+  set to "no view" or "no edit" keeps both; a rule created inactive runs. V4-35's dashboard rule
+  (an unshared row is its person's own) is right, but the rows say "shared".
+- **Fix:** write these fields explicitly (`Select("*")` or `*bool` with the default) and add a test per
+  model that a `false` round-trips; decide whether rows written so far can be corrected (they cannot be
+  told apart from rows meant as `true`).
+
+### BL-44 — Chat shows other members' unshared transactions (Medium)
+- **Found:** 2026-11-20, while building V4-35.
+- **Evidence:** `FinanceRepo.ListTransactions` filters the household only; the chat finance tools list every
+  member's transactions. Since V4-35 the dashboard shows an unshared transaction to its person only
+  (ADR 0002 Decision 1: an owner does not see another adult's personal data).
+- **Impact:** the two surfaces disagree about the same row; chat is the wider one.
+- **Fix:** apply the same rule in the finance repository (`is_shared OR` the person's own), after BL-43, so
+  the rows mean what they say.
+
+### BL-46 — Guests cannot be used yet (Medium)
+- **Found:** 2026-11-20, V4-35 review.
+- **Evidence:** ADR 0002 Decision 1: a guest chats "only [in] the topics shared with them by name" (a
+  babysitter and the baby log). `shared_spaces` shares a topic with a member, but nothing limits what a
+  guest's turn reads to those topics, and no item on the roadmap builds it (V4-11 is per-tool tiers).
+- **What V4-35 does meanwhile:** fails closed. The guest row of the role table is empty, the engine refuses
+  a guest's every message before commands and the model, and no pairing code makes a guest
+  (`identity.ParseInviteRole`, `generatePairingCode`, the dashboard form). Migration C makes no guest.
+- **Fix:** a roadmap item (the owner's to add) that scopes a guest's turn to the topics shared with them by
+  name, in every module and in recall; then give the guest row `UseAssistant` and allow guest codes.
+
+### BL-45 — The dashboard README documents a setting nothing reads (Low)
+- **Found:** 2026-11-20, while building V4-35.
+- **Evidence:** `dashboard/README.md` lists `NEXT_PUBLIC_GRAPHQL_API_KEY` ("client-side Bearer token for
+  browser mutations"); no code reads it, and since V4-35 no page calls `/graphql` from the browser.
+- **Fix:** remove the row.
 
 ## Operations (owner)
 

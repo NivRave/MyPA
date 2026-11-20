@@ -43,8 +43,13 @@ type memoryDB struct {
 	accounts map[string]*models.ChannelAccount
 	people   map[string]*models.Person
 	tokens   []*models.AccessToken
+	// access is the membership role and operator flag of the people pairing made (V4-35), by
+	// person ID; a seeded member's comes from their users row (identitytest.LegacyAccess).
+	access map[string]identity.Access
 	// sessions is every audit session published, in order.
 	sessions []models.AuditSession
+	// signedOut lists the people /signout ended the sessions of (V4-35).
+	signedOut []string
 }
 
 var _ orchestrator.DBClient = (*memoryDB)(nil)
@@ -56,6 +61,7 @@ func newMemoryDB() *memoryDB {
 		lastSession: map[string]models.AuditSession{},
 		households:  identitytest.NewStore(),
 		accounts:    map[string]*models.ChannelAccount{},
+		access:      map[string]identity.Access{},
 		people:      map[string]*models.Person{},
 	}
 }
@@ -75,6 +81,47 @@ func (d *memoryDB) HouseholdByID(ctx context.Context, id string) (*models.Househ
 
 func (d *memoryDB) HouseholdsByLabel(ctx context.Context, label string) ([]models.Household, error) {
 	return d.households.HouseholdsByLabel(ctx, label)
+}
+
+// AccessOf implements identity.Store like db.Client: the membership's role, never the users row's
+// for a person pairing made; a seeded member's comes from their row as Migration C maps it.
+func (d *memoryDB) AccessOf(_ context.Context, u *models.User) (identity.Access, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.accessLocked(u), nil
+}
+
+func (d *memoryDB) accessLocked(u *models.User) identity.Access {
+	if u == nil {
+		return identity.Access{}
+	}
+	if a, ok := d.access[u.ID]; ok {
+		return a
+	}
+	return identitytest.LegacyAccess(u)
+}
+
+// roleOf returns the role of the stored user with this platform ID (test accessor).
+func (d *memoryDB) roleOf(platformID string) (identity.Role, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	u, ok := d.users[platformID]
+	if !ok {
+		return "", false
+	}
+	return d.accessLocked(&u).Role, true
+}
+
+func (d *memoryDB) HouseholdOwners(_ context.Context, s identity.Scope) ([]models.User, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []models.User
+	for _, u := range d.users {
+		if u.HouseholdID == s.HouseholdID() && d.accessLocked(&u).Role == identity.RoleOwner {
+			out = append(out, u)
+		}
+	}
+	return out, nil
 }
 
 func (d *memoryDB) UsersInHousehold(_ context.Context, s identity.Scope) ([]models.User, error) {
@@ -223,8 +270,15 @@ func (d *memoryDB) RedeemPairingCode(codeID string, u models.User, channelName s
 	defer d.mu.Unlock()
 	for _, pc := range d.codes {
 		if pc.ID == codeID {
+			// As db.Client: the code's role, never owner; users.role gets the legacy value.
+			role, ok := identity.ParseInviteRole(pc.Role)
+			if !ok {
+				return errors.New("pairing code has no valid role")
+			}
 			pc.IsUsed = true
 			u.ID = uuid.NewString()
+			u.HouseholdID, u.FamilyGroup, u.Role = pc.HouseholdID, pc.FamilyGroup, identity.LegacyRole(role)
+			d.access[u.ID] = identity.Access{HouseholdID: pc.HouseholdID, Role: role}
 			d.users[u.PlatformID] = u
 			d.addAccountLocked(channelName, u.PlatformID, u.ID, time.Now())
 			return nil
@@ -257,6 +311,20 @@ func (a auditSink) Publish(_ context.Context, v any) error {
 		a.db.mu.Unlock()
 	}
 	return nil
+}
+
+// auditSessions returns every audit session published so far (test accessor).
+func (d *memoryDB) auditSessions() []models.AuditSession {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]models.AuditSession(nil), d.sessions...)
+}
+
+// signedOutPeople returns the people /signout was sent for (test accessor).
+func (d *memoryDB) signedOutPeople() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.signedOut...)
 }
 
 // modelCall is one request the engine made to the model.

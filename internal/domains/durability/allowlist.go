@@ -73,8 +73,9 @@ func ResolveRollbackTable(entityType string) (string, error) {
 	norm := strings.ToLower(strings.TrimSpace(entityType))
 	switch norm {
 	case "users", "pairing_codes", "households", "household", "encrypted_credentials", "audit_sessions", "audit_events", "schema_migrations",
-		// V4-32: identity is never changed by undo (ADR 0002 §10).
-		"people", "person", "channel_accounts", "channel_account", "memberships", "membership", "access_tokens", "access_token":
+		// V4-32, V4-35: identity and sign-ins are never changed by undo (ADR 0002 §10).
+		"people", "person", "channel_accounts", "channel_account", "memberships", "membership", "access_tokens", "access_token",
+		"sessions", "session":
 		return "", fmt.Errorf("system entity %q cannot be rolled back via mutation rollback", entityType)
 	}
 

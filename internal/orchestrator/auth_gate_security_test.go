@@ -241,6 +241,15 @@ func TestAdversarial_SEC01_PairingCodeRedemption(t *testing.T) {
 
 // TestAdversarial_SEC01_RBAC_NonAdminRolesDenied verifies that non-admin roles (family, guest, etc.)
 // receive permission denied on /backup and /restore.
+// refusedAsNonAdmin reports whether reply refuses an operator command to role. Since V4-35 a guest
+// is refused everything before any command runs (BL-46), with its own reply.
+func refusedAsNonAdmin(role, reply string) bool {
+	if role == "guest" {
+		return strings.Contains(reply, "not set up yet")
+	}
+	return strings.Contains(reply, "Permission denied: administrative privileges required")
+}
+
 func TestAdversarial_SEC01_RBAC_NonAdminRolesDenied(t *testing.T) {
 	engine, tgMock, dbMock, cleanup := setupUnauthTestEngine(t)
 	defer cleanup()
@@ -261,7 +270,7 @@ func TestAdversarial_SEC01_RBAC_NonAdminRolesDenied(t *testing.T) {
 			dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), userID).Return(user, nil)
 			tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 				s, ok := x.(string)
-				return ok && strings.Contains(s, "Permission denied: administrative privileges required")
+				return ok && refusedAsNonAdmin(role, s)
 			})).Return(nil)
 
 			err := engine.ProcessMessage(context.Background(), channel.Inbound{
@@ -276,7 +285,7 @@ func TestAdversarial_SEC01_RBAC_NonAdminRolesDenied(t *testing.T) {
 			dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), userID).Return(user, nil)
 			tgMock.EXPECT().SendMessage(gomock.Any(), gomock.Any(), gomock.Cond(func(x any) bool {
 				s, ok := x.(string)
-				return ok && strings.Contains(s, "Permission denied: administrative privileges required")
+				return ok && refusedAsNonAdmin(role, s)
 			})).Return(nil)
 
 			err = engine.ProcessMessage(context.Background(), channel.Inbound{

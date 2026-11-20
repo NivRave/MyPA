@@ -107,7 +107,7 @@ func TestRun_TelegramOnlyInstallRunsWithNoTunnel(t *testing.T) {
 	require.True(t, cfg.Channels.Telegram.Polling)
 	require.NoError(t, cfg.Validate(string(roleIngress)))
 	full := *cfg
-	full.Server = config.ServerConfig{Port: port, DashboardAPISecret: "d", DashboardFamilyGroup: "f", JWTSecret: "j"}
+	full.Server = config.ServerConfig{Port: port}
 	full.Encryption, full.Database, full.Redis = config.EncryptionConfig{Key: "e"}, config.DatabaseConfig{URL: "postgres://x"}, config.RedisConfig{URL: "redis://x"}
 	full.Gemini = config.GeminiConfig{APIKey: "g"}
 	require.NoError(t, full.Validate(string(roleAll)), "the default role accepts it too")

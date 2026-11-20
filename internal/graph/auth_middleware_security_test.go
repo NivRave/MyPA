@@ -1,180 +1,101 @@
 package graph
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/nivik/mypa/internal/identity"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// SEC-02 for the session middleware (V4-35): every header that is not a live session's secret is
+// refused, and the store is not even asked for one that is not well formed.
 func TestAdversarial_SEC02_AuthMiddleware_HeaderVariations(t *testing.T) {
-	dashboardSecret := "prod-dashboard-secret-999"
-	jwtSecret := "prod-jwt-secret-888"
-	middleware := NewAuthMiddleware(AuthConfig{DashboardSecret: dashboardSecret, DashboardFamilyGroup: "TestFamily", JWTSecret: jwtSecret})
+	f := newFakeSessions()
+	secret := f.open(t, "TestFamily", "p-1", identity.RoleOwner)
+	other, err := identity.NewSecret()
+	require.NoError(t, err)
 
-	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"data":"success"}`))
-	})
-	server := middleware(dummyHandler)
-
-	tests := []struct {
-		name        string
-		authHeader  string
-		expectedErr string
-	}{
-		{"EmptyHeader", "", "missing Authorization header"},
-		{"BasicAuthScheme", "Basic dXNlcjpwYXNz", "bearer token required"},
-		{"TokenScheme", "Token abcdef12345", "bearer token required"},
-		{"ApiKeyScheme", "ApiKey xyz", "bearer token required"},
-		{"BearerOnly", "Bearer", "bearer token required"},
-		{"BearerEmptyToken", "Bearer   ", "invalid credentials"},
-		{"InvalidDashboardSecret", "Bearer wrong-secret", "invalid credentials"},
-		{"SubtlePrefixMatchDashboardSecret", "Bearer prod-dashboard-secret", "invalid credentials"},
+	cases := map[string]string{
+		"EmptyHeader":            "",
+		"BasicAuthScheme":        "Basic dXNlcjpwYXNz",
+		"TokenScheme":            "Token " + secret,
+		"BearerOnly":             "Bearer",
+		"BearerEmptyToken":       "Bearer   ",
+		"CookieValueNotBearer":   "mypa_session=" + secret,
+		"PrefixOfTheSecret":      "Bearer " + secret[:42],
+		"SecretWithExtraChar":    "Bearer " + secret + "A",
+		"TheHashInsteadOfSecret": "Bearer " + identity.HashSecret(secret),
+		"WellFormedButUnknown":   "Bearer " + other,
+		"SQLInjection":           "Bearer ' OR 1=1 --",
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/graphql", nil)
-			if tc.authHeader != "" {
-				req.Header.Set("Authorization", tc.authHeader)
-			}
-			rr := httptest.NewRecorder()
-			server.ServeHTTP(rr, req)
-
-			assert.Equal(t, http.StatusUnauthorized, rr.Code)
-			assert.Contains(t, rr.Body.String(), tc.expectedErr)
+	for name, header := range cases {
+		t.Run(name, func(t *testing.T) {
+			code, c := serveAs(t, f, header)
+			assert.Equal(t, http.StatusUnauthorized, code)
+			assert.Nil(t, c, "the handler must not run")
 		})
 	}
+
+	f.mu.Lock()
+	before := f.lookups
+	f.mu.Unlock()
+	for _, h := range []string{"Bearer short", "Bearer " + strings.Repeat("!", 43), "Bearer " + identity.HashSecret(secret)} {
+		serveAs(t, f, h)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	assert.Equal(t, before, f.lookups, "a malformed secret is refused before any lookup")
 }
 
-func TestAdversarial_SEC02_AuthMiddleware_JWTForgingAndAttacks(t *testing.T) {
-	dashboardSecret := "prod-dashboard-secret-999"
-	jwtSecret := "prod-jwt-secret-888"
-	middleware := NewAuthMiddleware(AuthConfig{DashboardSecret: dashboardSecret, DashboardFamilyGroup: "TestFamily", JWTSecret: jwtSecret})
-
-	var capturedClaims *AuthClaims
-	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedClaims = ForContext(r.Context())
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"data":"success"}`))
-	})
-	server := middleware(dummyHandler)
-
-	// 1. Alg "none" attack
-	t.Run("AlgNoneAttack", func(t *testing.T) {
-		capturedClaims = nil
-		header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
-		payload := base64.RawURLEncoding.EncodeToString([]byte(`{"user_id":"hacker","role":"admin"}`))
-		forgedToken := header + "." + payload + "."
-
-		req := httptest.NewRequest("POST", "/graphql", nil)
-		req.Header.Set("Authorization", "Bearer "+forgedToken)
-		rr := httptest.NewRecorder()
-		server.ServeHTTP(rr, req)
-
-		assert.Equal(t, http.StatusUnauthorized, rr.Code)
-		assert.Nil(t, capturedClaims)
-	})
-
-	// 2. Tampered Payload (Privilege escalation: change role from family to admin)
-	t.Run("TamperedPayloadEscalation", func(t *testing.T) {
-		capturedClaims = nil
-		legitToken := generateTestJWT(AuthClaims{
-			UserID: "victim-user",
-			Role:   "family",
-		}, jwtSecret)
-
-		tokenParts := strings.Split(legitToken, ".")
-		require.Len(t, tokenParts, 3)
-
-		// Create forged payload claiming admin role
-		tamperedPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"user_id":"victim-user","role":"admin"}`))
-		// Tampered token pairs header and original signature with new payload
-		tamperedToken := tokenParts[0] + "." + tamperedPayload + "." + tokenParts[2]
-
-		req := httptest.NewRequest("POST", "/graphql", nil)
-		req.Header.Set("Authorization", "Bearer "+tamperedToken)
-		rr := httptest.NewRecorder()
-		server.ServeHTTP(rr, req)
-
-		assert.Equal(t, http.StatusUnauthorized, rr.Code)
-		assert.Nil(t, capturedClaims)
-	})
-
-	// 3. Expired JWT
-	t.Run("ExpiredToken", func(t *testing.T) {
-		capturedClaims = nil
-		expiredToken := generateTestJWT(AuthClaims{
-			UserID:    "expired-user",
-			Role:      "admin",
-			ExpiresAt: time.Now().Add(-10 * time.Minute).Unix(),
-		}, jwtSecret)
-
-		req := httptest.NewRequest("POST", "/graphql", nil)
-		req.Header.Set("Authorization", "Bearer "+expiredToken)
-		rr := httptest.NewRecorder()
-		server.ServeHTTP(rr, req)
-
-		assert.Equal(t, http.StatusUnauthorized, rr.Code)
-		assert.Nil(t, capturedClaims)
-	})
-
-	// 4. Valid Dashboard Secret Access
-	t.Run("ValidDashboardSecret", func(t *testing.T) {
-		capturedClaims = nil
-		req := httptest.NewRequest("POST", "/graphql", nil)
-		req.Header.Set("Authorization", "Bearer "+dashboardSecret)
-		rr := httptest.NewRecorder()
-		server.ServeHTTP(rr, req)
-
-		assert.Equal(t, http.StatusOK, rr.Code)
-		require.NotNil(t, capturedClaims)
-		assert.Equal(t, "dashboard-service", capturedClaims.UserID)
-		assert.Equal(t, "admin", capturedClaims.Role)
-	})
-
-	// 5. Valid JWT Access
-	t.Run("ValidJWTClaims", func(t *testing.T) {
-		capturedClaims = nil
-		validToken := generateTestJWT(AuthClaims{
-			UserID:      "legit-user",
-			Role:        "admin",
-			FamilyGroup: "TestFamily",
-			ExpiresAt:   time.Now().Add(1 * time.Hour).Unix(),
-		}, jwtSecret)
-
-		req := httptest.NewRequest("POST", "/graphql", nil)
-		req.Header.Set("Authorization", "Bearer "+validToken)
-		rr := httptest.NewRecorder()
-		server.ServeHTTP(rr, req)
-
-		assert.Equal(t, http.StatusOK, rr.Code)
-		require.NotNil(t, capturedClaims)
-		assert.Equal(t, "legit-user", capturedClaims.UserID)
-		assert.Equal(t, "admin", capturedClaims.Role)
-		assert.Equal(t, "TestFamily", capturedClaims.FamilyGroup)
-	})
+// signJWT makes an HS256 token as the removed signed-token path accepted it.
+func signJWT(t *testing.T, secret, alg string, claims map[string]any) string {
+	t.Helper()
+	enc := base64.RawURLEncoding
+	h, err := json.Marshal(map[string]string{"alg": alg, "typ": "JWT"})
+	require.NoError(t, err)
+	p, err := json.Marshal(claims)
+	require.NoError(t, err)
+	unsigned := enc.EncodeToString(h) + "." + enc.EncodeToString(p)
+	m := hmac.New(sha256.New, []byte(secret))
+	m.Write([]byte(unsigned))
+	return unsigned + "." + enc.EncodeToString(m.Sum(nil))
 }
 
-func TestAdversarial_SEC02_AuthMiddleware_EmptySecretsRejectsAll(t *testing.T) {
-	// If server misconfigured with empty secrets, all requests must be rejected
-	middleware := NewAuthMiddleware(AuthConfig{})
-	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	server := middleware(dummyHandler)
+// V4-35 done-when: the shared dashboard secret no longer grants access, and neither does a signed
+// token, whoever holds the old secrets. Before V4-35 each of these was accepted as an admin.
+func TestAdversarial_SharedSecretAndSignedTokensNoLongerGrantAccess(t *testing.T) {
+	f := newFakeSessions()
+	f.open(t, "TestFamily", "p-1", identity.RoleOwner)
+	const oldDashboardSecret = "prod-dashboard-secret-999"
+	const oldJWTSecret = "prod-jwt-secret-888"
+	t.Setenv("DASHBOARD_API_SECRET", oldDashboardSecret)
+	t.Setenv("DASHBOARD_FAMILY_GROUP", "TestFamily")
+	t.Setenv("JWT_SECRET", oldJWTSecret)
 
-	req := httptest.NewRequest("POST", "/graphql", nil)
-	req.Header.Set("Authorization", "Bearer any-token")
-	rr := httptest.NewRecorder()
-	server.ServeHTTP(rr, req)
-
-	assert.Equal(t, http.StatusUnauthorized, rr.Code)
-	assert.Contains(t, rr.Body.String(), "invalid credentials")
+	admin := map[string]any{"user_id": "root", "role": "admin", "family_group": "TestFamily", "exp": time.Now().Add(time.Hour).Unix()}
+	cases := map[string]string{
+		"TheOldDashboardSecret":          "Bearer " + oldDashboardSecret,
+		"TheDevelopmentFallbackToken":    "Bearer dev-dashboard-token",
+		"AValidHS256AdminToken":          "Bearer " + signJWT(t, oldJWTSecret, "HS256", admin),
+		"AnAlgNoneToken":                 "Bearer " + signJWT(t, "", "none", admin),
+		"ATokenSignedWithTheDashSecret":  "Bearer " + signJWT(t, oldDashboardSecret, "HS256", admin),
+		"ATenantBoundClaimInTheToken":    "Bearer " + signJWT(t, oldJWTSecret, "HS256", map[string]any{"role": "admin", "TenantBound": true, "exp": admin["exp"]}),
+		"TheOldSecretWithBasicScheme":    "Basic " + base64.StdEncoding.EncodeToString([]byte("dashboard:"+oldDashboardSecret)),
+		"TheOldSecretPaddedToSecretSize": "Bearer " + (oldDashboardSecret + strings.Repeat("A", 43))[:43],
+	}
+	for name, header := range cases {
+		t.Run(name, func(t *testing.T) {
+			code, c := serveAs(t, f, header)
+			assert.Equal(t, http.StatusUnauthorized, code)
+			assert.Nil(t, c)
+		})
+	}
 }

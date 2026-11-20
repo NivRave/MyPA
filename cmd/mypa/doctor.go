@@ -67,6 +67,7 @@ func newHealthReporter(cfg *config.Config, channels *channel.Registry, store *st
 			Set:        len(cfg.ParseAllowedUsers()) > 0,
 			Households: dbClient.CountHouseholds,
 		},
+		doctor.Owners{Ownerless: dbClient.HouseholdsWithoutOwner}, // V4-35
 		doctor.Queues{
 			Names:       []string{broker.InboundMessagesQueue, broker.AuditEventsQueue},
 			BacklogWarn: doctorQueueBacklog,

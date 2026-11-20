@@ -385,8 +385,8 @@ func linkRefusal(err error) string {
 }
 
 // announceAccountChange tells the person's other accounts (all but skip) and the household's
-// admins about a change to the person's accounts (Decision 4: every link is announced, so a stolen
-// phone adding an account is noticed). Owners are the admins until V4-35.
+// owners about a change to the person's accounts (Decision 4: every link is announced, so a stolen
+// phone adding an account is noticed).
 func (e *Engine) announceAccountChange(ctx context.Context, user *models.User, personID string, skip []string, text string) {
 	skipped := map[string]bool{}
 	for _, id := range skip {
@@ -399,17 +399,16 @@ func (e *Engine) announceAccountChange(ctx context.Context, user *models.User, p
 			}
 		}
 	}
-	scope := e.scopeOf(ctx, user)
-	members, err := e.db.UsersInHousehold(ctx, scope)
+	owners, err := e.db.HouseholdOwners(ctx, e.scopeOf(ctx, user))
 	if err != nil {
 		return
 	}
-	for _, m := range members {
-		if m.ID == personID || identity.ParseRole(m.Role) != identity.RoleAdmin {
+	for _, m := range owners {
+		if m.ID == personID {
 			continue
 		}
 		if err := e.deliverTo(ctx, m.PlatformID, text); err != nil {
-			slog.Warn("account change not announced to an admin", "person_id", m.ID, "error", err)
+			slog.Warn("account change not announced to an owner", "person_id", m.ID, "error", err)
 		}
 	}
 }

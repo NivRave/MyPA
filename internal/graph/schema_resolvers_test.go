@@ -58,24 +58,20 @@ func TestSchemaResolvers_BabyLifecycle(t *testing.T) {
 	userA := "usr-" + uuid.New().String()
 	households(t, resolver.DB, famA)
 
-	ctxA := WithClaims(context.Background(), &AuthClaims{
-		UserID:      userA,
-		Role:        "member",
-		FamilyGroup: famA,
-	})
+	ctxA := signedIn(t, resolver, famA, userA, "member")
 
 	// 1. UpsertBabyProfile
 	dob := time.Now().Add(-60 * 24 * time.Hour)
 	weight := 4500
 	height := 57.0
-	profile, err := resolver.Mutation().UpsertBabyProfile(ctxA, famA, "Noah", dob, "male", &weight, &height, nil, nil)
+	profile, err := resolver.Mutation().UpsertBabyProfile(ctxA, "Noah", dob, "male", &weight, &height, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, profile)
 	assert.Equal(t, "Noah", profile.Name)
 	assert.Equal(t, famA, profile.FamilyGroup)
 
 	// 2. Query BabyProfiles
-	profiles, err := resolver.Query().BabyProfiles(ctxA, famA)
+	profiles, err := resolver.Query().BabyProfiles(ctxA)
 	require.NoError(t, err)
 	require.Len(t, profiles, 1)
 	assert.Equal(t, profile.ID, profiles[0].ID)
@@ -84,25 +80,25 @@ func TestSchemaResolvers_BabyLifecycle(t *testing.T) {
 	volume := 160.0
 	unit := "ml"
 	details := "Evening bottle feed"
-	careLog, err := resolver.Mutation().LogBabyCare(ctxA, profile.ID, famA, "feeding", &volume, &unit, &details, nil)
+	careLog, err := resolver.Mutation().LogBabyCare(ctxA, profile.ID, "feeding", &volume, &unit, &details, nil)
 	require.NoError(t, err)
 	require.NotNil(t, careLog)
 	assert.Equal(t, "feeding", careLog.LogType)
 
 	// 4. Query BabyCareLogs
-	careLogs, err := resolver.Query().BabyCareLogs(ctxA, profile.ID, &famA, nil, nil)
+	careLogs, err := resolver.Query().BabyCareLogs(ctxA, profile.ID, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, careLogs, 1)
 	assert.Equal(t, careLog.ID, careLogs[0].ID)
 
 	// 5. UpdateBabyInventory
-	item, err := resolver.Mutation().UpdateBabyInventory(ctxA, famA, "Diapers Size 2", 120.0, "count", 25.0)
+	item, err := resolver.Mutation().UpdateBabyInventory(ctxA, "Diapers Size 2", 120.0, "count", 25.0)
 	require.NoError(t, err)
 	require.NotNil(t, item)
 	assert.Equal(t, "Diapers Size 2", item.ItemName)
 
 	// 6. Query BabyInventory
-	inventory, err := resolver.Query().BabyInventory(ctxA, famA)
+	inventory, err := resolver.Query().BabyInventory(ctxA)
 	require.NoError(t, err)
 	require.Len(t, inventory, 1)
 	assert.Equal(t, item.ID, inventory[0].ID)
@@ -128,43 +124,39 @@ func TestSchemaResolvers_FinanceLifecycle(t *testing.T) {
 	households(t, resolver.DB, fam)
 	user := "usr-" + uuid.New().String()
 
-	ctx := WithClaims(context.Background(), &AuthClaims{
-		UserID:      user,
-		Role:        "member",
-		FamilyGroup: fam,
-	})
+	ctx := signedIn(t, resolver, fam, user, "member")
 
 	// 1. LogFinancialTransaction
 	notes := "Weekly grocery shopping"
 	isShared := true
-	tx, err := resolver.Mutation().LogFinancialTransaction(ctx, fam, "expense", "groceries", "Trader Joe's", 84.50, "USD", &notes, &isShared)
+	tx, err := resolver.Mutation().LogFinancialTransaction(ctx, "expense", "groceries", "Trader Joe's", 84.50, "USD", &notes, &isShared)
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 	assert.Equal(t, 84.50, tx.Amount)
 
 	// 2. SetCategoryBudget
 	threshold := 80.0
-	budget, err := resolver.Mutation().SetCategoryBudget(ctx, fam, "groceries", 600.0, "USD", &threshold)
+	budget, err := resolver.Mutation().SetCategoryBudget(ctx, "groceries", 600.0, "USD", &threshold)
 	require.NoError(t, err)
 	require.NotNil(t, budget)
 	assert.Equal(t, 600.0, budget.MonthlyLimit)
 
 	// 3. SaveRecurringBill
-	bill, err := resolver.Mutation().SaveRecurringBill(ctx, fam, "Broadband Internet", "utilities", 65.0, "USD", "monthly", 20, true)
+	bill, err := resolver.Mutation().SaveRecurringBill(ctx, "Broadband Internet", "utilities", 65.0, "USD", "monthly", 20, true)
 	require.NoError(t, err)
 	require.NotNil(t, bill)
 	assert.Equal(t, "Broadband Internet", bill.Name)
 
 	// 4. Query all three
-	txs, err := resolver.Query().FinancialTransactions(ctx, fam, nil, nil)
+	txs, err := resolver.Query().FinancialTransactions(ctx, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, txs, 1)
 
-	budgets, err := resolver.Query().CategoryBudgets(ctx, fam)
+	budgets, err := resolver.Query().CategoryBudgets(ctx)
 	require.NoError(t, err)
 	require.Len(t, budgets, 1)
 
-	bills, err := resolver.Query().RecurringBills(ctx, fam)
+	bills, err := resolver.Query().RecurringBills(ctx)
 	require.NoError(t, err)
 	require.Len(t, bills, 1)
 
@@ -186,11 +178,7 @@ func TestSchemaResolvers_ScheduleLifecycle(t *testing.T) {
 	households(t, resolver.DB, fam)
 	user := "usr-" + uuid.New().String()
 
-	ctx := WithClaims(context.Background(), &AuthClaims{
-		UserID:      user,
-		Role:        "member",
-		FamilyGroup: fam,
-	})
+	ctx := signedIn(t, resolver, fam, user, "member")
 
 	startTime := time.Now().Add(48 * time.Hour).Truncate(time.Minute)
 	endTime := startTime.Add(2 * time.Hour)
@@ -199,13 +187,13 @@ func TestSchemaResolvers_ScheduleLifecycle(t *testing.T) {
 	isShared := true
 
 	// 1. CreateScheduleEvent
-	ev, err := resolver.Mutation().CreateScheduleEvent(ctx, "health", "Dentist Appointment", &desc, startTime, endTime, nil, &syncGoogle, &isShared, &fam)
+	ev, err := resolver.Mutation().CreateScheduleEvent(ctx, "health", "Dentist Appointment", &desc, startTime, endTime, nil, &syncGoogle, &isShared)
 	require.NoError(t, err)
 	require.NotNil(t, ev)
 	assert.Equal(t, "Dentist Appointment", ev.Title)
 
 	// 2. Query ScheduleEvents
-	eventsList, err := resolver.Query().ScheduleEvents(ctx, nil, &fam, nil, nil)
+	eventsList, err := resolver.Query().ScheduleEvents(ctx, nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, eventsList, 1)
 	assert.Equal(t, ev.ID, eventsList[0].ID)
@@ -216,7 +204,7 @@ func TestSchemaResolvers_ScheduleLifecycle(t *testing.T) {
 	assert.True(t, deleted)
 
 	// Query after delete
-	eventsAfter, err := resolver.Query().ScheduleEvents(ctx, nil, &fam, nil, nil)
+	eventsAfter, err := resolver.Query().ScheduleEvents(ctx, nil, nil, nil)
 	require.NoError(t, err)
 	assert.Empty(t, eventsAfter)
 
@@ -238,11 +226,7 @@ func TestSchemaResolvers_HouseLifecycle(t *testing.T) {
 	households(t, resolver.DB, fam)
 	user := "usr-" + uuid.New().String()
 
-	ctx := WithClaims(context.Background(), &AuthClaims{
-		UserID:      user,
-		Role:        "member",
-		FamilyGroup: fam,
-	})
+	ctx := signedIn(t, resolver, fam, user, "member")
 
 	// 1. SaveHouseContract
 	exp := time.Now().Add(90 * 24 * time.Hour)
@@ -250,14 +234,14 @@ func TestSchemaResolvers_HouseLifecycle(t *testing.T) {
 	amount := 2400.0
 	currency := "USD"
 	noticeDays := 60
-	contract, err := resolver.Mutation().SaveHouseContract(ctx, fam, "lease", "Apartment 4B", &landlord, &amount, &currency, &exp, &noticeDays, nil)
+	contract, err := resolver.Mutation().SaveHouseContract(ctx, "lease", "Apartment 4B", &landlord, &amount, &currency, &exp, &noticeDays, nil)
 	require.NoError(t, err)
 	require.NotNil(t, contract)
 
 	// 2. SaveHomeMaintenanceItem
 	nextDue := time.Now().Add(30 * 24 * time.Hour)
 	notes := "Check filter dimensions"
-	maint, err := resolver.Mutation().SaveHomeMaintenanceItem(ctx, fam, "HVAC Inspection", "hvac", 180, nextDue, nil, &notes)
+	maint, err := resolver.Mutation().SaveHomeMaintenanceItem(ctx, "HVAC Inspection", "hvac", 180, nextDue, nil, &notes)
 	require.NoError(t, err)
 	require.NotNil(t, maint)
 
@@ -271,20 +255,20 @@ func TestSchemaResolvers_HouseLifecycle(t *testing.T) {
 	insExpiry := time.Now().Add(180 * 24 * time.Hour)
 	mileage := 35000
 	nextService := 40000
-	veh, err := resolver.Mutation().SaveVehicleAsset(ctx, fam, "Mazda CX-5", "KLP-5544", &insExpiry, nil, &mileage, &nextService, nil)
+	veh, err := resolver.Mutation().SaveVehicleAsset(ctx, "Mazda CX-5", "KLP-5544", &insExpiry, nil, &mileage, &nextService, nil)
 	require.NoError(t, err)
 	require.NotNil(t, veh)
 
 	// 5. Query all
-	contracts, err := resolver.Query().HouseContracts(ctx, fam, nil)
+	contracts, err := resolver.Query().HouseContracts(ctx, nil)
 	require.NoError(t, err)
 	require.Len(t, contracts, 1)
 
-	maints, err := resolver.Query().HomeMaintenanceItems(ctx, fam, nil)
+	maints, err := resolver.Query().HomeMaintenanceItems(ctx, nil)
 	require.NoError(t, err)
 	require.Len(t, maints, 1)
 
-	vehs, err := resolver.Query().VehicleAssets(ctx, fam)
+	vehs, err := resolver.Query().VehicleAssets(ctx)
 	require.NoError(t, err)
 	require.Len(t, vehs, 1)
 
@@ -306,33 +290,29 @@ func TestSchemaResolvers_AutomationLifecycle(t *testing.T) {
 	households(t, resolver.DB, fam)
 	user := "usr-" + uuid.New().String()
 
-	ctx := WithClaims(context.Background(), &AuthClaims{
-		UserID:      user,
-		Role:        "member",
-		FamilyGroup: fam,
-	})
+	ctx := signedIn(t, resolver, fam, user, "member")
 
 	// 1. RegisterExternalAPI
 	method := "POST"
 	desc := "Local webhook gateway"
-	api, err := resolver.Mutation().RegisterExternalAPI(ctx, "LocalGateway", "https://93.184.216.34/webhook", &method, &desc, &fam)
+	api, err := resolver.Mutation().RegisterExternalAPI(ctx, "LocalGateway", "https://93.184.216.34/webhook", &method, &desc)
 	require.NoError(t, err)
 	require.NotNil(t, api)
 	assert.Equal(t, fam, api.FamilyGroup)
 
 	// 2. SaveAutomationRule
 	active := true
-	rule, err := resolver.Mutation().SaveAutomationRule(ctx, "EveningNotify", "cron", "shared", `{"cron":"0 20 * * *"}`, "Send evening digest", &active, &fam)
+	rule, err := resolver.Mutation().SaveAutomationRule(ctx, "EveningNotify", "cron", "shared", `{"cron":"0 20 * * *"}`, "Send evening digest", &active)
 	require.NoError(t, err)
 	require.NotNil(t, rule)
 	assert.Equal(t, fam, rule.FamilyGroup)
 
 	// 3. Query
-	apis, err := resolver.Query().ExternalAPIConnectors(ctx, &fam)
+	apis, err := resolver.Query().ExternalAPIConnectors(ctx)
 	require.NoError(t, err)
 	require.Len(t, apis, 1)
 
-	rules, err := resolver.Query().AutomationRules(ctx, &fam)
+	rules, err := resolver.Query().AutomationRules(ctx)
 	require.NoError(t, err)
 	require.Len(t, rules, 1)
 
@@ -347,7 +327,7 @@ func TestSchemaResolvers_AutomationLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, delOk)
 
-	rulesAfter, err := resolver.Query().AutomationRules(ctx, &fam)
+	rulesAfter, err := resolver.Query().AutomationRules(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, rulesAfter)
 
@@ -371,26 +351,22 @@ func TestSchemaResolvers_MultiTenantSecurity(t *testing.T) {
 	households(t, resolver.DB, famA, famB, "default")
 
 	// Member user belonging to Family A
-	ctxMemberA := WithClaims(context.Background(), &AuthClaims{
-		UserID:      userA,
-		Role:        "member",
-		FamilyGroup: famA,
-	})
+	ctxMemberA := signedIn(t, resolver, famA, userA, "member")
 
-	// Member A attempting to access Family B data should be rejected
-	_, err := resolver.Mutation().SaveTopicMemory(ctxMemberA, "health", "diet", "Gluten free", nil, nil, &famB)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "permission denied")
+	// V4-35: no argument names a household. Member A writes into Family A only.
+	mem, err := resolver.Mutation().SaveTopicMemory(ctxMemberA, "health", "diet", "Gluten free", nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, famA, mem.FamilyGroup)
 
-	// Admin user can target any family group
-	ctxAdmin := WithClaims(context.Background(), &AuthClaims{
-		UserID:      "admin-usr",
-		Role:        "admin",
-		FamilyGroup: "default",
-	})
+	// An owner (an admin before V4-35, who could target any family) writes into their own only.
+	ctxAdmin := signedIn(t, resolver, "default", "admin-usr", "admin")
 
-	mem, err := resolver.Mutation().SaveTopicMemory(ctxAdmin, "health", "diet", "Gluten free", nil, nil, &famB)
+	mem, err = resolver.Mutation().SaveTopicMemory(ctxAdmin, "health", "diet", "Gluten free", nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, mem)
-	assert.Equal(t, famB, mem.FamilyGroup)
+	assert.Equal(t, "default", mem.FamilyGroup)
+	assert.NotEqual(t, famB, mem.FamilyGroup)
+	var inB int64
+	require.NoError(t, resolver.DB.DB.Table("topic_memories").Where("family_group = ?", famB).Count(&inB).Error)
+	assert.Zero(t, inB, "nothing reaches Family B")
 }

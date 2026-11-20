@@ -457,21 +457,26 @@ func (c *Client) ResolveAccountChannels(ctx context.Context, channelOf func(exte
 	return resolved, unknown, nil
 }
 
-// ensurePerson makes the users row a person (same ID), a member of its household, and, when the
-// channel is known, the owner of the account it writes from. Every path that creates a user calls
-// it in the same transaction (double write until V4-44 drops users).
-func ensurePerson(tx *gorm.DB, u models.User, channelName string) error {
+// ensurePerson makes the users row a person (same ID), a member of its household with role, and,
+// when the channel is known, the owner of the account it writes from. Every path that creates a
+// user calls it in the same transaction (double write until V4-44 drops users). A person who
+// already exists keeps their role and operator flag: only a grant changes those, never a write
+// that happens to pass a user again (V4-35).
+func ensurePerson(tx *gorm.DB, u models.User, channelName string, role identity.Role, operator bool) error {
 	if u.ID == "" {
 		return fmt.Errorf("ensure person: the user has no ID")
 	}
-	p := models.Person{ID: u.ID, DisplayName: strings.TrimSpace(u.Name), CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if role == "" {
+		return fmt.Errorf("ensure person: no role")
+	}
+	p := models.Person{ID: u.ID, DisplayName: strings.TrimSpace(u.Name), IsOperator: operator, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{"display_name": p.DisplayName, "updated_at": p.UpdatedAt})}).
 		Create(&p).Error; err != nil {
 		return fmt.Errorf("ensure person: %w", err)
 	}
 	if strings.TrimSpace(u.HouseholdID) != "" {
-		m := models.Membership{PersonID: u.ID, HouseholdID: u.HouseholdID, CreatedAt: time.Now()}
+		m := models.Membership{PersonID: u.ID, HouseholdID: u.HouseholdID, Role: string(role), CreatedAt: time.Now()}
 		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "person_id"}},
 			DoUpdates: clause.Assignments(map[string]interface{}{"household_id": u.HouseholdID})}).
 			Create(&m).Error; err != nil {

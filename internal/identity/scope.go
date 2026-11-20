@@ -5,9 +5,10 @@
 // each constructor reads the household from the database through a Store. The household is
 // never taken from input: not from a tool argument, a GraphQL argument or a message.
 //
-// Until V4-32 and V4-35 the sources are the ones ADR 0002 §9 lists for V4-30: the sender's users
-// row (an inbound message), the household whose label the dashboard caller is bound to, and a
-// stored row's household_id (a scheduled job).
+// A scope is built from a verified person: the users row of the person behind the channel account
+// a message came from (V4-32), or behind a dashboard session (V4-35). Its role and operator flag
+// come from the person's membership and person row (Store.AccessOf), never from input. A
+// scheduled job's scope comes from a stored row's household_id and has no role.
 package identity
 
 import (
@@ -30,13 +31,26 @@ type Audience string
 // Direct is a one-to-one chat with the person.
 const Direct Audience = "direct"
 
-// Store reads households. db.Client implements it; tests may use identitytest.Store.
+// Access is what a person may do and where: their membership's household and role, and the
+// operator flag on their person row (V4-35, Migration C).
+type Access struct {
+	HouseholdID string
+	Role        Role
+	Operator    bool
+}
+
+// Store reads households and people's access. db.Client implements it; tests may use
+// identitytest.Store.
 type Store interface {
 	// HouseholdByID returns the household, or nil and no error when there is none.
 	HouseholdByID(ctx context.Context, id string) (*models.Household, error)
 	// HouseholdsByLabel returns every household whose legacy label equals label, trimmed and
-	// ignoring case (the dashboard's comparison, ADR 0002 §9).
+	// ignoring case.
 	HouseholdsByLabel(ctx context.Context, label string) ([]models.Household, error)
+	// AccessOf returns the access of the person behind the users row u. db.Client reads the
+	// membership and the person whose ID is u.ID, and ignores u.Role. It returns an error wrapping
+	// ErrNoScope when the person has no membership.
+	AccessOf(ctx context.Context, u *models.User) (Access, error)
 }
 
 // Scope is who is acting and in which household. The zero value is invalid.
@@ -85,11 +99,14 @@ func (s Scope) Household() models.Household {
 func (s Scope) PersonKey() string { return s.personKey }
 
 // PersonID is the acting person's people.id (V4-32): the same for every channel account of one
-// person. Empty for a dashboard caller (until V4-35 signs people in) and for a scheduled job.
+// person, and the same in chat and in the dashboard. Empty for a scheduled job.
 func (s Scope) PersonID() string { return s.personID }
 
-// Role is the acting person's role.
+// Role is the acting person's role in the household; empty for a scheduled job.
 func (s Scope) Role() Role { return s.role }
+
+// Operator reports whether the acting person is the install's operator.
+func (s Scope) Operator() bool { return s.operator }
 
 // Audience is who the turn speaks to.
 func (s Scope) Audience() Audience { return s.audience }
@@ -123,10 +140,10 @@ func (s Scope) Currency(fallback string) string {
 // Language is the household's language, or "" when it has none.
 func (s Scope) Language() string { return strings.TrimSpace(s.household.Language) }
 
-// ForUser builds the scope of a verified sender from their users row. The household is read
-// from the database by the row's household_id. Since V4-32 the row is the person's own, found
-// through the channel account the message came from, so every account of one person gets the
-// same scope; the person is the row's ID (a person keeps users.id).
+// ForUser builds the scope of a verified person from their users row: the row of the person who
+// owns the channel account a message came from (V4-32), or of the person a dashboard session
+// belongs to (V4-35). The household, role and operator flag are read from the database, and the
+// membership must name the row's household, or there is no scope. A person keeps users.id.
 func ForUser(ctx context.Context, st Store, u *models.User) (Scope, error) {
 	if u == nil {
 		return Scope{}, fmt.Errorf("%w: no user", ErrNoScope)
@@ -135,48 +152,29 @@ func ForUser(ctx context.Context, st Store, u *models.User) (Scope, error) {
 	if err != nil {
 		return Scope{}, err
 	}
-	role := ParseRole(u.Role)
-	return Scope{household: *h, personID: strings.TrimSpace(u.ID), personKey: strings.TrimSpace(u.PlatformID), role: role, operator: role == RoleAdmin, audience: Direct}, nil
-}
-
-// ForLabel builds the scope of a dashboard caller bound to a family label (the dashboard secret's
-// DASHBOARD_FAMILY_GROUP, or a signed token's family). The label is matched trimmed and ignoring
-// case, as the dashboard compared it before V4-30; a label that matches two households is
-// refused, because picking one would be guessing a tenant.
-func ForLabel(ctx context.Context, st Store, label, actorID string, role Role) (Scope, error) {
-	label = strings.TrimSpace(label)
-	if label == "" {
-		return Scope{}, fmt.Errorf("%w: empty family label", ErrNoScope)
-	}
-	if st == nil {
-		return Scope{}, fmt.Errorf("%w: no household store", ErrNoScope)
-	}
-	hs, err := st.HouseholdsByLabel(ctx, label)
+	acc, err := st.AccessOf(ctx, u)
 	if err != nil {
-		return Scope{}, fmt.Errorf("look up household: %w", err)
+		if errors.Is(err, ErrNoScope) {
+			return Scope{}, err
+		}
+		return Scope{}, fmt.Errorf("look up access: %w", err)
 	}
-	switch len(hs) {
-	case 0:
-		return Scope{}, fmt.Errorf("%w: no household for family %q", ErrNoScope, label)
-	case 1:
-	default:
-		return Scope{}, fmt.Errorf("%w: family %q matches %d households; rename one", ErrNoScope, label, len(hs))
+	if acc.HouseholdID != h.ID {
+		return Scope{}, fmt.Errorf("%w: the membership names another household", ErrNoScope)
 	}
-	h := hs[0]
-	if h.ID == "" || h.ID == models.HoldingHouseholdID {
-		return Scope{}, fmt.Errorf("%w: household is not usable", ErrNoScope)
-	}
-	return Scope{household: h, personKey: strings.TrimSpace(actorID), role: role, operator: role == RoleAdmin, audience: Direct}, nil
+	return Scope{household: *h, personID: strings.TrimSpace(u.ID), personKey: strings.TrimSpace(u.PlatformID),
+		role: acc.Role, operator: acc.Operator, audience: Direct}, nil
 }
 
 // ForStoredRow builds the scope of a scheduled job from a stored row: the row's household_id
-// and the person key it was written by. A job has no admin powers.
+// and the person key it was written by. A job has no role and is no operator, so every
+// permission check refuses it.
 func ForStoredRow(ctx context.Context, st Store, householdID, personKey string) (Scope, error) {
 	h, err := load(ctx, st, householdID)
 	if err != nil {
 		return Scope{}, err
 	}
-	return Scope{household: *h, personKey: strings.TrimSpace(personKey), role: RoleFamily, audience: Direct}, nil
+	return Scope{household: *h, personKey: strings.TrimSpace(personKey), audience: Direct}, nil
 }
 
 func load(ctx context.Context, st Store, id string) (*models.Household, error) {

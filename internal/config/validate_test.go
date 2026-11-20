@@ -17,11 +17,6 @@ const validTGSecret = "valid_telegram-secret123"
 
 func workerOK() Config {
 	return Config{
-		Server: ServerConfig{
-			DashboardAPISecret:   "dash-secret-abc",
-			DashboardFamilyGroup: "TheFamily",
-			JWTSecret:            "jwt-secret-def",
-		},
 		Encryption: EncryptionConfig{Key: "enc-key-ghi"},
 		Database:   DatabaseConfig{URL: "postgres://u:p@db:5432/x"},
 		Redis:      RedisConfig{URL: "redis://redis:6379/0"},
@@ -79,11 +74,20 @@ func TestValidate(t *testing.T) {
 		{name: "Worker_AllSetOK", service: RoleWorker, base: workerOK},
 		{name: "Worker_NothingSet_ListsEveryKey", service: RoleWorker,
 			base:    func() Config { return Config{} },
-			wantErr: []string{"ENCRYPTION_KEY", "JWT_SECRET", "DASHBOARD_API_SECRET", "DASHBOARD_FAMILY_GROUP", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"}},
+			wantErr: []string{"ENCRYPTION_KEY", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"}},
 		{name: "Worker_WhitespaceKeyIsMissing", service: RoleWorker, base: workerOK,
 			mutate: func(c *Config) { c.Encryption.Key = "   " }, wantErr: []string{"ENCRYPTION_KEY"}},
-		{name: "Worker_JWTEqualsEncryptionKey", service: RoleWorker, base: workerOK,
-			mutate: func(c *Config) { c.Server.JWTSecret = c.Encryption.Key }, wantErr: []string{"JWT_SECRET must differ"}},
+		// V4-35: the shared dashboard secret, its family and the JWT secret are no longer read; a
+		// leftover one is refused, so nobody believes it still guards the dashboard.
+		{name: "Worker_RetiredDashboardSettingsRefused", service: RoleWorker, base: workerOK,
+			mutate:  func(c *Config) { c.retired = RetiredEnvKeys() },
+			wantErr: []string{"DASHBOARD_API_SECRET is no longer read", "DASHBOARD_FAMILY_GROUP is no longer read", "JWT_SECRET is no longer read", "/dashboard"}},
+		{name: "Worker_DashboardURLOK", service: RoleWorker, base: workerOK,
+			mutate: func(c *Config) { c.Server.DashboardURL = "https://home.example.org" }},
+		{name: "Worker_DashboardURLWithPath", service: RoleWorker, base: workerOK,
+			mutate: func(c *Config) { c.Server.DashboardURL = "http://localhost:3030/signin" }, wantErr: []string{"DASHBOARD_URL"}},
+		{name: "Worker_DashboardURLNotHTTP", service: RoleWorker, base: workerOK,
+			mutate: func(c *Config) { c.Server.DashboardURL = "javascript:alert(1)" }, wantErr: []string{"DASHBOARD_URL"}},
 		{name: "Worker_PlaceholderEncryptionKey", service: RoleWorker, base: workerOK,
 			mutate: func(c *Config) { c.Encryption.Key = "your-32-byte-encryption-key" }, wantErr: []string{"ENCRYPTION_KEY", "placeholder"}},
 		{name: "Worker_PlaceholderDatabaseURL", service: RoleWorker, base: workerOK,
@@ -113,7 +117,7 @@ func TestValidate(t *testing.T) {
 		{name: "All_AllSetOK", service: RoleAll, base: workerOK},
 		{name: "All_NothingSet_ListsEveryKey", service: RoleAll,
 			base:    func() Config { return Config{} },
-			wantErr: []string{"ENCRYPTION_KEY", "JWT_SECRET", "DASHBOARD_API_SECRET", "DASHBOARD_FAMILY_GROUP", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"}},
+			wantErr: []string{"ENCRYPTION_KEY", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"}},
 		{name: "All_TelegramWithoutSecret", service: RoleAll, base: workerOK,
 			mutate: func(c *Config) { c.Channels.Telegram.BotToken = "1:a" }, wantErr: []string{"TELEGRAM_SECRET_TOKEN"}},
 		{name: "All_TelegramWithSecretOK", service: RoleAll, base: workerOK,
@@ -126,8 +130,8 @@ func TestValidate(t *testing.T) {
 				c.Channels.Telegram.WebhookURL = "https://x/webhook/telegram"
 				c.Channels.Telegram.SecretToken = validTGSecret
 			}, wantErr: []string{"TELEGRAM_BOT_TOKEN"}},
-		{name: "All_JWTEqualsEncryptionKey", service: RoleAll, base: workerOK,
-			mutate: func(c *Config) { c.Server.JWTSecret = c.Encryption.Key }, wantErr: []string{"JWT_SECRET must differ"}},
+		{name: "All_RetiredDashboardSettingsRefused", service: RoleAll, base: workerOK,
+			mutate: func(c *Config) { c.retired = []string{"DASHBOARD_API_SECRET"} }, wantErr: []string{"DASHBOARD_API_SECRET is no longer read"}},
 		{name: "All_TwilioSIDWithoutToken", service: RoleAll, base: workerOK,
 			mutate: func(c *Config) { c.Channels.WhatsApp.AccountSID = "AC1" }, wantErr: []string{"TWILIO_AUTH_TOKEN"}},
 		{name: "All_StatusCallbackNotHTTPS", service: RoleAll, base: workerOK,

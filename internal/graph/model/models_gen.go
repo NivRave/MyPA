@@ -155,6 +155,14 @@ type Household struct {
 	Currency string `json:"currency"`
 }
 
+type Me struct {
+	PersonID   string     `json:"personId"`
+	Name       string     `json:"name"`
+	Role       string     `json:"role"`
+	IsOperator bool       `json:"isOperator"`
+	Household  *Household `json:"household"`
+}
+
 type Mutation struct {
 }
 

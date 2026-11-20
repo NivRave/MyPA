@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -418,6 +419,7 @@ func newEnv(t *testing.T, ch channel) *env {
 	e.engine.SetToolRegistry(registry)
 	e.engine.WithHealthReporter(scenarioDoctor())
 	e.engine.WithAccounts(e.db, []byte(conformanceLinkSecret))
+	e.engine.WithSignIn(e.db, "") // V4-35: the default, local dashboard address
 
 	t.Cleanup(func() {
 		e.engine.Wait()
@@ -603,11 +605,16 @@ func goldenPath(scenario, channelName string) string {
 }
 
 // golden compares the scenario's transcript with the pinned one (or rewrites it with -update).
-func (e *env) golden(scenario string) {
+// Each mask's matches are replaced by its first group followed by "<masked>", for values that
+// differ on every run (a sign-in token, V4-35); everything around them is still compared.
+func (e *env) golden(scenario string, masks ...*regexp.Regexp) {
 	e.t.Helper()
 	path := goldenPath(scenario, e.ch.name)
 	e.compared = true
 	got := e.transcript()
+	for _, m := range masks {
+		got = m.ReplaceAllString(got, "${1}<masked>")
+	}
 
 	if *update {
 		require.NoError(e.t, os.MkdirAll(filepath.Dir(path), 0o755))

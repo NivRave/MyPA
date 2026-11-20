@@ -1,9 +1,9 @@
 package graph
 
 import (
-	"context"
-	"github.com/nivik/mypa/internal/identity"
 	"testing"
+
+	"github.com/nivik/mypa/internal/identity"
 
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
@@ -73,11 +73,7 @@ func TestBUG03_Lifecycle_RetentionAndImmediateVisibility(t *testing.T) {
 	tenantFamily := "Smith Family"
 	otherFamily := "Jones Family"
 
-	ctxTenantUser := WithClaims(context.Background(), &AuthClaims{
-		UserID:      "user-smith-1",
-		Role:        "member",
-		FamilyGroup: tenantFamily,
-	})
+	ctxTenantUser := signedIn(t, resolver, tenantFamily, "user-smith-1", "member")
 
 	// --- 1. Test External API Registration & Query Visibility ---
 	apiName := "SmartHomeWebhook"
@@ -92,7 +88,6 @@ func TestBUG03_Lifecycle_RetentionAndImmediateVisibility(t *testing.T) {
 		apiURL,
 		&apiMethod,
 		&apiDesc,
-		&tenantFamily,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, createdAPI)
@@ -100,7 +95,7 @@ func TestBUG03_Lifecycle_RetentionAndImmediateVisibility(t *testing.T) {
 	assert.Equal(t, apiName, createdAPI.Name)
 
 	// Query immediately as tenant user for tenantFamily
-	tenantAPIs, err := resolver.Query().ExternalAPIConnectors(ctxTenantUser, &tenantFamily)
+	tenantAPIs, err := resolver.Query().ExternalAPIConnectors(ctxTenantUser)
 	require.NoError(t, err)
 	require.Len(t, tenantAPIs, 1, "Registered API must appear immediately in tenant queries")
 	assert.Equal(t, apiName, tenantAPIs[0].Name)
@@ -121,7 +116,6 @@ func TestBUG03_Lifecycle_RetentionAndImmediateVisibility(t *testing.T) {
 		condition,
 		action,
 		nil,
-		&tenantFamily,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, createdRule)
@@ -129,44 +123,32 @@ func TestBUG03_Lifecycle_RetentionAndImmediateVisibility(t *testing.T) {
 	assert.Equal(t, ruleName, createdRule.Name)
 
 	// Query immediately as tenant user for tenantFamily
-	tenantRules, err := resolver.Query().AutomationRules(ctxTenantUser, &tenantFamily)
+	tenantRules, err := resolver.Query().AutomationRules(ctxTenantUser)
 	require.NoError(t, err)
 	require.Len(t, tenantRules, 1, "Registered rule must appear immediately in tenant queries")
 	assert.Equal(t, ruleName, tenantRules[0].Name)
 	assert.Equal(t, tenantFamily, tenantRules[0].FamilyGroup)
 
 	// --- 3. Verify Isolation: Other Tenant Querying Never Sees Smith Family Data ---
-	ctxOtherUser := WithClaims(context.Background(), &AuthClaims{
-		UserID:      "user-jones-1",
-		Role:        "member",
-		FamilyGroup: otherFamily,
-	})
+	ctxOtherUser := signedIn(t, resolver, otherFamily, "user-jones-1", "member")
 
-	otherAPIs, err := resolver.Query().ExternalAPIConnectors(ctxOtherUser, &otherFamily)
+	otherAPIs, err := resolver.Query().ExternalAPIConnectors(ctxOtherUser)
 	require.NoError(t, err)
 	assert.Empty(t, otherAPIs, "Other tenant must not see Smith Family APIs")
 
-	otherRules, err := resolver.Query().AutomationRules(ctxOtherUser, &otherFamily)
+	otherRules, err := resolver.Query().AutomationRules(ctxOtherUser)
 	require.NoError(t, err)
 	assert.Empty(t, otherRules, "Other tenant must not see Smith Family automation rules")
 
-	// Other tenant attempting to access Smith Family directly is denied
-	_, err = resolver.Query().ExternalAPIConnectors(ctxOtherUser, &tenantFamily)
-	require.Error(t, err, "Cross-tenant query must be rejected by positive authorization")
-	assert.Contains(t, err.Error(), "permission denied: unauthorized access to family group")
+	// --- 4. V4-35: no caller can name Smith Family; an owner of another household (an admin
+	// before V4-35, who could query any family) sees none of its data either ---
+	ctxAdmin := signedIn(t, resolver, "admin-system", "admin-sys", "admin")
 
-	// --- 4. Verify Admin Can Query Distinct Tenants Correctly ---
-	ctxAdmin := WithClaims(context.Background(), &AuthClaims{
-		UserID:      "admin-sys",
-		Role:        "admin",
-		FamilyGroup: "admin-system",
-	})
-
-	adminSmithAPIs, err := resolver.Query().ExternalAPIConnectors(ctxAdmin, &tenantFamily)
+	adminAPIs, err := resolver.Query().ExternalAPIConnectors(ctxAdmin)
 	require.NoError(t, err)
-	require.Len(t, adminSmithAPIs, 1)
+	assert.Empty(t, adminAPIs, "an owner of another household must not see Smith Family APIs")
 
-	adminJonesAPIs, err := resolver.Query().ExternalAPIConnectors(ctxAdmin, &otherFamily)
+	adminRules, err := resolver.Query().AutomationRules(ctxAdmin)
 	require.NoError(t, err)
-	assert.Empty(t, adminJonesAPIs)
+	assert.Empty(t, adminRules)
 }

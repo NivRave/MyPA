@@ -3,6 +3,7 @@
 //	mypa [--role=all|ingress|worker]   run the app; all, the default, is the ingress and the worker in one process
 //	mypa -migrate-only                 apply the database schema migrations and exit (P4-3)
 //	mypa transfer <command>            restore and migrate (V4-43); see docs/RESTORE_AND_MIGRATE.md
+//	mypa access grant owner|operator <person>  recovery: make a person an owner or the operator (V4-35)
 //
 // Every role keeps the durable hand-off: a webhook is verified, normalised and published to the
 // inbound.messages queue, and the worker consumes it from there, even inside one process. So a
@@ -36,6 +37,11 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "transfer" {
 		logging.Setup()
 		os.Exit(transferMain(os.Args[2:]))
+	}
+	// `mypa access grant ...`: offline recovery of owners and the operator (V4-35).
+	if len(os.Args) > 1 && os.Args[1] == "access" {
+		logging.Setup()
+		os.Exit(accessMain(os.Args[2:]))
 	}
 
 	roleFlag := flag.String("role", config.RoleAll, "what this process runs: "+strings.Join(config.Roles(), ", "))

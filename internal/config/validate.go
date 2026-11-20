@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -27,7 +28,7 @@ func Roles() []string { return []string{RoleAll, RoleIngress, RoleWorker} }
 
 var (
 	ingressKeys = []string{"RABBITMQ_URL"}
-	workerKeys  = []string{"ENCRYPTION_KEY", "JWT_SECRET", "DASHBOARD_API_SECRET", "DASHBOARD_FAMILY_GROUP", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"}
+	workerKeys  = []string{"ENCRYPTION_KEY", "DATABASE_URL", "REDIS_URL", "RABBITMQ_URL", "GEMINI_API_KEY"}
 )
 
 // requiredKeys lists the env vars each role or service cannot start without (conditional rules are
@@ -98,10 +99,11 @@ func (c *Config) Validate(service string) error {
 		}
 	}
 	if runsWorker {
-		if c.Server.JWTSecret != "" && strings.TrimSpace(c.Server.JWTSecret) == strings.TrimSpace(c.Encryption.Key) {
-			errs = append(errs, errors.New("JWT_SECRET must differ from ENCRYPTION_KEY"))
+		for _, k := range c.retired {
+			errs = append(errs, fmt.Errorf("%s is no longer read: the dashboard signs each person in with /dashboard in chat (V4-35). Remove %s", k, k))
 		}
 		errs = append(errs, c.validateLinkCodeSecret()...)
+		errs = append(errs, c.validateDashboardURL()...)
 	}
 	// The audit worker runs no channel, so it does not check their settings.
 	errs = append(errs, c.Channels.Validate(servesIngress, runsWorker)...)
@@ -123,12 +125,6 @@ func (c *Config) valueFor(envKey string) (string, bool) {
 		return c.Database.URL, true
 	case "ENCRYPTION_KEY":
 		return c.Encryption.Key, true
-	case "JWT_SECRET":
-		return c.Server.JWTSecret, true
-	case "DASHBOARD_API_SECRET":
-		return c.Server.DashboardAPISecret, true
-	case "DASHBOARD_FAMILY_GROUP":
-		return c.Server.DashboardFamilyGroup, true
 	case "GEMINI_API_KEY":
 		return c.Gemini.APIKey, true
 	}
@@ -150,8 +146,23 @@ func (c *Config) validateLinkCodeSecret() []error {
 		return []error{errors.New("LINK_CODE_SECRET still contains the .env.example placeholder value")}
 	case len(s) < MinLinkCodeSecretLen:
 		return []error{fmt.Errorf("LINK_CODE_SECRET must be at least %d characters (generate one with: openssl rand -hex 32)", MinLinkCodeSecretLen)}
-	case s == strings.TrimSpace(c.Encryption.Key) || s == strings.TrimSpace(c.Server.JWTSecret):
-		return []error{errors.New("LINK_CODE_SECRET must differ from ENCRYPTION_KEY and JWT_SECRET")}
+	case s == strings.TrimSpace(c.Encryption.Key):
+		return []error{errors.New("LINK_CODE_SECRET must differ from ENCRYPTION_KEY")}
+	}
+	return nil
+}
+
+// validateDashboardURL checks DASHBOARD_URL when it is set: an http or https origin with no path,
+// query or fragment, because /dashboard appends the sign-in page and the token to it (V4-35).
+func (c *Config) validateDashboardURL() []error {
+	raw := strings.TrimSpace(c.Server.DashboardURL)
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return []error{fmt.Errorf("DASHBOARD_URL must be an http or https address with no path, for example http://localhost:3030 (got %q)", raw)}
 	}
 	return nil
 }

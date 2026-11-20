@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"strings"
 	"time"
@@ -21,15 +22,38 @@ import (
 	dbmodels "github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/netguard"
 	pgvector "github.com/pgvector/pgvector-go"
-	"gorm.io/gorm"
 )
 
+// SignOut is the resolver for the signOut field.
+func (r *mutationResolver) SignOut(ctx context.Context) (bool, error) {
+	// Any signed-in person may end their own session, whatever their role now is.
+	c, ok := callerOf(ctx)
+	if !ok {
+		return false, fmt.Errorf("unauthorized: not signed in")
+	}
+	if c.sessionID == "" || r.DB == nil {
+		return false, nil
+	}
+	if err := r.DB.RevokeSession(ctx, c.sessionID); err != nil {
+		return false, err
+	}
+	slog.Info("dashboard session ended", "purpose", "signin", "outcome", "signed_out", "person_id", c.scope.PersonID(), "household_id", c.scope.HouseholdID())
+	return true, nil
+}
+
 // GeneratePairingCode is the resolver for the generatePairingCode field.
-func (r *mutationResolver) GeneratePairingCode(ctx context.Context, role string, familyGroup string) (*model.PairingCode, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *mutationResolver) GeneratePairingCode(ctx context.Context, role string) (*model.PairingCode, error) {
+	actorID, hs, err := r.callerMay(ctx, identity.ManageMembers)
 	if err != nil {
 		return nil, err
 	}
+	// V4-35: a code gives adult or child; an owner is made by promoting a member, and a guest waits
+	// for sharing by name (BL-46).
+	inviteRole, ok := identity.ParseInviteRole(role)
+	if !ok || identity.ParseRole(role) == identity.RoleOwner {
+		return nil, fmt.Errorf("invalid role %q: a pairing code is for an adult or a child", role)
+	}
+	role = string(inviteRole)
 
 	n, _ := rand.Int(rand.Reader, big.NewInt(1000000))
 	code := fmt.Sprintf("%06d", n.Int64())
@@ -45,16 +69,19 @@ func (r *mutationResolver) GeneratePairingCode(ctx context.Context, role string,
 		return nil, err
 	}
 
+	// ADR 0002 Decision 5: the mutation log never receives the code itself.
+	logged := pc
+	logged.Code = ""
 	r.publishEvent(ctx, events.MutationEvent{
 		Topic:       "auth",
 		Action:      "create",
 		EntityType:  "pairing_code",
-		EntityID:    pc.Code,
+		EntityID:    pc.ID,
 		ActorUserID: actorID,
 		HouseholdID: hs.HouseholdID(),
 		FamilyGroup: hs.LegacyLabel(),
 		BeforeJSON:  "",
-		AfterJSON:   toJSON(pc),
+		AfterJSON:   toJSON(logged),
 		Summary:     fmt.Sprintf("Generated pairing code for role %s in family %s", role, hs.LegacyLabel()),
 		Timestamp:   time.Now(),
 	})
@@ -72,14 +99,14 @@ func (r *mutationResolver) GeneratePairingCode(ctx context.Context, role string,
 
 // UpdateHousehold is the resolver for the updateHousehold field.
 func (r *mutationResolver) UpdateHousehold(ctx context.Context, name *string, language *string, timeZone *string, currency *string) (*model.Household, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, nil)
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// V4-30: family-level settings live on the household; only an admin changes them, and only
+	// V4-30: family-level settings live on the household; only an owner changes them, and only
 	// in their own household (the household is never an argument).
 	if !hs.Can(identity.ManageHousehold) {
-		return nil, fmt.Errorf("permission denied: only an admin may change the household's settings")
+		return nil, fmt.Errorf("permission denied: only an owner may change the household's settings")
 	}
 	in, err := validateHouseholdSettings(name, language, timeZone, currency)
 	if err != nil {
@@ -111,8 +138,8 @@ func (r *mutationResolver) UpdateHousehold(ctx context.Context, name *string, la
 }
 
 // SaveTopicMemory is the resolver for the saveTopicMemory field.
-func (r *mutationResolver) SaveTopicMemory(ctx context.Context, topic string, subtopic string, fact string, tagsJSON *string, scope *string, familyGroup *string) (*model.TopicMemory, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, familyGroup)
+func (r *mutationResolver) SaveTopicMemory(ctx context.Context, topic string, subtopic string, fact string, tagsJSON *string, scope *string) (*model.TopicMemory, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +194,7 @@ func (r *mutationResolver) DeleteTopicMemory(ctx context.Context, id string) (bo
 		return false, fmt.Errorf("invalid topic memory id: %w", err)
 	}
 
-	actorID, hs, err := r.resolveTenantAndActor(ctx, nil)
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -176,8 +203,8 @@ func (r *mutationResolver) DeleteTopicMemory(ctx context.Context, id string) (bo
 	if err != nil {
 		return false, err
 	}
-	if beforeMem == nil {
-		return false, fmt.Errorf("topic memory %s not found", id)
+	if beforeMem == nil || !memoryVisible(hs, beforeMem) {
+		return false, errNotYours("topic memory", id)
 	}
 	beforeJSON := toJSON(beforeMem)
 
@@ -209,7 +236,7 @@ func (r *mutationResolver) PinTopicMemory(ctx context.Context, id string, isPinn
 		return nil, fmt.Errorf("invalid topic memory id: %w", err)
 	}
 
-	actorID, hs, err := r.resolveTenantAndActor(ctx, nil)
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -218,8 +245,8 @@ func (r *mutationResolver) PinTopicMemory(ctx context.Context, id string, isPinn
 	if err != nil {
 		return nil, err
 	}
-	if beforeMem == nil {
-		return nil, fmt.Errorf("topic memory %s not found", id)
+	if beforeMem == nil || !memoryVisible(hs, beforeMem) {
+		return nil, errNotYours("topic memory", id)
 	}
 	beforeJSON := toJSON(beforeMem)
 
@@ -246,8 +273,8 @@ func (r *mutationResolver) PinTopicMemory(ctx context.Context, id string, isPinn
 }
 
 // UpsertEntityProfile is the resolver for the upsertEntityProfile field.
-func (r *mutationResolver) UpsertEntityProfile(ctx context.Context, topic string, entityType string, entityName string, attributesJSON string, familyGroup *string) (*model.EntityProfile, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, familyGroup)
+func (r *mutationResolver) UpsertEntityProfile(ctx context.Context, topic string, entityType string, entityName string, attributesJSON string) (*model.EntityProfile, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -292,8 +319,14 @@ func (r *mutationResolver) UpsertEntityProfile(ctx context.Context, topic string
 }
 
 // UpdateSharedSpace is the resolver for the updateSharedSpace field.
-func (r *mutationResolver) UpdateSharedSpace(ctx context.Context, familyGroup string, topic string, sharedWithUserID string, canView bool, canEdit bool, notifyMode string) (*model.SharedSpace, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *mutationResolver) UpdateSharedSpace(ctx context.Context, topic string, sharedWithUserID string, canView bool, canEdit bool, notifyMode string) (*model.SharedSpace, error) {
+	actorID, hs, err := r.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// ADR 0002 Decision 3: another person is resolved inside the caller's household only.
+	sharedWithUserID, err = r.member(ctx, hs, sharedWithUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -338,15 +371,17 @@ func (r *mutationResolver) UpdateSharedSpace(ctx context.Context, familyGroup st
 }
 
 // CreateSharedTask is the resolver for the createSharedTask field.
-func (r *mutationResolver) CreateSharedTask(ctx context.Context, familyGroup string, topic string, title string, dueTime *time.Time, assignedToUserID *string) (*model.SharedTaskReminder, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *mutationResolver) CreateSharedTask(ctx context.Context, topic string, title string, dueTime *time.Time, assignedToUserID *string) (*model.SharedTaskReminder, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	assigned := ""
-	if assignedToUserID != nil {
-		assigned = *assignedToUserID
+	if assignedToUserID != nil && strings.TrimSpace(*assignedToUserID) != "" {
+		if assigned, err = r.member(ctx, hs, *assignedToUserID); err != nil {
+			return nil, err
+		}
 	}
 
 	task := dbmodels.SharedTaskReminder{
@@ -387,20 +422,16 @@ func (r *mutationResolver) CompleteSharedTask(ctx context.Context, id string, co
 		return nil, fmt.Errorf("invalid shared task id: %w", err)
 	}
 
-	actorID, hs, err := r.resolveActingScope(ctx, func(db *gorm.DB) (string, error) {
-		var row dbmodels.SharedTaskReminder
-		if err := db.Select("household_id").First(&row, uID).Error; err != nil {
-			return "", fmt.Errorf("shared reminder with id %d not found", uID)
-		}
-		return row.HouseholdID, nil
-	})
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	completer := actorID
-	if completedByUserID != "" {
-		completer = completedByUserID
+	if strings.TrimSpace(completedByUserID) != "" {
+		if completer, err = r.member(ctx, hs, completedByUserID); err != nil {
+			return nil, err
+		}
 	}
 
 	beforeTask, err := r.sharedRepo().GetSharedReminder(hs, uID)
@@ -435,8 +466,8 @@ func (r *mutationResolver) CompleteSharedTask(ctx context.Context, id string, co
 }
 
 // CreateScheduleEvent is the resolver for the createScheduleEvent field.
-func (r *mutationResolver) CreateScheduleEvent(ctx context.Context, topic string, title string, description *string, startTime time.Time, endTime time.Time, tagsJSON *string, syncToGoogle *bool, isShared *bool, familyGroup *string) (*model.ScheduleEvent, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, familyGroup)
+func (r *mutationResolver) CreateScheduleEvent(ctx context.Context, topic string, title string, description *string, startTime time.Time, endTime time.Time, tagsJSON *string, syncToGoogle *bool, isShared *bool) (*model.ScheduleEvent, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -500,7 +531,7 @@ func (r *mutationResolver) DeleteScheduleEvent(ctx context.Context, id string) (
 		return false, fmt.Errorf("invalid schedule event id: %w", err)
 	}
 
-	actorID, hs, err := r.resolveTenantAndActor(ctx, nil)
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -509,8 +540,8 @@ func (r *mutationResolver) DeleteScheduleEvent(ctx context.Context, id string) (
 	if err != nil {
 		return false, err
 	}
-	if event == nil {
-		return false, fmt.Errorf("schedule event %s not found", id)
+	if event == nil || (!event.IsShared && !ownedBy(hs, event.UserID, event.PersonID)) {
+		return false, errNotYours("schedule event", id)
 	}
 	beforeJSON := toJSON(event)
 
@@ -536,8 +567,8 @@ func (r *mutationResolver) DeleteScheduleEvent(ctx context.Context, id string) (
 }
 
 // SaveTopicCalendarConfig is the resolver for the saveTopicCalendarConfig field.
-func (r *mutationResolver) SaveTopicCalendarConfig(ctx context.Context, topic string, colorID *string, prefixTag *string, includeInMorningBriefing *bool, syncToGoogleDefault *bool, familyGroup *string) (*model.TopicCalendarConfig, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, familyGroup)
+func (r *mutationResolver) SaveTopicCalendarConfig(ctx context.Context, topic string, colorID *string, prefixTag *string, includeInMorningBriefing *bool, syncToGoogleDefault *bool) (*model.TopicCalendarConfig, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -595,8 +626,8 @@ func (r *mutationResolver) SaveTopicCalendarConfig(ctx context.Context, topic st
 }
 
 // UpsertBabyProfile is the resolver for the upsertBabyProfile field.
-func (r *mutationResolver) UpsertBabyProfile(ctx context.Context, familyGroup string, name string, dateOfBirth time.Time, gender string, currentWeightGrams *int, heightCm *float64, pediatricianInfo *string, allergiesNotes *string) (*model.BabyProfile, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *mutationResolver) UpsertBabyProfile(ctx context.Context, name string, dateOfBirth time.Time, gender string, currentWeightGrams *int, heightCm *float64, pediatricianInfo *string, allergiesNotes *string) (*model.BabyProfile, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -659,13 +690,13 @@ func (r *mutationResolver) UpsertBabyProfile(ctx context.Context, familyGroup st
 }
 
 // LogBabyCare is the resolver for the logBabyCare field.
-func (r *mutationResolver) LogBabyCare(ctx context.Context, babyID string, familyGroup string, logType string, valueNumeric *float64, unit *string, details *string, timestamp *time.Time) (*model.BabyCareLog, error) {
+func (r *mutationResolver) LogBabyCare(ctx context.Context, babyID string, logType string, valueNumeric *float64, unit *string, details *string, timestamp *time.Time) (*model.BabyCareLog, error) {
 	uBabyID, err := toolutil.ParseID(babyID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid baby id: %w", err)
 	}
 
-	actorID, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -719,8 +750,8 @@ func (r *mutationResolver) LogBabyCare(ctx context.Context, babyID string, famil
 }
 
 // UpdateBabyInventory is the resolver for the updateBabyInventory field.
-func (r *mutationResolver) UpdateBabyInventory(ctx context.Context, familyGroup string, itemName string, quantityRemaining float64, unit string, lowThreshold float64) (*model.BabyInventoryItem, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *mutationResolver) UpdateBabyInventory(ctx context.Context, itemName string, quantityRemaining float64, unit string, lowThreshold float64) (*model.BabyInventoryItem, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -763,8 +794,8 @@ func (r *mutationResolver) UpdateBabyInventory(ctx context.Context, familyGroup 
 }
 
 // SaveHouseContract is the resolver for the saveHouseContract field.
-func (r *mutationResolver) SaveHouseContract(ctx context.Context, familyGroup string, recordType string, title string, vendorOrLandlord *string, amount *float64, currency *string, expirationOrRenewalDate *time.Time, noticePeriodDays *int, keyTermsJSON *string) (*model.HouseContractRecord, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *mutationResolver) SaveHouseContract(ctx context.Context, recordType string, title string, vendorOrLandlord *string, amount *float64, currency *string, expirationOrRenewalDate *time.Time, noticePeriodDays *int, keyTermsJSON *string) (*model.HouseContractRecord, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -816,8 +847,8 @@ func (r *mutationResolver) SaveHouseContract(ctx context.Context, familyGroup st
 }
 
 // SaveHomeMaintenanceItem is the resolver for the saveHomeMaintenanceItem field.
-func (r *mutationResolver) SaveHomeMaintenanceItem(ctx context.Context, familyGroup string, taskName string, category string, intervalDays int, nextDueAt time.Time, contractorInfo *string, notes *string) (*model.HomeMaintenanceItem, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *mutationResolver) SaveHomeMaintenanceItem(ctx context.Context, taskName string, category string, intervalDays int, nextDueAt time.Time, contractorInfo *string, notes *string) (*model.HomeMaintenanceItem, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -864,7 +895,7 @@ func (r *mutationResolver) CompleteHomeMaintenance(ctx context.Context, id strin
 		return nil, fmt.Errorf("invalid home maintenance id: %w", err)
 	}
 
-	actorID, hs, err := r.resolveTenantAndActor(ctx, nil)
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -901,8 +932,8 @@ func (r *mutationResolver) CompleteHomeMaintenance(ctx context.Context, id strin
 }
 
 // SaveVehicleAsset is the resolver for the saveVehicleAsset field.
-func (r *mutationResolver) SaveVehicleAsset(ctx context.Context, familyGroup string, name string, licensePlate string, insuranceExpiry *time.Time, annualTestExpiry *time.Time, currentMileageKm *int, nextServiceMileageKm *int, notes *string) (*model.VehicleAsset, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *mutationResolver) SaveVehicleAsset(ctx context.Context, name string, licensePlate string, insuranceExpiry *time.Time, annualTestExpiry *time.Time, currentMileageKm *int, nextServiceMileageKm *int, notes *string) (*model.VehicleAsset, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -964,8 +995,8 @@ func (r *mutationResolver) SaveVehicleAsset(ctx context.Context, familyGroup str
 }
 
 // LogFinancialTransaction is the resolver for the logFinancialTransaction field.
-func (r *mutationResolver) LogFinancialTransaction(ctx context.Context, familyGroup string, typeArg string, category string, merchant string, amount float64, currency string, notes *string, isShared *bool) (*model.FinancialTransaction, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *mutationResolver) LogFinancialTransaction(ctx context.Context, typeArg string, category string, merchant string, amount float64, currency string, notes *string, isShared *bool) (*model.FinancialTransaction, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1015,8 +1046,8 @@ func (r *mutationResolver) LogFinancialTransaction(ctx context.Context, familyGr
 }
 
 // SetCategoryBudget is the resolver for the setCategoryBudget field.
-func (r *mutationResolver) SetCategoryBudget(ctx context.Context, familyGroup string, category string, monthlyLimit float64, currency string, alertThresholdPct *float64) (*model.CategoryBudget, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *mutationResolver) SetCategoryBudget(ctx context.Context, category string, monthlyLimit float64, currency string, alertThresholdPct *float64) (*model.CategoryBudget, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1063,8 +1094,8 @@ func (r *mutationResolver) SetCategoryBudget(ctx context.Context, familyGroup st
 }
 
 // SaveRecurringBill is the resolver for the saveRecurringBill field.
-func (r *mutationResolver) SaveRecurringBill(ctx context.Context, familyGroup string, name string, category string, expectedAmount float64, currency string, billingCycle string, nextDueDay int, autoRenew bool) (*model.RecurringBill, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *mutationResolver) SaveRecurringBill(ctx context.Context, name string, category string, expectedAmount float64, currency string, billingCycle string, nextDueDay int, autoRenew bool) (*model.RecurringBill, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1103,12 +1134,12 @@ func (r *mutationResolver) SaveRecurringBill(ctx context.Context, familyGroup st
 }
 
 // RegisterExternalAPI is the resolver for the registerExternalApi field.
-func (r *mutationResolver) RegisterExternalAPI(ctx context.Context, name string, baseURL string, defaultMethod *string, description *string, familyGroup *string) (*model.ExternalAPIConnector, error) {
+func (r *mutationResolver) RegisterExternalAPI(ctx context.Context, name string, baseURL string, defaultMethod *string, description *string) (*model.ExternalAPIConnector, error) {
 	if err := netguard.ValidateURL(baseURL); err != nil {
 		return nil, fmt.Errorf("invalid or prohibited base_url: %w", err)
 	}
 
-	actorID, hs, err := r.resolveTenantAndActor(ctx, familyGroup)
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1152,8 +1183,8 @@ func (r *mutationResolver) RegisterExternalAPI(ctx context.Context, name string,
 }
 
 // SaveAutomationRule is the resolver for the saveAutomationRule field.
-func (r *mutationResolver) SaveAutomationRule(ctx context.Context, name string, triggerType string, triggerTopic string, conditionJSON string, actionInstruction string, isActive *bool, familyGroup *string) (*model.AutomationRule, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, familyGroup)
+func (r *mutationResolver) SaveAutomationRule(ctx context.Context, name string, triggerType string, triggerTopic string, conditionJSON string, actionInstruction string, isActive *bool) (*model.AutomationRule, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1201,13 +1232,13 @@ func (r *mutationResolver) ToggleAutomationRule(ctx context.Context, id string, 
 		return nil, fmt.Errorf("invalid automation rule id: %w", err)
 	}
 
-	actorID, hs, err := r.resolveActingScope(ctx, automationRuleHousehold(uID, id))
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// V4-30: the rule is read inside the acting household only; a rule of another household is
-	// refused, never reached (global admins act in the rule's own household, P3-2).
+	// V4-30: the rule is read inside the caller's household only; a rule of another household is
+	// refused, never reached.
 	rule, err := r.autoRepo().GetAutomationRule(hs, uID)
 	if err != nil || rule == nil {
 		return nil, fmt.Errorf("permission denied: unauthorized access to automation rule")
@@ -1244,13 +1275,13 @@ func (r *mutationResolver) DeleteAutomationRule(ctx context.Context, id string) 
 		return false, fmt.Errorf("invalid automation rule id: %w", err)
 	}
 
-	actorID, hs, err := r.resolveActingScope(ctx, automationRuleHousehold(uID, id))
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return false, err
 	}
 
-	// V4-30: the rule is read inside the acting household only; a rule of another household is
-	// refused, never reached (global admins act in the rule's own household, P3-2).
+	// V4-30: the rule is read inside the caller's household only; a rule of another household is
+	// refused, never reached.
 	rule, err := r.autoRepo().GetAutomationRule(hs, uID)
 	if err != nil || rule == nil {
 		return false, fmt.Errorf("permission denied: unauthorized access to automation rule")
@@ -1281,13 +1312,13 @@ func (r *mutationResolver) DeleteAutomationRule(ctx context.Context, id string) 
 
 // SaveUserPreference is the resolver for the saveUserPreference field.
 func (r *mutationResolver) SaveUserPreference(ctx context.Context, userID string, preferredLanguage *string, tonePersona *string, defaultCurrency *string, quietHoursStart *string, quietHoursEnd *string, standingInstructions *string) (*model.UserPreference, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, nil)
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// P3-2: tenant-bound admins may only target users of their own family.
-	targetUserID, err := r.resolveTargetUser(ctx, userID, actorID, hs)
+	// V4-35: preferences are personal data, the caller's own only.
+	targetUserID, err := r.resolveTargetUser(userID, hs)
 	if err != nil {
 		return nil, err
 	}
@@ -1349,8 +1380,8 @@ func (r *mutationResolver) SaveUserPreference(ctx context.Context, userID string
 }
 
 // SavePersonalCrmContact is the resolver for the savePersonalCrmContact field.
-func (r *mutationResolver) SavePersonalCrmContact(ctx context.Context, familyGroup string, personName string, relationship *string, importantDatesJSON *string, giftIdeasAndSizes *string, medicalNotes *string) (*model.PersonalCRMContact, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *mutationResolver) SavePersonalCrmContact(ctx context.Context, personName string, relationship *string, importantDatesJSON *string, giftIdeasAndSizes *string, medicalNotes *string) (*model.PersonalCRMContact, error) {
+	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1410,21 +1441,19 @@ func (r *mutationResolver) RollbackMutation(ctx context.Context, mutationID stri
 		return false, fmt.Errorf("durability engine is not configured")
 	}
 
-	claims := GetAuthClaims(ctx)
-	if claims == nil {
-		return false, fmt.Errorf("unauthorized: no authenticated claims") // P3-2: never a "system" rollback by default
-	}
-	// P3-2: only global admins roll back across households, and then in the mutation's own
-	// household (V4-30); everyone else rolls back inside their own.
-	_, hs, err := r.resolveActingScope(ctx, func(db *gorm.DB) (string, error) {
-		var log dbmodels.MutationLog
-		if err := db.Select("household_id").Where("id = ?", mutationID).First(&log).Error; err != nil {
-			return "", fmt.Errorf("mutation %s not found", mutationID)
-		}
-		return log.HouseholdID, nil
-	})
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return false, err
+	}
+	// V4-35: a person undoes their own changes only, inside their own household; another
+	// member's change is theirs to undo (/undo in chat). Undo itself refuses identity tables.
+	if r.DB == nil {
+		return false, fmt.Errorf("mutation lookup unavailable")
+	}
+	var log dbmodels.MutationLog
+	if err := r.DB.DB.WithContext(ctx).Select("user_id", "person_id").
+		Where("id = ? AND household_id = ?", mutationID, hs.HouseholdID()).First(&log).Error; err != nil || !ownedBy(hs, log.UserID, log.PersonID) {
+		return false, fmt.Errorf("permission denied: mutation %s is not one of your changes", mutationID)
 	}
 
 	res, err := dur.Rollback(ctx, hs, mutationID)
@@ -1434,29 +1463,61 @@ func (r *mutationResolver) RollbackMutation(ctx context.Context, mutationID stri
 	return !res.AlreadyUndone, nil
 }
 
-// Household is the resolver for the household field.
-func (r *queryResolver) Household(ctx context.Context) (*model.Household, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, nil)
+// Me is the resolver for the me field.
+func (r *queryResolver) Me(ctx context.Context) (*model.Me, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
+	}
+	name := ""
+	if r.DB != nil {
+		if u, err := r.DB.UserByID(ctx, hs.PersonID()); err == nil && u != nil {
+			name = u.Name
+		}
+	}
+	return &model.Me{PersonID: hs.PersonID(), Name: name, Role: string(hs.Role()), IsOperator: hs.Operator(),
+		Household: toModelHousehold(hs.Household())}, nil
+}
+
+// Household is the resolver for the household field. It is read from the database, not from the
+// scope the request started with, so it shows a change made earlier in the same request.
+func (r *queryResolver) Household(ctx context.Context) (*model.Household, error) {
+	_, hs, err := r.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if st := r.households(); st != nil {
+		if h, err := st.HouseholdByID(ctx, hs.HouseholdID()); err == nil && h != nil {
+			return toModelHousehold(*h), nil
+		}
 	}
 	return toModelHousehold(hs.Household()), nil
 }
 
 // Users is the resolver for the users field.
 func (r *queryResolver) Users(ctx context.Context) ([]*model.User, error) {
-	var dbUsers []dbmodels.User
-	if err := r.DB.DB.Find(&dbUsers).Error; err != nil {
+	_, hs, err := r.caller(ctx)
+	if err != nil {
 		return nil, err
 	}
-
+	if r.DB == nil {
+		return nil, fmt.Errorf("member lookup unavailable")
+	}
+	members, err := r.DB.MembersOf(ctx, hs)
+	if err != nil {
+		return nil, err
+	}
 	var users []*model.User
-	for _, u := range dbUsers {
+	for _, u := range members {
+		// V4-35: the member list and roles are an owner's; an adult sees only themselves.
+		if !hs.Can(identity.ManageMembers) && u.ID != hs.PersonID() {
+			continue
+		}
 		users = append(users, &model.User{
 			ID:          u.ID,
 			PlatformID:  u.PlatformID,
 			Name:        u.Name,
-			Role:        u.Role,
+			Role:        string(identity.ParseRole(u.MemberRole)),
 			FamilyGroup: u.FamilyGroup,
 			CreatedAt:   u.CreatedAt,
 		})
@@ -1465,23 +1526,15 @@ func (r *queryResolver) Users(ctx context.Context) ([]*model.User, error) {
 }
 
 // ActivePairingCodes is the resolver for the activePairingCodes field.
-func (r *queryResolver) ActivePairingCodes(ctx context.Context, familyGroup *string) ([]*model.PairingCode, error) {
-	// DE-2: only an explicit global-admin request reads across tenants.
-	allTenants := wantsAllTenants(GetAuthClaims(ctx), familyGroup)
-	var hs identity.Scope
-	if !allTenants {
-		var err error
-		if _, hs, err = r.resolveTenantAndActor(ctx, familyGroup); err != nil {
-			return nil, err
-		}
+func (r *queryResolver) ActivePairingCodes(ctx context.Context) ([]*model.PairingCode, error) {
+	_, hs, err := r.callerMay(ctx, identity.ManageMembers)
+	if err != nil {
+		return nil, err
 	}
 
 	var dbCodes []dbmodels.PairingCode
-	q := r.DB.DB.Where("is_used = ? AND expires_at > now()", false)
-	if !allTenants {
-		q = q.Where("household_id = ?", hs.HouseholdID())
-	}
-	if err := q.Find(&dbCodes).Error; err != nil {
+	if err := r.DB.DB.WithContext(ctx).Where("is_used = ? AND expires_at > now() AND household_id = ?", false, hs.HouseholdID()).
+		Find(&dbCodes).Error; err != nil {
 		return nil, err
 	}
 
@@ -1501,8 +1554,8 @@ func (r *queryResolver) ActivePairingCodes(ctx context.Context, familyGroup *str
 }
 
 // TopicMemories is the resolver for the topicMemories field.
-func (r *queryResolver) TopicMemories(ctx context.Context, topic *string, familyGroup *string, includeSuperseded *bool) ([]*model.TopicMemory, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, familyGroup)
+func (r *queryResolver) TopicMemories(ctx context.Context, topic *string, includeSuperseded *bool) ([]*model.TopicMemory, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1523,14 +1576,16 @@ func (r *queryResolver) TopicMemories(ctx context.Context, topic *string, family
 
 	var res []*model.TopicMemory
 	for i := range dbMems {
-		res = append(res, toModelTopicMemory(&dbMems[i]))
+		if memoryVisible(hs, &dbMems[i]) {
+			res = append(res, toModelTopicMemory(&dbMems[i]))
+		}
 	}
 	return res, nil
 }
 
 // EntityProfiles is the resolver for the entityProfiles field.
-func (r *queryResolver) EntityProfiles(ctx context.Context, topic *string, entityType *string, familyGroup *string) ([]*model.EntityProfile, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, familyGroup)
+func (r *queryResolver) EntityProfiles(ctx context.Context, topic *string, entityType *string) ([]*model.EntityProfile, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1556,8 +1611,8 @@ func (r *queryResolver) EntityProfiles(ctx context.Context, topic *string, entit
 }
 
 // SharedSpaces is the resolver for the sharedSpaces field.
-func (r *queryResolver) SharedSpaces(ctx context.Context, familyGroup string) ([]*model.SharedSpace, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *queryResolver) SharedSpaces(ctx context.Context) ([]*model.SharedSpace, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1575,8 +1630,8 @@ func (r *queryResolver) SharedSpaces(ctx context.Context, familyGroup string) ([
 }
 
 // SharedTasks is the resolver for the sharedTasks field.
-func (r *queryResolver) SharedTasks(ctx context.Context, familyGroup string, topic *string, isCompleted *bool) ([]*model.SharedTaskReminder, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *queryResolver) SharedTasks(ctx context.Context, topic *string, isCompleted *bool) ([]*model.SharedTaskReminder, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1601,8 +1656,8 @@ func (r *queryResolver) SharedTasks(ctx context.Context, familyGroup string, top
 }
 
 // ScheduleEvents is the resolver for the scheduleEvents field.
-func (r *queryResolver) ScheduleEvents(ctx context.Context, topic *string, familyGroup *string, startTime *time.Time, endTime *time.Time) ([]*model.ScheduleEvent, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, familyGroup)
+func (r *queryResolver) ScheduleEvents(ctx context.Context, topic *string, startTime *time.Time, endTime *time.Time) ([]*model.ScheduleEvent, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1632,15 +1687,20 @@ func (r *queryResolver) ScheduleEvents(ctx context.Context, topic *string, famil
 }
 
 // TopicCalendarConfigs is the resolver for the topicCalendarConfigs field.
-func (r *queryResolver) TopicCalendarConfigs(ctx context.Context, userID *string, familyGroup *string) ([]*model.TopicCalendarConfig, error) {
-	actorID, _, err := r.resolveTenantAndActor(ctx, familyGroup)
+func (r *queryResolver) TopicCalendarConfigs(ctx context.Context, userID *string) ([]*model.TopicCalendarConfig, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	targetUID := actorID
-	if userID != nil && *userID != "" {
-		targetUID = *userID
+	// V4-35: calendar settings are personal data, the caller's own only.
+	requested := ""
+	if userID != nil {
+		requested = *userID
+	}
+	targetUID, err := r.resolveTargetUser(requested, hs)
+	if err != nil {
+		return nil, err
 	}
 
 	dbConfigs, err := r.scheduleRepo().ListTopicCalendarConfigs(targetUID)
@@ -1656,8 +1716,8 @@ func (r *queryResolver) TopicCalendarConfigs(ctx context.Context, userID *string
 }
 
 // BabyProfiles is the resolver for the babyProfiles field.
-func (r *queryResolver) BabyProfiles(ctx context.Context, familyGroup string) ([]*model.BabyProfile, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *queryResolver) BabyProfiles(ctx context.Context) ([]*model.BabyProfile, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1675,13 +1735,13 @@ func (r *queryResolver) BabyProfiles(ctx context.Context, familyGroup string) ([
 }
 
 // BabyCareLogs is the resolver for the babyCareLogs field.
-func (r *queryResolver) BabyCareLogs(ctx context.Context, babyID string, familyGroup *string, logType *string, limit *int) ([]*model.BabyCareLog, error) {
+func (r *queryResolver) BabyCareLogs(ctx context.Context, babyID string, logType *string, limit *int) ([]*model.BabyCareLog, error) {
 	uBabyID, err := toolutil.ParseID(babyID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid baby id: %w", err)
 	}
 
-	_, hs, err := r.resolveTenantAndActor(ctx, familyGroup)
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1708,8 +1768,8 @@ func (r *queryResolver) BabyCareLogs(ctx context.Context, babyID string, familyG
 }
 
 // BabyInventory is the resolver for the babyInventory field.
-func (r *queryResolver) BabyInventory(ctx context.Context, familyGroup string) ([]*model.BabyInventoryItem, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *queryResolver) BabyInventory(ctx context.Context) ([]*model.BabyInventoryItem, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1727,8 +1787,8 @@ func (r *queryResolver) BabyInventory(ctx context.Context, familyGroup string) (
 }
 
 // HouseContracts is the resolver for the houseContracts field.
-func (r *queryResolver) HouseContracts(ctx context.Context, familyGroup string, recordType *string) ([]*model.HouseContractRecord, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *queryResolver) HouseContracts(ctx context.Context, recordType *string) ([]*model.HouseContractRecord, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1751,8 +1811,8 @@ func (r *queryResolver) HouseContracts(ctx context.Context, familyGroup string, 
 }
 
 // HomeMaintenanceItems is the resolver for the homeMaintenanceItems field.
-func (r *queryResolver) HomeMaintenanceItems(ctx context.Context, familyGroup string, category *string) ([]*model.HomeMaintenanceItem, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *queryResolver) HomeMaintenanceItems(ctx context.Context, category *string) ([]*model.HomeMaintenanceItem, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1775,8 +1835,8 @@ func (r *queryResolver) HomeMaintenanceItems(ctx context.Context, familyGroup st
 }
 
 // VehicleAssets is the resolver for the vehicleAssets field.
-func (r *queryResolver) VehicleAssets(ctx context.Context, familyGroup string) ([]*model.VehicleAsset, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *queryResolver) VehicleAssets(ctx context.Context) ([]*model.VehicleAsset, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1794,8 +1854,8 @@ func (r *queryResolver) VehicleAssets(ctx context.Context, familyGroup string) (
 }
 
 // FinancialTransactions is the resolver for the financialTransactions field.
-func (r *queryResolver) FinancialTransactions(ctx context.Context, familyGroup string, category *string, limit *int) ([]*model.FinancialTransaction, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *queryResolver) FinancialTransactions(ctx context.Context, category *string, limit *int) ([]*model.FinancialTransaction, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1819,14 +1879,17 @@ func (r *queryResolver) FinancialTransactions(ctx context.Context, familyGroup s
 
 	var res []*model.FinancialTransaction
 	for i := range dbTxs {
-		res = append(res, toModelFinancialTransaction(&dbTxs[i]))
+		// V4-35: an unshared transaction is its person's own.
+		if dbTxs[i].IsShared || ownedBy(hs, dbTxs[i].UserID, dbTxs[i].PersonID) {
+			res = append(res, toModelFinancialTransaction(&dbTxs[i]))
+		}
 	}
 	return res, nil
 }
 
 // CategoryBudgets is the resolver for the categoryBudgets field.
-func (r *queryResolver) CategoryBudgets(ctx context.Context, familyGroup string) ([]*model.CategoryBudget, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *queryResolver) CategoryBudgets(ctx context.Context) ([]*model.CategoryBudget, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1844,8 +1907,8 @@ func (r *queryResolver) CategoryBudgets(ctx context.Context, familyGroup string)
 }
 
 // RecurringBills is the resolver for the recurringBills field.
-func (r *queryResolver) RecurringBills(ctx context.Context, familyGroup string) ([]*model.RecurringBill, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *queryResolver) RecurringBills(ctx context.Context) ([]*model.RecurringBill, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1863,8 +1926,8 @@ func (r *queryResolver) RecurringBills(ctx context.Context, familyGroup string) 
 }
 
 // ExternalAPIConnectors is the resolver for the externalApiConnectors field.
-func (r *queryResolver) ExternalAPIConnectors(ctx context.Context, familyGroup *string) ([]*model.ExternalAPIConnector, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, familyGroup)
+func (r *queryResolver) ExternalAPIConnectors(ctx context.Context) ([]*model.ExternalAPIConnector, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1882,8 +1945,8 @@ func (r *queryResolver) ExternalAPIConnectors(ctx context.Context, familyGroup *
 }
 
 // AutomationRules is the resolver for the automationRules field.
-func (r *queryResolver) AutomationRules(ctx context.Context, familyGroup *string) ([]*model.AutomationRule, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, familyGroup)
+func (r *queryResolver) AutomationRules(ctx context.Context) ([]*model.AutomationRule, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1902,13 +1965,13 @@ func (r *queryResolver) AutomationRules(ctx context.Context, familyGroup *string
 
 // UserPreference is the resolver for the userPreference field.
 func (r *queryResolver) UserPreference(ctx context.Context, userID string) (*model.UserPreference, error) {
-	actorID, hs, err := r.resolveTenantAndActor(ctx, nil)
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// P3-2: tenant-bound admins may only target users of their own family.
-	targetUserID, err := r.resolveTargetUser(ctx, userID, actorID, hs)
+	// V4-35: preferences are personal data, the caller's own only.
+	targetUserID, err := r.resolveTargetUser(userID, hs)
 	if err != nil {
 		return nil, err
 	}
@@ -1921,8 +1984,8 @@ func (r *queryResolver) UserPreference(ctx context.Context, userID string) (*mod
 }
 
 // PersonalCrmContacts is the resolver for the personalCrmContacts field.
-func (r *queryResolver) PersonalCrmContacts(ctx context.Context, familyGroup string) ([]*model.PersonalCRMContact, error) {
-	_, hs, err := r.resolveTenantAndActor(ctx, &familyGroup)
+func (r *queryResolver) PersonalCrmContacts(ctx context.Context) ([]*model.PersonalCRMContact, error) {
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1939,23 +2002,21 @@ func (r *queryResolver) PersonalCrmContacts(ctx context.Context, familyGroup str
 	return res, nil
 }
 
-// MutationLogs is the resolver for the mutationLogs field.
-func (r *queryResolver) MutationLogs(ctx context.Context, familyGroup *string, topic *string, limit *int) ([]*model.MutationLog, error) {
-	// DE-2: only an explicit global-admin request reads across tenants.
-	allTenants := wantsAllTenants(GetAuthClaims(ctx), familyGroup)
-	var hs identity.Scope
-	if !allTenants {
-		var err error
-		if _, hs, err = r.resolveTenantAndActor(ctx, familyGroup); err != nil {
-			return nil, err
-		}
+// MutationLogs is the resolver for the mutationLogs field. The caller's own changes are shown in
+// full. An owner also sees the other members' changes as activity: who, when, what kind of change
+// to what kind of record, without the record's content (V4-35, ADR 0002 Decision 1). An adult sees
+// only their own.
+func (r *queryResolver) MutationLogs(ctx context.Context, topic *string, limit *int) ([]*model.MutationLog, error) {
+	_, hs, err := r.caller(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	var dbLogs []dbmodels.MutationLog
-	query := r.DB.DB.Model(&dbmodels.MutationLog{})
-
-	if !allTenants {
-		query = query.Where("household_id = ?", hs.HouseholdID())
+	query := r.DB.DB.WithContext(ctx).Model(&dbmodels.MutationLog{}).Where("household_id = ?", hs.HouseholdID())
+	if !hs.Can(identity.ViewMemberActivity) {
+		where, args := ownRows(hs, "user_id", "person_id")
+		query = query.Where(where, args...)
 	}
 	if topic != nil && *topic != "" {
 		query = query.Where("topic = ?", *topic)
@@ -1971,47 +2032,53 @@ func (r *queryResolver) MutationLogs(ctx context.Context, familyGroup *string, t
 
 	var res []*model.MutationLog
 	for i := range dbLogs {
-		res = append(res, toModelMutationLog(&dbLogs[i]))
+		m := toModelMutationLog(&dbLogs[i])
+		if !ownedBy(hs, dbLogs[i].UserID, dbLogs[i].PersonID) {
+			m.BeforeJSON, m.AfterJSON = nil, nil
+			m.Summary = fmt.Sprintf("%s %s", dbLogs[i].Action, dbLogs[i].EntityType)
+		}
+		res = append(res, m)
 	}
 	return res, nil
 }
 
-// AuditSessions is the resolver for the auditSessions field.
-func (r *queryResolver) AuditSessions(ctx context.Context, familyGroup *string, limit *int) ([]*model.AuditSession, error) {
+// AuditSessions is the resolver for the auditSessions field. The caller's own sessions carry their
+// prompts. An owner also sees the other members' sessions as activity, without the prompt (V4-35:
+// an owner does not read another member's chats). An adult sees only their own.
+func (r *queryResolver) AuditSessions(ctx context.Context, limit *int) ([]*model.AuditSession, error) {
 	lim := 50
 	if limit != nil && *limit > 0 {
 		lim = *limit
 	}
-
-	claims := GetAuthClaims(ctx)
-	var hs identity.Scope
-	var err error
-	scoped := !wantsAllTenants(claims, familyGroup) // P3-2, DE-2: else a global admin's system-wide view
-	if scoped {
-		_, hs, err = r.resolveTenantAndActor(ctx, familyGroup)
-		if err != nil {
-			return nil, err
-		}
+	_, hs, err := r.caller(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	var dbSessions []dbmodels.AuditSession
-	q := r.DB.DB.Model(&dbmodels.AuditSession{})
-	if scoped {
-		// Audit sessions are person-keyed: those of the members of the caller's household (V4-30).
-		q = q.Joins("JOIN users ON (users.id::text = audit_sessions.user_id OR users.platform_id = audit_sessions.user_id)").Where("users.household_id = ?", hs.HouseholdID())
+	// Audit sessions are person-keyed: those of the members of the caller's household (V4-30).
+	q := r.DB.DB.WithContext(ctx).Model(&dbmodels.AuditSession{}).
+		Joins("JOIN users ON (users.id::text = audit_sessions.user_id OR users.platform_id = audit_sessions.user_id)").
+		Where("users.household_id = ?", hs.HouseholdID())
+	if !hs.Can(identity.ViewMemberActivity) {
+		where, args := ownRows(hs, "audit_sessions.user_id", "audit_sessions.person_id")
+		q = q.Where(where, args...)
 	}
-
 	if err := q.Order("audit_sessions.start_time DESC").Limit(lim).Find(&dbSessions).Error; err != nil {
 		return nil, err
 	}
 
 	out := make([]*model.AuditSession, len(dbSessions))
 	for i, s := range dbSessions {
+		prompt := s.UserPrompt
+		if !ownedBy(hs, s.UserID, s.PersonID) {
+			prompt = ""
+		}
 		out[i] = &model.AuditSession{
 			ID:              s.ID,
 			UserID:          s.UserID,
 			Source:          s.Source,
-			UserPrompt:      s.UserPrompt,
+			UserPrompt:      prompt,
 			Status:          s.Status,
 			TotalDurationMs: int(s.TotalDurationMs),
 			StartTime:       s.StartTime,
@@ -2020,8 +2087,9 @@ func (r *queryResolver) AuditSessions(ctx context.Context, familyGroup *string, 
 	return out, nil
 }
 
-// UserSessions is the resolver for the userSessions field.
-func (r *queryResolver) UserSessions(ctx context.Context, familyGroup *string) ([]*model.UserSessionSummary, error) {
+// UserSessions is the resolver for the userSessions field: each member's activity for an owner,
+// the caller's own for an adult (V4-35).
+func (r *queryResolver) UserSessions(ctx context.Context) ([]*model.UserSessionSummary, error) {
 	type sessionRow struct {
 		UserID            string    `gorm:"column:user_id"`
 		Source            string    `gorm:"column:source"`
@@ -2029,24 +2097,20 @@ func (r *queryResolver) UserSessions(ctx context.Context, familyGroup *string) (
 		LastActive        time.Time `gorm:"column:last_active"`
 	}
 
-	claims := GetAuthClaims(ctx)
-	var hs identity.Scope
-	var err error
-	scoped := !wantsAllTenants(claims, familyGroup) // P3-2, DE-2: else a global admin's system-wide view
-	if scoped {
-		_, hs, err = r.resolveTenantAndActor(ctx, familyGroup)
-		if err != nil {
-			return nil, err
-		}
+	_, hs, err := r.caller(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	var rows []sessionRow
-	q := r.DB.DB.Model(&dbmodels.AuditSession{})
-	if scoped {
-		// Audit sessions are person-keyed: those of the members of the caller's household (V4-30).
-		q = q.Joins("JOIN users ON (users.id::text = audit_sessions.user_id OR users.platform_id = audit_sessions.user_id)").Where("users.household_id = ?", hs.HouseholdID())
+	// Audit sessions are person-keyed: those of the members of the caller's household (V4-30).
+	q := r.DB.DB.WithContext(ctx).Model(&dbmodels.AuditSession{}).
+		Joins("JOIN users ON (users.id::text = audit_sessions.user_id OR users.platform_id = audit_sessions.user_id)").
+		Where("users.household_id = ?", hs.HouseholdID())
+	if !hs.Can(identity.ViewMemberActivity) {
+		where, args := ownRows(hs, "audit_sessions.user_id", "audit_sessions.person_id")
+		q = q.Where(where, args...)
 	}
-
 	err = q.Select("audit_sessions.user_id, MAX(source) as source, COUNT(audit_sessions.id) as total_interactions, MAX(start_time) as last_active").
 		Group("audit_sessions.user_id").
 		Order("last_active DESC").

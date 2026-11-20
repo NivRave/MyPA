@@ -72,7 +72,7 @@ func (b backupOps) withDefaults() backupOps {
 // It changes nothing: no backup is taken, nothing is staged and nothing is restored.
 func (e *Engine) handleRestoreCommand(ctx context.Context, user *models.User, msg channel.Inbound) error {
 	if !e.scopeOf(ctx, user).Can(identity.RestoreBackup) {
-		slog.Warn("unauthorized restore command attempt", "user_id", user.PlatformID, "role", user.Role)
+		slog.Warn("unauthorized restore command attempt", "user_id", user.PlatformID, "role", e.scopeOf(ctx, user).Role())
 		return e.sendMessage(ctx, msg, "🚫 Permission denied: administrative privileges required.")
 	}
 

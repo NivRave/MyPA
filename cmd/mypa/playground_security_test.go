@@ -16,7 +16,6 @@ func TestAdversarial_SEC02_PlaygroundDisabledInProduction(t *testing.T) {
 
 	// Set ENV=production
 	os.Setenv("ENV", "production")
-	os.Setenv("DASHBOARD_API_SECRET", "adv-dashboard-secret")
 
 	dbClient := &db.Client{}
 	mux := setupAppRouter(nil, nil, nil, dbClient, nil)
@@ -42,7 +41,6 @@ func TestAdversarial_SEC02_PlaygroundAllowedInDevelopment(t *testing.T) {
 
 	// Set ENV=development
 	os.Setenv("ENV", "development")
-	os.Setenv("DASHBOARD_API_SECRET", "adv-dashboard-secret")
 
 	dbClient := &db.Client{}
 	mux := setupAppRouter(nil, nil, nil, dbClient, nil)

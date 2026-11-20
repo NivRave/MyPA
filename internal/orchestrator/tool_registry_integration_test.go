@@ -171,6 +171,12 @@ func (m *mockDBClient) HouseholdsByLabel(ctx context.Context, label string) ([]m
 func (m *mockDBClient) UsersInHousehold(ctx context.Context, s identity.Scope) ([]models.User, error) {
 	return nil, nil
 }
+func (m *mockDBClient) AccessOf(ctx context.Context, u *models.User) (identity.Access, error) {
+	return integrationHouseholds.AccessOf(ctx, u)
+}
+func (m *mockDBClient) HouseholdOwners(ctx context.Context, s identity.Scope) ([]models.User, error) {
+	return nil, nil
+}
 
 // integrationHouseholds holds this file's households; a label always names the same one.
 var integrationHouseholds = identitytest.NewStore()

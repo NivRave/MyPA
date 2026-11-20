@@ -219,7 +219,8 @@ func applyPersonKeys(db *gorm.DB) error {
 	return nil
 }
 
-// identityForeignKeySQL are people_migration.sql's constraints, for a schema built by AutoMigrate.
+// identityForeignKeySQL are the identity tables' constraints (people_migration.sql, and Migration
+// C's for sessions), for a schema built by AutoMigrate.
 var identityForeignKeySQL = func() []string {
 	type fk struct{ name, table, def string }
 	fks := []fk{
@@ -233,6 +234,8 @@ var identityForeignKeySQL = func() []string {
 		{"fk_access_tokens_created_by", "access_tokens", "FOREIGN KEY (created_by) REFERENCES public.people(id) ON DELETE SET NULL"},
 		{"fk_access_tokens_issued_on", "access_tokens", "FOREIGN KEY (issued_on_account_id) REFERENCES public.channel_accounts(id) ON DELETE CASCADE"},
 		{"chk_access_tokens_purpose", "access_tokens", "CHECK (purpose IN ('invite', 'link', 'signin'))"},
+		// Migration C (00005_roles_sessions.sql, V4-35).
+		{"fk_sessions_person", "sessions", "FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE CASCADE"},
 	}
 	out := make([]string, 0, len(fks))
 	for _, f := range fks {

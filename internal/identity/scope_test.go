@@ -3,6 +3,7 @@ package identity_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/nivik/mypa/internal/identity"
@@ -12,27 +13,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ADR 0002 Decision 1: one role-to-action table, with a test that walks every pair. V4-30 keeps
-// today's two rules: an admin may do what an admin may today (operator commands included), a
-// family member the rest.
+// ADR 0002 Decision 1: one role-to-action table, with a test that walks every pair (V4-35): four
+// household roles, each with and without the operator flag. The operator flag adds the install's
+// commands and the sign-in link, never household content.
 func TestCan_WalksEveryRoleAndActionPair(t *testing.T) {
+	owner := map[identity.Action]bool{identity.UseAssistant: true, identity.SignInDashboard: true, identity.UseDashboard: true,
+		identity.ManageHousehold: true, identity.ManageMembers: true, identity.ViewMemberActivity: true}
+	adult := map[identity.Action]bool{identity.UseAssistant: true, identity.SignInDashboard: true, identity.UseDashboard: true}
+	chatOnly := map[identity.Action]bool{identity.UseAssistant: true}
+	// A guest may do nothing until topics can be shared with a guest by name (BL-46).
 	want := map[identity.Role]map[identity.Action]bool{
-		identity.RoleAdmin: {
-			identity.UseAssistant: true, identity.ManageHousehold: true,
-			identity.RunBackup: true, identity.RestoreBackup: true, identity.RunDoctor: true,
-		},
-		identity.RoleFamily: {
-			identity.UseAssistant: true, identity.ManageHousehold: false,
-			identity.RunBackup: false, identity.RestoreBackup: false, identity.RunDoctor: false,
-		},
+		identity.RoleOwner: owner, identity.RoleAdult: adult, identity.RoleChild: chatOnly, identity.RoleGuest: {},
 	}
+	operatorAdds := map[identity.Action]bool{identity.RunBackup: true, identity.RestoreBackup: true, identity.RunDoctor: true, identity.SignInDashboard: true}
+
 	require.Len(t, want, len(identity.Roles), "every role has a row")
+	require.Len(t, identity.Actions, 9, "a new action needs a column here")
 	for _, r := range identity.Roles {
-		require.Len(t, want[r], len(identity.Actions), "role %s: every action has a cell", r)
-		s := identitytest.Scope(t, "Levi", "1001", string(r))
-		for _, a := range identity.Actions {
-			assert.Equal(t, want[r][a], s.Can(a), "role %s, action %s", r, a)
+		for _, operator := range []bool{false, true} {
+			st := identitytest.NewStore()
+			h := st.Household("Levi")
+			s, err := identity.ForUser(context.Background(), accessStore{st, identity.Access{HouseholdID: h.ID, Role: r, Operator: operator}},
+				&models.User{ID: "p-1", PlatformID: "1001", HouseholdID: h.ID})
+			require.NoError(t, err)
+			assert.Equal(t, operator, s.Operator())
+			for _, a := range identity.Actions {
+				assert.Equal(t, want[r][a] || (operator && operatorAdds[a]), s.Can(a), "role %s, operator %v, action %s", r, operator, a)
+			}
 		}
+	}
+	// No role (an unknown stored string) may do nothing, unless it is the operator.
+	st := identitytest.NewStore()
+	h := st.Household("Levi")
+	s, err := identity.ForUser(context.Background(), accessStore{st, identity.Access{HouseholdID: h.ID}}, &models.User{ID: "p-1", HouseholdID: h.ID})
+	require.NoError(t, err)
+	for _, a := range identity.Actions {
+		assert.False(t, s.Can(a), "no role, action %s", a)
 	}
 }
 
@@ -45,13 +61,80 @@ func TestCan_InvalidScopeMayDoNothing(t *testing.T) {
 	}
 }
 
-// An unknown role string never gains admin powers; "admin" is matched trimmed, ignoring case.
+// Stored roles map as Migration C maps them; an unknown string is no role at all.
 func TestParseRole(t *testing.T) {
-	assert.Equal(t, identity.RoleAdmin, identity.ParseRole("admin"))
-	assert.Equal(t, identity.RoleAdmin, identity.ParseRole(" Admin "))
-	for _, s := range []string{"", "family", "owner", "administrator", "admin; DROP TABLE users", "*"} {
-		assert.Equal(t, identity.RoleFamily, identity.ParseRole(s), "role %q", s)
+	cases := map[string]identity.Role{
+		"owner": identity.RoleOwner, " Owner ": identity.RoleOwner, "admin": identity.RoleOwner, " Admin ": identity.RoleOwner,
+		"adult": identity.RoleAdult, "family": identity.RoleAdult, "child": identity.RoleChild, "GUEST": identity.RoleGuest,
 	}
+	for in, want := range cases {
+		assert.Equal(t, want, identity.ParseRole(in), "role %q", in)
+	}
+	for _, s := range []string{"", "member", "administrator", "operator", "admin; DROP TABLE users", "*"} {
+		assert.Equal(t, identity.Role(""), identity.ParseRole(s), "role %q", s)
+	}
+}
+
+// A pairing code gives adult or child, never owner (ADR 0002 Decision 5), and no guest until
+// sharing by name exists (BL-46).
+func TestParseInviteRole_NeverGivesOwner(t *testing.T) {
+	for in, want := range map[string]identity.Role{"adult": identity.RoleAdult, "child": identity.RoleChild,
+		"family": identity.RoleAdult, "owner": identity.RoleAdult, "admin": identity.RoleAdult} {
+		got, ok := identity.ParseInviteRole(in)
+		assert.True(t, ok, in)
+		assert.Equal(t, want, got, in)
+	}
+	for _, in := range []string{"", "operator", "root", "guest", " Guest "} {
+		_, ok := identity.ParseInviteRole(in)
+		assert.False(t, ok, in)
+	}
+}
+
+// users.role keeps the two values the release before V4 reads.
+func TestLegacyRole(t *testing.T) {
+	assert.Equal(t, "admin", identity.LegacyRole(identity.RoleOwner))
+	for _, r := range []identity.Role{identity.RoleAdult, identity.RoleChild, identity.RoleGuest, ""} {
+		assert.Equal(t, "family", identity.LegacyRole(r), r)
+	}
+}
+
+// accessStore answers AccessOf with a fixed access, as a membership would, whatever the users
+// row's role says.
+type accessStore struct {
+	*identitytest.Store
+	acc identity.Access
+}
+
+func (a accessStore) AccessOf(context.Context, *models.User) (identity.Access, error) {
+	return a.acc, nil
+}
+
+type noAccess struct{ *identitytest.Store }
+
+func (noAccess) AccessOf(context.Context, *models.User) (identity.Access, error) {
+	return identity.Access{}, fmt.Errorf("%w: no membership", identity.ErrNoScope)
+}
+
+// V4-35: the role and the operator flag come from the store (the membership and the person), not
+// from users.role; a person without a membership, or whose membership names another household,
+// has no scope.
+func TestForUser_TakesTheRoleFromTheMembership(t *testing.T) {
+	st := identitytest.NewStore()
+	levi, cohen := st.Household("Levi"), st.Household("Cohen")
+	ctx := context.Background()
+	row := &models.User{ID: "p-1", PlatformID: "1001", Role: "admin", HouseholdID: levi.ID}
+
+	s, err := identity.ForUser(ctx, accessStore{st, identity.Access{HouseholdID: levi.ID, Role: identity.RoleGuest}}, row)
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleGuest, s.Role(), "users.role says admin; the membership says guest")
+	assert.False(t, s.Operator())
+	assert.False(t, s.Can(identity.RunBackup))
+
+	_, err = identity.ForUser(ctx, accessStore{st, identity.Access{HouseholdID: cohen.ID, Role: identity.RoleOwner}}, row)
+	assert.ErrorIs(t, err, identity.ErrNoScope, "a membership of another household")
+
+	_, err = identity.ForUser(ctx, noAccess{st}, row)
+	assert.ErrorIs(t, err, identity.ErrNoScope, "no membership")
 }
 
 func TestForUser_ReadsTheHouseholdFromTheStore(t *testing.T) {
@@ -67,7 +150,7 @@ func TestForUser_ReadsTheHouseholdFromTheStore(t *testing.T) {
 	assert.Equal(t, h.ID, s.HouseholdID())
 	assert.Equal(t, "Levi", s.LegacyLabel(), "the label comes from the household, not from the user row")
 	assert.Equal(t, "1001", s.PersonKey())
-	assert.Equal(t, identity.RoleAdmin, s.Role())
+	assert.Equal(t, identity.RoleOwner, s.Role())
 	assert.Equal(t, identity.Direct, s.Audience())
 	assert.Equal(t, tz, s.TimeZone("UTC"))
 	assert.Equal(t, "ILS", s.Currency("USD"))
@@ -99,38 +182,16 @@ func TestForUser_RefusesWithoutAUsableHousehold(t *testing.T) {
 	assert.ErrorIs(t, err, identity.ErrNoScope, "no store")
 }
 
-// The dashboard matches its label ignoring case, as before V4-30; a label that matches two
-// households is refused rather than guessed (ADR 0002 §9).
-func TestForLabel_MatchesIgnoringCaseAndRefusesAmbiguity(t *testing.T) {
-	st := identitytest.NewStore()
-	ctx := context.Background()
-	levi := st.Household("Levi")
-
-	s, err := identity.ForLabel(ctx, st, " levi ", "dashboard-service", identity.RoleAdmin)
-	require.NoError(t, err)
-	assert.Equal(t, levi.ID, s.HouseholdID())
-	assert.Equal(t, "dashboard-service", s.PersonKey())
-
-	_, err = identity.ForLabel(ctx, st, "Nobody", "x", identity.RoleAdmin)
-	assert.ErrorIs(t, err, identity.ErrNoScope)
-	_, err = identity.ForLabel(ctx, st, "  ", "x", identity.RoleAdmin)
-	assert.ErrorIs(t, err, identity.ErrNoScope)
-
-	st.Household("LEVI") // a second household whose label differs only in case
-	_, err = identity.ForLabel(ctx, st, "Levi", "x", identity.RoleAdmin)
-	assert.ErrorIs(t, err, identity.ErrNoScope, "two households match: refused")
-	assert.Contains(t, err.Error(), "matches 2 households")
-}
-
-// A scheduled job's scope comes from the stored row and has no admin powers.
-func TestForStoredRow_HasNoAdminPowers(t *testing.T) {
+// A scheduled job's scope comes from the stored row and has no role: every check refuses it.
+func TestForStoredRow_HasNoPowers(t *testing.T) {
 	st := identitytest.NewStore()
 	h := st.Household("Levi")
 	s, err := identity.ForStoredRow(context.Background(), st, h.ID, "1001")
 	require.NoError(t, err)
-	assert.True(t, s.Can(identity.UseAssistant))
-	assert.False(t, s.Can(identity.ManageHousehold))
-	assert.False(t, s.Can(identity.RunBackup))
+	assert.True(t, s.Valid())
+	for _, a := range identity.Actions {
+		assert.False(t, s.Can(a), "a job, action %s", a)
+	}
 
 	_, err = identity.ForStoredRow(context.Background(), st, "", "1001")
 	assert.ErrorIs(t, err, identity.ErrNoScope)
@@ -179,8 +240,8 @@ func TestMember_LooksOnlyInsideTheCallersHousehold(t *testing.T) {
 	assert.ErrorIs(t, err, identity.ErrNoScope)
 }
 
-// V4-32: the person of a scope built from a sender's users row is that row's ID (a person keeps
-// users.id), so every account of one person gets the same person; a dashboard scope has none.
+// V4-32: the person of a scope built from a users row is that row's ID (a person keeps users.id),
+// so every account of one person, and their dashboard session (V4-35), get the same person.
 func TestForUser_CarriesThePerson(t *testing.T) {
 	st := identitytest.NewStore()
 	h := st.Household("Levi")
@@ -188,8 +249,4 @@ func TestForUser_CarriesThePerson(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "p-1", s.PersonID())
 	assert.Equal(t, "7001", s.PersonKey())
-
-	d, err := identity.ForLabel(context.Background(), st, "Levi", "dashboard-service", identity.RoleAdmin)
-	require.NoError(t, err)
-	assert.Empty(t, d.PersonID(), "the dashboard signs no person in until V4-35")
 }
