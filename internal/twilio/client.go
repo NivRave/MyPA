@@ -47,52 +47,8 @@ func NewClient(cfg Config, opts ...Option) *Client {
 // SendMessage sends a WhatsApp message (text) to the target number.
 // If the formatted text exceeds the max length (1500 chars), it is split across multiple messages.
 func (c *Client) SendMessage(ctx context.Context, to string, text string) error {
-	formattedText := ToWhatsApp(text)
-	chunks := SplitMessage(formattedText, 1500)
-
-	for _, chunk := range chunks {
-		if err := c.sendSingleMessage(ctx, to, chunk); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c *Client) sendSingleMessage(ctx context.Context, to string, body string) error {
-	apiURL := fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", c.cfg.AccountSID)
-
-	data := url.Values{}
-	if !strings.HasPrefix(to, "whatsapp:") {
-		to = "whatsapp:" + to
-	}
-	data.Set("To", to)
-	data.Set("From", c.cfg.FromNumber)
-	data.Set("Body", body)
-	if c.cfg.StatusCallbackURL != "" {
-		// BL-8: "accepted" is not "delivered"; Twilio reports the outcome to the gateway.
-		data.Set("StatusCallback", c.cfg.StatusCallbackURL)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(data.Encode()))
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-
-	req.SetBasicAuth(c.cfg.AccountSID, c.cfg.AuthToken)
-	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("sending request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("twilio API returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	return nil
+	_, err := c.SendMessageRefs(ctx, to, text)
+	return err
 }
 
 // SplitMessage splits text into chunks of at most maxLen characters,

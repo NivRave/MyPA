@@ -391,6 +391,13 @@ func (c *Client) MergeOnLink(ctx context.Context, tokenID, claimantChannel, clai
 			}
 			out.Rows += res.RowsAffected
 		}
+		// V4-33: the merged person's messages still to deliver are the survivor's now; deleting the
+		// person below would otherwise drop them with it.
+		res = tx.Exec(`UPDATE public.proactive_deliveries SET person_id = ? WHERE person_id = ?`, survivor, merged)
+		if res.Error != nil {
+			return fmt.Errorf("move proactive_deliveries: %w", res.Error)
+		}
+		out.Rows += res.RowsAffected
 		if err := tx.Exec(`DELETE FROM people WHERE id = ?`, merged).Error; err != nil {
 			return err
 		}

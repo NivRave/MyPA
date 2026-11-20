@@ -1,0 +1,18 @@
+=== message 1: telegram to=7008 parse_mode=HTML
+🔔 <i>Reminder:</i>
+
+Call the dentist about <b>Noa</b>&#39;s appointment
+=== message 2: telegram to=7009 parse_mode=HTML
+🔔 <i>Reminder:</i>
+
+Call the dentist about <b>Noa</b>&#39;s appointment
+
+ℹ️ I could not reach you on whatsapp, so this came here. On WhatsApp, first send <code>join conformance-check</code> to +14155238886; Twilio answers that you joined. After 3 days without writing, send it again.
+=== message 3: whatsapp to=whatsapp:+12025550101 from=whatsapp:+14155238886
+⏰ This was due <masked>, when I could not reach you.
+
+🔔 _Reminder:_
+
+Call the dentist about *Noa*'s appointment
+=== message 4: whatsapp to=whatsapp:+12025550101 from=whatsapp:+14155238886
+Hello!

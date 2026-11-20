@@ -73,6 +73,18 @@ type Inbound struct {
 	ReplyContext []byte `json:"reply_context,omitempty"`
 	// SentAt is when the platform says the message was sent; zero when it does not say.
 	SentAt time.Time `json:"sent_at,omitempty"`
+	// Report, when set, makes this not a message but the platform's later report that a message
+	// the assistant sent was refused (V4-33). Sender is then the person it was for, MessageID
+	// names the report, and Text and Attachments are empty.
+	Report *Report `json:"report,omitempty"`
+}
+
+// Report is a platform's later answer about a message it had accepted: it was not delivered,
+// and why, in the reasons a Receipt uses.
+type Report struct {
+	// Ref is the platform's ID of the refused message, as Receipt.Refs carried it.
+	Ref    string        `json:"ref"`
+	Reason RefusalReason `json:"reason"`
 }
 
 // ReplyAddress is where a reply to this message goes.
@@ -117,12 +129,22 @@ type Audio struct {
 }
 
 // Proactive marks a message the assistant starts itself (a reminder, a briefing, a notification).
-// The delivery policy for it is V4-33.
+// The delivery policy is internal/proactive (V4-33). With TemplateKey set, the adapter sends its
+// approved template of that key with TemplateValues instead of Text; the key is one the
+// destination lists in ProactiveRule.Templates.
 type Proactive struct {
 	Category       string
 	TemplateKey    string
 	TemplateValues []string
 }
+
+// Template keys MyPA's proactive messages may name (ADR 0003 §4): a reminder carrying its title
+// as one short line, and a note that a briefing is waiting. An adapter that has approved
+// templates lists the keys it can send in ProactiveRule.Templates.
+const (
+	TemplateReminder = "reminder"
+	TemplateBriefing = "briefing"
+)
 
 // Outbound is a message the assistant sends, in the neutral form. Render applies the fallbacks for
 // what the destination cannot show before Adapter.Send is called.
@@ -158,6 +180,61 @@ type Receipt struct {
 	Accepted bool
 	Reason   RefusalReason // set when not accepted
 	RetryAt  time.Time     // set with RateLimited
+	// Refs are the platform's IDs of what it accepted (one per part of a split message), so a
+	// later Report can be matched to the message. Empty on a platform that sends no reports.
+	Refs []string
+}
+
+// ProactiveRule is when a channel accepts a message the person did not ask for (V4-33). The
+// delivery policy reads it, with when the person last wrote on the channel, before sending.
+type ProactiveRule struct {
+	// Window, when positive, is how long after the person last wrote the channel accepts a
+	// free-form message; zero means always.
+	Window time.Duration
+	// Reach, when positive, is how long after the person last wrote they can be reached on the
+	// channel at all (a sandbox membership lapses); zero means no limit.
+	Reach time.Duration
+	// Templates are the keys of the approved templates the channel can send outside the window.
+	Templates []string
+}
+
+// Openness is what a ProactiveRule says about one account at one moment.
+type Openness int
+
+const (
+	// Open: a free-form message is accepted.
+	Open Openness = iota
+	// Closed: only a template is accepted.
+	Closed
+	// Unreachable: nothing reaches the person on this channel.
+	Unreachable
+)
+
+// At says whether a message to an account that last wrote at lastInbound is accepted at now.
+// An account that never wrote (zero lastInbound) is unreachable: platforms refuse a first message
+// from the assistant (a bot often cannot start a chat) or have no window to send in.
+func (r ProactiveRule) At(lastInbound, now time.Time) Openness {
+	if lastInbound.IsZero() {
+		return Unreachable
+	}
+	since := now.Sub(lastInbound)
+	switch {
+	case r.Reach > 0 && since >= r.Reach:
+		return Unreachable
+	case r.Window > 0 && since >= r.Window:
+		return Closed
+	}
+	return Open
+}
+
+// HasTemplate reports whether the rule lists the template key.
+func (r ProactiveRule) HasTemplate(key string) bool {
+	for _, k := range r.Templates {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 // Markup is the text formatting a channel renders.
@@ -192,8 +269,9 @@ type Capabilities struct {
 	MaxTextLen int
 	Markup     Markup
 	// Proactive says, in words, when the channel accepts a message the person did not ask for (for
-	// example "always"). V4-33 turns it into a rule.
+	// example "always"), for the capability matrix. Rule is the same, for the delivery policy.
 	Proactive string
+	Rule      ProactiveRule
 }
 
 // Validate reports a declaration that cannot be honoured.
@@ -220,6 +298,17 @@ func (c Capabilities) Validate() error {
 	}
 	if c.Proactive == "" {
 		return errors.New("Proactive must say when unprompted messages are accepted")
+	}
+	switch {
+	case c.Rule.Window < 0 || c.Rule.Reach < 0:
+		return errors.New("Rule.Window and Rule.Reach must not be negative")
+	case c.Rule.Reach > 0 && c.Rule.Window > c.Rule.Reach:
+		return fmt.Errorf("Rule.Window (%s) is longer than Rule.Reach (%s)", c.Rule.Window, c.Rule.Reach)
+	}
+	for _, k := range c.Rule.Templates {
+		if k == "" {
+			return errors.New("Rule.Templates has an empty key")
+		}
 	}
 	return nil
 }

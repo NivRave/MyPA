@@ -236,6 +236,8 @@ var identityForeignKeySQL = func() []string {
 		{"chk_access_tokens_purpose", "access_tokens", "CHECK (purpose IN ('invite', 'link', 'signin'))"},
 		// Migration C (00005_roles_sessions.sql, V4-35).
 		{"fk_sessions_person", "sessions", "FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE CASCADE"},
+		// 00008_proactive_deliveries.sql (V4-33).
+		{"fk_proactive_deliveries_person", "proactive_deliveries", "FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE CASCADE"},
 	}
 	out := make([]string, 0, len(fks))
 	for _, f := range fks {

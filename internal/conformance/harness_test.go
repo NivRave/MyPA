@@ -28,6 +28,8 @@ import (
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/proactive"
+	"github.com/nivik/mypa/internal/proactive/proactivetest"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/nivik/mypa/internal/telegram"
 	"github.com/nivik/mypa/internal/twilio"
@@ -451,7 +453,10 @@ type env struct {
 	stt     *fakeTranscriber
 	tools   *scenarioTools
 	undo    *fakeDurability
-	seq     int
+	// deliveries are the delivery policy's records (V4-33): every message the assistant starts
+	// itself goes through the production policy, over this store.
+	deliveries *proactivetest.Store
+	seq        int
 	// compared is set once the scenario has compared its transcript (see golden).
 	compared bool
 	// redact replaces values that differ on every run (a random code) in the transcript.
@@ -479,6 +484,8 @@ func newEnv(t *testing.T, ch channel, mode string) *env {
 		stt:   &fakeTranscriber{},
 		tools: &scenarioTools{},
 		undo:  &fakeDurability{},
+
+		deliveries: proactivetest.NewStore(),
 	}
 
 	oauth := calendar.NewOAuthConfig(&config.GoogleConfig{
@@ -514,6 +521,7 @@ func newEnv(t *testing.T, ch channel, mode string) *env {
 	e.engine.WithHealthReporter(scenarioDoctor(e))
 	e.engine.WithAccounts(e.db, []byte(conformanceLinkSecret))
 	e.engine.WithSignIn(e.db, "") // V4-35: the default, local dashboard address
+	e.engine.WithDelivery(proactive.New(e.deliveries, e.db, e.channels))
 
 	t.Cleanup(func() {
 		e.engine.Wait()

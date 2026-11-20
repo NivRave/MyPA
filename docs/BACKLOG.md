@@ -64,6 +64,9 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-51 | Low | Topic calendar colours never reach Google: no real client implements `CreateEventWithColor` | open |
 | BL-52 | Low | `internal/llm/tools.go` keeps a static copy of 27 module tools whose schemas have drifted from the modules | open |
 | BL-53 | Low | `update_calendar_event` and `list_calendar_events` read a time without an offset as UTC when no zone is given | open |
+| BL-54 | Low | WhatsApp templates exist in English only | open |
+| BL-55 | Medium | A legacy workflow run counts as the person writing, and its answer bypasses the delivery policy | open |
+| BL-56 | Low | Telegram's "bot was blocked by the user" is an error, not a "not reachable" refusal | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -704,6 +707,28 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   outside the 24-hour window in English. WhatsApp approves each language as its own template.
 - **Fix:** a wording per supported language, a SID per template and language, and the sender
   choosing by the person's language when V4-33 sends templates.
+
+### BL-55 — A legacy workflow run counts as the person writing (Medium)
+- **Found:** 2026-11-20, while building V4-33.
+- **Evidence:** `scheduler.executeWorkflowMessage` builds a `channel.Inbound` from the person's latest
+  audit session and calls `ProcessMessage` without marking the turn as started by the assistant. So
+  `RecordInbound` sets the account's `last_inbound_at` to now, although the person did not write; the
+  delivery policy then predicts an open window that WhatsApp does not have, and `Release` sends the
+  person's held messages into it. The workflow's own answer goes straight to that chat, not through the
+  policy. A refusal still comes back as a delivery report and is re-routed, so nothing is lost, but
+  the prediction is wrong and the message goes out late.
+- **Fix:** run a workflow as a turn the assistant started, with its answer delivered as a
+  notification through the policy (an exported engine method, as `SendDueBriefings` does for the
+  briefing), and on the person's delivery account rather than their latest session.
+
+### BL-56 — Telegram's "blocked by the user" is an error, not a refusal (Low)
+- **Found:** 2026-11-20, while building V4-33.
+- **Evidence:** the Telegram adapter returns every Bot API failure as an error. A person who blocked
+  the bot gets `403 Forbidden: bot was blocked by the user`, which the delivery policy treats as a
+  failure to retry: it tries three times, a minute apart, before it moves to the person's other
+  channel or holds the message.
+- **Fix:** map Bot API 403 (blocked, user deactivated, chat not found) to `channel.NotReachable` in
+  `telegram.Adapter.Send`, so the chain moves on at once.
 
 ## Operations (owner)
 

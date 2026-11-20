@@ -126,6 +126,7 @@ func newHealthReporter(cfg *config.Config, channels *channel.Registry, store *st
 				return db.SchemaVersion(ctx, sqlDB)
 			},
 		},
+		doctor.HeldMessages{Counts: dbClient.DeliveryCounts}, // V4-33
 	)
 	return doctor.New(checks...)
 }

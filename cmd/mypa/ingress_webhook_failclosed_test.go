@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/twilio"
@@ -92,9 +93,10 @@ func TestTwilioWebhook_EmptyAuthToken_RejectsEvenEmptyKeySignature(t *testing.T)
 	pub.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
-// BL-8: the delivery-status route exists (not 404/405) and is signature-protected like the inbound one.
+// BL-8: the delivery-status route exists (not 404/405) and is signature-protected like the inbound
+// one: a request that fails verification publishes nothing. V4-33: a verified failure report is
+// published once, as a delivery report and not as a message, for the delivery policy.
 func TestTwilioStatusCallback_RouteIsWiredAndFailsClosed(t *testing.T) {
-	pub := new(MockEventPublisher)
 	form := url.Values{"MessageSid": {"SM1"}, "MessageStatus": {"failed"}, "ErrorCode": {"63015"}}
 	fullURL := "https://gw.example/webhook/twilio/status"
 
@@ -103,6 +105,7 @@ func TestTwilioStatusCallback_RouteIsWiredAndFailsClosed(t *testing.T) {
 		"wrong signature": {Channels: adapters.Config{WhatsApp: twilio.Config{AuthToken: "real-token"}}},
 	} {
 		t.Run(name, func(t *testing.T) {
+			pub := new(MockEventPublisher)
 			req := httptest.NewRequest("POST", fullURL, strings.NewReader(form.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			req.Header.Set("X-Forwarded-Proto", "https")
@@ -111,10 +114,16 @@ func TestTwilioStatusCallback_RouteIsWiredAndFailsClosed(t *testing.T) {
 			rr := httptest.NewRecorder()
 			setupIngressRouter(pub, testChannels(t, cfg)).ServeHTTP(rr, req)
 			assert.Equal(t, http.StatusForbidden, rr.Code)
+			pub.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 		})
 	}
 
 	t.Run("valid signature", func(t *testing.T) {
+		pub := new(MockEventPublisher)
+		pub.On("Publish", mock.Anything, mock.MatchedBy(func(v any) bool {
+			in, ok := v.(channel.Inbound)
+			return ok && in.Report != nil && in.Report.Ref == "SM1" && in.Report.Reason == channel.NotReachable && in.Text == ""
+		})).Return(nil).Once()
 		req := httptest.NewRequest("POST", fullURL, strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("X-Forwarded-Proto", "https")
@@ -123,6 +132,6 @@ func TestTwilioStatusCallback_RouteIsWiredAndFailsClosed(t *testing.T) {
 		rr := httptest.NewRecorder()
 		setupIngressRouter(pub, testChannels(t, &config.Config{Channels: adapters.Config{WhatsApp: twilio.Config{AuthToken: "real-token"}}})).ServeHTTP(rr, req)
 		assert.Equal(t, http.StatusOK, rr.Code)
+		pub.AssertExpectations(t)
 	})
-	pub.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }

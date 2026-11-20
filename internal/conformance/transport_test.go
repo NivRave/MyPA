@@ -47,6 +47,9 @@ type fakePlatforms struct {
 	// offset a getUpdates call has confirmed.
 	telegramUpdates []json.RawMessage
 	confirmed       int64
+	// twilioSeq numbers the SIDs of the messages Twilio accepted, so a delivery report can name
+	// one (V4-33).
+	twilioSeq int
 }
 
 func newFakePlatforms(t *testing.T) *fakePlatforms {
@@ -218,13 +221,22 @@ func (f *fakePlatforms) twilio(req *http.Request) (*http.Response, error) {
 		if err := req.ParseForm(); err != nil {
 			return respond(req, http.StatusBadRequest, `{"code":21602,"message":"bad form"}`), nil
 		}
+		meta := "from=" + req.PostForm.Get("From")
+		if sid := req.PostForm.Get("ContentSid"); sid != "" {
+			// An approved template (V4-33): the content and its variables, no free text.
+			meta += " content=" + sid + " variables=" + req.PostForm.Get("ContentVariables")
+		}
 		f.record(wireMessage{
 			Platform: "whatsapp",
 			To:       req.PostForm.Get("To"),
-			Meta:     "from=" + req.PostForm.Get("From"),
+			Meta:     meta,
 			Text:     req.PostForm.Get("Body"),
 		})
-		return respond(req, http.StatusCreated, `{"sid":"SMfake","status":"queued"}`), nil
+		f.mu.Lock()
+		f.twilioSeq++
+		sid := fmt.Sprintf("SM%032d", f.twilioSeq)
+		f.mu.Unlock()
+		return respond(req, http.StatusCreated, `{"sid":"`+sid+`","status":"queued"}`), nil
 
 	case req.Method == http.MethodGet && strings.Contains(path, "/Media/"):
 		f.mu.Lock()

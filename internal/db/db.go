@@ -105,6 +105,8 @@ func AutoMigrateSchema(db *gorm.DB) error {
 		&models.AccessToken{},
 		// V4-35: dashboard sessions.
 		&models.Session{},
+		// V4-33: messages the assistant starts itself.
+		&models.ProactiveDelivery{},
 	}
 	allModels := append(baseModels, GetRegisteredModels()...)
 	if err := db.AutoMigrate(allModels...); err != nil {
