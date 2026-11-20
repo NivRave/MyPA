@@ -69,6 +69,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-56 | Low | Telegram's "bot was blocked by the user" is an error, not a "not reachable" refusal | open |
 | BL-57 | Medium | Undo restores a memory's old embedding, which after a re-embed into another model is in the wrong vector space | open: fixed together with BL-25 in one change, after V4-07 and before the V4.0 release, not part of any stage-4 item |
 | BL-58 | Medium | A turn kept local (`LLM_LOCAL_DOMAINS`) is in the history later cloud turns send; voice and tools reach their own services | open |
+| BL-59 | Low | `TestReembed_ToAnotherSizeAfterTheDocumentedMigration` fails on a CRLF checkout of docs/EMBEDDINGS.md | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -460,6 +461,19 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** decide whether the history of a local turn is withheld from later cloud turns (for example stored
   with a local mark and dropped from a cloud request), and say in the docs what local routing covers. Test: a
   cloud turn after a local one carries none of the local turn's text.
+
+### BL-59 — A doc-reading test fails when the doc has Windows line endings (Low)
+- **Found:** 2026-11-20, while running the race suite for V4-02 in the golang container, which mounts the Windows
+  working tree.
+- **Evidence:** `sizeChangeMigration` (`internal/db/embedding_space_test.go`) finds the migration in
+  docs/EMBEDDINGS.md with the pattern ``<!-- size-change-migration -->\s*```sql\n(.*?)```  ``. With CRLF line endings
+  in the working copy (`core.autocrlf=true`, or an editor that writes CRLF) the `\n` after `sql` does not match and
+  the test fails with "must hold the size-change migration in a marked sql block". The committed file is LF, so CI
+  passes; a local run against a CRLF working copy does not.
+- **Impact:** a false failure of the full local check on Windows. No effect on the product.
+- **Fix:** match `\r?\n` in the pattern (the function already removes `\r` from the match), or add
+  `docs/*.md text eol=lf` to `.gitattributes`. Test: the function finds the block in a CRLF copy of the doc.
+
 ### BL-30 — Other tests change the process environment and do not restore it exactly (Low)
 - **Found:** 2026-11-19, in the search of every `_test.go` file done for BL-27.
 - **Evidence:** `cmd/mypa/playground_security_test.go:18-19` and `:44-45` (formerly `cmd/orchestrator`) set `ENV` and
