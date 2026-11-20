@@ -713,7 +713,7 @@ func TestRegistry_SelectDeclarations_AdversarialCombinations(t *testing.T) {
 		},
 	}
 	calMod := &mockToolModule{
-		name: "workspace_calendar",
+		name: "schedule",
 		declarations: []*genai.FunctionDeclaration{
 			{Name: "create_calendar_event"},
 			{Name: "list_calendar_events"},

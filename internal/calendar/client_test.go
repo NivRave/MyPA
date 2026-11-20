@@ -25,7 +25,7 @@ func (t *dummyTokenSource) Token() (*oauth2.Token, error) {
 
 func setupTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.Server) {
 	ts := httptest.NewServer(handler)
-	
+
 	client, err := NewClient(context.Background(), &dummyTokenSource{}, option.WithEndpoint(ts.URL))
 	require.NoError(t, err)
 
@@ -36,9 +36,9 @@ func TestClient_CreateEvent(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Contains(t, r.URL.Path, "/calendars/primary/events")
-		
+
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"htmlLink": "https://calendar.google.com/events/123"}`))
+		_, _ = w.Write([]byte(`{"id": "evt123", "htmlLink": "https://calendar.google.com/events/123"}`))
 	}
 
 	client, ts := setupTestClient(t, handler)
@@ -52,16 +52,16 @@ func TestClient_CreateEvent(t *testing.T) {
 		Timezone:    "UTC",
 	}
 
-	link, err := client.CreateEvent(context.Background(), ev)
+	id, err := client.CreateEvent(context.Background(), ev)
 	require.NoError(t, err)
-	assert.Equal(t, "https://calendar.google.com/events/123", link)
+	assert.Equal(t, "evt123", id, "the event ID, not the web link: update and delete take the ID")
 }
 
 func TestClient_ListEvents(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Contains(t, r.URL.Path, "/calendars/primary/events")
-		
+
 		assert.Equal(t, "2030-01-01T00:00:00Z", r.URL.Query().Get("timeMin"))
 		assert.Equal(t, "query", r.URL.Query().Get("q"))
 
@@ -90,7 +90,7 @@ func TestClient_UpdateEvent(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PATCH", r.Method)
 		assert.Contains(t, r.URL.Path, "/calendars/primary/events/event-1")
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id": "event-1"}`))
 	}
@@ -110,7 +110,7 @@ func TestClient_DeleteEvent(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "DELETE", r.Method)
 		assert.Contains(t, r.URL.Path, "/calendars/primary/events/event-1")
-		
+
 		w.WriteHeader(http.StatusNoContent)
 	}
 

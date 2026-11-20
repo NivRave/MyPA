@@ -31,7 +31,6 @@ import (
 	"github.com/nivik/mypa/internal/domains/schedule"
 	"github.com/nivik/mypa/internal/domains/shared"
 	"github.com/nivik/mypa/internal/domains/web_research"
-	"github.com/nivik/mypa/internal/domains/workspace_calendar"
 	"github.com/nivik/mypa/internal/domains/workspace_contacts"
 	"github.com/nivik/mypa/internal/domains/workspace_gmail"
 	"github.com/nivik/mypa/internal/domains/workspace_tasks"
@@ -253,13 +252,11 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 	preferencesModule := preferences.NewModule(dbClient, preferences.WithEventBus(eventBus))
 
 	// Register all Wave 0, Wave 1, and Wave 2 domain modules in the ToolRegistry
-	workspaceCalendarModule := workspace_calendar.NewModule(calendarFactory, workspace_calendar.WithEventBus(eventBus))
 	workspaceGmailModule := workspace_gmail.NewModule(workspace_gmail.WithClient(gmailClient), workspace_gmail.WithEventBus(eventBus))
 	workspaceTasksModule := workspace_tasks.NewModule(workspace_tasks.WithClient(tasksClient), workspace_tasks.WithEventBus(eventBus))
 	workspaceContactsModule := workspace_contacts.NewModule(workspace_contacts.WithClient(contactsClient), workspace_contacts.WithEventBus(eventBus))
 	webResearchModule := web_research.NewModule(web_research.WithClient(tavilyClient))
 
-	registry.Register(workspaceCalendarModule)
 	registry.Register(workspaceGmailModule)
 	registry.Register(workspaceTasksModule)
 	registry.Register(workspaceContactsModule)

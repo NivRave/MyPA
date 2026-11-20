@@ -68,7 +68,7 @@ func TestListTopicSchedule_GoogleFailureIsReportedAndLogged(t *testing.T) {
 			logs := captureLogs(t)
 			repo := newFakeScheduleRepo()
 			seedLocalEvent(t, repo, "")
-			res, err := NewModule(repo, opt).Execute(context.Background(), aliceCtx, "list_topic_schedule", map[string]interface{}{})
+			res, err := NewModule(repo, opt).Execute(context.Background(), aliceCtx, "list_calendar_events", map[string]interface{}{})
 			require.NoError(t, err)
 			assert.Contains(t, res, "Morning Feeding", "local events are still listed")
 			assert.Contains(t, res, "Google Calendar could not be reached")
@@ -83,7 +83,7 @@ func TestListTopicSchedule_GoogleFailureIsReportedAndLogged(t *testing.T) {
 func TestListTopicSchedule_GoogleFailureWithNoLocalEvents(t *testing.T) {
 	captureLogs(t)
 	res, err := NewModule(newFakeScheduleRepo(), calendarFactory(nil, errors.New("boom"))).
-		Execute(context.Background(), aliceCtx, "list_topic_schedule", map[string]interface{}{})
+		Execute(context.Background(), aliceCtx, "list_calendar_events", map[string]interface{}{})
 	require.NoError(t, err)
 	assert.Contains(t, res, "No scheduled events found")
 	assert.Contains(t, res, "Google Calendar could not be reached")
@@ -94,7 +94,7 @@ func TestListTopicSchedule_NotConnectedIsExplainedWithoutWarning(t *testing.T) {
 	repo := newFakeScheduleRepo()
 	seedLocalEvent(t, repo, "")
 	res, err := NewModule(repo, calendarFactory(nil, orchestrator.ErrCalendarNotConnected)).
-		Execute(context.Background(), aliceCtx, "list_topic_schedule", map[string]interface{}{})
+		Execute(context.Background(), aliceCtx, "list_calendar_events", map[string]interface{}{})
 	require.NoError(t, err)
 	assert.Contains(t, res, "Morning Feeding")
 	assert.Contains(t, res, "Google Calendar is not connected")
@@ -105,7 +105,7 @@ func TestListTopicSchedule_NotConnectedIsExplainedWithoutWarning(t *testing.T) {
 func TestListTopicSchedule_NoCalendarIntegrationStaysSilent(t *testing.T) {
 	repo := newFakeScheduleRepo()
 	seedLocalEvent(t, repo, "")
-	res, err := NewModule(repo).Execute(context.Background(), aliceCtx, "list_topic_schedule", map[string]interface{}{})
+	res, err := NewModule(repo).Execute(context.Background(), aliceCtx, "list_calendar_events", map[string]interface{}{})
 	require.NoError(t, err)
 	assert.NotContains(t, res, "⚠️")
 }
@@ -114,7 +114,7 @@ func TestScheduleTopicEvent_GoogleCreateFailureIsNotReportedAsSynced(t *testing.
 	logs := captureLogs(t)
 	repo := newFakeScheduleRepo()
 	res, err := NewModule(repo, calendarFactory(failingCalendarClient{err: errors.New("googleapi: 403")}, nil)).
-		Execute(context.Background(), aliceCtx, "schedule_topic_event", map[string]interface{}{
+		Execute(context.Background(), aliceCtx, "create_calendar_event", map[string]interface{}{
 			"title": "Vaccination", "topic": "baby", "start_time": "2026-11-20T09:00:00Z", "sync_to_google": true,
 		})
 	require.NoError(t, err)
@@ -130,7 +130,7 @@ func TestScheduleTopicEvent_GoogleCreateFailureIsNotReportedAsSynced(t *testing.
 
 func TestScheduleTopicEvent_NotConnectedIsStated(t *testing.T) {
 	res, err := NewModule(newFakeScheduleRepo(), calendarFactory(nil, orchestrator.ErrCalendarNotConnected)).
-		Execute(context.Background(), aliceCtx, "schedule_topic_event", map[string]interface{}{
+		Execute(context.Background(), aliceCtx, "create_calendar_event", map[string]interface{}{
 			"title": "Vaccination", "topic": "baby", "start_time": "2026-11-20T09:00:00Z", "sync_to_google": true,
 		})
 	require.NoError(t, err)
@@ -152,7 +152,7 @@ func TestScheduleTopicEvent_PartnerSyncFailureIsReported(t *testing.T) {
 		Scope: sc(t, "Smiths", "tg_alice"),
 		Extra: map[string]interface{}{"partner_user_id": "tg_bob"},
 	}
-	res, err := mod.Execute(context.Background(), callCtx, "schedule_topic_event", map[string]interface{}{
+	res, err := mod.Execute(context.Background(), callCtx, "create_calendar_event", map[string]interface{}{
 		"title": "Boiler Inspection", "topic": "house", "start_time": "2026-11-06T09:00:00Z",
 		"sync_to_google": true, "is_shared": true,
 	})
@@ -167,7 +167,7 @@ func TestDeleteTopicEvent_GoogleDeleteFailureIsReported(t *testing.T) {
 	repo := newFakeScheduleRepo()
 	seedLocalEvent(t, repo, "gcal_1")
 	res, err := NewModule(repo, calendarFactory(failingCalendarClient{err: errors.New("googleapi: 500")}, nil)).
-		Execute(context.Background(), aliceCtx, "delete_topic_event", map[string]interface{}{"event_id": 1})
+		Execute(context.Background(), aliceCtx, "delete_calendar_event", map[string]interface{}{"event_id": 1})
 	require.NoError(t, err)
 	assert.Contains(t, res, "successfully deleted")
 	assert.Contains(t, res, "could not be removed from Google Calendar")
@@ -179,7 +179,7 @@ func TestUpdateTopicEvent_GoogleUpdateFailureIsReported(t *testing.T) {
 	repo := newFakeScheduleRepo()
 	seedLocalEvent(t, repo, "gcal_1")
 	res, err := NewModule(repo, calendarFactory(nil, errors.New("decrypt failed"))).
-		Execute(context.Background(), aliceCtx, "update_topic_event", map[string]interface{}{"event_id": 1, "title": "Late Feeding"})
+		Execute(context.Background(), aliceCtx, "update_calendar_event", map[string]interface{}{"event_id": 1, "title": "Late Feeding"})
 	require.NoError(t, err)
 	assert.Contains(t, res, "Late Feeding")
 	assert.Contains(t, res, "was not updated in Google Calendar")

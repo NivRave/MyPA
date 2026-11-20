@@ -61,6 +61,9 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-48 | Low | The Shared Spaces dashboard page shows two made-up members ("Dana (Admin)", "Omer (Family)") | open |
 | BL-49 | Medium | Partner notifications and event-triggered automation messages ignore quiet hours | open |
 | BL-50 | Medium | The reminder tools read a due time without an offset as UTC and confirm it in the server's zone | open |
+| BL-51 | Low | Topic calendar colours never reach Google: no real client implements `CreateEventWithColor` | open |
+| BL-52 | Low | `internal/llm/tools.go` keeps a static copy of 27 module tools whose schemas have drifted from the modules | open |
+| BL-53 | Low | `update_calendar_event` and `list_calendar_events` read a time without an offset as UTC when no zone is given | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -670,6 +673,29 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   enforces it. The scheduler side (V4-05) uses the person's zone.
 - **Fix:** parse with `toolutil.ParseTimeInLocation` in the household's zone (the engine's `location`) and
   confirm in that zone; this needs the install default zone in `CallContext`.
+
+### BL-51 — Topic calendar colours never reach Google (Low)
+- **Found:** 2026-11-20, while building V4-08.
+- **Evidence:** `configure_topic_calendar` stores a `color_id`, and the create path sends it only when the
+  client satisfies `schedule.ColoredCalendarClient`. Only the test fake does; `internal/calendar.Client`
+  has no `CreateEventWithColor`, so every event is created in the calendar's default colour.
+- **Fix:** add `CreateEventWithColor` to `calendar.Client` (set `Event.ColorId`) and a client test.
+
+### BL-52 — Static tool list repeats module tools with old schemas (Low)
+- **Found:** 2026-11-20, while building V4-08.
+- **Evidence:** `llm.CalendarEventTool` declares 27 tools that modules also declare. `GenerateResponse`
+  adds it when a call carries no scoped tool list, after the modules' declarations, so a module's schema
+  wins by name; but its `update_calendar_event`/`delete_calendar_event` still take `id`, which the
+  calendar module no longer reads.
+- **Fix:** drop the static list and fall back to the registry's declarations, or keep only names no
+  module declares.
+
+### BL-53 — Calendar update and list read a time without an offset as UTC (Low)
+- **Found:** 2026-11-20, while building V4-08.
+- **Evidence:** `create_calendar_event` requires `timezone`; `update_calendar_event` and
+  `list_calendar_events` take it optionally (list not at all) and read a time without an offset as UTC.
+  The model usually sends an offset or the zone. Same cause as BL-50: `CallContext` carries no zone.
+- **Fix:** with BL-50, give `CallContext` the person's zone and use it as the default.
 
 ## Operations (owner)
 

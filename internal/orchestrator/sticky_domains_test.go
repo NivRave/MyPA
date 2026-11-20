@@ -35,7 +35,7 @@ func newStickyHarness(t *testing.T) *stickyHarness {
 	noop := func(context.Context, CallContext, string, map[string]interface{}) (string, error) { return "ok", nil }
 	reg.Register(&mockToolModule{name: "workspace_gmail", executeFunc: noop, declarations: []*genai.FunctionDeclaration{
 		{Name: "search_emails"}, {Name: "archive_emails"}, {Name: "soft_delete_emails"}}})
-	reg.Register(&mockToolModule{name: "workspace_calendar", executeFunc: noop, declarations: []*genai.FunctionDeclaration{
+	reg.Register(&mockToolModule{name: "schedule", executeFunc: noop, declarations: []*genai.FunctionDeclaration{
 		{Name: "create_calendar_event"}}})
 	reg.Register(&mockToolModule{name: "baby", executeFunc: noop, declarations: []*genai.FunctionDeclaration{
 		{Name: "log_baby_care"}}})

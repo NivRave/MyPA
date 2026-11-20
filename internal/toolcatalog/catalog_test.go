@@ -142,3 +142,47 @@ func TestRememberFactIsGone(t *testing.T) {
 		assert.NotEqual(t, gone, tool[0])
 	}
 }
+
+// V4-08 "done when": the calendar domain offers at most five tools. The two overlapping sets
+// (workspace_calendar's four Google tools and schedule's five topic tools) are one set, with
+// Google sync as a flag; the removed names are declared nowhere, and the delete stays gated in
+// an untrusted turn (the old delete_topic_event never was).
+func TestCalendarDomainOffersAtMostFiveTools(t *testing.T) {
+	want := []string{
+		"create_calendar_event", "list_calendar_events", "update_calendar_event",
+		"delete_calendar_event", "configure_topic_calendar",
+	}
+	removed := []string{"schedule_topic_event", "list_topic_schedule", "update_topic_event", "delete_topic_event"}
+
+	var offered []string
+	for _, g := range Build().Groups {
+		if g.Domain != orchestrator.DomainCalendar {
+			continue
+		}
+		for _, tool := range g.Tools {
+			if !orchestrator.CoreToolNames[tool.Name] {
+				offered = append(offered, tool.Name)
+			}
+		}
+	}
+	assert.LessOrEqual(t, len(offered), 5, "the calendar domain offers %d tools: %v", len(offered), offered)
+	assert.ElementsMatch(t, want, offered)
+
+	// The domain is one module now; nothing maps the retired one.
+	_, mapped := orchestrator.ModuleDomainMapping["workspace_calendar"]
+	assert.False(t, mapped, "workspace_calendar must not be mapped to a domain any more")
+	for _, m := range ProductionModules() {
+		assert.NotEqual(t, "workspace_calendar", m.Name())
+		for _, d := range m.Declarations() {
+			assert.NotContains(t, removed, d.Name, "module %s still declares %s", m.Name(), d.Name)
+		}
+	}
+	// The static fallback list may only repeat names the domain declares, so it can never add a
+	// sixth calendar tool or bring a retired one back.
+	for _, d := range llm.CalendarEventTool.FunctionDeclarations {
+		assert.NotContains(t, removed, d.Name, "the static tool list still declares %s", d.Name)
+	}
+
+	assert.True(t, orchestrator.RequiresConfirmationWhenUntrusted("delete_calendar_event"),
+		"deleting a calendar event must stay gated in an untrusted turn")
+}

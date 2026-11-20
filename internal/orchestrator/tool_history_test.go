@@ -98,7 +98,7 @@ func TestProcessMessage_PersistsToolContextInHistory(t *testing.T) {
 	longResult := "Event Created Successfully! id=evt_42 " + strings.Repeat("x", 2000)
 	reg := NewRegistry()
 	reg.Register(&mockToolModule{
-		name:         "workspace_calendar",
+		name:         "schedule",
 		declarations: []*genai.FunctionDeclaration{{Name: "create_calendar_event"}},
 		executeFunc: func(context.Context, CallContext, string, map[string]interface{}) (string, error) {
 			return longResult, nil
@@ -188,7 +188,7 @@ func TestProcessMessage_AuditSessionCarriesToolSummary(t *testing.T) {
 
 	reg := NewRegistry()
 	reg.Register(&mockToolModule{
-		name:         "workspace_calendar",
+		name:         "schedule",
 		declarations: []*genai.FunctionDeclaration{{Name: "create_calendar_event"}},
 		executeFunc: func(context.Context, CallContext, string, map[string]interface{}) (string, error) {
 			return "Event created id=evt_77", nil

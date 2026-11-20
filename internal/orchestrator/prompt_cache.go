@@ -46,7 +46,7 @@ func MapEventToModules(event events.MutationEvent) []string {
 	case "memory":
 		mods = append(mods, "memory")
 	case "schedule", "calendar":
-		mods = append(mods, "schedule", "workspace_calendar")
+		mods = append(mods, "schedule") // V4-08: the only calendar module
 	case "shared":
 		mods = append(mods, "shared")
 	case "automation":

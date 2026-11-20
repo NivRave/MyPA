@@ -134,7 +134,7 @@ func TestScale01_CacheHitMissAndTTL(t *testing.T) {
 //     every user has a household, so an actor's own ID is no longer a cache scope and is not scanned.
 //  2. Unrelated tenant keys (e.g. fam_beta) are NOT evicted.
 //  3. Unrelated module keys (e.g. finance, house) are NOT evicted.
-//  4. Aliased topics (e.g. "calendar" -> "schedule" and "workspace_calendar") evict both mapped modules.
+//  4. Aliased topics (e.g. "calendar" -> "schedule", the only calendar module since V4-08) evict the mapped module.
 //  5. Entity-level fallbacks (e.g. entity_type: "topic_memory") evict "memory".
 //  6. Topic case-insensitivity and whitespace trimming work robustly.
 func TestScale01_EventBusInvalidationStress(t *testing.T) {
@@ -158,7 +158,6 @@ func TestScale01_EventBusInvalidationStress(t *testing.T) {
 		"ctx_prompt:fam_beta:u_beta:baby":                 "Baby fam_beta",     // Unrelated family
 		"ctx_prompt:fam_alpha:u_alpha:finance":            "Finance fam_alpha", // Unrelated module
 		"ctx_prompt:fam_alpha:u_alpha:schedule":           "Schedule fam_alpha",
-		"ctx_prompt:fam_alpha:u_alpha:workspace_calendar": "Calendar fam_alpha",
 		"ctx_prompt:fam_alpha:u_alpha:memory":             "Memory fam_alpha",
 		"ctx_prompt:fam_alpha:u_alpha:house":              "House fam_alpha",
 	}
@@ -188,7 +187,7 @@ func TestScale01_EventBusInvalidationStress(t *testing.T) {
 	// Assert unrelated module preserved
 	assert.True(t, mr.Exists("ctx_prompt:fam_alpha:u_alpha:finance"), "fam_alpha:finance must NOT be evicted")
 
-	// 2. Test topic alias "calendar" -> invalidates "schedule" and "workspace_calendar"
+	// 2. Test topic alias "calendar" -> invalidates "schedule"
 	err = bus.Publish(ctx, events.MutationEvent{
 		Topic:       "calendar",
 		HouseholdID: "fam_alpha",
@@ -197,7 +196,6 @@ func TestScale01_EventBusInvalidationStress(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.False(t, mr.Exists("ctx_prompt:fam_alpha:u_alpha:schedule"), "schedule must be evicted by calendar topic")
-	assert.False(t, mr.Exists("ctx_prompt:fam_alpha:u_alpha:workspace_calendar"), "workspace_calendar must be evicted by calendar topic")
 
 	// 3. Test entity type fallback: Topic="health_custom", EntityType="topic_memory" -> invalidates "memory"
 	err = bus.Publish(ctx, events.MutationEvent{

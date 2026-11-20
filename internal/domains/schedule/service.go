@@ -2,16 +2,18 @@ package schedule
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
-	"strconv"
-	"strings"
-	"time"
 )
 
 // resolveCalendarClient retrieves a CalendarClient for the target user ID.
@@ -26,18 +28,7 @@ func (m *Module) resolveCalendarClient(ctx context.Context, callCtx orchestrator
 		return factory(ctx, userID)
 	}
 
-	activeUserID := ""
-	if callCtx.User != nil {
-		activeUserID = callCtx.User.PlatformID
-		if activeUserID == "" {
-			activeUserID = callCtx.User.ID
-		}
-	}
-	if activeUserID == "" {
-		activeUserID = callCtx.Message.Sender
-	}
-
-	if userID == activeUserID {
+	if userID == callerID(callCtx) {
 		if client, ok := callCtx.Extra["calendar_client"].(orchestrator.CalendarClient); ok {
 			return client, nil
 		}
@@ -196,6 +187,11 @@ func hasAnyTag(eventTags, filterTags []string) bool {
 }
 
 func parseFlexibleTime(str string) (time.Time, error) {
+	return parseFlexibleTimeIn(str, time.UTC)
+}
+
+// parseFlexibleTimeIn reads str; a time without an offset is read in loc (V4-08).
+func parseFlexibleTimeIn(str string, loc *time.Location) (time.Time, error) {
 	formats := []string{
 		time.RFC3339,
 		time.RFC3339Nano,
@@ -205,9 +201,125 @@ func parseFlexibleTime(str string) (time.Time, error) {
 		"2006-01-02",
 	}
 	for _, f := range formats {
-		if t, err := time.Parse(f, str); err == nil {
+		if t, err := time.ParseInLocation(f, str, loc); err == nil {
 			return t, nil
 		}
 	}
 	return time.Time{}, fmt.Errorf("unable to parse time string %q", str)
+}
+
+// callerID is the user key the call acts for: the platform ID, else the user ID, else the sender.
+func callerID(callCtx orchestrator.CallContext) string {
+	if callCtx.User != nil {
+		if callCtx.User.PlatformID != "" {
+			return callCtx.User.PlatformID
+		}
+		if callCtx.User.ID != "" {
+			return callCtx.User.ID
+		}
+	}
+	return callCtx.Message.Sender
+}
+
+// locationArg is the event's time zone from the "timezone" argument; UTC when it is not given.
+func locationArg(args map[string]interface{}) (*time.Location, error) {
+	name := strings.TrimSpace(getStringArg(args, "timezone"))
+	if name == "" {
+		return time.UTC, nil
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, fmt.Errorf("invalid timezone %q: use an IANA name such as 'Asia/Jerusalem'", name)
+	}
+	return loc, nil
+}
+
+// getRecurrenceArg reads "recurrence" as a list of RRULE lines or as one string.
+func getRecurrenceArg(args map[string]interface{}) []string {
+	if list := getStringSliceArg(args, "recurrence"); len(list) > 0 {
+		return list
+	}
+	if s := strings.TrimSpace(getStringArg(args, "recurrence")); s != "" {
+		return []string{s}
+	}
+	return nil
+}
+
+// splitRecurrence turns a stored RecurrenceRule back into its lines.
+func splitRecurrence(rule string) []string {
+	var out []string
+	for _, line := range strings.Split(rule, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// eventRefArg names the event an update or delete acts on: a MyPA ID, or the Google ID of an
+// event that exists only in Google. A non-numeric event_id is taken as a Google ID.
+func eventRefArg(args map[string]interface{}) (uint, string, error) {
+	id, isNumber := getIntArg(args, "event_id")
+	if isNumber && id > 0 {
+		return uint(id), "", nil
+	}
+	if g := strings.TrimSpace(getStringArg(args, "google_event_id")); g != "" {
+		return 0, g, nil
+	}
+	if s := strings.TrimSpace(getStringArg(args, "event_id")); s != "" && !isNumber {
+		return 0, s, nil
+	}
+	if isNumber {
+		return 0, "", fmt.Errorf("valid event_id is required")
+	}
+	return 0, "", fmt.Errorf("event_id or google_event_id is required")
+}
+
+// googleEventRef is the Google event ID behind a stored reference. Rows written before V4-08 hold
+// the event's web link (the client returned HtmlLink); its eid parameter is the base64 of
+// "<event id> <calendar id>". Empty when the reference holds no usable ID.
+func googleEventRef(stored string) string {
+	stored = strings.TrimSpace(stored)
+	if !strings.HasPrefix(stored, "http://") && !strings.HasPrefix(stored, "https://") {
+		return stored
+	}
+	u, err := url.Parse(stored)
+	if err != nil {
+		return ""
+	}
+	eid := u.Query().Get("eid")
+	if eid == "" {
+		return ""
+	}
+	for _, enc := range []*base64.Encoding{base64.RawURLEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.StdEncoding} {
+		if raw, err := enc.DecodeString(eid); err == nil {
+			if f := strings.Fields(string(raw)); len(f) > 0 {
+				return f[0]
+			}
+		}
+	}
+	return ""
+}
+
+// calendarTitle is the title an event gets in Google. A plain event (topic "general", no
+// configured prefix) keeps its own title, as create_calendar_event always wrote it (V4-08).
+func calendarTitle(ev *models.ScheduleEvent, prefixTag string) string {
+	if strings.TrimSpace(prefixTag) == "" {
+		if t := strings.ToLower(strings.TrimSpace(ev.Topic)); t == "" || t == generalTopic {
+			return strings.TrimSpace(ev.Title)
+		}
+	}
+	return ev.FormattedTitle(prefixTag)
+}
+
+// googleEvent builds what is sent to Google for one event, shown in loc.
+func googleEvent(title, description string, start, end time.Time, loc *time.Location, recurrence []string) models.CalendarEvent {
+	return models.CalendarEvent{
+		Title:       title,
+		Description: description,
+		StartTime:   start.In(loc).Format(time.RFC3339),
+		EndTime:     end.In(loc).Format(time.RFC3339),
+		Timezone:    loc.String(),
+		Recurrence:  recurrence,
+	}
 }

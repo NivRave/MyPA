@@ -73,7 +73,7 @@ flowchart LR
 
 | Service | Entrypoint | Runtime Base Image | Port(s) | Responsibility |
 | :--- | :--- | :--- | :---: | :--- |
-| **`app`** | [`cmd/mypa/main.go`](./cmd/mypa/main.go) (`mypa`, default `--role=all`) | `debian:12.15-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8000` | One binary with roles (*V4-01*, ADR 0001 option 1c), replacing `proxy`, `gateway` and `orchestrator`. **Edge** ([`edge.go`](./cmd/mypa/edge.go), role `all`): the public surface the proxy had — `/webhook/*` (10 MB, every channel adapter's routes, *V4-31*) to the ingress, `/auth/google*` (1 MB) and `/graphql*` (1 MB, only with an `Authorization` header, else 401) to the worker, `/favicon.ico` 204, everything else 404 (including `/playground` and `/health`). **Ingress** ([`ingress.go`](./cmd/mypa/ingress.go), roles `all`, `ingress`): mounts the webhook routes of every registered channel adapter (§3.10); each adapter verifies its platform's requests, normalizes them into [`channel.Inbound`](./internal/channel/types.go) and the ingress publishes them to RabbitMQ `inbound.messages` — the durable hand-off is kept inside one process. On start it runs each adapter's registration (Telegram with a public address: `setWebhook`) or its outward connection (Telegram without one: polling, *V4-40*, §3.11). The WhatsApp adapter also receives Twilio delivery reports on `/webhook/twilio/status` (signature-verified, never published; `failed`/`undelivered` → WARN `whatsapp message not delivered` with `message_sid`, `error_code`, `hint`, *BL-8*). **Worker** ([`worker.go`](./cmd/mypa/worker.go), roles `all`, `worker`): consumes `inbound.messages`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](./internal/orchestrator/registry.go#L56-L67) registry (<!-- gen:tool-summary -->67 tools across 14 modules<!-- /gen:tool-summary -->), dual-lane [`EventBus`](./internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](./internal/scheduler/scheduler.go). `--role=ingress` serves the webhooks plus `/health`; `--role=worker` serves `/graphql`, the OAuth callback and, outside `ENV=production`, `/playground`. Split roles need an external reverse proxy, and exactly one worker (the scheduler has no leader election). |
+| **`app`** | [`cmd/mypa/main.go`](./cmd/mypa/main.go) (`mypa`, default `--role=all`) | `debian:12.15-slim` (includes `postgresql-client` for `pg_dump`/`pg_restore`) | `8000` | One binary with roles (*V4-01*, ADR 0001 option 1c), replacing `proxy`, `gateway` and `orchestrator`. **Edge** ([`edge.go`](./cmd/mypa/edge.go), role `all`): the public surface the proxy had — `/webhook/*` (10 MB, every channel adapter's routes, *V4-31*) to the ingress, `/auth/google*` (1 MB) and `/graphql*` (1 MB, only with an `Authorization` header, else 401) to the worker, `/favicon.ico` 204, everything else 404 (including `/playground` and `/health`). **Ingress** ([`ingress.go`](./cmd/mypa/ingress.go), roles `all`, `ingress`): mounts the webhook routes of every registered channel adapter (§3.10); each adapter verifies its platform's requests, normalizes them into [`channel.Inbound`](./internal/channel/types.go) and the ingress publishes them to RabbitMQ `inbound.messages` — the durable hand-off is kept inside one process. On start it runs each adapter's registration (Telegram with a public address: `setWebhook`) or its outward connection (Telegram without one: polling, *V4-40*, §3.11). The WhatsApp adapter also receives Twilio delivery reports on `/webhook/twilio/status` (signature-verified, never published; `failed`/`undelivered` → WARN `whatsapp message not delivered` with `message_sid`, `error_code`, `hint`, *BL-8*). **Worker** ([`worker.go`](./cmd/mypa/worker.go), roles `all`, `worker`): consumes `inbound.messages`, runs Gemini multi-turn tool calling, hosts the [`ToolModule`](./internal/orchestrator/registry.go#L56-L67) registry (<!-- gen:tool-summary -->63 tools across 13 modules<!-- /gen:tool-summary -->), dual-lane [`EventBus`](./internal/events/bus.go), Google OAuth2 callback (`/auth/google/callback`), `gqlgen` GraphQL API (`/graphql`), and Cron [`scheduler`](./internal/scheduler/scheduler.go). `--role=ingress` serves the webhooks plus `/health`; `--role=worker` serves `/graphql`, the OAuth callback and, outside `ENV=production`, `/playground`. Split roles need an external reverse proxy, and exactly one worker (the scheduler has no leader election). |
 | **`audit-worker`** | [`cmd/audit-worker/main.go`](./cmd/audit-worker/main.go) | `gcr.io/distroless/static-debian12` | — | Consumes `audit.events` from RabbitMQ, persists [`models.AuditSession`](./internal/models/models.go#L51-L66) rows to PostgreSQL, and runs a 24h ticker archiving sessions older than 30 days. |
 | **`migrate`** | [`cmd/mypa/main.go`](./cmd/mypa/main.go) (`-migrate-only`) | app image | — | One-shot (*P4-3*): applies goose migrations ([`internal/db/migrations/`](./internal/db/migrations)) and exits. `app` and `audit-worker` depend on it with `condition: service_completed_successfully`. |
 | **`transfer`** | [`cmd/mypa/transfer.go`](./cmd/mypa/transfer.go) (`mypa transfer …`) | app image | — | One-shot, opt-in (compose profile `tools`, *V4-43*): the restore-and-migrate tool. Run next to a stopped app with `docker compose --profile tools run --rm transfer <command>`; mounts `./backups` and `audit_archives` (§3.9) |
@@ -152,7 +152,6 @@ mypa/
 │   │                               #   SystemPromptSection), declarations.go (genai tool schemas), handlers.go (Execute +
 │   │                               #   execute* per tool), service.go (helpers/business logic without genai types):
 │   │   ├── toolutil/               # Shared typed argument extractors & mutation publishing helpers
-│   │   ├── workspace_calendar/     # 4 Calendar tools (create, list, update, delete) emitting schedule mutations
 │   │   ├── workspace_gmail/        # 9 Gmail tools (search, read, reply, archive, delete, labels, unsubscribe)
 │   │   ├── workspace_tasks/        # 6 Google Tasks tools (lists & tasks CRUD) emitting tasks mutations
 │   │   ├── workspace_contacts/     # 2 Google Contacts tools (search, create) emitting contacts mutations
@@ -160,7 +159,7 @@ mypa/
 │   │   ├── durability/             # Topic 1: Audit listener, `/undo` (`undo_last_action`), CSV/JSON export
 │   │   ├── memory/                 # Topic 2: Topic memories, conflict superseding, living entity profiles & consolidation
 │   │   ├── shared/                 # Topic 9: Shared spaces, partner `Notifier` on `EventBus`, shared reminders
-│   │   ├── schedule/               # Topic 3: Virtual `[Topic]` sub-calendars & bidirectional partner Google Calendar sync
+│   │   ├── schedule/               # Topic 3: the calendar domain's 5 tools (V4-08): MyPA events, Google sync flag, `[Topic]` sub-calendars, partner sync
 │   │   ├── baby/                   # Topic 4: Baby profile, Wonder Weeks milestones, medication safety guardrails, inventory
 │   │   ├── house/                  # Topic 5 & 8.1: Leases/warranties/contracts, preventive maintenance, vehicle vault
 │   │   ├── finance/                # Topic 6: Expense/income ledger, category budgets, >30% anomaly detector, recurring bills
@@ -246,23 +245,23 @@ type ToolModule interface {
 }
 ```
 
-**Registered Domain Modules (<!-- gen:module-count -->14<!-- /gen:module-count --> wired in [`cmd/mypa/worker.go`](./cmd/mypa/worker.go)):**
-- **5 Workspace Base Modules:** `workspace_calendar`, `workspace_gmail`, `workspace_tasks`, `workspace_contacts`, `web_research` (per-module tool lists: §6).
+**Registered Domain Modules (<!-- gen:module-count -->13<!-- /gen:module-count --> wired in [`cmd/mypa/worker.go`](./cmd/mypa/worker.go)):**
+- **4 Workspace Base Modules:** `workspace_gmail`, `workspace_tasks`, `workspace_contacts`, `web_research` (per-module tool lists: §6). Google Calendar has no module of its own: since *V4-08* the calendar domain is `schedule`, below.
 - **9 Life Domain Modules:** `durability` (Topic 1 & `/undo`), `memory` (Topic 2; `save_topic_memory` stores each fact with its embedding, which is what per-turn recall searches by, *V4-06*), `shared` (Topic 9 & `schedule_reminder`), `schedule` (Topic 3), `baby` (Topic 4), `house` (Topic 5 & 8.1), `finance` (Topic 6), `automation` (Topics 7, 8.2 & workflow management), `preferences` (Topic 8.3: preferences and the personal CRM, Core since *V4-27*).
-- **Packs (*V4-27*, §3.15):** `baby`, `house`, `finance`, `workspace_gmail` and `automation` each belong to an opt-in pack; the other nine modules are Core.
+- **Packs (*V4-27*, §3.15):** `baby`, `house`, `finance`, `workspace_gmail` and `automation` each belong to an opt-in pack; the other eight modules are Core.
 
 **Two-Tier Tool Domain Grouping (SCALE-01):**
-Rather than injecting all <!-- gen:tool-count -->67<!-- /gen:tool-count --> registered tool schemas on every call (~9,500 input tokens), the orchestrator dynamically scopes tools into two tiers:
+Rather than injecting all <!-- gen:tool-count -->63<!-- /gen:tool-count --> registered tool schemas on every call (~9,500 input tokens), the orchestrator dynamically scopes tools into two tiers:
 <!-- BEGIN GENERATED: tool-tiers -->
 1. **Tier 1 Core Tools (7 tools):** always injected into every user turn: `get_current_time` (`registry`), `search_web` (`web_research`), `fetch_webpage` (`web_research`), `undo_last_action` (`durability`), `save_topic_memory` (`memory`), `search_topic_memories` (`memory`), `schedule_reminder` (`shared`).
 2. **Tier 2 Domain Groups** (injected on demand via `KeywordIntentMatcher`):
-   - `calendar` (9 tools): `create_calendar_event`, `list_calendar_events`, `update_calendar_event`, `delete_calendar_event`, `schedule_topic_event`, `list_topic_schedule`, `configure_topic_calendar`, `delete_topic_event`, `update_topic_event`.
    - `gmail` (9 tools): `search_emails`, `read_email`, `draft_email_reply`, `archive_emails`, `soft_delete_emails`, `list_email_labels`, `apply_email_labels`, `create_email_label`, `unsubscribe_email`.
    - `tasks` (6 tools): `list_task_lists`, `create_task_list`, `list_tasks`, `create_task`, `complete_task`, `delete_task`.
    - `contacts` (2 tools): `search_contacts`, `create_contact`.
    - `history` (2 tools): `list_recent_changes`, `export_topic_data`.
    - `memory` (2 tools): `upsert_entity_profile`, `get_entity_profile`.
    - `shared` (4 tools): `configure_shared_topic`, `create_shared_reminder`, `complete_shared_reminder`, `list_shared_activity`.
+   - `calendar` (5 tools): `create_calendar_event`, `list_calendar_events`, `update_calendar_event`, `delete_calendar_event`, `configure_topic_calendar`.
    - `baby` (5 tools): `upsert_baby_profile`, `log_baby_care`, `query_baby_logs_and_trends`, `get_baby_milestone_suggestions`, `manage_baby_inventory`.
    - `house` (4 tools): `save_house_contract_or_receipt`, `list_house_contracts`, `manage_home_maintenance`, `manage_vehicle_asset`.
    - `finance` (4 tools): `log_financial_transaction`, `get_financial_summary`, `set_category_budget`, `manage_recurring_bills`.
@@ -780,7 +779,7 @@ The consumer loop guarantees resilient, bounded message processing:
 > Generated from the live `ToolModule` declarations by `go run ./cmd/devtools/gendocs`; do not edit by hand (`internal/docgen` `TestDocsAreUpToDate` fails on drift).
 
 <!-- BEGIN GENERATED: tool-catalog -->
-67 tools across 14 modules. Tier 1 = always offered to the model; Tier 2 = offered when the intent matcher selects the module's domain (see §3.2).
+63 tools across 13 modules. Tier 1 = always offered to the model; Tier 2 = offered when the intent matcher selects the module's domain (see §3.2).
 
 ### 6.1 Registry built-ins (1 tool)
 
@@ -788,16 +787,7 @@ The consumer loop guarantees resilient, bounded message processing:
 | :--- | :--- | :--- | :--- |
 | `get_current_time` | 1 (core) | `timezone` (string) | Returns the current date, time, and day of the week in the user's local timezone. |
 
-### 6.2 `workspace_calendar` (4 tools)
-
-| Tool | Tier | Parameters (`*` = required) | Description |
-| :--- | :--- | :--- | :--- |
-| `create_calendar_event` | 2 (`calendar`) | `title`* (string), `start_time`* (string), `end_time`* (string), `timezone`* (string), `description` (string), `recurrence` ([]string) | Creates a new event on the user's Google Calendar. Call this when the user asks to schedule a meeting, block time, or create an event. |
-| `list_calendar_events` | 2 (`calendar`) | `query` (string), `time_max` (string), `time_min` (string) | Retrieves events from the user's Google Calendar. Call this when the user asks what is on their schedule, if they have meetings, or to query their calendar. |
-| `update_calendar_event` | 2 (`calendar`) | `id`* (string), `description` (string), `end_time` (string), `recurrence` ([]string), `start_time` (string), `timezone` (string), `title` (string) | Updates an existing event on the user's Google Calendar. Call this when the user asks to change, reschedule, or modify an event. |
-| `delete_calendar_event` | 2 (`calendar`) | `id`* (string) | Deletes an event from the user's Google Calendar. Call this when the user asks to cancel, remove, or delete an event. |
-
-### 6.3 `workspace_gmail` (9 tools)
+### 6.2 `workspace_gmail` (9 tools)
 
 | Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
@@ -811,7 +801,7 @@ The consumer loop guarantees resilient, bounded message processing:
 | `create_email_label` | 2 (`gmail`) | `label_name`* (string) | Creates a new Gmail label and returns its ID. Use this when you want to categorize an email and the appropriate label doesn't exist yet. |
 | `unsubscribe_email` | 2 (`gmail`) | `message_id`* (string) | Attempts to unsubscribe from a newsletter or mailing list by parsing the List-Unsubscribe header of a specific email. Call this when the user asks to unsubscribe from an email. |
 
-### 6.4 `workspace_tasks` (6 tools)
+### 6.3 `workspace_tasks` (6 tools)
 
 | Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
@@ -822,21 +812,21 @@ The consumer loop guarantees resilient, bounded message processing:
 | `complete_task` | 2 (`tasks`) | `task_id`* (string), `list_id` (string) | Marks a task as completed in Google Tasks. |
 | `delete_task` | 2 (`tasks`) | `task_id`* (string), `list_id` (string) | Deletes a task entirely from Google Tasks. |
 
-### 6.5 `workspace_contacts` (2 tools)
+### 6.4 `workspace_contacts` (2 tools)
 
 | Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
 | `search_contacts` | 2 (`contacts`) | `query`* (string) | Searches the user's Google Contacts by name. Call this when the user asks for someone's email or phone number. |
 | `create_contact` | 2 (`contacts`) | `name`* (string), `email` (string), `phone` (string) | Creates a new Google Contact. Call this when the user asks to save a phone number, email, or contact information. |
 
-### 6.6 `web_research` (2 tools)
+### 6.5 `web_research` (2 tools)
 
 | Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
 | `search_web` | 1 (core) | `query`* (string) | Searches the live web using Tavily for current news, facts, recent events, or information you don't know. |
 | `fetch_webpage` | 1 (core) | `url`* (string) | Fetches and returns the main article text content of a webpage. Use this when the user sends a link and wants you to read, summarize, or save it. |
 
-### 6.7 `durability` (3 tools)
+### 6.6 `durability` (3 tools)
 
 | Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
@@ -844,7 +834,7 @@ The consumer loop guarantees resilient, bounded message processing:
 | `list_recent_changes` | 2 (`history`) | `limit` (integer), `topic` (string) | Lists recent data mutations and changes across life domains (the household's topics, schedule, memory). Use when user asks 'what did I change recently?', 'show audit log', or 'who updated what?'. |
 | `export_topic_data` | 2 (`history`) | `topic`* (string), `format` (string), `limit` (integer) | Exports structured data and mutation history for a specific topic (one of the household's topics, memory, schedule, or all) as formatted JSON or CSV. |
 
-### 6.8 `memory` (4 tools)
+### 6.7 `memory` (4 tools)
 
 | Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
@@ -853,7 +843,7 @@ The consumer loop guarantees resilient, bounded message processing:
 | `upsert_entity_profile` | 2 (`memory`) | `topic`* (string), `entity_type`* (string), `entity_name`* (string), `attributes`* (object) | Creates or updates a structured living entity profile card (e.g. FamilyMember, Pet, Property, Vehicle) with key-value attributes stored in JSONB. |
 | `get_entity_profile` | 2 (`memory`) | `topic`* (string), `entity_name`* (string) | Retrieves a structured living entity profile card by topic and entity name or type. |
 
-### 6.9 `shared` (5 tools)
+### 6.8 `shared` (5 tools)
 
 | Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
@@ -863,17 +853,17 @@ The consumer loop guarantees resilient, bounded message processing:
 | `list_shared_activity` | 2 (`shared`) | `include_completed` (boolean), `topic` (string) | Query configured shared spaces and active or completed shared family tasks and reminders. |
 | `schedule_reminder` | 1 (core) | `message`* (string), `due_time`* (string), `urgent` (boolean) | Schedules a point-in-time reminder alert for the user at a specified due date and time. |
 
-### 6.10 `schedule` (5 tools)
+### 6.9 `schedule` (5 tools)
 
 | Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
-| `schedule_topic_event` | 2 (`calendar`) | `title`* (string), `topic`* (string), `start_time`* (string), `description` (string), `end_time` (string), `is_shared` (boolean), `recurrence` (string), `sync_to_google` (boolean), `tags` ([]string) | Create a topic-tagged schedule event with virtual sub-calendar support. Events can be synchronized with Google Calendar (with topic prefix e.g. [Health], [Work] and custom color coding) or kept internal-only for high-frequency routines (meds, workouts). If shared, also synchronizes to partner's calendar. |
-| `list_topic_schedule` | 2 (`calendar`) | `end_time` (string), `include_google` (boolean), `start_time` (string), `tags` ([]string), `topic` (string) | Query and list schedule events filtered by topic, tags, and time range. Merges database schedule events with Google Calendar events. |
+| `create_calendar_event` | 2 (`calendar`) | `title`* (string), `start_time`* (string), `timezone`* (string), `description` (string), `end_time` (string), `is_shared` (boolean), `recurrence` ([]string), `sync_to_google` (boolean), `tags` ([]string), `topic` (string) | Creates a calendar event. Call this when the user asks to schedule a meeting, block time, add an appointment, or create an event. The event is saved in MyPA and, unless sync_to_google is false, added to the user's Google Calendar. A topic files it under a virtual sub-calendar (its Google title gets a [Topic] prefix and the topic's colour); shared events are also added to the partner's calendar. |
+| `list_calendar_events` | 2 (`calendar`) | `end_time` (string), `include_google` (boolean), `query` (string), `start_time` (string), `tags` ([]string), `topic` (string) | Lists the user's calendar: MyPA's events merged with Google Calendar. Call this when the user asks what is on their schedule, whether they have meetings, or to find an event. Each event shows the ID to use with update_calendar_event and delete_calendar_event. |
+| `update_calendar_event` | 2 (`calendar`) | `description` (string), `end_time` (string), `event_id` (integer), `google_event_id` (string), `recurrence` ([]string), `start_time` (string), `tags` ([]string), `timezone` (string), `title` (string) | Changes an existing calendar event (title, time, notes, tags or recurrence) in MyPA and in Google Calendar. Call this when the user asks to change, reschedule, or modify an event. Give event_id, or google_event_id for an event that exists only in Google. |
+| `delete_calendar_event` | 2 (`calendar`) | `event_id` (integer), `google_event_id` (string) | Deletes a calendar event from MyPA and from every Google Calendar it was added to (including the partner's). Call this when the user asks to cancel, remove, or delete an event. Give event_id, or google_event_id for an event that exists only in Google. |
 | `configure_topic_calendar` | 2 (`calendar`) | `topic`* (string), `color_id` (string), `include_in_morning_briefing` (boolean), `prefix_tag` (string), `sync_to_google_default` (boolean), `target_calendar_id` (string) | Customize virtual sub-calendar settings for a topic: custom bracket prefix tag, Google Calendar color ID (1-11), internal-only vs Google sync default, and morning briefing inclusion. |
-| `delete_topic_event` | 2 (`calendar`) | `event_id`* (integer) | Delete a topic-tagged schedule event by ID, removing it from the database and any synced Google Calendars (including partner's calendar). |
-| `update_topic_event` | 2 (`calendar`) | `event_id`* (integer), `description` (string), `end_time` (string), `start_time` (string), `tags` ([]string), `title` (string) | Update an existing schedule event's title, time, notes, tags, or sync status across database and Google Calendars. |
 
-### 6.11 `baby` (5 tools)
+### 6.10 `baby` (5 tools)
 
 | Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
@@ -883,7 +873,7 @@ The consumer loop guarantees resilient, bounded message processing:
 | `get_baby_milestone_suggestions` | 2 (`baby`) | `baby_id` (integer), `baby_name` (string), `category` (string) | Get developmental milestone insights, current Wonder Weeks cognitive leap, upcoming vaccination schedule, recommended pediatric checkups, feeding transitions, and wake windows based on exact age. |
 | `manage_baby_inventory` | 2 (`baby`) | `action`* (string), `delta` (number), `item_name` (string), `low_threshold` (number), `quantity` (number), `unit` (string) | Track and manage baby supplies (formula, diapers, wipes, Vitamin D drops). View stock levels, record consumption or restocks, and check low-threshold alerts. |
 
-### 6.12 `house` (4 tools)
+### 6.11 `house` (4 tools)
 
 | Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
@@ -892,7 +882,7 @@ The consumer loop guarantees resilient, bounded message processing:
 | `manage_home_maintenance` | 2 (`house`) | `action`* (string), `category` (string), `contractor_info` (string), `interval_days` (integer), `item_id` (integer), `next_due_at` (string), `notes` (string), `overdue_only` (boolean), `task_name` (string) | Manage preventive home upkeep schedules (HVAC, plumbing, appliances, pest control), log completions, list overdue tasks, or get seasonal suggestions. |
 | `manage_vehicle_asset` | 2 (`house`) | `action`* (string), `annual_test_expiry` (string), `asset_id` (integer), `current_mileage_km` (integer), `insurance_expiry` (string), `last_service_date` (string), `license_plate` (string), `name` (string), `next_service_mileage_km` (integer), `notes` (string) | Log and track family vehicles, annual licensing/test dates, insurance policy expiry, odometer mileage, and service maintenance history. |
 
-### 6.13 `finance` (4 tools)
+### 6.12 `finance` (4 tools)
 
 | Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
@@ -901,7 +891,7 @@ The consumer loop guarantees resilient, bounded message processing:
 | `set_category_budget` | 2 (`finance`) | `category`* (string), `monthly_limit`* (number), `alert_threshold_pct` (number), `currency` (string) | Configure or update monthly budget limits and alert thresholds per category. |
 | `manage_recurring_bills` | 2 (`finance`) | `action`* (string), `auto_renew` (boolean), `bill_id` (integer), `billing_cycle` (string), `category` (string), `currency` (string), `expected_amount` (number), `name` (string), `next_due_day` (integer) | List, add, update, or delete recurring subscriptions and utility bills. |
 
-### 6.14 `automation` (9 tools)
+### 6.13 `automation` (9 tools)
 
 | Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
@@ -915,7 +905,7 @@ The consumer loop guarantees resilient, bounded message processing:
 | `list_workflows` | 2 (`automation`) | — | Lists all scheduled recurring workflows and their cron expressions for the current user. |
 | `delete_workflow` | 2 (`automation`) | `id`* (string) | Deletes a scheduled recurring workflow by its ID. |
 
-### 6.15 `preferences` (4 tools)
+### 6.14 `preferences` (4 tools)
 
 | Tool | Tier | Parameters (`*` = required) | Description |
 | :--- | :--- | :--- | :--- |
@@ -934,18 +924,20 @@ What each module adds to the system prompt and whether its writes emit `Mutation
 | **`durability`** | [`internal/domains/durability`](./internal/domains/durability/module.go) | Undo (`undo_last_action`), change history, and JSON/CSV export instructions. | `undo_last_action`: Yes (`action: "undo"`) |
 | **`memory`** | [`internal/domains/memory`](./internal/domains/memory/module.go) | Active `EntityProfile` cards + pinned `TopicMemory` facts for the user/family. `save_topic_memory` embeds the fact (`GenerateEmbedding`) so the turn's memory retrieval can find it by meaning; if the embedding cannot be computed the fact is still saved, without one (*V4-06*; `remember_fact`, the former alias that did the embedding, was removed). | `save_topic_memory`: Yes<br>`upsert_entity_profile`: Yes |
 | **`shared`** | [`internal/domains/shared`](./internal/domains/shared/module.go) | Configured `SharedSpace` topics, permissions, and notify modes for the family. | `configure_shared_topic`: Yes<br>`create_shared_reminder`: Yes<br>`complete_shared_reminder`: Yes |
-| **`schedule`** | [`internal/domains/schedule`](./internal/domains/schedule/module.go) | Configured `TopicCalendarConfig` prefixes/colors + upcoming 7-day `ScheduleEvent` items. | All except `list_topic_schedule`: Yes |
+| **`schedule`** | [`internal/domains/schedule`](./internal/domains/schedule/module.go) | The calendar tool set (*V4-08*: the only calendar module), configured `TopicCalendarConfig` prefixes/colors + upcoming 48-hour `ScheduleEvent` items. | All except `list_calendar_events`: Yes. A change to an event that exists only in Google (`google_event_id`) is recorded as `CalendarEvent`, which is not undoable (no MyPA row) |
 | **`baby`** | [`internal/domains/baby`](./internal/domains/baby/module.go) | Exact baby age (days/weeks/months + adjusted age), current developmental leap, medication cooldown status, and low inventory alerts. | `upsert_baby_profile`: Yes<br>`log_baby_care`: Yes<br>`manage_baby_inventory` (`set`/`adjust`): Yes |
 | **`house`** | [`internal/domains/house`](./internal/domains/house/module.go) | Expiring contracts/warranties within notice window, overdue/upcoming maintenance tasks, and vehicle test/insurance/service alerts. | All mutating actions: Yes |
 | **`finance`** | [`internal/domains/finance`](./internal/domains/finance/module.go) | Current month spending vs. `CategoryBudget` thresholds and upcoming `RecurringBill` due dates (next 7 days). | All mutating actions: Yes |
 | **`automation`** | [`internal/domains/automation`](./internal/domains/automation/module.go) | The Automations pack's tools: external APIs, rules and workflows (*V4-27*: no personal data any more). | `register_external_api`, `create_automation_rule`, `delete_automation_rule`: Yes |
 | **`preferences`** | [`internal/domains/preferences`](./internal/domains/preferences/module.go) | Core (*V4-27*): the user's `PreferredLanguage`, `TonePersona`, `DefaultCurrency`, `QuietHours`, `StandingInstructions`, and upcoming 30-day CRM birthdays/anniversaries. | `update_user_preferences`, `upsert_personal_crm`: Yes (topic `automation`, as before) |
 
-**Google Calendar availability (*BL-1*).** One factory, `orchestrator.NewCalendarFactory`, builds every per-user Calendar client (used by `schedule`, `workspace_calendar` and the engine). It returns `orchestrator.ErrCalendarNotConnected` only when the user has no stored token; an unreadable/undecodable token is a wrapped error. Callers distinguish three outcomes and never fail silently:
+**Google Calendar availability (*BL-1*).** One factory, `orchestrator.NewCalendarFactory`, builds every per-user Calendar client (used by `schedule` and the engine). It returns `orchestrator.ErrCalendarNotConnected` only when the user has no stored token; an unreadable/undecodable token is a wrapped error. Callers distinguish three outcomes and never fail silently:
 - *not connected* — normal: the tool result says so and suggests `/connect`; no warning is logged.
-- *connected but failing* (token unusable or Google API error) — `slog.Warn("google calendar operation failed", op, user_id, error)` (never event content) **and** a line in the tool result: `list_topic_schedule` appends "Google Calendar could not be reached…" (also when no local events were found); `schedule_topic_event` reports `⚠️ Sync failed — saved in MyPA only` (partner: `⚠️ Sync failed — shared in the family space only`); `update_topic_event`/`delete_topic_event` say the Google copy was not updated/removed.
+- *connected but failing* (token unusable or Google API error) — `slog.Warn("google calendar operation failed", op, user_id, error)` (never event content) **and** a line in the tool result: `list_calendar_events` appends "Google Calendar could not be reached…" (also when no local events were found); `create_calendar_event` reports `⚠️ Sync failed — saved in MyPA only` (partner: `⚠️ Sync failed — shared in the family space only`); `update_calendar_event`/`delete_calendar_event` say the Google copy was not updated/removed.
 - *no calendar integration wired* — silent (tests/dev).
 Failed syncs are **not retried**; the event stays in MyPA with an empty `external_google_event_id`.
+
+**One calendar tool set (*V4-08*).** `create_calendar_event` keeps every event in MyPA and adds it to Google Calendar unless `sync_to_google` is false (default: the topic's `sync_to_google_default`, else true). An event without a topic is topic `general` and keeps its own title in Google; any other topic, or a configured prefix, adds `[Topic]`. A time without an offset is read in the event's `timezone` (required on create; UTC when an update omits it), and Google shows the event in that zone. `list_calendar_events` merges MyPA's events with Google's and shows each one's MyPA `ID`, or its `Google ID` when it exists only in Google; `update_calendar_event` and `delete_calendar_event` take `event_id` or `google_event_id` (a non-numeric `event_id` is a Google ID). `external_google_event_id` holds Google's event ID; rows written before V4-08 hold the event's web link, and the module reads the ID out of its `eid` parameter. `delete_calendar_event` needs confirmation in an untrusted turn.
 
 ---
 
