@@ -40,6 +40,8 @@ import (
 	"github.com/nivik/mypa/internal/llm"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
+	"github.com/nivik/mypa/internal/proactive"
+	"github.com/nivik/mypa/internal/quiet"
 	"github.com/nivik/mypa/internal/scheduler"
 	"github.com/nivik/mypa/internal/state"
 	"github.com/nivik/mypa/internal/tasks"
@@ -219,10 +221,23 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 	memoryRepo := db.NewMemoryV2Repo(dbClient.DB)
 	memoryModule := memory.NewModule(memoryRepo)
 
+	// V4-33: every message the assistant starts itself goes through the delivery policy, which
+	// records it, chooses a route from each channel's rule and holds what no channel takes yet.
+	// A reminder that goes out late joins the person's chat history through the engine, which is
+	// built below; nothing is delivered before the engine starts.
+	var recordLate func(ctx context.Context, d models.ProactiveDelivery)
+	delivery := proactive.New(dbClient, dbClient, channels,
+		proactive.WithZone(personZone(dbClient, cfg.Server.DefaultTimezone)),
+		proactive.WithLateSend(func(ctx context.Context, d models.ProactiveDelivery) {
+			if recordLate != nil {
+				recordLate(ctx, d)
+			}
+		}))
+
 	// Proactive Notification Sender for Shared Spaces and Automations: these callers hold only the
 	// recipient's person key, so the message goes to the account that person wants notifications
-	// on (V4-32).
-	notifier := channelNotifier{channels: channels, accounts: dbClient}
+	// on (V4-32), through the delivery policy (V4-33).
+	notifier := channelNotifier{channels: channels, accounts: dbClient, delivery: delivery}
 	notificationSender := notifier.SendMessage
 
 	// Track 1C: Shared Spaces & Partner Sync Notifier
@@ -283,7 +298,9 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 		WithHealthReporter(newHealthReporter(cfg, channels, store, dbClient, oauthCfg, doctorBackupDir)). // /doctor (V4-17)
 		WithAccounts(dbClient, []byte(strings.TrimSpace(cfg.Server.LinkCodeSecret))).                     // /link (V4-32)
 		WithSignIn(dbClient, cfg.Server.DashboardURL).                                                    // /dashboard (V4-35)
-		WithQuietHours(dbClient)                                                                          // each person's zone and quiet hours (V4-05)
+		WithQuietHours(dbClient).                                                                         // each person's zone and quiet hours (V4-05)
+		WithDelivery(delivery)                                                                            // reminders, briefings and notifications (V4-33)
+	recordLate = engine.RecordLateDelivery
 	if strings.TrimSpace(cfg.Server.LinkCodeSecret) == "" {
 		slog.Warn("LINK_CODE_SECRET is not set: linking a second app to a person (/link) is off")
 	}
@@ -351,11 +368,30 @@ type deliveryAccounts interface {
 }
 
 // channelNotifier sends to a person known only by their person key (partner notifications,
-// automations, the Google sign-in confirmation): to the account they want notifications on
-// (V4-32). A key that names no person falls back to the channel whose adapter recognizes it.
+// automations, the Google sign-in confirmation): through the delivery policy when it is set
+// (V4-33), else to the account they want notifications on (V4-32). A key that names no person
+// falls back to the channel whose adapter recognizes it.
 type channelNotifier struct {
 	channels *channel.Registry
 	accounts deliveryAccounts
+	delivery notificationPolicy
+}
+
+// notificationPolicy is the part of the delivery policy the notifier uses.
+type notificationPolicy interface {
+	Deliver(ctx context.Context, req proactive.Request) (*models.ProactiveDelivery, error)
+}
+
+// personZone is the time zone of a person, by their ID, for the note on a late message: their
+// household's, else the install's.
+func personZone(c *db.Client, fallback string) func(ctx context.Context, personID string) *time.Location {
+	return func(ctx context.Context, personID string) *time.Location {
+		var s quiet.Settings
+		if u, err := c.UserByID(ctx, personID); err == nil && u != nil {
+			s, _ = c.QuietSettings(ctx, u.PlatformID)
+		}
+		return quiet.NewClock(s, fallback).Loc
+	}
 }
 
 // JoinSteps is what a new person does on each configured channel before their first message
@@ -371,6 +407,12 @@ func joinStepsOf(notifier AuthNotifier) func() []channel.JoinStep {
 }
 
 func (n channelNotifier) SendMessage(ctx context.Context, recipientID, text string) error {
+	if n.delivery != nil {
+		_, err := n.delivery.Deliver(ctx, proactive.Request{Key: recipientID, Category: proactive.Notification, Text: text})
+		if !errors.Is(err, proactive.ErrNoPerson) {
+			return err
+		}
+	}
 	if n.accounts != nil {
 		a, err := n.accounts.DeliveryAccount(ctx, recipientID)
 		if err != nil {

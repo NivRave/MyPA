@@ -81,16 +81,32 @@ func (a *Adapter) Mode() string { return string(a.cfg.Mode) }
 // (V4-41); the rule that acts on it is V4-33.
 func (a *Adapter) Capabilities() channel.Capabilities {
 	proactive := "within 24 hours of the person's last message; outside it only MyPA's approved reminder and briefing templates (V4-33)"
+	rule := channel.ProactiveRule{Window: Window, Templates: a.templateKeys()}
 	if a.cfg.Mode == ModeSandbox {
 		proactive = "within 24 hours of the person's last message, while their sandbox membership lasts (72 hours after it); " +
 			"there are no templates of MyPA's, so outside the window the message is held or sent on another channel (V4-33)"
+		rule = channel.ProactiveRule{Window: Window, Reach: SandboxMembership}
 	}
 	return channel.Capabilities{
 		AttachmentsIn: []channel.AttachmentKind{channel.KindImage, channel.KindAudio, channel.KindDocument},
 		MaxTextLen:    maxTextLen,
 		Markup:        channel.LightMarkup,
 		Proactive:     proactive,
+		Rule:          rule,
 	}
+}
+
+// templateKeys lists MyPA's templates this sender has a Content SID for, in Templates() order.
+// Whether WhatsApp approved each one is Twilio's to say: a refusal comes back as a delivery
+// report, and the policy then tries the next route.
+func (a *Adapter) templateKeys() []string {
+	var keys []string
+	for _, t := range Templates() {
+		if a.cfg.TemplateSIDs[t.Key] != "" {
+			keys = append(keys, t.Key)
+		}
+	}
+	return keys
 }
 
 // JoinStep implements channel.Joiner: in the sandbox, a person sends its join message to the
@@ -136,15 +152,52 @@ func (a *Adapter) Configured() bool { return a.cfg.AccountSID != "" }
 
 // Send implements channel.Adapter. Messages go to the person's number; the client converts the
 // text to WhatsApp markup and splits it at a paragraph, line or space, exactly as before the
-// channel layer.
+// channel layer. A proactive message naming a template is sent as that approved template, in
+// sender mode only (V4-33). A refusal Twilio explains by its error code comes back as a Receipt.
 func (a *Adapter) Send(ctx context.Context, to channel.Address, m channel.Outbound) (channel.Receipt, error) {
 	if strings.TrimSpace(to.Person) == "" {
 		return channel.Receipt{}, errors.New("whatsapp: no number to send to")
 	}
-	if err := a.api.SendMessage(ctx, to.Person, m.Text); err != nil {
-		return channel.Receipt{}, err
+	msgr, rich := a.api.(messenger)
+	if p := m.Proactive; p != nil && p.TemplateKey != "" {
+		sid := a.cfg.TemplateSIDs[p.TemplateKey]
+		if a.cfg.Mode != ModeSender || sid == "" {
+			return channel.Receipt{}, fmt.Errorf("whatsapp: no template %q in this mode", p.TemplateKey)
+		}
+		if !rich {
+			return channel.Receipt{}, errors.New("whatsapp: this client cannot send templates")
+		}
+		ref, err := msgr.SendTemplate(ctx, to.Person, sid, p.TemplateValues)
+		if err != nil {
+			return receiptFor(err)
+		}
+		return channel.Receipt{Accepted: true, Refs: nonEmpty(ref)}, nil
 	}
-	return channel.Receipt{Accepted: true}, nil
+	if !rich {
+		if err := a.api.SendMessage(ctx, to.Person, m.Text); err != nil {
+			return receiptFor(err)
+		}
+		return channel.Receipt{Accepted: true}, nil
+	}
+	refs, err := msgr.SendMessageRefs(ctx, to.Person, m.Text)
+	if err != nil {
+		if len(refs) > 0 {
+			return channel.Receipt{}, err // part of it went out: a retry would repeat that part
+		}
+		return receiptFor(err)
+	}
+	return channel.Receipt{Accepted: true, Refs: nonEmpty(refs...)}, nil
+}
+
+// nonEmpty drops empty SIDs (an answer without one).
+func nonEmpty(refs ...string) []string {
+	var out []string
+	for _, r := range refs {
+		if r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // Fetch implements channel.Adapter: the reference is the Twilio media URL, downloaded over HTTPS

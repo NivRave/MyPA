@@ -15,6 +15,7 @@ import (
 	"github.com/nivik/mypa/internal/calendar"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/proactive"
 	"github.com/nivik/mypa/internal/state"
 
 	"github.com/nivik/mypa/internal/channel"
@@ -51,6 +52,7 @@ type Engine struct {
 	signIns            SignInStore         // dashboard sign-in links and sessions (V4-35); nil when not wired
 	dashboardURL       string              // where a sign-in link points (DASHBOARD_URL)
 	quietHours         QuietStore          // people's time zones and quiet hours (V4-05); nil = none held back
+	delivery           Delivery            // the proactive delivery policy (V4-33); nil = send directly
 	now                func() time.Time    // the scheduled checks' clock; nil = time.Now
 }
 
@@ -247,8 +249,12 @@ func (e *Engine) Wait() {
 }
 
 // sendMessage sends assistant text back to where msg came from. The channel's adapter converts
-// the text to its markup and splits it at its length limit (V4-31).
+// the text to its markup and splits it at its length limit (V4-31). The answer of a turn the
+// assistant started itself (a briefing) goes through the delivery policy instead (V4-33).
 func (e *Engine) sendMessage(ctx context.Context, msg channel.Inbound, text string) error {
+	if t := proactiveTurnOf(ctx); t != nil && e.delivery != nil {
+		return e.sendProactiveAnswer(ctx, t, text)
+	}
 	return e.sendTo(ctx, msg.ReplyAddress(), text)
 }
 
@@ -260,8 +266,8 @@ func (e *Engine) sendTo(ctx context.Context, to channel.Address, text string) er
 	return e.channels.SendText(ctx, to, text)
 }
 
-// lastAddress is where the assistant reaches a person it is not answering: the channel and chat of
-// their latest audit session. Proactive delivery gets its own rule in V4-33.
+// lastAddress is where the assistant reaches a person it is not answering when the key names no
+// person: the channel and chat of their latest audit session, as before V4-32.
 func lastAddress(log *models.AuditSession, userID string) channel.Address {
 	return channel.Address{Channel: log.Source, Conversation: log.ChatID, Person: userID}
 }
@@ -326,6 +332,11 @@ func (e *Engine) handleUnauthenticatedUser(ctx context.Context, msg channel.Inbo
 // ProcessMessage is the main entry point for handling an incoming user message.
 // It orchestrates transcription, command handling, confirmation flows, and LLM reasoning.
 func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err error) {
+	// V4-33: a platform's later refusal of a message the assistant sent is not a message. The
+	// policy is idempotent (a second report finds nothing to reopen), so it needs no claim.
+	if msg.Report != nil {
+		return e.handleReport(ctx, msg)
+	}
 	// P1-4: drop duplicate deliveries (webhook retries, broker redeliveries) before
 	// doing anything — including telemetry — so a message's tools run at most once.
 	claim, duplicate := e.claimInbound(ctx, msg)
@@ -408,6 +419,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 			slog.Warn("could not record the account's last message time", "error", rerr)
 		}
 	}
+	if e.delivery != nil && !isStartedByAssistant(ctx) {
+		// V4-33: the person wrote, so this account is open: what was held for them goes out now,
+		// before the answer.
+		e.delivery.Release(ctx, msg.Channel, msg.Sender)
+	}
 	ctx = withTurnUser(ctx, user) // P2-7: resolved once; tool calls reuse it
 	// V4-30: the household is read from the database once per message, from the sender's row.
 	scope, scopeErr := identity.ForUser(ctx, e.db, user)
@@ -458,7 +474,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 
 // CheckAndSendReminders checks the database for due reminders and sends them. A reminder that is
 // not urgent waits while its recipient is in their quiet hours (V4-05): it stays due, so the first
-// pass after the window ends sends it.
+// pass after the window ends sends it. A due reminder is handed to the delivery policy (V4-33),
+// which records it and sends it, holds it or sends it elsewhere; once handed over it is marked
+// sent. One that cannot be handed over (no person, a database error) stays due.
 func (e *Engine) CheckAndSendReminders() {
 	now := e.clock()
 	clocks := e.newQuietClocks()
@@ -476,27 +494,24 @@ func (e *Engine) CheckAndSendReminders() {
 			cancel()
 			continue
 		}
-		to, historyKey, err := e.deliveryAddress(ctx, reminder.UserID)
-		if err != nil {
-			slog.Warn("no channel to send the reminder on", "user_id", reminder.UserID, "error", err)
-			cancel()
-			continue
-		}
-
 		formattedMsg := fmt.Sprintf("🔔 *Reminder:*\n\n%s", reminder.Message)
-
-		err = e.sendTo(ctx, to, formattedMsg)
+		historyKey, err := e.deliverProactive(ctx, reminder.UserID, proactive.Request{
+			Category:       proactive.Reminder,
+			Text:           formattedMsg,
+			TemplateKey:    channel.TemplateReminder,
+			TemplateValues: []string{reminderTitle(reminder.Message)},
+			DueAt:          reminder.DueTime,
+		})
+		cancel()
 		if err != nil {
-			slog.Error("failed to send reminder message", "reminder_id", reminder.ID, "error", err)
-			cancel()
+			slog.Warn("reminder not sent; it stays due", "reminder_id", reminder.ID, "user_id", reminder.UserID, "error", err)
 			continue
 		}
-		cancel()
 
 		_ = e.db.MarkReminderSent(reminder.ID)
 
 		// Optionally log to history
-		if e.store != nil {
+		if e.store != nil && historyKey != "" {
 			_ = e.store.AppendChatHistory(context.Background(), historyKey, models.ChatMessage{Role: "assistant", Content: formattedMsg})
 		}
 	}
@@ -519,20 +534,22 @@ func (e *Engine) CheckAndSendReminders() {
 			cancel()
 			continue
 		}
-		to, historyKey, err := e.deliveryAddress(ctx, targetUserID)
-		if err != nil {
-			slog.Warn("no channel to send the shared reminder on", "user_id", targetUserID, "shared_reminder_id", s.ID)
-			cancel()
-			continue
-		}
 		formattedMsg := fmt.Sprintf("🔔 *Shared Task Reminder:*\n\n**%s** (Topic: %s)", s.Title, s.Topic)
-		err = e.sendTo(ctx, to, formattedMsg)
+		req := proactive.Request{
+			Category:       proactive.Reminder,
+			Text:           formattedMsg,
+			TemplateKey:    channel.TemplateReminder,
+			TemplateValues: []string{reminderTitle(s.Title)},
+		}
+		if s.DueTime != nil {
+			req.DueAt = *s.DueTime
+		}
+		historyKey, err := e.deliverProactive(ctx, targetUserID, req)
+		cancel()
 		if err != nil {
-			slog.Error("failed to send shared reminder message", "shared_reminder_id", s.ID, "error", err)
-			cancel()
+			slog.Warn("shared reminder not sent; it stays due", "user_id", targetUserID, "shared_reminder_id", s.ID, "error", err)
 			continue
 		}
-		cancel()
 
 		// A scheduled job: the scope comes from the stored row's household (ADR 0002 Decision 3).
 		if scope, serr := identity.ForStoredRow(context.Background(), e.db, s.HouseholdID, s.CreatedByUserID); serr == nil {
@@ -540,7 +557,7 @@ func (e *Engine) CheckAndSendReminders() {
 		} else {
 			slog.Error("shared reminder has no usable household", "shared_reminder_id", s.ID, "error", serr)
 		}
-		if e.store != nil {
+		if e.store != nil && historyKey != "" {
 			_ = e.store.AppendChatHistory(context.Background(), historyKey, models.ChatMessage{Role: "assistant", Content: formattedMsg})
 		}
 	}

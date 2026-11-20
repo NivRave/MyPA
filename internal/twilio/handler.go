@@ -159,8 +159,9 @@ var deliveryErrorHints = map[string]string{
 }
 
 // HandleStatusCallback receives Twilio delivery reports for outbound messages (BL-8). Failed or
-// undelivered messages are logged at WARN with the error code and a hint; other statuses at DEBUG.
-// It never publishes anything and never logs message content.
+// undelivered messages are logged at WARN with the error code and a hint, and published as a
+// channel.Report so the delivery policy can try another route (V4-33); other statuses are logged
+// at DEBUG. It never logs message content.
 func (h *Handler) HandleStatusCallback(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -188,6 +189,22 @@ func (h *Handler) HandleStatusCallback(w http.ResponseWriter, r *http.Request) {
 			attrs = append(attrs, "hint", hint)
 		}
 		slog.Warn("whatsapp message not delivered", attrs...)
+		sid := r.PostForm.Get("MessageSid")
+		if sid == "" {
+			break
+		}
+		report := channel.Inbound{
+			Channel:   Name,
+			MessageID: "report-" + sid + "-" + status,
+			Sender:    strings.TrimPrefix(r.PostForm.Get("To"), "whatsapp:"),
+			Report:    &channel.Report{Ref: sid, Reason: reportReason(code)},
+		}
+		if err := h.publisher.Publish(r.Context(), report); err != nil {
+			// Twilio retries a callback that fails, so the report is not lost.
+			slog.Error("failed to publish a whatsapp delivery report", "message_sid", sid, "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 	default:
 		slog.Debug("whatsapp delivery status", attrs...)
 	}

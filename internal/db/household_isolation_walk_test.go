@@ -78,6 +78,18 @@ var unscopedMethods = map[string]string{
 	"PurgeSignIns":           "install-level clean-up of ended sessions and used links",
 	"HouseholdsWithoutOwner": "install-level count for /doctor",
 	"GrantAccess":            "offline operator recovery command, never moves a person between households",
+	// V4-33: proactive delivery rows are one person's, written and read by the delivery policy for
+	// the person a reminder, briefing or notification is for, never on a member's request.
+	"CreateDelivery":    "the delivery policy records a message for the person it is for",
+	"SaveDelivery":      "the delivery policy updates the row it holds",
+	"ClaimDelivery":     "the delivery policy claims one row by its ID",
+	"HeldDeliveries":    "the held messages of the person who just wrote, sent to that person",
+	"DueDeliveries":     "install-level minute tick: retries of messages already recorded",
+	"DeliveryByRef":     "a platform's signed delivery report, matched by the platform's message ID",
+	"ExpireDeliveries":  "install-level minute tick: expiry of held messages",
+	"UnstickDeliveries": "install-level minute tick: rows a crash left mid-send",
+	"PurgeDeliveries":   "install-level clean-up of messages that ended a month ago",
+	"DeliveryCounts":    "/doctor counts for the admin's own household, by its memberships",
 }
 
 var scopeType = reflect.TypeOf(identity.Scope{})

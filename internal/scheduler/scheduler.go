@@ -89,6 +89,10 @@ func StartCronJobs(engine *orchestrator.Engine, dbClient *db.Client, runner *aut
 	// not urgent waits while its recipient is in quiet hours (V4-05).
 	_, err = c.AddFunc("* * * * *", func() {
 		engine.CheckAndSendReminders()
+		// V4-33: retry what a channel refused for now, expire what was held too long.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		engine.SweepDeliveries(ctx)
 	})
 
 	// Every minute: run, once, each automation held during quiet hours that end now (V4-05). It

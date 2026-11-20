@@ -1,0 +1,6 @@
+=== message 1: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199 content=HX00000000000000000000000000000001 variables={"1":"Call the dentist about Noa's appointment"}
+
+=== message 2: whatsapp to=whatsapp:+12025550102 from=whatsapp:+12025550199 content=HX00000000000000000000000000000001 variables={"1":"Call the dentist about Noa's appointment"}
+
+=== message 3: whatsapp to=whatsapp:+12025550103 from=whatsapp:+12025550199 content=HX00000000000000000000000000000001 variables={"1":"Call the dentist about Noa's appointment"}
+

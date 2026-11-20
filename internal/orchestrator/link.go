@@ -14,6 +14,7 @@ import (
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/logging"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/proactive"
 )
 
 // People and their channel accounts in chat (V4-32, ADR 0002 Decision 4). Linking is a command
@@ -131,13 +132,11 @@ func (e *Engine) deliveryAddress(ctx context.Context, key string) (channel.Addre
 	return lastAddress(log, key), key, nil
 }
 
-// deliverTo sends text to the person behind key, where they want notifications.
+// deliverTo sends a notification to the person behind key: through the delivery policy (V4-33),
+// which sends it where they want notifications, elsewhere, or holds it.
 func (e *Engine) deliverTo(ctx context.Context, key, text string) error {
-	to, _, err := e.deliveryAddress(ctx, key)
-	if err != nil {
-		return err
-	}
-	return e.sendTo(ctx, to, text)
+	_, err := e.deliverProactive(ctx, key, proactive.Request{Category: proactive.Notification, Text: text})
+	return err
 }
 
 // accountAddress is where a message to one specific account goes.

@@ -1,9 +1,11 @@
 package twilio
 
+import "github.com/nivik/mypa/internal/channel"
+
 // Template keys: what a proactive message names in channel.Proactive.TemplateKey (V4-33).
 const (
-	TemplateReminder = "reminder"
-	TemplateBriefing = "briefing"
+	TemplateReminder = channel.TemplateReminder
+	TemplateBriefing = channel.TemplateBriefing
 )
 
 // Template is one WhatsApp message template MyPA provides for a registered sender (V4-41, ADR 0003

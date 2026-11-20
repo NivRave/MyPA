@@ -42,8 +42,9 @@ var scenarios = []scenario{
 	{"duplicate_delivery", duplicateDelivery},
 	{"doctor", doctorReport},
 	{"fallbacks", fallbacks},
-	{"link_accounts", linkAccounts},       // V4-32: one person on two channels
-	{"dashboard_signin", dashboardSignIn}, // V4-35: a sign-in link in a direct chat
+	{"link_accounts", linkAccounts},                    // V4-32: one person on two channels
+	{"dashboard_signin", dashboardSignIn},              // V4-35: a sign-in link in a direct chat
+	{"reminder_outside_window", reminderOutsideWindow}, // V4-33: delivered by a route, never lost
 }
 
 // TestConformance runs every scenario on every adapter the app registers, in every mode it has
@@ -309,8 +310,9 @@ func approval(t *testing.T, e *env) {
 }
 
 // reminder: a due reminder is delivered on the channel the person last wrote on and is then
-// marked sent. Today a person who never wrote has no known channel: their reminder is not sent
-// and stays due (V4-33 replaces that with a delivery policy).
+// marked sent. A person who never wrote has no channel that would take it: since V4-33 their
+// reminder is held for them by the delivery policy, recorded, until they write
+// (reminder_outside_window covers the routes).
 func reminder(t *testing.T, e *env) {
 	writer := e.member(1, "family", "Levi")
 	silent := e.member(2, "family", "Levi")
@@ -328,10 +330,11 @@ func reminder(t *testing.T, e *env) {
 
 	e.db.mu.Lock()
 	assert.True(t, e.db.reminders[0].IsSent, "a delivered reminder is marked sent")
-	assert.False(t, e.db.reminders[1].IsSent, "a reminder that could not be delivered stays due")
+	assert.True(t, e.db.reminders[1].IsSent, "a reminder nobody can take yet is handed to the delivery policy")
 	assert.True(t, e.db.shared[0].IsSent, "a delivered shared reminder is marked sent")
 	e.db.mu.Unlock()
 	require.Len(t, e.wire.messages(), 3, "the reply, the reminder and the shared reminder")
+	assert.Equal(t, models.DeliveryHeld, e.deliveryOf(silent).State, "the silent person's reminder is held for them, not lost")
 
 	// A second pass sends nothing twice.
 	e.engine.CheckAndSendReminders()

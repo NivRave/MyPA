@@ -1,0 +1,12 @@
+=== message 1: telegram to=7001 parse_mode=HTML
+🔔 <i>Reminder:</i>
+
+Call the dentist about <b>Noa</b>&#39;s appointment
+=== message 2: telegram to=7002 parse_mode=HTML
+🔔 <i>Reminder:</i>
+
+Call the dentist about <b>Noa</b>&#39;s appointment
+=== message 3: telegram to=7003 parse_mode=HTML
+🔔 <i>Reminder:</i>
+
+Call the dentist about <b>Noa</b>&#39;s appointment

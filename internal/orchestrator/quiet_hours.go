@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/proactive"
 	"github.com/nivik/mypa/internal/quiet"
 )
 
@@ -102,7 +103,8 @@ func (e *Engine) SendDueBriefings(ctx context.Context) []string {
 
 	var started []string
 	for _, userID := range userIDs {
-		if !e.clockOf(ctx, userID).BriefingDue(now) {
+		clock := e.clockOf(ctx, userID)
+		if !clock.BriefingDue(now) {
 			continue
 		}
 		// A system-triggered prompt fed into a turn on behalf of the person, on the account they
@@ -120,12 +122,22 @@ func (e *Engine) SendDueBriefings(ctx context.Context) []string {
 			Text:         MorningBriefingPrompt,
 		}
 		started = append(started, userID)
+		// V4-33: the answer is a proactive message. Outside the window it may go out as the
+		// briefing template ("it is waiting"), and a held briefing expires at the end of its day.
+		local := now.In(clock.Loc)
+		turn := &proactiveTurn{
+			key:            userID,
+			category:       proactive.Briefing,
+			expiresAt:      time.Date(local.Year(), local.Month(), local.Day()+1, 0, 0, 0, 0, clock.Loc),
+			templateKey:    channel.TemplateBriefing,
+			templateValues: []string{local.Format("Monday, 2 January")},
+		}
 
 		// One goroutine per person, so one slow turn does not delay another.
 		e.wg.Add(1)
 		go func(m channel.Inbound) {
 			defer e.wg.Done()
-			bgCtx, cancel := context.WithTimeout(startedByAssistant(context.Background()), 2*time.Minute)
+			bgCtx, cancel := context.WithTimeout(withProactiveTurn(startedByAssistant(context.Background()), turn), 2*time.Minute)
 			defer cancel()
 			slog.Info("sending the morning briefing", "user_id", m.Sender)
 			if err := e.ProcessMessage(bgCtx, m); err != nil {
