@@ -6,7 +6,7 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 
 ## Highlights
 
-- **Channels:** Telegram and WhatsApp (Twilio), voice notes (Groq Whisper) and images/documents (Gemini vision); a Next.js web dashboard for browsing, editing and rolling back data, which each owner or adult signs in to with `/dashboard` in chat (a link valid 10 minutes, once). One person can use several apps as the same user with the same data: `/link` in chat adds another account (confirmed from the first), `/accounts` lists them and `/notify N` picks where notifications go.
+- **Channels:** Telegram and WhatsApp (Twilio), voice notes (Groq Whisper) and images/documents (read by the chat model; Gemini by default, see Model providers below); a Next.js web dashboard for browsing, editing and rolling back data, which each owner or adult signs in to with `/dashboard` in chat (a link valid 10 minutes, once). One person can use several apps as the same user with the same data: `/link` in chat adds another account (confirmed from the first), `/accounts` lists them and `/notify N` picks where notifications go.
 - **Tools:** <!-- gen:tool-summary -->63 tools across 13 modules<!-- /gen:tool-summary -->, offered in two tiers (always-on core tools + domain groups selected per message) to keep prompts small. Full catalogue: [SYSTEM.md §6](./SYSTEM.md#6-complete-ai-agent-tool-catalog).
 - **Google Workspace:** Calendar, Gmail, Tasks and Contacts; live web search (Tavily).
 - **Life domains:** baby care (with medication-cooldown guardrails), house contracts and maintenance, vehicles, finance and budgets, a personal CRM, topic-scoped memory and entity profiles, shared family spaces with partner notifications.

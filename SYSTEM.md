@@ -115,7 +115,8 @@ mypa/
 │   │   └── transfer.go, doctor.go  #   `mypa transfer` (V4-43) and the /doctor wiring (V4-17)
 │   ├── audit-worker/main.go        # Async RabbitMQ telemetry consumer & 30-day session archiver
 │   ├── devtools/listmodels/        # Dev-only utility (lists Gemini models); not in any image
-│   └── devtools/gendocs/           # Regenerates the generated sections of SYSTEM.md/README.md: tool catalogue (P5-5), channel capability matrix (V4-34)
+│   ├── devtools/gendocs/           # Regenerates the generated sections of SYSTEM.md/README.md: tool catalogue (P5-5), channel capability matrix (V4-34), chat model provider matrix (V4-02)
+│   └── devtools/llmconformance/    # Dev-only: runs the provider conformance scenarios against the real providers configured in the environment (V4-02); not in any image
 ├── .github/dependabot.yml          # Weekly updates → PRs to dev: gomod, npm, docker, docker-compose, github-actions (P5-4)
 ├── .github/workflows/ci.yml       # CI (P5-3): go test -race, golangci-lint (.golangci.yml), govulncheck, dashboard, compose build
 ├── scripts/clean.{ps1,sh}          # Remove local build artefacts (bin/, root *.exe/*.test, coverage)
@@ -146,7 +147,7 @@ mypa/
 │   │   ├── house_repo.go           # `HouseRepository` (HouseContractRecord, HomeMaintenanceItem, VehicleAsset)
 │   │   ├── finance_repo.go         # `FinanceRepository` (FinancialTransaction, CategoryBudget, RecurringBill)
 │   │   └── automation_repo.go      # `AutomationRepository` (ExternalAPIConnector, AutomationRule, UserPreference, PersonalCRMContact)
-│   ├── docgen/                     # Every generated doc region in one map (tool catalogue, channel matrix) for gendocs and its drift test
+│   ├── docgen/                     # Every generated doc region in one map (tool catalogue, channel matrix, provider matrix) for gendocs and its drift test
 │   ├── doctor/                     # `/doctor` health checks (V4-17): Google sign-ins, queues, backups, schema, messages waiting (V4-33); each channel adapter brings its own (§3.8)
 │   ├── domains/                    # Modular `orchestrator.ToolModule` implementations. Large modules (house, automation,
 │   │                               #   schedule, baby, finance — P4-2) are split: module.go (struct, NewModule/options, Name,
