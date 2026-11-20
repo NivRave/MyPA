@@ -41,8 +41,18 @@ func TestChannelMatrixHasAColumnPerRegisteredAdapter(t *testing.T) {
 	require.NoError(t, err)
 	header := strings.SplitN(matrix, "\n", 2)[0]
 	require.NotEmpty(t, reg.All())
+	// One column per adapter, and one per mode of an adapter that has several (V4-41).
+	columns := 0
 	for _, a := range reg.All() {
-		assert.Contains(t, header, "`"+a.Name()+"`")
+		modes := adapters.Modes()[a.Name()]
+		if len(modes) == 0 {
+			assert.Contains(t, header, "| `"+a.Name()+"` |")
+			columns++
+		}
+		for _, m := range modes {
+			assert.Contains(t, header, "`"+a.Name()+"` ("+m+")")
+			columns++
+		}
 	}
-	assert.Equal(t, len(reg.All())+3, strings.Count(header, "|"), "a capability column, one per adapter and a fallback column")
+	assert.Equal(t, columns+3, strings.Count(header, "|"), "a capability column, one per adapter or mode and a fallback column")
 }

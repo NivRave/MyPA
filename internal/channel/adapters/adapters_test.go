@@ -43,3 +43,32 @@ func TestBuild_ReturnsASealedRegistry(t *testing.T) {
 	_, ok := reg.Get("extra")
 	assert.False(t, ok)
 }
+
+// TestModes_EachModeIsReachedBySettingsAlone: every mode an adapter lists is the mode the adapter
+// reports when built from settings set to it (V4-41), and an adapter that reports a mode lists it.
+func TestModes_EachModeIsReachedBySettingsAlone(t *testing.T) {
+	reg, err := Build(Config{})
+	require.NoError(t, err)
+	for _, a := range reg.All() {
+		modes, listed := Modes()[a.Name()]
+		_, moded := a.(channel.Moded)
+		require.Equal(t, moded, listed, "%s: an adapter with modes must list them in Modes, and only then", a.Name())
+		for _, mode := range modes {
+			cfg, err := InMode(Config{}, a.Name(), mode)
+			require.NoError(t, err)
+			built, err := Build(cfg)
+			require.NoError(t, err)
+			got, ok := built.Get(a.Name())
+			require.True(t, ok)
+			assert.Equal(t, mode, got.(channel.Moded).Mode(), "%s built in mode %s", a.Name(), mode)
+		}
+	}
+	_, err = InMode(Config{}, "extra", "any")
+	assert.Error(t, err)
+}
+
+func TestSetup_UnknownChannel(t *testing.T) {
+	err := Setup(context.Background(), Config{}, "extra", io.Discard, false, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no guided setup")
+}

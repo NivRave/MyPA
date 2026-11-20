@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"time"
 )
 
 // Adapter is one messaging platform behind the channel layer. Name is the only place a platform
@@ -38,6 +39,39 @@ type Recognizer interface {
 type Configurable interface {
 	Configured() bool
 }
+
+// Moded is implemented by an adapter that runs in one of several modes chosen by its settings
+// (V4-41). Mode names the one in use; the capability matrix has a column per mode, and the
+// conformance suite runs every scenario in each.
+type Moded interface {
+	Mode() string
+}
+
+// Joiner is implemented by an adapter on which a person must do something before their first
+// message reaches MyPA (V4-41: a sandbox's join message). JoinStep says what, in one sentence a
+// person can follow, or is empty when nothing is needed. Invitations and the link code show it.
+type Joiner interface {
+	JoinStep() string
+}
+
+// JoinStep is one channel's step before the first message (Registry.JoinSteps).
+type JoinStep struct {
+	Channel string
+	Step    string
+}
+
+// AccountActivity is when one person last wrote from their account on a channel. A zero
+// LastInboundAt means the account never wrote since it was added.
+type AccountActivity struct {
+	Person        string // the person's display name
+	LastInboundAt time.Time
+}
+
+// ActivitySource lists the channel accounts of one household on the named channel with when each
+// last wrote. It is bound to the database in cmd/mypa and handed to the adapters' /doctor checks,
+// so an adapter can report a limit that depends on it (V4-41: a sandbox membership lapses 72
+// hours after the person last wrote).
+type ActivitySource func(ctx context.Context, householdID, channelName string) ([]AccountActivity, error)
 
 // Sink receives the messages an adapter's ingress produced. In the app it publishes to the durable
 // inbound queue, so a webhook can answer at once and the turn follows from the queue.

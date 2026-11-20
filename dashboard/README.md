@@ -56,7 +56,7 @@ npm install
 # Start development server on http://localhost:3000
 npm run dev
 
-# Run Vitest unit & React Testing Library component suites (61 tests across 7 suites)
+# Run Vitest unit & React Testing Library component suites (63 tests across 8 suites)
 npm test
 
 # Build production standalone bundle

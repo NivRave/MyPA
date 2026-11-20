@@ -15,7 +15,7 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 - **Feature packs:** Core (memory, reminders, calendar, tasks and contacts, web search, undo, family sharing, preferences and the personal CRM) is always on. Baby, House and vehicles, Finance, Gmail and Automations are packs an owner switches on or off per household on the dashboard's **Tools & Packs** page; a pack that is off adds no tools, chat guidance, briefing lines or pages, and keeps its data. A new household starts with Core only; an upgraded one keeps every pack it holds data in.
 - **Durability:** every tool write is snapshotted for `/undo` and dashboard rollback; encrypted, age-protected nightly backups (database plus archive files); versioned schema migrations; one documented path to upgrade, move or restore an install.
 - **Roles:** owner, adult, child and guest, plus the install's operator. Owners manage the household and its members and see each member's activity, never another member's chats or personal data; adults see the shared data and their own; children chat only. Pairing codes give adult or child. Guests (only the topics shared with them by name) wait for sharing by name (BL-46).
-- **Health check:** the operator sends `/doctor` in chat and gets the state of the Telegram webhook, each family member's Google sign-in, WhatsApp, the queues, the newest backup and the database schema, with a next step for every problem.
+- **Health check:** the operator sends `/doctor` in chat and gets the state of the Telegram webhook, each family member's Google sign-in, the WhatsApp mode and its health, the queues, the newest backup and the database schema, with a next step for every problem.
 - **Security:** fail-closed webhook verification, tenant isolation, prompt-injection boundaries with confirmation for sensitive tools, AES-256-GCM encryption at rest.
 
 ## Documentation
@@ -85,6 +85,7 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 3. **Set Webhooks:**
    - **Telegram:** Automatic. With `INGRESS=none` the app polls (look for `telegram polling for updates` in `docker compose logs app`). With a public address it calls `setWebhook` for `PUBLIC_URL/webhook/telegram` with `TELEGRAM_SECRET_TOKEN` on startup (look for `telegram webhook registered with secret token`).
    - **WhatsApp:** Set `PUBLIC_URL/webhook/twilio` (e.g. `https://mypa.example.com/webhook/twilio`) in your Twilio WhatsApp Sandbox settings. Delivery reports go to `PUBLIC_URL/webhook/twilio/status` automatically, so replies Twilio accepts but cannot deliver show up in `docker compose logs app` as `whatsapp message not delivered` (with the error code and a hint, e.g. 63015 = re-join the sandbox).
+     WhatsApp runs in one of two modes (`TWILIO_WHATSAPP_MODE`, V4-41). **Sandbox** (the default for Twilio's sandbox number): set `TWILIO_SANDBOX_JOIN_CODE` to the join code from the Twilio Console, so invitations tell new people to send `join <code>` first; Twilio drops a person 72 hours after they last wrote, and `/doctor` names who and what to send. **Sender** (any number you registered in Twilio): run `docker compose run --rm app channel-setup whatsapp` to see MyPA's reminder and briefing templates, add `--submit` to create and submit them in your Twilio account, then put the two `TWILIO_TEMPLATE_*_SID` lines it prints in `.env`; `/doctor` shows when WhatsApp has approved them. Switching is a settings change and a restart.
    - **Google:** register `PUBLIC_URL/auth/google/callback` as the OAuth redirect URI (or `http://localhost:8000/auth/google/callback` with no public address, which only works in a browser on the same machine).
 
 ### Running Locally (Development)
@@ -144,7 +145,7 @@ go test -v -race ./internal/...
 # 2. Run database repository and GraphQL resolver integration tests
 go test -v ./internal/db/... ./internal/graph/...
 
-# 3. Run Next.js Dashboard Vitest component tests (61 tests across 7 test suites)
+# 3. Run Next.js Dashboard Vitest component tests (63 tests across 8 test suites)
 npm test --prefix dashboard
 
 # 4. Verify full multi-stage container build
@@ -156,7 +157,7 @@ go test -v ./tests/...
 
 Database tests need a running Docker daemon: each one gets its own empty database in a throwaway testcontainers Postgres (`internal/testutil/pgtest`, same image as production). They never connect to the compose database, and a test that tries to (compose DSN or `DATABASE_URL`) fails `TestNoTestReachesTheLiveDatabase`. Test containers must use the exact `docker-compose.yml` images (`TestTestContainerImagesMatchCompose`).
 
-The channel conformance suite (`internal/conformance`, part of `go test ./...`) runs the same scenarios on Telegram and WhatsApp over a fake transport and compares what each platform would receive with pinned transcripts in `testdata/golden`. If a change is meant to alter what users receive, regenerate them with `go test ./internal/conformance -update` and review the diff.
+The channel conformance suite (`internal/conformance`, part of `go test ./...`) runs the same scenarios on Telegram and on WhatsApp in both its modes over a fake transport and compares what each platform would receive with pinned transcripts in `testdata/golden`. If a change is meant to alter what users receive, regenerate them with `go test ./internal/conformance -update` and review the diff.
 
 Phone numbers in committed files (examples, docs, fixtures) must be fictional: use `+1 NXX 555 0100–0199`, e.g. `+12025550123`. `TestNoRealPhoneNumbersCommitted` fails on any tracked number that could reach a person, and prints it masked.
 

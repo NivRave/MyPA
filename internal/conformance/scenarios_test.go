@@ -10,8 +10,10 @@ import (
 	"unicode/utf8"
 
 	layer "github.com/nivik/mypa/internal/channel"
+	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/twilio"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,26 +46,64 @@ var scenarios = []scenario{
 	{"dashboard_signin", dashboardSignIn}, // V4-35: a sign-in link in a direct chat
 }
 
-// TestConformance runs every scenario on every adapter the app registers. An adapter without a
-// fixture fails here; it is never skipped.
+// TestConformance runs every scenario on every adapter the app registers, in every mode it has
+// (V4-41). An adapter without a fixture fails here; it is never skipped.
 func TestConformance(t *testing.T) {
 	for _, adapter := range registeredAdapters(t) {
 		name := adapter.Name()
-		t.Run(name, func(t *testing.T) {
-			ch, ok := fixtureFor(name)
-			require.True(t, ok, "adapter %q is registered (internal/channel/adapters) but has no conformance fixture: "+
-				"add one to fixtures in internal/conformance/harness_test.go and make every scenario pass", name)
-			for _, sc := range scenarios {
-				t.Run(sc.name, func(t *testing.T) {
-					e := newEnv(t, ch)
-					sc.run(t, e)
-					e.finish()
-					// A scenario with a transcript on disk must compare it, or the file would
-					// look like a pin that nothing checks.
-					assert.Equal(t, hasTranscript(sc.name), e.compared, "scenario %s: transcript compared", sc.name)
-				})
-			}
-		})
+		ch, ok := fixtureFor(name)
+		require.True(t, ok, "adapter %q is registered (internal/channel/adapters) but has no conformance fixture: "+
+			"add one to fixtures in internal/conformance/harness_test.go and make every scenario pass", name)
+		require.Equal(t, adapters.Modes()[name], fixtureModes(ch), "the fixture of %s must cover exactly the adapter's modes", name)
+		for _, mode := range ch.modeNames() {
+			t.Run(label(ch, mode), func(t *testing.T) {
+				for _, sc := range scenarios {
+					t.Run(sc.name, func(t *testing.T) {
+						e := newEnv(t, ch, mode)
+						sc.run(t, e)
+						e.finish()
+						// A scenario with a transcript on disk must compare it, or the file would
+						// look like a pin that nothing checks.
+						assert.Equal(t, hasTranscript(sc.name), e.compared, "scenario %s: transcript compared", sc.name)
+					})
+				}
+			})
+		}
+	}
+}
+
+// fixtureModes lists a fixture's mode names, nil for an adapter without modes.
+func fixtureModes(ch channel) []string {
+	var names []string
+	for _, m := range ch.modes {
+		names = append(names, m.name)
+	}
+	return names
+}
+
+// TestModesAreChosenBySettingsAlone is the "done when" of V4-41 at the registry: one install's
+// settings, changed in the mode setting and that mode's own values only, give the adapter that
+// runs in that mode, and the registry the app builds from them passes every scenario
+// (TestConformance runs each mode from exactly these settings).
+func TestModesAreChosenBySettingsAlone(t *testing.T) {
+	for _, ch := range fixtures {
+		for _, mode := range fixtureModes(ch) {
+			reg, err := adapters.Build(configFor(t, ch, mode))
+			require.NoError(t, err)
+			a, ok := reg.Get(ch.name)
+			require.True(t, ok)
+			moded, ok := a.(layer.Moded)
+			require.True(t, ok, "%s has modes, so its adapter reports the one in use", ch.name)
+			assert.Equal(t, mode, moded.Mode())
+		}
+	}
+	base, err := adapters.Build(baseConfig())
+	require.NoError(t, err)
+	for _, ch := range fixtures {
+		if len(ch.modes) > 0 {
+			a, _ := base.Get(ch.name)
+			assert.Equal(t, ch.modes[0].name, a.(layer.Moded).Mode(), "the other channels' scenarios see %s in its first mode", ch.name)
+		}
 	}
 }
 
@@ -110,7 +150,9 @@ func TestTranscriptsMatchScenarios(t *testing.T) {
 			continue
 		}
 		for _, ch := range fixtures {
-			want[filepath.ToSlash(goldenPath(sc.name, ch.name))] = true
+			for _, mode := range ch.modeNames() {
+				want[filepath.ToSlash(goldenPath(sc.name, label(ch, mode)))] = true
+			}
 		}
 	}
 	files, err := filepath.Glob(filepath.Join("testdata", "golden", "*.txt"))
@@ -498,10 +540,20 @@ func doctorReport(t *testing.T, e *env) {
 	for i, text := range texts {
 		assert.LessOrEqual(t, utf8.RuneCountInString(text), e.ch.hardLimit, "report message %d exceeds what %s accepts", i+1, e.ch.name)
 	}
-	// The three problems of the fixture are there, each with a next step, ahead of what passed.
-	for _, problem := range []string{"Telegram webhook", "Google account: Omer", "WhatsApp sender"} {
+	// The three problems of the fixture are there, each with a next step, ahead of what passed. The
+	// WhatsApp one is the install's mode's own (V4-41): in the sandbox, the member whose membership
+	// lapsed and the exact message to send; with a registered sender, the template still waiting.
+	whatsAppProblem, whatsAppStep := "WhatsApp sandbox: Omer", sandboxJoin
+	if waMode(t, e) == string(twilio.ModeSender) {
+		whatsAppProblem, whatsAppStep = "WhatsApp template mypa_briefing", "Run /doctor again later"
+		assert.Contains(t, report, "WhatsApp template mypa_reminder", "an approved template is reported as working")
+		assert.NotContains(t, report, "sandbox", "a registered sender has no sandbox limits")
+	}
+	for _, problem := range []string{"Telegram webhook", "Google account: Omer", whatsAppProblem} {
 		assert.Contains(t, report, problem)
 	}
+	assert.Contains(t, report, whatsAppStep)
+	assert.Contains(t, report, "WhatsApp mode", "the report says which mode WhatsApp runs in")
 	assert.Contains(t, report, "Connection refused")
 	assert.Contains(t, report, "Ask Omer to send /connect")
 	assert.Equal(t, 3, strings.Count(report, "➡️"), "one next step per problem")
@@ -511,6 +563,14 @@ func doctorReport(t *testing.T, e *env) {
 	assert.Empty(t, e.model.requests(), "the health check is handled without the model")
 	e.requireAllSentTo(admin, member)
 	e.golden("doctor")
+}
+
+// waMode is the mode WhatsApp runs in in this scenario's install.
+func waMode(t *testing.T, e *env) string {
+	t.Helper()
+	a, ok := e.channels.Get(twilio.Name)
+	require.True(t, ok)
+	return a.(layer.Moded).Mode()
 }
 
 // fallbacks: a message with choices, a file and a voice note reaches a person on this channel

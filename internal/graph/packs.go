@@ -38,7 +38,7 @@ var packFields = map[string]packs.ID{
 // coreFields are the root fields that belong to no pack. Preferences and the personal CRM are
 // Core (V4-27); Gmail has no fields.
 var coreFields = map[string]bool{
-	"me": true, "household": true, "users": true, "activePairingCodes": true, "topicMemories": true,
+	"me": true, "household": true, "users": true, "activePairingCodes": true, "joinSteps": true, "topicMemories": true,
 	"entityProfiles": true, "sharedSpaces": true, "sharedTasks": true, "scheduleEvents": true,
 	"topicCalendarConfigs": true, "userPreference": true, "personalCrmContacts": true, "mutationLogs": true,
 	"auditSessions": true, "userSessions": true,

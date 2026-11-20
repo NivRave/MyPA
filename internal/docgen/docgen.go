@@ -35,13 +35,35 @@ func Regions() (map[string]string, error) {
 // ChannelMatrix renders the capabilities of the adapters the app registers, in registration
 // order, as an unconfigured install declares them: its settings loaded from an empty environment,
 // so it has no public address (INGRESS=none, V4-40) and an adapter that can receive without one
-// shows that mode.
+// shows that mode. An adapter with several modes (V4-41) gets a column for each, built from those
+// settings with only its mode setting changed.
 func ChannelMatrix() (string, error) {
-	reg, err := adapters.Build(adapters.LoadConfig(func(string) string { return "" }))
+	cfg := adapters.LoadConfig(func(string) string { return "" })
+	reg, err := adapters.Build(cfg)
 	if err != nil {
 		return "", err
 	}
-	return channel.Matrix(reg.All()), nil
+	var columns []channel.Adapter
+	for _, a := range reg.All() {
+		modes := adapters.Modes()[a.Name()]
+		if len(modes) == 0 {
+			columns = append(columns, a)
+			continue
+		}
+		for _, mode := range modes {
+			modeCfg, err := adapters.InMode(cfg, a.Name(), mode)
+			if err != nil {
+				return "", err
+			}
+			modeReg, err := adapters.Build(modeCfg)
+			if err != nil {
+				return "", err
+			}
+			inMode, _ := modeReg.Get(a.Name())
+			columns = append(columns, inMode)
+		}
+	}
+	return channel.Matrix(columns), nil
 }
 
 // Apply replaces every generated region in doc (see toolcatalog.Apply for the markers).

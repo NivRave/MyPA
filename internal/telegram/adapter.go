@@ -156,8 +156,8 @@ func (a *Adapter) Recognizes(person string) bool {
 }
 
 // HealthCheck is the adapter's /doctor check: Telegram's own view of the webhook, which a polling
-// install expects to be absent.
-func (a *Adapter) HealthCheck() doctor.Check {
+// install expects to be absent. It does not depend on when accounts last wrote.
+func (a *Adapter) HealthCheck(channel.ActivitySource) doctor.Check {
 	return WebhookCheck{
 		Configured: a.Configured(),
 		Polling:    a.cfg.Polling,

@@ -1,0 +1,8 @@
+=== message 1: whatsapp to=whatsapp:+12025550101 from=whatsapp:+14155238886
+🔒 *Interactive Security Confirmation Required*
+
+The assistant tried to perform a sensitive action (```delete_task```) after reading external data (whatsapp_image).
+To prevent indirect prompt injection, this modification was NOT applied automatically.
+
+👉 If you intended to make this change, please reply with:
+```CONFIRM DELETE_TASK```

@@ -358,6 +358,18 @@ type channelNotifier struct {
 	accounts deliveryAccounts
 }
 
+// JoinSteps is what a new person does on each configured channel before their first message
+// (V4-41), for the dashboard's pairing codes.
+func (n channelNotifier) JoinSteps() []channel.JoinStep { return n.channels.JoinSteps() }
+
+// joinStepsOf returns the notifier's JoinSteps when it is the channel layer's, else nil.
+func joinStepsOf(notifier AuthNotifier) func() []channel.JoinStep {
+	if js, ok := notifier.(interface{ JoinSteps() []channel.JoinStep }); ok {
+		return js.JoinSteps
+	}
+	return nil
+}
+
 func (n channelNotifier) SendMessage(ctx context.Context, recipientID, text string) error {
 	if n.accounts != nil {
 		a, err := n.accounts.DeliveryAccount(ctx, recipientID)
@@ -499,6 +511,7 @@ func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifier
 			MemoryRepo:     db.NewMemoryV2Repo(dbClient.DB),
 			AutomationRepo: db.NewAutomationRepository(dbClient.DB),
 			PromptCache:    promptCache,
+			JoinStepsOf:    joinStepsOf(notifier), // V4-41: shown with pairing codes
 		})
 		srv := graph.NewServer(resolvers) // with the pack guard (V4-27)
 

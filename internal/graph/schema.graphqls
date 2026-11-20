@@ -34,6 +34,14 @@ type Pack {
   pages: [String!]!
 }
 
+"What a new person does on one channel before their first message reaches MyPA (V4-41), shown with pairing codes."
+type JoinStep {
+  "The channel's name."
+  channel: String!
+  "One sentence the person can follow."
+  step: String!
+}
+
 type PairingCode {
   id: ID!
   code: String!
@@ -364,6 +372,8 @@ type Query {
   "The household's members with their roles (owners); an adult sees only themselves."
   users: [User!]!
   activePairingCodes: [PairingCode!]!
+  "Steps on each configured channel before a new person's first message, for an owner handing out a pairing code (V4-41). Empty when none needs one."
+  joinSteps: [JoinStep!]!
   topicMemories(topic: String, includeSuperseded: Boolean): [TopicMemory!]!
   entityProfiles(topic: String, entityType: String): [EntityProfile!]!
   sharedSpaces: [SharedSpace!]!

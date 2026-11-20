@@ -175,6 +175,12 @@ export interface User {
   createdAt: string;
 }
 
+// V4-41: what a new person does on one channel before their first message (Query.joinSteps).
+export interface JoinStep {
+  channel: string;
+  step: string;
+}
+
 export interface PairingCode {
   id: string;
   code: string;

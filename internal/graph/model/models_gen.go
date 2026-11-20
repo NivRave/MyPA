@@ -159,6 +159,14 @@ type Household struct {
 	Topics []string `json:"topics"`
 }
 
+// What a new person does on one channel before their first message reaches MyPA (V4-41), shown with pairing codes.
+type JoinStep struct {
+	// The channel's name.
+	Channel string `json:"channel"`
+	// One sentence the person can follow.
+	Step string `json:"step"`
+}
+
 type Me struct {
 	PersonID   string     `json:"personId"`
 	Name       string     `json:"name"`

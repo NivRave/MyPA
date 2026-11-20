@@ -172,7 +172,7 @@ func TestHealthReporter_DetectsABrokenInstall(t *testing.T) {
 
 	// What does work is reported as working.
 	assert.Contains(t, report, "✅ **Database schema**")
-	assert.Contains(t, report, "✅ **WhatsApp**")
+	assert.Contains(t, report, "✅ **WhatsApp delivery reports**")
 
 	// Tenant isolation: another family's member is not in the report, and no secret is.
 	assert.NotContains(t, report, "Stranger")
@@ -199,9 +199,79 @@ func TestHealthReporter_HealthyInstallHasNoProblems(t *testing.T) {
 	report := reporter.Report(ctx, admin)
 	t.Log("\n" + report)
 
-	for _, check := range []string{"Telegram webhook", "Google account: Dana", "Google account: Omer", "WhatsApp", "Backups", "Database schema"} {
+	for _, check := range []string{"Telegram webhook", "Google account: Dana", "Google account: Omer", "WhatsApp delivery reports", "Backups", "Database schema"} {
 		assert.Contains(t, report, "✅ **"+check+"**")
 	}
 	// RabbitMQ is still unreachable in this fixture, so exactly the two queue checks fail.
 	assert.Equal(t, 2, strings.Count(report, "❌"), "only the queue checks may fail:\n%s", report)
+}
+
+// V4-41, through the production wiring and a real database: in sandbox mode /doctor names the
+// member of the admin's household whose membership lapsed, from when their account last wrote,
+// with the message to send again; another household's member is never named.
+func TestHealthReporter_SandboxNamesLapsedMembers(t *testing.T) {
+	f := newDoctorFixture(t)
+	ctx := context.Background()
+	wa := adapterName(t, f.channels, "sandbox")
+	householdtest.Member(t, f.dbClient, "+12025550111", "Noa", "family", "Levi", wa)
+	householdtest.Member(t, f.dbClient, "+12025550112", "Lior", "family", "Levi", wa)
+	householdtest.Member(t, f.dbClient, "+12025550113", "Stranger2", "family", "Cohen", wa)
+	setLastInbound := func(id string, at time.Time) {
+		require.NoError(t, f.dbClient.DB.Exec(`UPDATE channel_accounts SET last_inbound_at = ? WHERE channel = ? AND external_id = ?`, at, wa, id).Error)
+	}
+	setLastInbound("+12025550111", time.Now().Add(-5*24*time.Hour))
+	setLastInbound("+12025550112", time.Now().Add(-time.Hour))
+	setLastInbound("+12025550113", time.Now().Add(-5*24*time.Hour))
+
+	cfg, err := adapters.InMode(f.cfg.Channels, wa, "sandbox")
+	require.NoError(t, err)
+	cfg.WhatsApp.FromNumber = "whatsapp:+14155238886"
+	cfg.WhatsApp.SandboxJoin = "join plenty-tiger"
+	f.cfg.Channels = cfg
+	f.channels, err = adapters.Build(cfg, adapters.WithHTTPClient(&http.Client{
+		Transport: telegramAPI{t: t, webhookInfo: `{"url":"https://mypa.example/webhook/telegram","pending_update_count":0}`},
+	}))
+	require.NoError(t, err)
+
+	reporter := newHealthReporter(f.cfg, f.channels, f.store, f.dbClient, f.oauth, f.backupDir)
+	admin, err := f.dbClient.GetUser("1001")
+	require.NoError(t, err)
+	report := reporter.Report(ctx, admin)
+	t.Log("\n" + report)
+
+	assert.Contains(t, report, "Sandbox, on Twilio's shared number")
+	assert.Contains(t, report, "⚠️ **WhatsApp sandbox: Noa**")
+	assert.Contains(t, report, "5 days ago")
+	assert.Contains(t, report, "`join plenty-tiger`")
+	assert.NotContains(t, report, "WhatsApp sandbox: Lior", "a member who wrote within 72 hours is fine")
+	assert.Contains(t, report, "**Telegram webhook**", "every adapter keeps its own check")
+	assert.NotContains(t, report, "Stranger2", "another household's member is never named")
+}
+
+// adapterName is the name of the registered adapter that has the given mode.
+func adapterName(t *testing.T, reg *channel.Registry, mode string) string {
+	t.Helper()
+	for name, modes := range adapters.Modes() {
+		for _, m := range modes {
+			if m == mode {
+				_, ok := reg.Get(name)
+				require.True(t, ok)
+				return name
+			}
+		}
+	}
+	t.Fatalf("no adapter has mode %q", mode)
+	return ""
+}
+
+// Every shipped adapter has a /doctor check of its own, so a changed check signature cannot drop
+// one from the report unnoticed (V4-41 changed it).
+func TestChannelChecks_EveryAdapterHasOne(t *testing.T) {
+	reg, err := adapters.Build(adapters.Config{})
+	require.NoError(t, err)
+	for _, a := range reg.All() {
+		_, ok := a.(healthChecker)
+		assert.True(t, ok, "adapter %q has no HealthCheck(channel.ActivitySource)", a.Name())
+	}
+	assert.Len(t, channelChecks(reg, nil), len(reg.All()))
 }

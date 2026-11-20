@@ -172,7 +172,21 @@ func (e *Engine) cmdLinkIssue(ctx context.Context, user *models.User, msg channe
 	auditLink(ctx, "issued", "")
 	return "", e.sendMessage(ctx, msg, fmt.Sprintf(
 		"🔗 To add another account, send this from it to me within 10 minutes:\n\n/link %s\n\n"+
-			"Then confirm here. The code works once. Never send it to anyone: whoever types it asks to join your account.", code))
+			"Then confirm here. The code works once. Never send it to anyone: whoever types it asks to join your account.%s",
+		code, e.joinStepsBesides(msg.Channel)))
+}
+
+// joinStepsBesides is what a person does on each other configured channel before their first
+// message reaches MyPA there (V4-41: a sandbox's join message), as paragraphs to append, or "".
+func (e *Engine) joinStepsBesides(here string) string {
+	var b strings.Builder
+	for _, s := range e.channels.JoinSteps() {
+		if s.Channel != here {
+			b.WriteString("\n\n")
+			b.WriteString(s.Step)
+		}
+	}
+	return b.String()
 }
 
 // redeemLinkCode handles "/link CODE" from any account: the code is claimed for this account and

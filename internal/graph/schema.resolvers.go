@@ -1571,6 +1571,22 @@ func (r *queryResolver) ActivePairingCodes(ctx context.Context) ([]*model.Pairin
 	return codes, nil
 }
 
+// JoinSteps is the resolver for the joinSteps field.
+func (r *queryResolver) JoinSteps(ctx context.Context) ([]*model.JoinStep, error) {
+	// Shown where pairing codes are issued, so the same permission.
+	if _, _, err := r.callerMay(ctx, identity.ManageMembers); err != nil {
+		return nil, err
+	}
+	steps := []*model.JoinStep{}
+	if r.JoinStepsOf == nil {
+		return steps, nil
+	}
+	for _, s := range r.JoinStepsOf() {
+		steps = append(steps, &model.JoinStep{Channel: s.Channel, Step: s.Step})
+	}
+	return steps, nil
+}
+
 // TopicMemories is the resolver for the topicMemories field.
 func (r *queryResolver) TopicMemories(ctx context.Context, topic *string, includeSuperseded *bool) ([]*model.TopicMemory, error) {
 	_, hs, err := r.caller(ctx)

@@ -1,0 +1,16 @@
+=== message 1: whatsapp to=whatsapp:+12025550101 from=whatsapp:+14155238886
+🔒 *Interactive Security Confirmation Required*
+
+The assistant tried to perform a sensitive action (```delete_task```) after reading external data (webpage:fetch_webpage).
+To prevent indirect prompt injection, this modification was NOT applied automatically.
+
+👉 If you intended to make this change, please reply with:
+```CONFIRM DELETE_TASK```
+=== message 2: whatsapp to=whatsapp:+12025550101 from=whatsapp:+14155238886
+⚠️ Confirmation mismatch. Pending action is 'delete_task', but you confirmed 'delete_calendar_event'.
+=== message 3: whatsapp to=whatsapp:+12025550101 from=whatsapp:+14155238886
+✅ *Confirmed and Executed:* ```delete_task```
+
+Task task-42 deleted.
+=== message 4: whatsapp to=whatsapp:+12025550101 from=whatsapp:+14155238886
+⚠️ No pending confirmation found or it has expired.

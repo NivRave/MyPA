@@ -102,15 +102,17 @@ func TestDashboard_TheLinkIsNeverLogged(t *testing.T) {
 // exist yet (BL-46), so a guest gets nothing on any channel: no command, no tool, no model call.
 func TestGuest_GetsNothingUntilSharingByName(t *testing.T) {
 	for _, ch := range fixtures {
-		t.Run(ch.name, func(t *testing.T) {
-			e := newEnv(t, ch)
-			g := e.member(1, "guest", "Levi")
-			for _, text := range []string{"What is on the family calendar?", "/dashboard", "/accounts", "/backup"} {
-				e.says(g, text)
-				assert.Contains(t, e.lastText(), "not set up yet", text)
-			}
-			assert.Empty(t, e.model.requests(), "a guest's message never reaches the model")
-			assert.Empty(t, tokenIn(strings.Join(e.texts(), "\n")))
-		})
+		for _, mode := range ch.modeNames() {
+			t.Run(label(ch, mode), func(t *testing.T) {
+				e := newEnv(t, ch, mode)
+				g := e.member(1, "guest", "Levi")
+				for _, text := range []string{"What is on the family calendar?", "/dashboard", "/accounts", "/backup"} {
+					e.says(g, text)
+					assert.Contains(t, e.lastText(), "not set up yet", text)
+				}
+				assert.Empty(t, e.model.requests(), "a guest's message never reaches the model")
+				assert.Empty(t, tokenIn(strings.Join(e.texts(), "\n")))
+			})
+		}
 	}
 }
