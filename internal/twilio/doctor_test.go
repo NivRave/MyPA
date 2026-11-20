@@ -193,6 +193,16 @@ func TestWhatsAppCheck_DeliveryReports(t *testing.T) {
 
 	on := byCheck(t, sandboxCheck().Run(context.Background(), adminScope), "WhatsApp delivery reports")
 	assert.Equal(t, doctor.StatusOK, on.Status)
+
+	// A sandbox without delivery reports reports both: the delivery-report warning and the
+	// sandbox's own problems, each with its next step.
+	sb := sandboxCheck()
+	sb.StatusCallbackURL = ""
+	sb.SandboxJoin = ""
+	results := sb.Run(context.Background(), adminScope)
+	requireProblem(t, byCheck(t, results, "WhatsApp delivery reports"), doctor.StatusWarn, "Delivery failures")
+	requireProblem(t, byCheck(t, results, "WhatsApp join message"), doctor.StatusWarn, "invitations")
+	assert.Equal(t, doctor.StatusInfo, byCheck(t, results, "WhatsApp mode").Status)
 }
 
 // TestAdapter_HealthCheckFollowsTheMode: the adapter's own check reads its settings and the

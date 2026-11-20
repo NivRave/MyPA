@@ -462,7 +462,7 @@ On both channels a voice note is transcribed, echoed, then answered; an approval
 
 - **Shape.** `doctor.Doctor` runs a list of independent `Check`s concurrently (15 s each; a check that panics or hangs becomes a failed line and never blocks the others) and renders one Markdown report: failures and warnings first, each with a `➡️` next step, then what passed, then notes. The engine knows only the `orchestrator.HealthReporter` port (`WithHealthReporter`); [`cmd/mypa/doctor.go`](./cmd/mypa/doctor.go) binds each check to the real system. Channel checks belong to their adapters (`HealthCheck(channel.ActivitySource)`: `telegram.WebhookCheck`, `twilio.WhatsAppCheck`, *V4-31*; the activity source, bound to the database in `cmd/mypa/doctor.go`, says when each of a household's accounts on the channel last wrote, *V4-41*) and come first in the report, in registration order; `internal/doctor` exports its wording helpers (`Reason`, `HostOf`, `Plural`, `Ago`, `MaskTail`) so they read the same. Every check takes its inputs as functions, so each failure is reproduced in tests without infrastructure.
 - **Healthy** means no failed check. Warnings and notes do not make an install unhealthy.
-- **Scope.** Install-level checks are the same for every admin. The Google check covers only the members of the admin's own household, listed by household ID (V4-30), and names a member without a stored name by the last four characters of their ID, never by a phone number.
+- **Scope.** Install-level checks are the same for every admin. The Google check and the WhatsApp sandbox check (*V4-41*: whose membership has lapsed) cover only the members of the admin's own household, listed by household ID (V4-30), and name a member without a stored name by the last four characters of their ID, never by a phone number.
 
 | Check | Source | Fails when | Warns when |
 | :--- | :--- | :--- | :--- |
@@ -1198,7 +1198,7 @@ Follow this canonical 8-section playbook whenever adding a new feature or life d
 3. **Client Error Boundary (`dashboard/src/app/error.tsx`):**
    - Implement React client error boundaries displaying user-friendly error diagnostics with a recovery button.
 4. **Comprehensive Vitest Component Test Suites:**
-   - Maintain and run Vitest component tests (7 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`, `signin.test.tsx`, `settings_page.test.tsx`, `packs.test.tsx`, `join_steps.test.tsx`).
+   - Maintain and run Vitest component tests (8 suites in `dashboard/src/__tests__/`: `graphql_client.test.ts`, `error_boundary.test.tsx`, `baby_page.test.tsx`, `domain_pages.test.tsx`, `signin.test.tsx`, `settings_page.test.tsx`, `packs.test.tsx`, `join_steps.test.tsx`).
    - Run tests before completion: `npm test --prefix dashboard`.
 5. **Full Container Build Verification:**
    - Always verify the complete multi-stage container build succeeds: `docker-compose build`.
