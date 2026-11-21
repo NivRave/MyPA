@@ -398,6 +398,12 @@ func (c *Client) MergeOnLink(ctx context.Context, tokenID, claimantChannel, clai
 			return fmt.Errorf("move proactive_deliveries: %w", res.Error)
 		}
 		out.Rows += res.RowsAffected
+		// V4-04: the merged person's tokens are the survivor's, so a merge does not reset a cap.
+		res = tx.Exec(`UPDATE public.model_usage SET person_id = ? WHERE person_id = ?`, survivor, merged)
+		if res.Error != nil {
+			return fmt.Errorf("move model_usage: %w", res.Error)
+		}
+		out.Rows += res.RowsAffected
 		if err := tx.Exec(`DELETE FROM people WHERE id = ?`, merged).Error; err != nil {
 			return err
 		}

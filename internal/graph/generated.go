@@ -305,6 +305,7 @@ type ComplexityRoot struct {
 		SharedTasks           func(childComplexity int, topic *string, isCompleted *bool) int
 		TopicCalendarConfigs  func(childComplexity int, userID *string) int
 		TopicMemories         func(childComplexity int, topic *string, includeSuperseded *bool) int
+		Usage                 func(childComplexity int, days *int) int
 		UserPreference        func(childComplexity int, userID string) int
 		UserSessions          func(childComplexity int) int
 		Users                 func(childComplexity int) int
@@ -397,6 +398,37 @@ type ComplexityRoot struct {
 		UserID          func(childComplexity int) int
 		ValidFrom       func(childComplexity int) int
 		ValidUntil      func(childComplexity int) int
+	}
+
+	TurnUsage struct {
+		Calls        func(childComplexity int) int
+		InputTokens  func(childComplexity int) int
+		Name         func(childComplexity int) int
+		OutputTokens func(childComplexity int) int
+		PersonID     func(childComplexity int) int
+		Providers    func(childComplexity int) int
+		StartedAt    func(childComplexity int) int
+		TurnID       func(childComplexity int) int
+	}
+
+	Usage struct {
+		Days               func(childComplexity int) int
+		InstallDailyCap    func(childComplexity int) int
+		InstallTokensToday func(childComplexity int) int
+		MyTokensToday      func(childComplexity int) int
+		PersonDailyCap     func(childComplexity int) int
+		TimeZone           func(childComplexity int) int
+		Turns              func(childComplexity int) int
+	}
+
+	UsageDay struct {
+		Calls        func(childComplexity int) int
+		Day          func(childComplexity int) int
+		InputTokens  func(childComplexity int) int
+		Name         func(childComplexity int) int
+		OutputTokens func(childComplexity int) int
+		PersonID     func(childComplexity int) int
+		Turns        func(childComplexity int) int
 	}
 
 	User struct {
@@ -506,6 +538,7 @@ type QueryResolver interface {
 	MutationLogs(ctx context.Context, topic *string, limit *int) ([]*model.MutationLog, error)
 	AuditSessions(ctx context.Context, limit *int) ([]*model.AuditSession, error)
 	UserSessions(ctx context.Context) ([]*model.UserSessionSummary, error)
+	Usage(ctx context.Context, days *int) (*model.Usage, error)
 }
 
 // endregion ************************** generated!.gotpl **************************
@@ -2005,6 +2038,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.TopicMemories(childComplexity, args["topic"].(*string), args["includeSuperseded"].(*bool)), true
+	case "Query.usage":
+		if e.ComplexityRoot.Query.Usage == nil {
+			break
+		}
+
+		args, err := ec.field_Query_usage_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.Usage(childComplexity, args["days"].(*int)), true
 	case "Query.userPreference":
 		if e.ComplexityRoot.Query.UserPreference == nil {
 			break
@@ -2460,6 +2504,141 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.TopicMemory.ValidUntil(childComplexity), true
+
+	case "TurnUsage.calls":
+		if e.ComplexityRoot.TurnUsage.Calls == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TurnUsage.Calls(childComplexity), true
+	case "TurnUsage.inputTokens":
+		if e.ComplexityRoot.TurnUsage.InputTokens == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TurnUsage.InputTokens(childComplexity), true
+	case "TurnUsage.name":
+		if e.ComplexityRoot.TurnUsage.Name == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TurnUsage.Name(childComplexity), true
+	case "TurnUsage.outputTokens":
+		if e.ComplexityRoot.TurnUsage.OutputTokens == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TurnUsage.OutputTokens(childComplexity), true
+	case "TurnUsage.personId":
+		if e.ComplexityRoot.TurnUsage.PersonID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TurnUsage.PersonID(childComplexity), true
+	case "TurnUsage.providers":
+		if e.ComplexityRoot.TurnUsage.Providers == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TurnUsage.Providers(childComplexity), true
+	case "TurnUsage.startedAt":
+		if e.ComplexityRoot.TurnUsage.StartedAt == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TurnUsage.StartedAt(childComplexity), true
+	case "TurnUsage.turnId":
+		if e.ComplexityRoot.TurnUsage.TurnID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TurnUsage.TurnID(childComplexity), true
+
+	case "Usage.days":
+		if e.ComplexityRoot.Usage.Days == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Usage.Days(childComplexity), true
+	case "Usage.installDailyCap":
+		if e.ComplexityRoot.Usage.InstallDailyCap == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Usage.InstallDailyCap(childComplexity), true
+	case "Usage.installTokensToday":
+		if e.ComplexityRoot.Usage.InstallTokensToday == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Usage.InstallTokensToday(childComplexity), true
+	case "Usage.myTokensToday":
+		if e.ComplexityRoot.Usage.MyTokensToday == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Usage.MyTokensToday(childComplexity), true
+	case "Usage.personDailyCap":
+		if e.ComplexityRoot.Usage.PersonDailyCap == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Usage.PersonDailyCap(childComplexity), true
+	case "Usage.timeZone":
+		if e.ComplexityRoot.Usage.TimeZone == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Usage.TimeZone(childComplexity), true
+	case "Usage.turns":
+		if e.ComplexityRoot.Usage.Turns == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Usage.Turns(childComplexity), true
+
+	case "UsageDay.calls":
+		if e.ComplexityRoot.UsageDay.Calls == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UsageDay.Calls(childComplexity), true
+	case "UsageDay.day":
+		if e.ComplexityRoot.UsageDay.Day == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UsageDay.Day(childComplexity), true
+	case "UsageDay.inputTokens":
+		if e.ComplexityRoot.UsageDay.InputTokens == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UsageDay.InputTokens(childComplexity), true
+	case "UsageDay.name":
+		if e.ComplexityRoot.UsageDay.Name == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UsageDay.Name(childComplexity), true
+	case "UsageDay.outputTokens":
+		if e.ComplexityRoot.UsageDay.OutputTokens == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UsageDay.OutputTokens(childComplexity), true
+	case "UsageDay.personId":
+		if e.ComplexityRoot.UsageDay.PersonID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UsageDay.PersonID(childComplexity), true
+	case "UsageDay.turns":
+		if e.ComplexityRoot.UsageDay.Turns == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UsageDay.Turns(childComplexity), true
 
 	case "User.createdAt":
 		if e.ComplexityRoot.User.CreatedAt == nil {
@@ -3334,6 +3513,68 @@ func (ec *executionContext) childFields_TopicMemory(ctx context.Context, field g
 		return ec.fieldContext_TopicMemory_createdAt(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type TopicMemory", field.Name)
+}
+
+func (ec *executionContext) childFields_TurnUsage(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "turnId":
+		return ec.fieldContext_TurnUsage_turnId(ctx, field)
+	case "personId":
+		return ec.fieldContext_TurnUsage_personId(ctx, field)
+	case "name":
+		return ec.fieldContext_TurnUsage_name(ctx, field)
+	case "startedAt":
+		return ec.fieldContext_TurnUsage_startedAt(ctx, field)
+	case "inputTokens":
+		return ec.fieldContext_TurnUsage_inputTokens(ctx, field)
+	case "outputTokens":
+		return ec.fieldContext_TurnUsage_outputTokens(ctx, field)
+	case "calls":
+		return ec.fieldContext_TurnUsage_calls(ctx, field)
+	case "providers":
+		return ec.fieldContext_TurnUsage_providers(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type TurnUsage", field.Name)
+}
+
+func (ec *executionContext) childFields_Usage(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "timeZone":
+		return ec.fieldContext_Usage_timeZone(ctx, field)
+	case "personDailyCap":
+		return ec.fieldContext_Usage_personDailyCap(ctx, field)
+	case "installDailyCap":
+		return ec.fieldContext_Usage_installDailyCap(ctx, field)
+	case "myTokensToday":
+		return ec.fieldContext_Usage_myTokensToday(ctx, field)
+	case "installTokensToday":
+		return ec.fieldContext_Usage_installTokensToday(ctx, field)
+	case "days":
+		return ec.fieldContext_Usage_days(ctx, field)
+	case "turns":
+		return ec.fieldContext_Usage_turns(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type Usage", field.Name)
+}
+
+func (ec *executionContext) childFields_UsageDay(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "day":
+		return ec.fieldContext_UsageDay_day(ctx, field)
+	case "personId":
+		return ec.fieldContext_UsageDay_personId(ctx, field)
+	case "name":
+		return ec.fieldContext_UsageDay_name(ctx, field)
+	case "inputTokens":
+		return ec.fieldContext_UsageDay_inputTokens(ctx, field)
+	case "outputTokens":
+		return ec.fieldContext_UsageDay_outputTokens(ctx, field)
+	case "calls":
+		return ec.fieldContext_UsageDay_calls(ctx, field)
+	case "turns":
+		return ec.fieldContext_UsageDay_turns(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type UsageDay", field.Name)
 }
 
 func (ec *executionContext) childFields_User(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -4967,6 +5208,20 @@ func (ec *executionContext) field_Query_topicMemories_args(ctx context.Context, 
 		return nil, err
 	}
 	args["includeSuperseded"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_usage_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "days",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["days"] = arg0
 	return args, nil
 }
 
@@ -10992,6 +11247,50 @@ func (ec *executionContext) fieldContext_Query_userSessions(_ context.Context, f
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_usage(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_usage(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().Usage(ctx, fc.Args["days"].(*int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *model.Usage) graphql.Marshaler {
+			return ec.marshalNUsage2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐUsage(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_usage(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Usage(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_usage_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query___type(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -12676,6 +12975,530 @@ func (ec *executionContext) _TopicMemory_createdAt(ctx context.Context, field gr
 }
 func (ec *executionContext) fieldContext_TopicMemory_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("TopicMemory", field, false, false, "Time")
+}
+
+func (ec *executionContext) _TurnUsage_turnId(ctx context.Context, field graphql.CollectedField, obj *model.TurnUsage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_TurnUsage_turnId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TurnID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_TurnUsage_turnId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("TurnUsage", field, false, false, "ID")
+}
+
+func (ec *executionContext) _TurnUsage_personId(ctx context.Context, field graphql.CollectedField, obj *model.TurnUsage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_TurnUsage_personId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PersonID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_TurnUsage_personId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("TurnUsage", field, false, false, "ID")
+}
+
+func (ec *executionContext) _TurnUsage_name(ctx context.Context, field graphql.CollectedField, obj *model.TurnUsage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_TurnUsage_name(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_TurnUsage_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("TurnUsage", field, false, false, "String")
+}
+
+func (ec *executionContext) _TurnUsage_startedAt(ctx context.Context, field graphql.CollectedField, obj *model.TurnUsage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_TurnUsage_startedAt(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.StartedAt, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v time.Time) graphql.Marshaler {
+			return ec.marshalNTime2timeᚐTime(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_TurnUsage_startedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("TurnUsage", field, false, false, "Time")
+}
+
+func (ec *executionContext) _TurnUsage_inputTokens(ctx context.Context, field graphql.CollectedField, obj *model.TurnUsage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_TurnUsage_inputTokens(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.InputTokens, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_TurnUsage_inputTokens(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("TurnUsage", field, false, false, "Int")
+}
+
+func (ec *executionContext) _TurnUsage_outputTokens(ctx context.Context, field graphql.CollectedField, obj *model.TurnUsage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_TurnUsage_outputTokens(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.OutputTokens, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_TurnUsage_outputTokens(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("TurnUsage", field, false, false, "Int")
+}
+
+func (ec *executionContext) _TurnUsage_calls(ctx context.Context, field graphql.CollectedField, obj *model.TurnUsage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_TurnUsage_calls(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Calls, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_TurnUsage_calls(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("TurnUsage", field, false, false, "Int")
+}
+
+func (ec *executionContext) _TurnUsage_providers(ctx context.Context, field graphql.CollectedField, obj *model.TurnUsage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_TurnUsage_providers(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Providers, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_TurnUsage_providers(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("TurnUsage", field, false, false, "String")
+}
+
+func (ec *executionContext) _Usage_timeZone(ctx context.Context, field graphql.CollectedField, obj *model.Usage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Usage_timeZone(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TimeZone, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Usage_timeZone(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Usage", field, false, false, "String")
+}
+
+func (ec *executionContext) _Usage_personDailyCap(ctx context.Context, field graphql.CollectedField, obj *model.Usage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Usage_personDailyCap(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PersonDailyCap, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Usage_personDailyCap(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Usage", field, false, false, "Int")
+}
+
+func (ec *executionContext) _Usage_installDailyCap(ctx context.Context, field graphql.CollectedField, obj *model.Usage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Usage_installDailyCap(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.InstallDailyCap, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Usage_installDailyCap(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Usage", field, false, false, "Int")
+}
+
+func (ec *executionContext) _Usage_myTokensToday(ctx context.Context, field graphql.CollectedField, obj *model.Usage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Usage_myTokensToday(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.MyTokensToday, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Usage_myTokensToday(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Usage", field, false, false, "Int")
+}
+
+func (ec *executionContext) _Usage_installTokensToday(ctx context.Context, field graphql.CollectedField, obj *model.Usage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Usage_installTokensToday(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.InstallTokensToday, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *int) graphql.Marshaler {
+			return ec.marshalOInt2ᚖint(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Usage_installTokensToday(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Usage", field, false, false, "Int")
+}
+
+func (ec *executionContext) _Usage_days(ctx context.Context, field graphql.CollectedField, obj *model.Usage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Usage_days(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Days, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*model.UsageDay) graphql.Marshaler {
+			return ec.marshalNUsageDay2ᚕᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐUsageDayᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Usage_days(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Usage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_UsageDay(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Usage_turns(ctx context.Context, field graphql.CollectedField, obj *model.Usage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Usage_turns(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Turns, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*model.TurnUsage) graphql.Marshaler {
+			return ec.marshalNTurnUsage2ᚕᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐTurnUsageᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Usage_turns(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Usage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_TurnUsage(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _UsageDay_day(ctx context.Context, field graphql.CollectedField, obj *model.UsageDay) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UsageDay_day(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Day, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UsageDay_day(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("UsageDay", field, false, false, "String")
+}
+
+func (ec *executionContext) _UsageDay_personId(ctx context.Context, field graphql.CollectedField, obj *model.UsageDay) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UsageDay_personId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PersonID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UsageDay_personId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("UsageDay", field, false, false, "ID")
+}
+
+func (ec *executionContext) _UsageDay_name(ctx context.Context, field graphql.CollectedField, obj *model.UsageDay) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UsageDay_name(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UsageDay_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("UsageDay", field, false, false, "String")
+}
+
+func (ec *executionContext) _UsageDay_inputTokens(ctx context.Context, field graphql.CollectedField, obj *model.UsageDay) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UsageDay_inputTokens(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.InputTokens, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UsageDay_inputTokens(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("UsageDay", field, false, false, "Int")
+}
+
+func (ec *executionContext) _UsageDay_outputTokens(ctx context.Context, field graphql.CollectedField, obj *model.UsageDay) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UsageDay_outputTokens(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.OutputTokens, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UsageDay_outputTokens(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("UsageDay", field, false, false, "Int")
+}
+
+func (ec *executionContext) _UsageDay_calls(ctx context.Context, field graphql.CollectedField, obj *model.UsageDay) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UsageDay_calls(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Calls, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UsageDay_calls(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("UsageDay", field, false, false, "Int")
+}
+
+func (ec *executionContext) _UsageDay_turns(ctx context.Context, field graphql.CollectedField, obj *model.UsageDay) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UsageDay_turns(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Turns, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_UsageDay_turns(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("UsageDay", field, false, false, "Int")
 }
 
 func (ec *executionContext) _User_id(ctx context.Context, field graphql.CollectedField, obj *model.User) (ret graphql.Marshaler) {
@@ -16139,6 +16962,12 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 				func(ctx context.Context) graphql.Marshaler {
 					return ec._Query_userSessions(ctx, field)
 				})
+		case "usage":
+			out.ResolveRootConcurrently(innerCtx, ec.OperationContext, i,
+				true, true,
+				func(ctx context.Context) graphql.Marshaler {
+					return ec._Query_usage(ctx, field)
+				})
 		case "__type":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Query___type(ctx, field)
@@ -16668,6 +17497,200 @@ func (ec *executionContext) _TopicMemory(ctx context.Context, sel ast.SelectionS
 			}
 		case "createdAt":
 			out.Values[i] = ec._TopicMemory_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	if n := len(deferred.Defers); n > 0 {
+		atomic.AddInt32(&ec.Deferred, int32(min(n, math.MaxInt32)))
+		ec.ProcessDeferredGroup(deferred)
+	}
+
+	return out
+}
+
+var turnUsageImplementors = []string{"TurnUsage"}
+
+func (ec *executionContext) _TurnUsage(ctx context.Context, sel ast.SelectionSet, obj *model.TurnUsage) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, turnUsageImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := graphql.NewDeferredGroup(ctx)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("TurnUsage")
+		case "turnId":
+			out.Values[i] = ec._TurnUsage_turnId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "personId":
+			out.Values[i] = ec._TurnUsage_personId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "name":
+			out.Values[i] = ec._TurnUsage_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "startedAt":
+			out.Values[i] = ec._TurnUsage_startedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "inputTokens":
+			out.Values[i] = ec._TurnUsage_inputTokens(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "outputTokens":
+			out.Values[i] = ec._TurnUsage_outputTokens(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "calls":
+			out.Values[i] = ec._TurnUsage_calls(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "providers":
+			out.Values[i] = ec._TurnUsage_providers(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	if n := len(deferred.Defers); n > 0 {
+		atomic.AddInt32(&ec.Deferred, int32(min(n, math.MaxInt32)))
+		ec.ProcessDeferredGroup(deferred)
+	}
+
+	return out
+}
+
+var usageImplementors = []string{"Usage"}
+
+func (ec *executionContext) _Usage(ctx context.Context, sel ast.SelectionSet, obj *model.Usage) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, usageImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := graphql.NewDeferredGroup(ctx)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Usage")
+		case "timeZone":
+			out.Values[i] = ec._Usage_timeZone(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "personDailyCap":
+			out.Values[i] = ec._Usage_personDailyCap(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "installDailyCap":
+			out.Values[i] = ec._Usage_installDailyCap(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "myTokensToday":
+			out.Values[i] = ec._Usage_myTokensToday(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "installTokensToday":
+			out.Values[i] = ec._Usage_installTokensToday(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "days":
+			out.Values[i] = ec._Usage_days(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "turns":
+			out.Values[i] = ec._Usage_turns(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	if n := len(deferred.Defers); n > 0 {
+		atomic.AddInt32(&ec.Deferred, int32(min(n, math.MaxInt32)))
+		ec.ProcessDeferredGroup(deferred)
+	}
+
+	return out
+}
+
+var usageDayImplementors = []string{"UsageDay"}
+
+func (ec *executionContext) _UsageDay(ctx context.Context, sel ast.SelectionSet, obj *model.UsageDay) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, usageDayImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := graphql.NewDeferredGroup(ctx)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("UsageDay")
+		case "day":
+			out.Values[i] = ec._UsageDay_day(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "personId":
+			out.Values[i] = ec._UsageDay_personId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "name":
+			out.Values[i] = ec._UsageDay_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "inputTokens":
+			out.Values[i] = ec._UsageDay_inputTokens(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "outputTokens":
+			out.Values[i] = ec._UsageDay_outputTokens(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "calls":
+			out.Values[i] = ec._UsageDay_calls(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "turns":
+			out.Values[i] = ec._UsageDay_turns(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -17962,6 +18985,62 @@ func (ec *executionContext) marshalNTopicMemory2ᚖgithubᚗcomᚋnivikᚋmypa�
 		return graphql.Null
 	}
 	return ec._TopicMemory(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNTurnUsage2ᚕᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐTurnUsageᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.TurnUsage) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNTurnUsage2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐTurnUsage(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNTurnUsage2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐTurnUsage(ctx context.Context, sel ast.SelectionSet, v *model.TurnUsage) graphql.Marshaler {
+	if v == nil {
+		graphql.AddInvalidNullError(ctx, "TurnUsage!")
+		return graphql.Null
+	}
+	return ec._TurnUsage(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNUsage2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐUsage(ctx context.Context, sel ast.SelectionSet, v *model.Usage) graphql.Marshaler {
+	if v == nil {
+		graphql.AddInvalidNullError(ctx, "Usage!")
+		return graphql.Null
+	}
+	return ec._Usage(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNUsageDay2ᚕᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐUsageDayᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.UsageDay) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNUsageDay2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐUsageDay(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNUsageDay2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐUsageDay(ctx context.Context, sel ast.SelectionSet, v *model.UsageDay) graphql.Marshaler {
+	if v == nil {
+		graphql.AddInvalidNullError(ctx, "UsageDay!")
+		return graphql.Null
+	}
+	return ec._UsageDay(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalNUser2ᚕᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐUserᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.User) graphql.Marshaler {

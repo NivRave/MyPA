@@ -1,0 +1,8 @@
+=== message 1: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
+⏸️ You have used today's allowance of the assistant (1000 of 1000 tokens). It starts again at 00:00 (UTC). Commands such as /help and /undo still work.
+=== message 2: whatsapp to=whatsapp:+12025550101 from=whatsapp:+12025550199
+↩️ *Successfully Undone!*
+
+Removed reminder "Call the dentist".
+=== message 3: whatsapp to=whatsapp:+12025550102 from=whatsapp:+12025550199
+Here is your plan.

@@ -94,6 +94,10 @@ var unscopedMethods = map[string]string{
 	"EmbeddingStatus":     "install-level counts for the offline `mypa embeddings status`",
 	"CheckEmbeddingSpace": "install-level start-up check of the recorded embedding model; changes no memory",
 	"Reembed":             "offline `mypa embeddings reembed`: every household's vectors move to one model together",
+	// V4-04: usage rows are one person's model calls, written by the engine for the turn's own
+	// person; the cap check reads totals only (the turn's person and the install), never rows.
+	"RecordModelUsage": "the engine records a model call for the person of the turn that made it",
+	"TokensSince":      "the daily caps: the turn's own person's total and the install's, no rows",
 }
 
 var scopeType = reflect.TypeOf(identity.Scope{})

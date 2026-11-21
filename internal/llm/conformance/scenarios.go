@@ -373,6 +373,36 @@ func Scenarios() []Scenario {
 			},
 		},
 		{
+			// V4-04: usage is recorded per call and the daily caps count it, so every provider
+			// must report what a call cost, in its own fields (Gemini's thoughts and Anthropic's
+			// cache reads included), and which model answered.
+			ID: "usage", Title: "Token usage is reported for each call (V4-04)",
+			Run: func(ctx context.Context, env Env) error {
+				var c checks
+				if !env.Live() {
+					env.Fake.Answer(Reply{Text: "ok", InputTokens: 120, OutputTokens: 7})
+				}
+				resp, err := env.Provider.Chat(ctx, llm.Request{System: "Answer briefly.", Message: "Say hello."})
+				if err != nil {
+					return err
+				}
+				c.that(resp.Model == env.Provider.Model(), "the response names model %q, configured %q", resp.Model, env.Provider.Model())
+				if env.Live() {
+					c.that(resp.Usage.InputTokens > 0 && resp.Usage.OutputTokens > 0, "the provider reported no usage: %+v", resp.Usage)
+					return c.err()
+				}
+				c.that(resp.Usage == llm.Usage{InputTokens: 120, OutputTokens: 7}, "the usage came back as %+v, want 120 in and 7 out", resp.Usage)
+				// A tool call costs tokens too.
+				env.Fake.Answer(Reply{Call: &Call{Name: reminderTool.Name, Args: map[string]any{"text": "milk"}}, InputTokens: 300, OutputTokens: 15})
+				resp, err = env.Provider.Chat(ctx, llm.Request{System: "s", Message: "remind me", Tools: []*genai.FunctionDeclaration{reminderTool}})
+				if err != nil {
+					return err
+				}
+				c.that(resp.Usage == llm.Usage{InputTokens: 300, OutputTokens: 15}, "a tool call's usage came back as %+v", resp.Usage)
+				return c.err()
+			},
+		},
+		{
 			ID: "blocked", Title: "A safety block is reported as blocked, never failed over", FakeOnly: true,
 			Run: func(ctx context.Context, env Env) error {
 				env.Fake.Answer(Reply{Blocked: true})

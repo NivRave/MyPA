@@ -456,7 +456,9 @@ type env struct {
 	// deliveries are the delivery policy's records (V4-33): every message the assistant starts
 	// itself goes through the production policy, over this store.
 	deliveries *proactivetest.Store
-	seq        int
+	// usage is the engine's usage meter (V4-04), under conformanceCaps.
+	usage *fakeUsage
+	seq   int
 	// compared is set once the scenario has compared its transcript (see golden).
 	compared bool
 	// redact replaces values that differ on every run (a random code) in the transcript.
@@ -486,6 +488,7 @@ func newEnv(t *testing.T, ch channel, mode string) *env {
 		undo:  &fakeDurability{},
 
 		deliveries: proactivetest.NewStore(),
+		usage:      &fakeUsage{},
 	}
 
 	oauth := calendar.NewOAuthConfig(&config.GoogleConfig{
@@ -522,6 +525,7 @@ func newEnv(t *testing.T, ch channel, mode string) *env {
 	e.engine.WithAccounts(e.db, []byte(conformanceLinkSecret))
 	e.engine.WithSignIn(e.db, "") // V4-35: the default, local dashboard address
 	e.engine.WithDelivery(proactive.New(e.deliveries, e.db, e.channels))
+	e.engine.WithUsage(e.usage, conformanceCaps) // V4-04: every scenario runs under the caps
 
 	t.Cleanup(func() {
 		e.engine.Wait()

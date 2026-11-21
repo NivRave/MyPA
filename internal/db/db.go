@@ -107,6 +107,8 @@ func AutoMigrateSchema(db *gorm.DB) error {
 		&models.Session{},
 		// V4-33: messages the assistant starts itself.
 		&models.ProactiveDelivery{},
+		// V4-04: the tokens of each chat model call.
+		&models.ModelUsage{},
 		// V4-03: which embedding model made the stored memory vectors.
 		&models.EmbeddingSpace{},
 	}

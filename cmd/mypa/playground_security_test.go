@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/graph"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -18,7 +19,7 @@ func TestAdversarial_SEC02_PlaygroundDisabledInProduction(t *testing.T) {
 	os.Setenv("ENV", "production")
 
 	dbClient := &db.Client{}
-	mux := setupAppRouter(nil, nil, nil, dbClient, nil)
+	mux := setupAppRouter(nil, nil, nil, dbClient, nil, graph.UsageSettings{})
 
 	// 1. In production, GET /playground must return HTTP 404 Not Found
 	reqPlayground := httptest.NewRequest("GET", "/playground", nil)
@@ -43,7 +44,7 @@ func TestAdversarial_SEC02_PlaygroundAllowedInDevelopment(t *testing.T) {
 	os.Setenv("ENV", "development")
 
 	dbClient := &db.Client{}
-	mux := setupAppRouter(nil, nil, nil, dbClient, nil)
+	mux := setupAppRouter(nil, nil, nil, dbClient, nil, graph.UsageSettings{})
 
 	// In development, GET /playground returns 200 OK (HTML UI)
 	reqPlayground := httptest.NewRequest("GET", "/playground", nil)

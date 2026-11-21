@@ -162,6 +162,11 @@ type openAIReply struct {
 			} `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
+	// Usage is the call's counts; completion_tokens includes a reasoning model's reasoning.
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
 func (p *openAIProvider) Chat(ctx context.Context, req Request) (*Response, error) {
@@ -205,7 +210,8 @@ func (p *openAIProvider) Chat(ctx context.Context, req Request) (*Response, erro
 	if choice.Message.Refusal != nil && *choice.Message.Refusal != "" {
 		return nil, &ContentBlockedError{BlockReason: "refusal", Provider: p.name}
 	}
-	out := &Response{Provider: p.name}
+	out := &Response{Provider: p.name, Model: p.model,
+		Usage: Usage{InputTokens: reply.Usage.PromptTokens, OutputTokens: reply.Usage.CompletionTokens}}
 	for _, tc := range choice.Message.ToolCalls {
 		args := map[string]any{}
 		if strings.TrimSpace(tc.Function.Arguments) != "" {

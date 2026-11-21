@@ -29,6 +29,7 @@ var personKeyedTables = map[string]string{
 	"channel_accounts":       "a person's accounts on the channels; the household comes through the membership (V4-32)",
 	"sessions":               "a person's dashboard sign-ins; the household comes through the membership, read on every request (V4-35)",
 	"proactive_deliveries":   "messages the assistant started for one person; the household comes through the membership (V4-33)",
+	"model_usage":            "the tokens of one person's model calls; the household comes through the membership (V4-04)",
 }
 
 // identityHouseholdTables carry household_id from the start (V4-32): a membership names its

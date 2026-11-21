@@ -53,7 +53,23 @@ type Response struct {
 	IsError   bool
 	// Provider names the provider that answered, which after a failover is not the primary.
 	Provider string
+	// Model is the model that answered (the provider's configured one).
+	Model string
+	// Usage is what the call cost, as the provider reported it (V4-04).
+	Usage Usage
 }
+
+// Usage is the tokens one model call used (V4-04). Each adapter maps its API's fields onto these
+// two: everything the request sent (prompt, history, tools, cached input) is input, everything
+// the model produced (reply, tool calls, a thinking model's thoughts) is output. A provider that
+// reports nothing gives zero.
+type Usage struct {
+	InputTokens  int
+	OutputTokens int
+}
+
+// Total is input plus output.
+func (u Usage) Total() int { return u.InputTokens + u.OutputTokens }
 
 // ContentBlockedError indicates that the provider blocked the prompt or the reply under its
 // safety or content policy. It is final: the router never retries a blocked turn elsewhere.

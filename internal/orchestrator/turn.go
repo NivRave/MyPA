@@ -107,14 +107,14 @@ func (e *Engine) runTurn(ctx context.Context, user *models.User, msg channel.Inb
 
 	// 4. Call LLM
 	promptText := msg.Text
-	resp, err := e.llm.Chat(ctx, systemPrompt, history, promptText, media.Data, media.MimeType)
+	resp, err := e.model().Chat(ctx, systemPrompt, history, promptText, media.Data, media.MimeType)
 	if err != nil {
 		var blockedErr *llm.ContentBlockedError
 		if errors.As(err, &blockedErr) {
 			normalized := NormalizeHebrewPrepositionNumbers(promptText)
 			if normalized != promptText {
 				slog.Info("retrying LLM chat with normalized prompt after content block", "message_id", msg.MessageID, "text_len", len([]rune(promptText)), "reason", blockedErr.BlockReason) // P3-3: no content
-				resp, err = e.llm.Chat(ctx, systemPrompt, history, normalized, media.Data, media.MimeType)
+				resp, err = e.model().Chat(ctx, systemPrompt, history, normalized, media.Data, media.MimeType)
 			}
 		}
 	}
@@ -326,7 +326,7 @@ func (e *Engine) handleToolCalls(
 			"user_id", msg.Sender, "iteration", iteration)
 
 		// Force no-tools call to guarantee conversational termination
-		summaryResp, err := e.llm.Chat(llm.WithNoTools(ctx), systemPrompt, extendedHistory, toolLimitSummaryPrompt, nil, "")
+		summaryResp, err := e.model().Chat(llm.WithNoTools(ctx), systemPrompt, extendedHistory, toolLimitSummaryPrompt, nil, "")
 		if err != nil {
 			return "✅ Actions were executed (maximum 8 steps reached).", nil
 		}
@@ -339,7 +339,7 @@ func (e *Engine) handleToolCalls(
 	// Normal continuation prompt
 	prompt := continuationPrompt
 
-	summaryResp, err := e.llm.Chat(ctx, systemPrompt, extendedHistory, prompt, nil, "")
+	summaryResp, err := e.model().Chat(ctx, systemPrompt, extendedHistory, prompt, nil, "")
 	if err != nil {
 		var blockedErr *llm.ContentBlockedError
 		if errors.As(err, &blockedErr) {

@@ -2165,6 +2165,67 @@ func (r *queryResolver) UserSessions(ctx context.Context) ([]*model.UserSessionS
 	return out, nil
 }
 
+// Usage is the resolver for the usage field (V4-04). The rows are the repository's, which keeps
+// an adult to their own; the install's total is shown to the operator only.
+func (r *queryResolver) Usage(ctx context.Context, days *int) (*model.Usage, error) {
+	_, hs, err := r.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if r.DB == nil {
+		return nil, fmt.Errorf("usage unavailable")
+	}
+	n := 14
+	if days != nil && *days > 0 {
+		n = min(*days, 90)
+	}
+	loc := r.UsageView.location()
+	y, m, d := r.UsageView.now().In(loc).Date()
+	today := time.Date(y, m, d, 0, 0, 0, 0, loc)
+
+	mine, install, err := r.DB.TokensSince(ctx, hs.PersonID(), today)
+	if err != nil {
+		return nil, err
+	}
+	dayRows, err := r.DB.UsageByDay(ctx, hs, today.AddDate(0, 0, -(n-1)), loc.String())
+	if err != nil {
+		return nil, err
+	}
+	turnRows, err := r.DB.TurnUsage(ctx, hs, 20)
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]string{}
+	if members, err := r.DB.MembersOf(ctx, hs); err == nil {
+		for _, mb := range members {
+			names[mb.ID] = mb.Name
+		}
+	}
+
+	out := &model.Usage{
+		TimeZone:        loc.String(),
+		PersonDailyCap:  int(r.UsageView.PersonDaily),
+		InstallDailyCap: int(r.UsageView.InstallDaily),
+		MyTokensToday:   int(mine),
+		Days:            []*model.UsageDay{},
+		Turns:           []*model.TurnUsage{},
+	}
+	if hs.Operator() {
+		total := int(install)
+		out.InstallTokensToday = &total
+	}
+	for _, row := range dayRows {
+		out.Days = append(out.Days, &model.UsageDay{Day: row.Day, PersonID: row.PersonID, Name: names[row.PersonID],
+			InputTokens: int(row.InputTokens), OutputTokens: int(row.OutputTokens), Calls: row.Calls, Turns: row.Turns})
+	}
+	for _, row := range turnRows {
+		out.Turns = append(out.Turns, &model.TurnUsage{TurnID: row.TurnID, PersonID: row.PersonID, Name: names[row.PersonID],
+			StartedAt: row.StartedAt, InputTokens: int(row.InputTokens), OutputTokens: int(row.OutputTokens),
+			Calls: row.Calls, Providers: row.Providers})
+	}
+	return out, nil
+}
+
 // Mutation returns MutationResolver implementation.
 func (r *Resolver) Mutation() MutationResolver { return &mutationResolver{r} }
 

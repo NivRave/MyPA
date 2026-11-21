@@ -315,6 +315,51 @@ type TopicMemory struct {
 	CreatedAt       time.Time  `json:"createdAt"`
 }
 
+// The tokens of one turn: the sum of its model calls.
+type TurnUsage struct {
+	// The turn's audit session ID.
+	TurnID       string    `json:"turnId"`
+	PersonID     string    `json:"personId"`
+	Name         string    `json:"name"`
+	StartedAt    time.Time `json:"startedAt"`
+	InputTokens  int       `json:"inputTokens"`
+	OutputTokens int       `json:"outputTokens"`
+	Calls        int       `json:"calls"`
+	// Who answered the turn's calls, comma-separated (more than one after a failover).
+	Providers string `json:"providers"`
+}
+
+// Chat model token usage and the daily caps (V4-04). Days are calendar days on the install's clock.
+type Usage struct {
+	// The install's time zone (DEFAULT_TIMEZONE): days are counted, and the caps start again at 00:00, on it.
+	TimeZone string `json:"timeZone"`
+	// The daily cap per person, in tokens (LLM_DAILY_TOKENS_PER_PERSON); 0 means no cap.
+	PersonDailyCap int `json:"personDailyCap"`
+	// The daily cap for the whole install, in tokens (LLM_DAILY_TOKENS_PER_INSTALL); 0 means no cap.
+	InstallDailyCap int `json:"installDailyCap"`
+	// The tokens the caller used today.
+	MyTokensToday int `json:"myTokensToday"`
+	// The tokens the whole install used today: for the install's operator only, null for anyone else.
+	InstallTokensToday *int `json:"installTokensToday,omitempty"`
+	// Tokens per person and day, newest day first: each member's for an owner, the caller's own for anyone else.
+	Days []*UsageDay `json:"days"`
+	// The latest turns, newest first, with the same visibility as days.
+	Turns []*TurnUsage `json:"turns"`
+}
+
+// One person's tokens on one day.
+type UsageDay struct {
+	// YYYY-MM-DD on the install's clock.
+	Day          string `json:"day"`
+	PersonID     string `json:"personId"`
+	Name         string `json:"name"`
+	InputTokens  int    `json:"inputTokens"`
+	OutputTokens int    `json:"outputTokens"`
+	// Model calls, and the turns they belonged to.
+	Calls int `json:"calls"`
+	Turns int `json:"turns"`
+}
+
 type User struct {
 	ID          string    `json:"id"`
 	PlatformID  string    `json:"platformId"`

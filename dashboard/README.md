@@ -28,6 +28,7 @@ The **MyPA Web Control Dashboard** is a Next.js 16 (App Router) and React 19 adm
 | `/automations` | **Automations & APIs** | SSRF-guarded external REST API connectors and `When -> If -> Then` `EventBus` rules (the Automations pack) |
 | `/audit` | **Audit & Rollback** | Immutable `MutationLog` inspector (`BeforeJSON` / `AfterJSON` diffs) with one-click transactional **Rollback** (`rollbackMutation`) |
 | `/sessions` | **User Sessions** | Multi-channel conversation session summaries across Telegram and WhatsApp |
+| `/usage` | **Usage** | Chat model tokens today against the daily caps, by person and day, and the latest turns (V4-04); an owner sees each member, an adult themselves, the operator also the install's total |
 | `/logs` | **Telemetry Logs** | End-to-end `AuditSession` latency, token usage, and execution status traces |
 | `/users` | **Users & Pairing** | The household's members and their roles, and 6-digit pairing codes for an adult or a child (owners); an adult sees only themselves |
 | `/signin` | **Sign in** | Signs in with the link from `/dashboard` in chat |
@@ -56,7 +57,7 @@ npm install
 # Start development server on http://localhost:3000
 npm run dev
 
-# Run Vitest unit & React Testing Library component suites (63 tests across 8 suites)
+# Run Vitest unit & React Testing Library component suites (68 tests across 9 suites)
 npm test
 
 # Build production standalone bundle

@@ -348,6 +348,51 @@ type UserSessionSummary {
   lastActive: Time!
 }
 
+"Chat model token usage and the daily caps (V4-04). Days are calendar days on the install's clock."
+type Usage {
+  "The install's time zone (DEFAULT_TIMEZONE): days are counted, and the caps start again at 00:00, on it."
+  timeZone: String!
+  "The daily cap per person, in tokens (LLM_DAILY_TOKENS_PER_PERSON); 0 means no cap."
+  personDailyCap: Int!
+  "The daily cap for the whole install, in tokens (LLM_DAILY_TOKENS_PER_INSTALL); 0 means no cap."
+  installDailyCap: Int!
+  "The tokens the caller used today."
+  myTokensToday: Int!
+  "The tokens the whole install used today: for the install's operator only, null for anyone else."
+  installTokensToday: Int
+  "Tokens per person and day, newest day first: each member's for an owner, the caller's own for anyone else."
+  days: [UsageDay!]!
+  "The latest turns, newest first, with the same visibility as days."
+  turns: [TurnUsage!]!
+}
+
+"One person's tokens on one day."
+type UsageDay {
+  "YYYY-MM-DD on the install's clock."
+  day: String!
+  personId: ID!
+  name: String!
+  inputTokens: Int!
+  outputTokens: Int!
+  "Model calls, and the turns they belonged to."
+  calls: Int!
+  turns: Int!
+}
+
+"The tokens of one turn: the sum of its model calls."
+type TurnUsage {
+  "The turn's audit session ID."
+  turnId: ID!
+  personId: ID!
+  name: String!
+  startedAt: Time!
+  inputTokens: Int!
+  outputTokens: Int!
+  calls: Int!
+  "Who answered the turn's calls, comma-separated (more than one after a failover)."
+  providers: String!
+}
+
 # The signed-in person (V4-35): who they are, their role in the household, and whether they are the
 # install's operator.
 type Me {
@@ -396,6 +441,8 @@ type Query {
   mutationLogs(topic: String, limit: Int): [MutationLog!]!
   auditSessions(limit: Int): [AuditSession!]!
   userSessions: [UserSessionSummary!]!
+  "Chat model usage and the daily caps (V4-04): the last `days` days, today included (default 14, at most 90)."
+  usage(days: Int): Usage!
 }
 
 type Mutation {

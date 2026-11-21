@@ -439,3 +439,38 @@ export interface UserSessionSummary {
   totalInteractions: number;
   lastActive: string;
 }
+
+/** One person's chat model tokens on one day (V4-04). */
+export interface UsageDay {
+  day: string;
+  personId: string;
+  name: string;
+  inputTokens: number;
+  outputTokens: number;
+  calls: number;
+  turns: number;
+}
+
+/** The tokens of one turn (V4-04). */
+export interface TurnUsage {
+  turnId: string;
+  personId: string;
+  name: string;
+  startedAt: string;
+  inputTokens: number;
+  outputTokens: number;
+  calls: number;
+  providers: string;
+}
+
+/** Chat model usage and the daily caps (V4-04). A cap of 0 means no cap. */
+export interface Usage {
+  timeZone: string;
+  personDailyCap: number;
+  installDailyCap: number;
+  myTokensToday: number;
+  /** The whole install's tokens today: the operator's only, null for anyone else. */
+  installTokensToday: number | null;
+  days: UsageDay[];
+  turns: TurnUsage[];
+}

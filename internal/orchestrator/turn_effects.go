@@ -22,6 +22,10 @@ import (
 // Safe for concurrent use: tools execute in parallel goroutines.
 type turnEffects struct {
 	happened atomic.Bool
+	// turnID is the turn's audit session ID, which its model calls are recorded under (V4-04),
+	// and tokens the tokens its calls used so far.
+	turnID string
+	tokens atomic.Int64
 
 	mu    sync.Mutex
 	tools []toolRecord // tools executed this turn (sticky domains P2-2, history/audit P2-9)
