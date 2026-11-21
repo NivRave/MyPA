@@ -1,7 +1,7 @@
 import Link from "next/link";
 import {
   LayoutDashboard, Users, Wrench, Settings, Activity, ShieldCheck,
-  Brain, Share2, Baby, Home, DollarSign, Zap, History, Sliders,
+  Brain, Share2, Baby, Home, DollarSign, Zap, History, Sliders, Gauge,
 } from "lucide-react";
 import type { Me } from "@/lib/graphql";
 import { pageEnabled } from "@/lib/packs";
@@ -19,6 +19,7 @@ const sections: NavSection[] = [
       { href: "/", label: "Overview", icon: <LayoutDashboard className="mr-3 h-5 w-5" /> },
       { href: "/users", label: "Users & Access", icon: <Users className="mr-3 h-5 w-5" /> },
       { href: "/sessions", label: "Sessions", icon: <Activity className="mr-3 h-5 w-5" /> },
+      { href: "/usage", label: "Usage", icon: <Gauge className="mr-3 h-5 w-5" /> },
     ],
   },
   {

@@ -238,6 +238,8 @@ var identityForeignKeySQL = func() []string {
 		{"fk_sessions_person", "sessions", "FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE CASCADE"},
 		// 00008_proactive_deliveries.sql (V4-33).
 		{"fk_proactive_deliveries_person", "proactive_deliveries", "FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE CASCADE"},
+		// 00010_model_usage.sql (V4-04): a removed person's calls stay in the install's total.
+		{"fk_model_usage_person", "model_usage", "FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE SET NULL"},
 	}
 	out := make([]string, 0, len(fks))
 	for _, f := range fks {

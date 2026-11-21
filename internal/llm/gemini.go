@@ -103,6 +103,18 @@ func geminiContents(req Request) []*genai.Content {
 	return append(contents, &genai.Content{Role: "user", Parts: newParts})
 }
 
+// geminiUsage maps Gemini's counts onto Usage: the prompt and the tool-use prompt are input; the
+// candidates and a thinking model's thoughts, which Gemini bills as output, are output.
+func geminiUsage(m *genai.GenerateContentResponseUsageMetadata) Usage {
+	if m == nil {
+		return Usage{}
+	}
+	return Usage{
+		InputTokens:  int(m.PromptTokenCount) + int(m.ToolUsePromptTokenCount),
+		OutputTokens: int(m.CandidatesTokenCount) + int(m.ThoughtsTokenCount),
+	}
+}
+
 func (p *geminiProvider) Chat(ctx context.Context, req Request) (*Response, error) {
 	resp, err := p.client.Models.GenerateContent(ctx, p.model, geminiContents(req), generateConfig(req))
 	if err != nil {
@@ -135,7 +147,7 @@ func (p *geminiProvider) Chat(ctx context.Context, req Request) (*Response, erro
 		return nil, fmt.Errorf("no content returned in model candidate")
 	}
 
-	out := &Response{Provider: p.Name()}
+	out := &Response{Provider: p.Name(), Model: p.model, Usage: geminiUsage(resp.UsageMetadata)}
 	for _, part := range candidate.Content.Parts {
 		if part.FunctionCall != nil {
 			slog.Info("LLM invoked function", "name", part.FunctionCall.Name)

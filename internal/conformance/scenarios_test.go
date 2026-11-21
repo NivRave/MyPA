@@ -45,6 +45,7 @@ var scenarios = []scenario{
 	{"link_accounts", linkAccounts},                    // V4-32: one person on two channels
 	{"dashboard_signin", dashboardSignIn},              // V4-35: a sign-in link in a direct chat
 	{"reminder_outside_window", reminderOutsideWindow}, // V4-33: delivered by a route, never lost
+	{"usage_cap", usageCap},                            // V4-04: a capped person is told, the model is not called
 }
 
 // TestConformance runs every scenario on every adapter the app registers, in every mode it has

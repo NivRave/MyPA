@@ -41,7 +41,7 @@ var coreFields = map[string]bool{
 	"me": true, "household": true, "users": true, "activePairingCodes": true, "joinSteps": true, "topicMemories": true,
 	"entityProfiles": true, "sharedSpaces": true, "sharedTasks": true, "scheduleEvents": true,
 	"topicCalendarConfigs": true, "userPreference": true, "personalCrmContacts": true, "mutationLogs": true,
-	"auditSessions": true, "userSessions": true,
+	"auditSessions": true, "userSessions": true, "usage": true, // usage: V4-04
 	"signOut": true, "generatePairingCode": true, "updateHousehold": true, "setPackEnabled": true,
 	"saveTopicMemory": true, "deleteTopicMemory": true, "pinTopicMemory": true, "upsertEntityProfile": true,
 	"updateSharedSpace": true, "createSharedTask": true, "completeSharedTask": true, "createScheduleEvent": true,

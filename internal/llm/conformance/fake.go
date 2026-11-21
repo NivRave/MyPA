@@ -42,6 +42,9 @@ type Reply struct {
 	Status int
 	// Down makes the provider unreachable: the request fails before any response.
 	Down bool
+	// InputTokens and OutputTokens are the token counts the reply reports, in the provider's own
+	// usage fields (V4-04).
+	InputTokens, OutputTokens int
 }
 
 // Call is a tool call in a reply.
@@ -372,15 +375,25 @@ func parseGemini(r *http.Request, body []byte) (Seen, error) {
 }
 
 func geminiReply(r Reply) []byte {
+	// Gemini reports the prompt and the reply apart, and a thinking model's thoughts apart again;
+	// the fake puts one output token in thoughts when it has more than one, so the adapter must
+	// add them.
+	thoughts := 0
+	if r.OutputTokens > 1 {
+		thoughts = 1
+	}
+	usage := map[string]any{"promptTokenCount": r.InputTokens, "candidatesTokenCount": r.OutputTokens - thoughts,
+		"thoughtsTokenCount": thoughts, "totalTokenCount": r.InputTokens + r.OutputTokens}
 	switch {
 	case r.Blocked:
 		return mustJSON(map[string]any{"promptFeedback": map[string]any{"blockReason": "SAFETY"}, "candidates": []any{}})
 	case r.Call != nil:
 		return mustJSON(map[string]any{"candidates": []any{map[string]any{"content": map[string]any{"role": "model",
-			"parts": []any{map[string]any{"functionCall": map[string]any{"name": r.Call.Name, "args": r.Call.Args}}}}, "finishReason": "STOP"}}})
+			"parts": []any{map[string]any{"functionCall": map[string]any{"name": r.Call.Name, "args": r.Call.Args}}}}, "finishReason": "STOP"}},
+			"usageMetadata": usage})
 	}
 	return mustJSON(map[string]any{"candidates": []any{map[string]any{"content": map[string]any{"role": "model",
-		"parts": []any{map[string]any{"text": r.Text}}}, "finishReason": "STOP"}}})
+		"parts": []any{map[string]any{"text": r.Text}}}, "finishReason": "STOP"}}, "usageMetadata": usage})
 }
 
 // ---------------------------------------------------------------- Anthropic
@@ -511,14 +524,22 @@ func parseAnthropic(r *http.Request, body []byte) (Seen, error) {
 }
 
 func anthropicReply(r Reply) []byte {
+	// Anthropic counts prompt-cache reads apart from input_tokens; the fake reports one input
+	// token as a cache read when it has more than one, so the adapter must add them.
+	cached := 0
+	if r.InputTokens > 1 {
+		cached = 1
+	}
+	usage := map[string]any{"input_tokens": r.InputTokens - cached, "cache_read_input_tokens": cached,
+		"cache_creation_input_tokens": 0, "output_tokens": r.OutputTokens}
 	switch {
 	case r.Blocked:
-		return mustJSON(map[string]any{"type": "message", "role": "assistant", "content": []any{}, "stop_reason": "refusal"})
+		return mustJSON(map[string]any{"type": "message", "role": "assistant", "content": []any{}, "stop_reason": "refusal", "usage": usage})
 	case r.Call != nil:
-		return mustJSON(map[string]any{"type": "message", "role": "assistant", "stop_reason": "tool_use",
+		return mustJSON(map[string]any{"type": "message", "role": "assistant", "stop_reason": "tool_use", "usage": usage,
 			"content": []any{map[string]any{"type": "tool_use", "id": "toolu_fake_1", "name": r.Call.Name, "input": r.Call.Args}}})
 	}
-	return mustJSON(map[string]any{"type": "message", "role": "assistant", "stop_reason": "end_turn",
+	return mustJSON(map[string]any{"type": "message", "role": "assistant", "stop_reason": "end_turn", "usage": usage,
 		"content": []any{map[string]any{"type": "text", "text": r.Text}}})
 }
 
@@ -657,16 +678,18 @@ func dataURL(raw string) (Attachment, error) {
 }
 
 func openAIReply(r Reply) []byte {
+	usage := map[string]any{"prompt_tokens": r.InputTokens, "completion_tokens": r.OutputTokens,
+		"total_tokens": r.InputTokens + r.OutputTokens}
 	switch {
 	case r.Blocked:
 		return mustJSON(map[string]any{"choices": []any{map[string]any{"index": 0, "finish_reason": "content_filter",
-			"message": map[string]any{"role": "assistant", "content": nil}}}})
+			"message": map[string]any{"role": "assistant", "content": nil}}}, "usage": usage})
 	case r.Call != nil:
 		return mustJSON(map[string]any{"choices": []any{map[string]any{"index": 0, "finish_reason": "tool_calls",
 			"message": map[string]any{"role": "assistant", "content": nil, "tool_calls": []any{map[string]any{
-				"id": "call_fake_1", "type": "function", "function": map[string]any{"name": r.Call.Name, "arguments": string(mustJSON(r.Call.Args))}}}}}}})
+				"id": "call_fake_1", "type": "function", "function": map[string]any{"name": r.Call.Name, "arguments": string(mustJSON(r.Call.Args))}}}}}},
+			"usage": usage})
 	}
 	return mustJSON(map[string]any{"choices": []any{map[string]any{"index": 0, "finish_reason": "stop",
-		"message": map[string]any{"role": "assistant", "content": r.Text}}}})
+		"message": map[string]any{"role": "assistant", "content": r.Text}}}, "usage": usage})
 }
-

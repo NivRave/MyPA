@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -36,6 +37,44 @@ type LLMConfig struct {
 	// LocalDomains lists the tool domains whose turns run only on the local model (Ollama), never
 	// on a cloud provider (LLM_LOCAL_DOMAINS, comma-separated). Empty: no turn is kept local.
 	LocalDomains string `mapstructure:"local_domains"`
+	// DailyTokensPerPerson caps the chat model tokens one person may use per day
+	// (LLM_DAILY_TOKENS_PER_PERSON, V4-04). Empty or 0: no cap. Read with UsageCaps.
+	DailyTokensPerPerson string `mapstructure:"daily_tokens_per_person"`
+	// DailyTokensPerInstall caps the tokens the whole install may use per day
+	// (LLM_DAILY_TOKENS_PER_INSTALL). Empty or 0: no cap.
+	DailyTokensPerInstall string `mapstructure:"daily_tokens_per_install"`
+}
+
+// UsageCaps are the daily token caps (V4-04); 0 means no cap. A day is a calendar day in the
+// install's time zone (DEFAULT_TIMEZONE).
+type UsageCaps struct {
+	PersonDaily  int64
+	InstallDaily int64
+}
+
+// UsageCaps reads the daily caps. Validate refuses a value that is not a whole number of tokens.
+func (c *Config) UsageCaps() (UsageCaps, error) {
+	person, err := tokenCap("LLM_DAILY_TOKENS_PER_PERSON", c.LLM.DailyTokensPerPerson)
+	if err != nil {
+		return UsageCaps{}, err
+	}
+	install, err := tokenCap("LLM_DAILY_TOKENS_PER_INSTALL", c.LLM.DailyTokensPerInstall)
+	if err != nil {
+		return UsageCaps{}, err
+	}
+	return UsageCaps{PersonDaily: person, InstallDaily: install}, nil
+}
+
+func tokenCap(setting, raw string) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("%s must be a whole number of tokens, 0 or more (0 means no cap), not %q", setting, raw)
+	}
+	return n, nil
 }
 
 // AnthropicConfig holds the Anthropic (Claude) settings. There is no built-in model: the one
@@ -70,14 +109,17 @@ var llmEnvBindings = map[string]string{
 	"LLM_PROVIDER":      "llm.provider",
 	"LLM_FALLBACK":      "llm.fallback",
 	"LLM_LOCAL_DOMAINS": "llm.local_domains",
-	"ANTHROPIC_API_KEY": "anthropic.api_key",
-	"ANTHROPIC_MODEL":   "anthropic.model",
-	"OPENAI_API_KEY":    "openai.api_key",
-	"OPENAI_MODEL":      "openai.model",
-	"XAI_API_KEY":       "xai.api_key",
-	"XAI_MODEL":         "xai.model",
-	"OLLAMA_BASE_URL":   "ollama.base_url",
-	"OLLAMA_MODEL":      "ollama.model",
+	// V4-04: daily token caps.
+	"LLM_DAILY_TOKENS_PER_PERSON":  "llm.daily_tokens_per_person",
+	"LLM_DAILY_TOKENS_PER_INSTALL": "llm.daily_tokens_per_install",
+	"ANTHROPIC_API_KEY":            "anthropic.api_key",
+	"ANTHROPIC_MODEL":              "anthropic.model",
+	"OPENAI_API_KEY":               "openai.api_key",
+	"OPENAI_MODEL":                 "openai.model",
+	"XAI_API_KEY":                  "xai.api_key",
+	"XAI_MODEL":                    "xai.model",
+	"OLLAMA_BASE_URL":              "ollama.base_url",
+	"OLLAMA_MODEL":                 "ollama.model",
 }
 
 // llmConditionalKeys are the provider settings Validate demands when that provider is used.
@@ -166,6 +208,11 @@ func (c *Config) validateLLM() []error {
 	}
 	if len(c.LocalDomains()) > 0 {
 		used[ProviderOllama] = true // local turns run on Ollama
+	}
+	for _, check := range [][2]string{{"LLM_DAILY_TOKENS_PER_PERSON", c.LLM.DailyTokensPerPerson}, {"LLM_DAILY_TOKENS_PER_INSTALL", c.LLM.DailyTokensPerInstall}} {
+		if _, err := tokenCap(check[0], check[1]); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	need := func(provider, key, value string) {
 		if !used[provider] {

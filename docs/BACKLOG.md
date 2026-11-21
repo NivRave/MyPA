@@ -70,6 +70,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-57 | Medium | Undo restores a memory's old embedding, which after a re-embed into another model is in the wrong vector space | open: fixed together with BL-25 in one change, after V4-07 and before the V4.0 release, not part of any stage-4 item |
 | BL-58 | Medium | A turn kept local (`LLM_LOCAL_DOMAINS`) is in the history later cloud turns send; voice and tools reach their own services | open |
 | BL-59 | Low | `TestReembed_ToAnotherSizeAfterTheDocumentedMigration` fails on a CRLF checkout of docs/EMBEDDINGS.md | open |
+| BL-60 | Low | `audit_events.prompt_tokens` and `completion_tokens` are never written | open |
+| BL-61 | Low | The dashboard's Sessions page shows "View History" and "Revoke" buttons that do nothing | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -473,6 +475,24 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Impact:** a false failure of the full local check on Windows. No effect on the product.
 - **Fix:** match `\r?\n` in the pattern (the function already removes `\r` from the match), or add
   `docs/*.md text eol=lf` to `.gitattributes`. Test: the function finds the block in a CRLF copy of the doc.
+
+### BL-60 — The audit events' token columns are never written (Low)
+- **Found:** 2026-11-21, while building V4-04.
+- **Evidence:** `models.AuditEvent` has `PromptTokens` and `CompletionTokens` (`internal/models/models.go`), and no code
+  writes or reads them. V4-04 records each model call's tokens in `model_usage` and fills the turn's total in
+  `audit_sessions.total_tokens`, which was also never written before.
+- **Impact:** none on behaviour; two columns that look meaningful are always 0, and a reader of the schema may
+  trust them.
+- **Fix:** drop the two columns in a versioned migration, or fill them if audit events ever get one row per
+  model call. `model_usage` already holds that per call, so dropping them is the simpler choice.
+
+### BL-61 — Dead buttons on the dashboard's Sessions page (Low)
+- **Found:** 2026-11-21, while adding the Usage page next to it (V4-04).
+- **Evidence:** `dashboard/src/app/sessions/page.tsx` renders "View History" and "Revoke" on every row with no
+  handler and no route behind them.
+- **Impact:** an owner who presses "Revoke" may believe a member's access was taken away; nothing happens.
+- **Fix:** remove both buttons, or wire "View History" to `/logs` filtered by the person; revoking access belongs
+  to the household admin area (V4-37). Test: the page has no button without an action.
 
 ### BL-30 — Other tests change the process environment and do not restore it exactly (Low)
 - **Found:** 2026-11-19, in the search of every `_test.go` file done for BL-27.

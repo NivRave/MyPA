@@ -40,6 +40,32 @@ type Resolver struct {
 	// JoinStepsOf lists what a new person does on each configured channel before their first
 	// message (V4-41, channel.Registry.JoinSteps); nil means none.
 	JoinStepsOf func() []channel.JoinStep
+	// UsageView is what the usage query shows besides the rows: the caps and the install's
+	// zone (V4-04).
+	UsageView UsageSettings
+}
+
+// UsageSettings are the daily token caps (0 = none) and the install's time zone (DEFAULT_TIMEZONE;
+// empty or unknown = UTC) the usage query reports and counts days in. Now is its clock (tests).
+type UsageSettings struct {
+	PersonDaily  int64
+	InstallDaily int64
+	TimeZone     string
+	Now          func() time.Time
+}
+
+func (u UsageSettings) location() *time.Location {
+	if loc, err := time.LoadLocation(strings.TrimSpace(u.TimeZone)); err == nil && strings.TrimSpace(u.TimeZone) != "" {
+		return loc
+	}
+	return time.UTC
+}
+
+func (u UsageSettings) now() time.Time {
+	if u.Now != nil {
+		return u.Now()
+	}
+	return time.Now()
 }
 
 // ResolverConfig holds dependencies for constructing a fully decoupled Resolver.
@@ -57,6 +83,7 @@ type ResolverConfig struct {
 	AutomationRepo db.AutomationRepository
 	PromptCache    PromptInvalidator
 	JoinStepsOf    func() []channel.JoinStep
+	UsageView      UsageSettings
 }
 
 // NewResolver constructs a Resolver instance with injected repository interfaces.
@@ -75,6 +102,7 @@ func NewResolver(cfg ResolverConfig) *Resolver {
 		AutomationRepo: cfg.AutomationRepo,
 		PromptCache:    cfg.PromptCache,
 		JoinStepsOf:    cfg.JoinStepsOf,
+		UsageView:      cfg.UsageView,
 	}
 
 	if r.DB != nil {

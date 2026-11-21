@@ -55,6 +55,8 @@ type Engine struct {
 	delivery           Delivery             // the proactive delivery policy (V4-33); nil = send directly
 	now                func() time.Time     // the scheduled checks' clock; nil = time.Now
 	localDomains       map[DomainGroup]bool // turns kept on the local model (LLM_LOCAL_DOMAINS, V4-02)
+	usage              UsageMeter           // records each model call's tokens (V4-04); nil = not recorded
+	caps               UsageCaps            // the daily token caps (V4-04); zero = none
 }
 
 var hebrewPrepositionRegex = regexp.MustCompile(`(^|[^\p{Hebrew}\w])([בלמכ])(\d+)`)
@@ -162,7 +164,7 @@ func (e *Engine) buildCallContext(ctx context.Context, user *models.User, msg ch
 		Scope:            e.scopeOf(ctx, user),
 		Message:          msg,
 		DB:               e.db,
-		LLM:              e.llm,
+		LLM:              e.model(), // metered: a tool's model call counts for the turn (V4-04)
 		EventBus:         e.eventBus,
 		SendNotification: sendNotif,
 		Extra:            make(map[string]interface{}),
@@ -356,12 +358,12 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 	startTime := time.Now()
 	// Per-turn record of side effects and executed tools (P1-4, P2-2, P2-9). Declared before the
 	// telemetry defer so the audit session can carry the turn's tool summary.
-	effects := &turnEffects{}
+	effects := &turnEffects{turnID: sessionID}
 
 	defer func() {
 		e.wg.Add(1)
 		// Publish the telemetry session asynchronously
-		go func(msgText string, errStr string, toolSummary string) {
+		go func(msgText string, errStr string, toolSummary string, tokens int) {
 			defer e.wg.Done()
 			status := "success"
 			if errStr != "" {
@@ -380,6 +382,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 				TotalDurationMs: time.Since(startTime).Milliseconds(),
 				Status:          status,
 				ToolSummary:     toolSummary,
+				TotalTokens:     tokens, // the turn's model calls (V4-04)
 			}
 
 			if e.publisher != nil {
@@ -393,7 +396,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 				return err.Error()
 			}
 			return ""
-		}(), effects.toolSummary())
+		}(), effects.toolSummary(), effects.turnTokens())
 	}()
 
 	secState := &TurnSecurityState{}
@@ -457,6 +460,13 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 		return cerr
 	}
 	if response, handled, cerr := e.dispatchCommand(ctx, user, msg); handled {
+		llmResponse = response
+		return cerr
+	}
+
+	// V4-04: a person or install over its daily cap gets one message and no model call; the
+	// check comes before the attachments, so a voice note is not transcribed either.
+	if response, refused, cerr := e.refuseCapped(ctx, scope, msg); refused {
 		llmResponse = response
 		return cerr
 	}

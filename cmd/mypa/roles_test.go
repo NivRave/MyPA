@@ -21,6 +21,7 @@ import (
 	"github.com/nivik/mypa/internal/channel/adapters"
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/graph"
 	"github.com/nivik/mypa/internal/telegram"
 )
 
@@ -71,7 +72,7 @@ func TestRouterForRole_EachRoleKeepsTheSurfaceOfTheServiceItReplaces(t *testing.
 		return msg.Sender == "987654321" && msg.Text == "hello"
 	})).Return(nil)
 	ingressRouter := setupIngressRouter(pub, testChannels(t, &config.Config{Channels: adapters.Config{Telegram: telegram.Config{SecretToken: testTelegramSecret}}}))
-	appRouter := setupAppRouter(nil, nil, nil, &db.Client{}, nil)
+	appRouter := setupAppRouter(nil, nil, nil, &db.Client{}, nil, graph.UsageSettings{})
 
 	serve := func(t *testing.T, r role, req *http.Request) int {
 		t.Helper()

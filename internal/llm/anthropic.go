@@ -130,6 +130,19 @@ type anthropicReply struct {
 		Input map[string]any `json:"input"`
 	} `json:"content"`
 	StopReason string `json:"stop_reason"`
+	Usage      struct {
+		InputTokens              int `json:"input_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+	} `json:"usage"`
+}
+
+// usage maps Anthropic's counts onto Usage: input_tokens leaves out what was written to or read
+// from the prompt cache, so both are added to the input.
+func (r anthropicReply) usage() Usage {
+	u := r.Usage
+	return Usage{InputTokens: u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens, OutputTokens: u.OutputTokens}
 }
 
 func (p *anthropicProvider) Chat(ctx context.Context, req Request) (*Response, error) {
@@ -165,7 +178,7 @@ func (p *anthropicProvider) Chat(ctx context.Context, req Request) (*Response, e
 	if reply.StopReason == "refusal" {
 		return nil, &ContentBlockedError{BlockReason: "refusal", Provider: p.Name()}
 	}
-	out := &Response{Provider: p.Name()}
+	out := &Response{Provider: p.Name(), Model: p.model, Usage: reply.usage()}
 	var text strings.Builder
 	for _, c := range reply.Content {
 		switch c.Type {

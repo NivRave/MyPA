@@ -124,6 +124,11 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 		return w, fmt.Errorf("llm client: %w", err)
 	}
 	slog.Info("chat model providers", "chain", cfg.ProviderChain(), "local_domains", cfg.LocalDomains())
+	caps, err := cfg.UsageCaps() // V4-04; Validate has refused a bad value already
+	if err != nil {
+		return w, err
+	}
+	slog.Info("daily usage caps", "tokens_per_person", caps.PersonDaily, "tokens_per_install", caps.InstallDaily)
 
 	// 5. Initialize OAuth Config
 	oauthCfg := calendar.NewOAuthConfig(&cfg.Google)
@@ -308,12 +313,13 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 		WithToolRegistry(registry).
 		WithEventBus(eventBus).
 		WithCalendarConventions(orchestrator.ParseCalendarConventions(cfg.Server.WeekStartDay, cfg.Server.WeekendDays)).
-		WithHealthReporter(newHealthReporter(cfg, channels, store, dbClient, oauthCfg, doctorBackupDir)). // /doctor (V4-17)
-		WithAccounts(dbClient, []byte(strings.TrimSpace(cfg.Server.LinkCodeSecret))).                     // /link (V4-32)
-		WithSignIn(dbClient, cfg.Server.DashboardURL).                                                    // /dashboard (V4-35)
-		WithQuietHours(dbClient).                                                                         // each person's zone and quiet hours (V4-05)
-		WithDelivery(delivery).                                                                           // reminders, briefings and notifications (V4-33)
-		WithLocalDomains(localDomains)                                                                    // turns kept on the local model (V4-02)
+		WithHealthReporter(newHealthReporter(cfg, channels, store, dbClient, oauthCfg, doctorBackupDir)).           // /doctor (V4-17)
+		WithAccounts(dbClient, []byte(strings.TrimSpace(cfg.Server.LinkCodeSecret))).                               // /link (V4-32)
+		WithSignIn(dbClient, cfg.Server.DashboardURL).                                                              // /dashboard (V4-35)
+		WithQuietHours(dbClient).                                                                                   // each person's zone and quiet hours (V4-05)
+		WithDelivery(delivery).                                                                                     // reminders, briefings and notifications (V4-33)
+		WithLocalDomains(localDomains).                                                                             // turns kept on the local model (V4-02)
+		WithUsage(dbClient, orchestrator.UsageCaps{PersonDaily: caps.PersonDaily, InstallDaily: caps.InstallDaily}) // token usage and daily caps (V4-04)
 	recordLate = engine.RecordLateDelivery
 	if strings.TrimSpace(cfg.Server.LinkCodeSecret) == "" {
 		slog.Warn("LINK_CODE_SECRET is not set: linking a second app to a person (/link) is off")
@@ -343,7 +349,8 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 	}()
 
 	// HTTP routes for the OAuth callback and GraphQL
-	w.router = setupAppRouter(oauthCfg, store, notifier, dbClient, durabilityModule, eventBus)
+	w.router = setupAppRouter(oauthCfg, store, notifier, dbClient, durabilityModule,
+		graph.UsageSettings{PersonDaily: caps.PersonDaily, InstallDaily: caps.InstallDaily, TimeZone: cfg.Server.DefaultTimezone}, eventBus)
 	return w, nil
 }
 
@@ -500,7 +507,7 @@ func setupAuthRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifie
 	if len(fallbackSaver) > 0 {
 		saver = fallbackSaver[0]
 	}
-	return setupAppRouter(oauthCfg, store, notifier, nil, saver)
+	return setupAppRouter(oauthCfg, store, notifier, nil, saver, graph.UsageSettings{})
 }
 
 // runMigrations applies all pending schema migrations and returns the process exit code.
@@ -538,7 +545,7 @@ func runMigrations(databaseURL string) int {
 	return 0
 }
 
-func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifier AuthNotifier, dbClient *db.Client, fallbackSaver CredentialFallbackSaver, eventBus ...*events.EventBus) *http.ServeMux {
+func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifier AuthNotifier, dbClient *db.Client, fallbackSaver CredentialFallbackSaver, usage graph.UsageSettings, eventBus ...*events.EventBus) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// GraphQL Server
@@ -568,6 +575,7 @@ func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifier
 			AutomationRepo: db.NewAutomationRepository(dbClient.DB),
 			PromptCache:    promptCache,
 			JoinStepsOf:    joinStepsOf(notifier), // V4-41: shown with pairing codes
+			UsageView:      usage,                 // V4-04: the caps and the install's zone
 		})
 		srv := graph.NewServer(resolvers) // with the pack guard (V4-27)
 
