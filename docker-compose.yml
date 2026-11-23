@@ -205,7 +205,7 @@ services:
 
   rabbitmq:
     logging: *default-logging
-    image: rabbitmq:4.3.7-management-alpine@sha256:eb338b3fc8f5c251028c0022ac0de3fe1db2d599d1c6a08b45898f756f248881
+    image: rabbitmq:4.4.1-management-alpine@sha256:2b47b1aa05ec7e373950ad2e9200e9f95a9da7039c8d22c19dbf5a59101362c4
     # Fixed hostname = stable node name (rabbit@rabbitmq). Without it the node name is the
     # container ID, so every recreate started an empty node and stranded queued/DLQ messages.
     hostname: rabbitmq
