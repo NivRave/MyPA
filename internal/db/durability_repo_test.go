@@ -223,6 +223,7 @@ func TestDurabilityRepo_RollbackSnapshot(t *testing.T) {
 
 	mutCreate := models.MutationLog{
 		ID:         uuid.New().String(),
+		UserID:     "test-user", // the scope's own change (BL-65)
 		Action:     "create",
 		EntityType: "user",
 		EntityID:   user.ID,
@@ -230,7 +231,7 @@ func TestDurabilityRepo_RollbackSnapshot(t *testing.T) {
 	}
 	require.NoError(t, client.InsertMutationLog(scope, mutCreate))
 
-	err := client.RollbackSnapshot(ctx, scope, mutCreate, "users")
+	err := client.RollbackSnapshot(ctx, scope, mutCreate, "users", models.UndoViaChat)
 	require.NoError(t, err)
 
 	// Verify user deleted
@@ -259,6 +260,7 @@ func TestDurabilityRepo_RollbackSnapshot(t *testing.T) {
 
 	mutUpdate := models.MutationLog{
 		ID:         uuid.New().String(),
+		UserID:     "test-user",
 		Action:     "update",
 		EntityType: "user",
 		EntityID:   user2.ID,
@@ -267,7 +269,7 @@ func TestDurabilityRepo_RollbackSnapshot(t *testing.T) {
 	}
 	require.NoError(t, client.InsertMutationLog(scope, mutUpdate))
 
-	err = client.RollbackSnapshot(ctx, scope, mutUpdate, "users")
+	err = client.RollbackSnapshot(ctx, scope, mutUpdate, "users", models.UndoViaChat)
 	require.NoError(t, err)
 
 	var checkUser2 models.User

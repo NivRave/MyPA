@@ -419,3 +419,23 @@ func validateHouseholdSettings(name, language, timeZone, currency *string) (db.H
 	}
 	return in, nil
 }
+
+// changedHouseholdSettings names the settings an update changed, for the INFO line that stands in
+// for a mutation log entry (BL-47). Names only, not values.
+func changedHouseholdSettings(before, after dbmodels.Household) []string {
+	var out []string
+	for _, f := range []struct {
+		name      string
+		was, want string
+	}{
+		{"name", before.Name, after.Name},
+		{"language", before.Language, after.Language},
+		{"time_zone", before.TimeZone, after.TimeZone},
+		{"currency", before.Currency, after.Currency},
+	} {
+		if f.was != f.want {
+			out = append(out, f.name)
+		}
+	}
+	return out
+}

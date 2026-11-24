@@ -88,6 +88,13 @@ func TestSEC06_RollbackMutation_TransactionRollbackOnStatementFailure(t *testing
 
 	adminCtx := signedIn(t, client, "", "admin-user", "admin")
 
+	// A real memory of the household, so the rollback reaches the failing statement (BL-65 reads
+	// the row first and refuses a missing one before any statement runs).
+	h := householdtest.Household(t, client, "admin-user")
+	mem := models.TopicMemory{UserID: "admin-user", HouseholdID: h.ID, FamilyGroup: "admin-user", Topic: "memory",
+		Fact: "kept", TagsJSON: "[]", Scope: "family", CreatedByUserID: "admin-user"}
+	require.NoError(t, client.DB.Create(&mem).Error)
+
 	mID := uuid.New().String()
 	// Create an 'update' mutation targeting TopicMemory where BeforeJSON tries to set a non-existent column,
 	// triggering an SQL statement failure during rollback
@@ -96,7 +103,7 @@ func TestSEC06_RollbackMutation_TransactionRollbackOnStatementFailure(t *testing
 		Topic:       "memory",
 		Action:      "update",
 		EntityType:  "TopicMemory",
-		EntityID:    "1",
+		EntityID:    fmt.Sprint(mem.ID),
 		UserID:      "admin-user",
 		HouseholdID: householdtest.Household(t, client, "admin-user").ID,
 		BeforeJSON:  `{"non_existent_column_fail": "crash"}`,
@@ -113,6 +120,7 @@ func TestSEC06_RollbackMutation_TransactionRollbackOnStatementFailure(t *testing
 	assert.False(t, ok)
 	require.Error(t, rErr)
 	assert.Contains(t, rErr.Error(), "failed to rollback update")
+	assert.Contains(t, rErr.Error(), "non_existent_column_fail", "the failure is the statement's, not a missing row")
 
 	// Verify that is_undone remained false in DB
 	var refreshed models.MutationLog

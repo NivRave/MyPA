@@ -2,6 +2,7 @@ package durability
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -38,9 +39,9 @@ type Repository interface {
 	InsertMutationLog(s identity.Scope, log models.MutationLog) error
 	GetMutationLogsByTopic(s identity.Scope, topic string, limit int) ([]models.MutationLog, error)
 	GetMutationLogByID(s identity.Scope, id string) (*models.MutationLog, error)
-	GetLastMutation(s identity.Scope) (*models.MutationLog, error)
+	GetLastUndoableMutation(s identity.Scope, entityTypes []string) (*models.MutationLog, error)
 	MarkMutationUndone(s identity.Scope, id string) error
-	RollbackSnapshot(ctx context.Context, s identity.Scope, log models.MutationLog, tableName string) error
+	RollbackSnapshot(ctx context.Context, s identity.Scope, log models.MutationLog, tableName string, via models.UndoVia) error
 	CheckIdempotency(key string) (*models.IdempotencyRecord, error)
 	SaveIdempotency(rec models.IdempotencyRecord) error
 	ExportTopicData(s identity.Scope, topic string, format string, limit int) (string, error)
@@ -49,10 +50,14 @@ type Repository interface {
 // RollbackResult provides unified, structured feedback on completed rollback operations.
 type RollbackResult = models.RollbackResult
 
-// RollbackEngine is the unified interface exposed to engine, tools, and resolvers.
+// RollbackEngine is the unified interface exposed to engine, tools, and resolvers. Rollback and
+// RollbackLast are chat's (/undo, undo_last_action): the caller's own changes only.
+// RollbackFromDashboard is the dashboard's, where an owner may also roll back another member's
+// change to the household's shared data (BL-65, db.MayUndo).
 type RollbackEngine interface {
 	Rollback(ctx context.Context, s identity.Scope, mutationID string, reason ...string) (*RollbackResult, error)
 	RollbackLast(ctx context.Context, s identity.Scope, reason ...string) (*RollbackResult, error)
+	RollbackFromDashboard(ctx context.Context, s identity.Scope, mutationID string) (*RollbackResult, error)
 }
 
 // UndoHandler defines a custom rollback function for a specific EntityType.
@@ -199,7 +204,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 	return []*genai.FunctionDeclaration{
 		{
 			Name:        "undo_last_action",
-			Description: "Reverts the user's or family's most recent mutation or change (such as a saved memory, schedule entry, reminder, or task) using the recorded BeforeJSON state and marks it undone.",
+			Description: "Reverts the user's own most recent change that can be undone (such as a saved memory, schedule entry, reminder, or task) using the recorded BeforeJSON state and marks it undone. Another member's change is theirs to undo.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
@@ -209,7 +214,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					},
 					"mutation_id": {
 						Type:        genai.TypeString,
-						Description: "Optional specific mutation ID to undo. If omitted, undoes the latest mutation for the active user or family.",
+						Description: "Optional specific mutation ID to undo; it must be one of the user's own changes. If omitted, undoes the user's own latest change that can be undone.",
 					},
 				},
 			},
@@ -289,10 +294,25 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 	}
 }
 
-// Rollback performs atomic, snapshot-backed rollback for a specific mutation ID of the scope's
-// household. A mutation of another household is refused exactly like one that does not exist, so
-// the answer does not reveal whether it exists.
+// Rollback performs atomic, snapshot-backed rollback, asked in chat, of a specific mutation ID of
+// the scope's household: one of the caller's own changes (BL-65). A mutation of another household
+// is refused exactly like one that does not exist, so the answer does not reveal whether it
+// exists. An empty ID is RollbackLast.
 func (m *Module) Rollback(ctx context.Context, s identity.Scope, mutationID string, reason ...string) (*RollbackResult, error) {
+	return m.rollbackByID(ctx, s, mutationID, models.UndoViaChat, reason...)
+}
+
+// RollbackFromDashboard is the dashboard's rollbackMutation: like Rollback, except that an owner
+// may also roll back another member's change, or one with no known person, to the household's
+// shared data (BL-65). A person-owned row is still rolled back by its own person only.
+func (m *Module) RollbackFromDashboard(ctx context.Context, s identity.Scope, mutationID string) (*RollbackResult, error) {
+	if strings.TrimSpace(mutationID) == "" {
+		return nil, fmt.Errorf("a mutation ID is required")
+	}
+	return m.rollbackByID(ctx, s, mutationID, models.UndoViaDashboard)
+}
+
+func (m *Module) rollbackByID(ctx context.Context, s identity.Scope, mutationID string, via models.UndoVia, reason ...string) (*RollbackResult, error) {
 	if m.repo == nil {
 		return nil, fmt.Errorf("durability: repository is not configured")
 	}
@@ -313,11 +333,21 @@ func (m *Module) Rollback(ctx context.Context, s identity.Scope, mutationID stri
 		return nil, fmt.Errorf("permission denied: mutation %q is not a mutation of this household", trimmedID)
 	}
 
-	return m.executeRollbackInternal(ctx, s, log)
+	return m.executeRollbackInternal(ctx, s, log, via)
 }
 
-// RollbackLast performs atomic, snapshot-backed rollback for the most recent mutation of the
-// scope's household.
+// undoableEntityTypes are the entity types undo can roll back: the allowlist (BL-47).
+func undoableEntityTypes() []string {
+	out := make([]string, 0, len(AllowedRollbackEntities))
+	for t := range AllowedRollbackEntities {
+		out = append(out, t)
+	}
+	return out
+}
+
+// RollbackLast performs atomic, snapshot-backed rollback, asked in chat (/undo), of the caller's
+// own newest change that can be undone (BL-65). Changes of entity types undo cannot roll back are
+// skipped, so one such entry never blocks undo (BL-47).
 func (m *Module) RollbackLast(ctx context.Context, s identity.Scope, reason ...string) (*RollbackResult, error) {
 	if m.repo == nil {
 		return nil, fmt.Errorf("durability: repository is not configured")
@@ -326,19 +356,24 @@ func (m *Module) RollbackLast(ctx context.Context, s identity.Scope, reason ...s
 		return nil, fmt.Errorf("permission denied: %w", identity.ErrNoScope)
 	}
 
-	log, err := m.repo.GetLastMutation(s)
+	log, err := m.repo.GetLastUndoableMutation(s, undoableEntityTypes())
 	if err != nil || log == nil {
 		return nil, fmt.Errorf("no recent undoable actions found")
 	}
 
-	return m.executeRollbackInternal(ctx, s, log)
+	return m.executeRollbackInternal(ctx, s, log, models.UndoViaChat)
 }
 
-func (m *Module) executeRollbackInternal(ctx context.Context, s identity.Scope, log *models.MutationLog) (*RollbackResult, error) {
+func (m *Module) executeRollbackInternal(ctx context.Context, s identity.Scope, log *models.MutationLog, via models.UndoVia) (*RollbackResult, error) {
 	// Tenant boundary check (V4-30): the log must belong to the scope's household. The repository
 	// already confines the lookup; this is the second fence.
 	if !s.Valid() || log.HouseholdID != s.HouseholdID() {
 		return nil, fmt.Errorf("permission denied: mutation %q belongs to another tenant", log.ID)
+	}
+	// Whose change it is (BL-65), before anything about it is answered. The repository checks it
+	// again on the locked log, with the row it touches.
+	if err := db.MayUndo(s, via, *log, ""); err != nil {
+		return nil, err
 	}
 	actorID := s.PersonKey()
 
@@ -364,6 +399,15 @@ func (m *Module) executeRollbackInternal(ctx context.Context, s identity.Scope, 
 	var detail string
 	// Check if a domain registered a custom UndoHandler (e.g. external Google Calendar deletion)
 	if handler, exists := m.getUndoHandler(log.EntityType); exists {
+		// A custom handler sees no row; the snapshots say whose it was and would be. Another
+		// person's change without either snapshot cannot be judged, so it is refused.
+		before, after := snapshotState(log.BeforeJSON), snapshotState(log.AfterJSON)
+		if before == nil && after == nil && !db.MutationIsOwn(s, *log) {
+			return nil, fmt.Errorf("permission denied: mutation %q is not one of your changes and has no snapshot to check", log.ID)
+		}
+		if err := db.MayUndo(s, via, *log, tbl, before, after); err != nil {
+			return nil, err
+		}
 		callCtx := orchestrator.CallContext{
 			User:     &models.User{PlatformID: actorID, HouseholdID: s.HouseholdID(), FamilyGroup: s.LegacyLabel()},
 			Scope:    s,
@@ -380,12 +424,15 @@ func (m *Module) executeRollbackInternal(ctx context.Context, s identity.Scope, 
 		}
 	} else {
 		// Default: Atomic Transactional Snapshot Rollback
-		if err := m.repo.RollbackSnapshot(ctx, s, *log, tbl); err != nil {
+		if err := m.repo.RollbackSnapshot(ctx, s, *log, tbl, via); err != nil {
+			if strings.HasPrefix(err.Error(), "permission denied") {
+				return nil, err
+			}
 			return nil, fmt.Errorf("snapshot rollback failed: %w", err)
 		}
 		detail = fmt.Sprintf("Reverted %s '%s' on %s.", log.Action, log.EntityID, log.EntityType)
-		if log.BeforeJSON != "" && log.BeforeJSON != "{}" {
-			detail += fmt.Sprintf(" Restored prior state: %s", log.BeforeJSON)
+		if before := withoutVector(tbl, log.BeforeJSON); before != "" && before != "{}" {
+			detail += fmt.Sprintf(" Restored prior state: %s", before)
 		}
 	}
 
@@ -399,8 +446,8 @@ func (m *Module) executeRollbackInternal(ctx context.Context, s identity.Scope, 
 			ActorUserID: actorID,
 			HouseholdID: s.HouseholdID(),
 			FamilyGroup: s.LegacyLabel(),
-			BeforeJSON:  log.AfterJSON,
-			AfterJSON:   log.BeforeJSON,
+			BeforeJSON:  withoutVector(tbl, log.AfterJSON),
+			AfterJSON:   withoutVector(tbl, log.BeforeJSON),
 			Summary:     fmt.Sprintf("Undid %s (%s): %s", log.ID, log.Action, log.Summary),
 			Timestamp:   time.Now(),
 		})
@@ -416,6 +463,34 @@ func (m *Module) executeRollbackInternal(ctx context.Context, s identity.Scope, 
 		Detail:        detail,
 		AlreadyUndone: false,
 	}, nil
+}
+
+// snapshotState reads a snapshot for db.MayUndo; an empty or unreadable one says nothing.
+func snapshotState(js string) db.UndoRowState {
+	var m map[string]interface{}
+	if strings.TrimSpace(js) == "" || json.Unmarshal([]byte(js), &m) != nil || len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+// withoutVector drops the embedding from a memory snapshot written before BL-25, so an undo's own
+// log entry and its reply never carry the old vector again. Other snapshots are returned as they
+// are.
+func withoutVector(table, js string) string {
+	if table != "topic_memories" || !strings.Contains(js, `"embedding"`) {
+		return js
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(js), &m); err != nil {
+		return js
+	}
+	delete(m, "embedding")
+	out, err := json.Marshal(m)
+	if err != nil {
+		return js
+	}
+	return string(out)
 }
 
 func (m *Module) executeUndo(ctx context.Context, callCtx orchestrator.CallContext, repo Repository, args map[string]interface{}) (string, error) {
@@ -507,7 +582,7 @@ func (m *Module) executeExportTopicData(ctx context.Context, callCtx orchestrato
 func (m *Module) SystemPromptSection(ctx context.Context, callCtx orchestrator.CallContext) string {
 	return `### Durability, Audit & Undo
 - All data modifications across life domains (every topic of the household, schedules, and memories) are tracked in an immutable mutation log.
-- If the user asks to "undo", "cancel that last entry", or "revert that change", use the "undo_last_action" tool.
+- If the user asks to "undo", "cancel that last entry", or "revert that change", use the "undo_last_action" tool. It undoes the user's own changes only; another member undoes theirs themselves.
 - You can inspect change history with "list_recent_changes" and export domain records with "export_topic_data".`
 }
 

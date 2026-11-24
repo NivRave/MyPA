@@ -100,7 +100,7 @@ func (r *mutationResolver) GeneratePairingCode(ctx context.Context, role string)
 
 // UpdateHousehold is the resolver for the updateHousehold field.
 func (r *mutationResolver) UpdateHousehold(ctx context.Context, name *string, language *string, timeZone *string, currency *string) (*model.Household, error) {
-	actorID, hs, err := r.caller(ctx)
+	_, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -122,19 +122,10 @@ func (r *mutationResolver) UpdateHousehold(ctx context.Context, name *string, la
 		return nil, fmt.Errorf("household not found")
 	}
 
-	r.publishEvent(ctx, events.MutationEvent{
-		Topic:       "household",
-		Action:      "update",
-		EntityType:  "Household",
-		EntityID:    after.ID,
-		ActorUserID: actorID,
-		HouseholdID: hs.HouseholdID(),
-		FamilyGroup: hs.LegacyLabel(),
-		BeforeJSON:  toJSON(before),
-		AfterJSON:   toJSON(after),
-		Summary:     "Updated the household's settings",
-		Timestamp:   time.Now(),
-	})
+	// BL-47: a settings change stays off the mutation log, like sign-ins and pack switches: undo
+	// cannot roll a household back, and an entry it cannot undo has no place there.
+	slog.Info("household settings changed", "household_id", hs.HouseholdID(), "person_id", hs.PersonID(),
+		"changed", changedHouseholdSettings(before, *after))
 	return toModelHousehold(*after), nil
 }
 
@@ -1463,18 +1454,11 @@ func (r *mutationResolver) RollbackMutation(ctx context.Context, mutationID stri
 	if err != nil {
 		return false, err
 	}
-	// V4-35: a person undoes their own changes only, inside their own household; another
-	// member's change is theirs to undo (/undo in chat). Undo itself refuses identity tables.
-	if r.DB == nil {
-		return false, fmt.Errorf("mutation lookup unavailable")
-	}
-	var log dbmodels.MutationLog
-	if err := r.DB.DB.WithContext(ctx).Select("user_id", "person_id").
-		Where("id = ? AND household_id = ?", mutationID, hs.HouseholdID()).First(&log).Error; err != nil || !ownedBy(hs, log.UserID, log.PersonID) {
-		return false, fmt.Errorf("permission denied: mutation %s is not one of your changes", mutationID)
-	}
-
-	res, err := dur.Rollback(ctx, hs, mutationID)
+	// BL-65: inside the caller's own household, a person rolls back their own changes; an owner
+	// also another member's change, or one with no known person, to the household's shared data.
+	// A person-owned row is rolled back by its own person only. The durability module and the
+	// rollback itself decide (db.MayUndo); undo refuses identity tables.
+	res, err := dur.RollbackFromDashboard(ctx, hs, mutationID)
 	if err != nil {
 		return false, err
 	}

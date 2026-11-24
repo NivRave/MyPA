@@ -35,13 +35,10 @@ func TestHousehold_AdminUpdatesAndReadsBack(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, got, read)
 
-	require.Eventually(t, func() bool { return len(tracker.getEvents()) == 1 }, time.Second, 10*time.Millisecond)
-	ev := tracker.getEvents()[0]
-	assert.Equal(t, "household", ev.Topic)
-	assert.Equal(t, "update", ev.Action)
-	assert.Equal(t, h.ID, ev.HouseholdID)
-	assert.Equal(t, label, ev.FamilyGroup)
-	assert.Contains(t, ev.AfterJSON, "Asia/Jerusalem")
+	// BL-47: a settings change stays off the mutation log (undo cannot roll a household back); it
+	// is logged at INFO, as sign-ins and pack switches are.
+	time.Sleep(50 * time.Millisecond)
+	assert.Empty(t, tracker.getEvents(), "a settings change publishes no mutation event")
 
 	// Omitted fields stay; an empty string resets a setting to the install default.
 	got, err = resolver.Mutation().UpdateHousehold(admin, nil, nil, ptr(""), nil)

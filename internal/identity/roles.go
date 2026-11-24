@@ -85,6 +85,10 @@ const (
 	// ViewMemberActivity is seeing each member's activity: who, when and what kind of action,
 	// without the text of their chats or their personal data.
 	ViewMemberActivity Action = "view_member_activity"
+	// UndoOthersChanges is rolling back, in the dashboard, another member's change (or one with no
+	// known person) to the household's shared data (BL-65). A person-owned row is rolled back by
+	// its own person only, whatever the role; in chat everyone undoes only their own changes.
+	UndoOthersChanges Action = "undo_others_changes"
 	// RunBackup is the /backup command (operator).
 	RunBackup Action = "run_backup"
 	// RestoreBackup is the /restore command (operator).
@@ -95,13 +99,13 @@ const (
 
 // Actions lists every action, for the test that walks every role and action pair.
 var Actions = []Action{UseAssistant, SignInDashboard, UseDashboard, ManageHousehold, ManageMembers,
-	ViewMemberActivity, RunBackup, RestoreBackup, RunDoctor}
+	ViewMemberActivity, UndoOthersChanges, RunBackup, RestoreBackup, RunDoctor}
 
 // roleActions is the one role-to-action table (ADR 0002 Decision 1). What a child or a guest may
 // do tool by tool is V4-11's.
 var roleActions = map[Role]map[Action]bool{
 	RoleOwner: {UseAssistant: true, SignInDashboard: true, UseDashboard: true, ManageHousehold: true,
-		ManageMembers: true, ViewMemberActivity: true},
+		ManageMembers: true, ViewMemberActivity: true, UndoOthersChanges: true},
 	RoleAdult: {UseAssistant: true, SignInDashboard: true, UseDashboard: true},
 	RoleChild: {UseAssistant: true},
 	// RoleGuest: nothing until sharing by name exists (BL-46); failing closed is the only way a

@@ -82,7 +82,7 @@ func TestRollback_AnotherHouseholdsMutationIsRefused(t *testing.T) {
 
 	logA, err := client.GetMutationLogByID(scopeA, mutID)
 	require.NoError(t, err)
-	require.Error(t, client.RollbackSnapshot(ctx, scopeB, *logA, "baby_care_logs"), "the repository refuses another household's log")
+	require.Error(t, client.RollbackSnapshot(ctx, scopeB, *logA, "baby_care_logs", models.UndoViaDashboard), "the repository refuses another household's log")
 
 	_, err = client.GetMutationLogByID(scopeB, mutID)
 	require.Error(t, err, "household B cannot read household A's log")

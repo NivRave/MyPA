@@ -35,7 +35,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-22 | Low | Restore tool: the rollback test cannot fail yet, and the piped dump check runs only against a fake | open |
 | BL-23 | Low | A failing archive step makes the nightly backup discard its database dump | open |
 | BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: the backfill exists since V4-03 (`mypa embeddings reembed --missing`); running it on the live install is the owner's |
-| BL-25 | Low | Undo snapshots of saved memories carry the full 3,072-number embedding | open: fixed together with BL-57 in one change, after V4-07 and before the V4.0 release, not part of any stage-4 item |
+| BL-25 | Low | Undo snapshots of saved memories carry the full 3,072-number embedding | done 2026-11-24 (`fix/undo-batch`, with BL-57) |
 | BL-26 | Medium | `save_topic_memory` stores `scope` as given, so a value such as `Family` is saved but never found | open |
 | BL-27 | High | The real-phone-number guard and the `.gitignore` guard are skipped in every full test run, including CI | done 2026-11-19 (`chore/bl-27-guards`) |
 | BL-28 | Low | The one-default-model guard misses a model alias with no version digit (`gemini-flash-latest`) and does not search `.mjs`, `.sh`, `.ps1` or `.sql` files | open |
@@ -57,7 +57,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-44 | Medium | In chat, the finance tools list the household's unshared transactions of every member, while the dashboard shows each member only their own | done 2026-11-24 (`fix/bl-43-stored-booleans`): owner's decision, the dashboard's rule on every finance read |
 | BL-45 | Low | `dashboard/README.md` documents `NEXT_PUBLIC_GRAPHQL_API_KEY`, which nothing reads | open |
 | BL-46 | Medium | Guests cannot be used yet: a guest sees only the topics shared with them by name, and nothing shares a topic with a guest by name | open — needs a roadmap item (proposal: with V4-36 invites or V4-11 tiers) |
-| BL-47 | Medium | A household settings change goes to the mutation log, so `/undo` stops working until the next undoable change | open |
+| BL-47 | Medium | A household settings change goes to the mutation log, so `/undo` stops working until the next undoable change | done 2026-11-24 (`fix/undo-batch`): off the log, and `/undo` skips entity types it cannot undo |
 | BL-48 | Low | The Shared Spaces dashboard page shows two made-up members ("Dana (Admin)", "Omer (Family)") | open |
 | BL-49 | Medium | Partner notifications and event-triggered automation messages ignore quiet hours | open |
 | BL-50 | Medium | The reminder tools read a due time without an offset as UTC and confirm it in the server's zone | open |
@@ -67,7 +67,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-54 | Low | WhatsApp templates exist in English only | open |
 | BL-55 | Medium | A legacy workflow run counts as the person writing, and its answer bypasses the delivery policy | open |
 | BL-56 | Low | Telegram's "bot was blocked by the user" is an error, not a "not reachable" refusal | open |
-| BL-57 | Medium | Undo restores a memory's old embedding, which after a re-embed into another model is in the wrong vector space | open: fixed together with BL-25 in one change, after V4-07 and before the V4.0 release, not part of any stage-4 item |
+| BL-57 | Medium | Undo restores a memory's old embedding, which after a re-embed into another model is in the wrong vector space | done 2026-11-24 (`fix/undo-batch`, with BL-25) |
 | BL-58 | Medium | A turn kept local (`LLM_LOCAL_DOMAINS`) is in the history later cloud turns send; voice and tools reach their own services | open |
 | BL-59 | Low | `TestReembed_ToAnotherSizeAfterTheDocumentedMigration` fails on a CRLF checkout of docs/EMBEDDINGS.md | open |
 | BL-60 | Low | `audit_events.prompt_tokens` and `completion_tokens` are never written | open |
@@ -75,9 +75,10 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-62 | Medium | An automation rule created inactive is stored active: the column's default replaces a false `IsActive` | done 2026-11-24 (`fix/bl-43-stored-booleans`, with BL-43) |
 | BL-63 | Medium | A cron rule whose action is a plain instruction does nothing when it fires | open |
 | BL-64 | Low | The Redis token cache still accepts a Google sign-in stored unencrypted, a legacy branch outside V4-07 and V4-45 | open |
-| BL-65 | Low | `/undo` and the dashboard rollback act on the household's newest change, so one member can undo another person's new workflow | open |
+| BL-65 | Low | `/undo` and the dashboard rollback act on the household's newest change, so one member can undo another person's new workflow | done 2026-11-24 (`fix/undo-batch`): chat undoes one's own; the dashboard by role |
 | BL-66 | Medium | A financial transaction cannot be changed or deleted after it is logged, so a person cannot make a wrongly shared one private | open |
 | BL-67 | Medium | A household automation rule fires on another member's unshared transaction, and a webhook rule sends the whole row to its maker's URL | open — owner's decision |
+| BL-68 | Medium | Many chat writes are logged with an action undo cannot roll back (`transaction_logged`, `rule_created`, `upsert`, `supersede` ...), so `/undo` after one fails, and keeps failing | open — owner's decision |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -385,6 +386,9 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   of a saved memory stays small, and an undone-then-restored memory is still found by meaning.
 - **Decided (owner, 2026-11-20):** fixed together with BL-57 in one change, after V4-07 and before the V4.0 release, not part of any stage-4 item. The
   direction is in BL-57.
+- **Done:** 2026-11-24 (`fix/undo-batch`, with BL-57). `TopicMemory.Embedding` is `json:"-"`, so no snapshot written
+  by any path carries it (`TestSaveTopicMemory_SnapshotHoldsNoVector`: no vector, under 1 KB). Existing snapshots
+  are not rewritten.
 
 ### BL-26 — `save_topic_memory` does not normalise `scope` (Medium)
 - **Found:** 2026-11-19, in the second review of V4-06 (non-blocking, after the item passed).
@@ -554,6 +558,12 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** decide whether undo of a person's own row is that person's: either filter `RollbackLast` to the caller's
   own mutations for person-owned entities, or check the owner in `RollbackSnapshot`. Test: another member's `/undo`
   leaves a person's new workflow in place.
+- **Done:** 2026-11-24 (`fix/undo-batch`), the owner's decision: `/undo` and `undo_last_action` act on the caller's
+  own newest undoable change. In the dashboard an owner (`identity.UndoOthersChanges`) may roll back any change to
+  shared household data; a change to a person-owned row only that person; a change with no known person only an
+  owner from the dashboard, and only for shared data. `db.MayUndo` decides, in the module and again inside
+  `RollbackSnapshot` on the locked log and the row (`models.UndoVia`). Tests: `TestUndo_ChatUndoesTheCallersOwnNewestChange`,
+  `TestUndo_TheRollbackItselfChecksTheOwner`, `TestUndo_DashboardRulesPerRole`.
 
 ### BL-66 — A transaction cannot be changed or deleted after it is logged (Medium)
 - **Found:** 2026-11-24, while writing the BL-43 upgrade notes.
@@ -583,6 +593,22 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** decide whether a household rule acts on another person's unshared rows. If not, the runner skips an event
   whose after-image says `"is_shared": false` unless the rule's person is the event's actor. Test: Omer's rule does
   not fire on Dana's private transaction and fires on her shared one and on his own private one.
+
+### BL-68 — Many chat writes cannot be undone, and then block `/undo` (Medium)
+- **Found:** 2026-11-24, while fixing BL-47.
+- **Evidence:** `RollbackSnapshot` (`internal/db/durability_repo.go`) rolls back the actions `create`, `update` and
+  `delete` only, and answers `unsupported mutation action` for anything else. Chat tools log other actions on entity
+  types that are on the undo allowlist: `transaction_logged` (`FinancialTransaction`, `internal/domains/finance/handlers.go`),
+  `rule_created` (`AutomationRule`), `maintenance_created`, `vehicle_created` and the other `vehicle_*` and
+  `maintenance_*` actions (`internal/domains/house/handlers.go`), `upsert` (`EntityProfile`), `complete`
+  (`SharedTaskReminder`), `recurring_bill_*`, `budget_set`, `preferences_updated`, and `supersede` (`TopicMemory`,
+  a memory saved in place of an older one).
+- **Impact:** after one of these, `/undo` fails with "unsupported mutation action". It is the person's newest change
+  of an undoable type, so every later `/undo` fails the same way until they make a change undo can roll back. BL-47's
+  fix skips entity types, as decided, not actions.
+- **Fix:** decide between (a) logging these as `create`/`update`/`delete` with the snapshots undo needs (`upsert` and
+  `supersede` need both rows), or (b) having `/undo` skip actions it cannot roll back as well, which then undoes an
+  older change without saying so. Test: `/undo` right after logging a transaction in chat removes it.
 
 ### BL-30 — Other tests change the process environment and do not restore it exactly (Low)
 - **Found:** 2026-11-19, in the search of every `_test.go` file done for BL-27.
@@ -815,6 +841,10 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   V4-27's `setPackEnabled` keeps pack switches off it.
 - **Fix:** keep household settings off the mutation log (log them at INFO, as sign-ins and pack switches
   are), or make `GetLastMutation` skip entity types that cannot be undone.
+- **Done:** 2026-11-24 (`fix/undo-batch`), both: `updateHousehold` publishes nothing and logs at INFO (household,
+  person, names of the settings changed); `RollbackLast` reads `GetLastUndoableMutation`, which skips entity types
+  not on the allowlist. Tests: `TestUndo_HouseholdSettingsChangeDoesNotBlockUndo`, `TestUndo_SkipsEntriesThatCannotBeUndone`.
+  An action undo cannot roll back on an undoable entity type still blocks it: BL-68.
 
 ### BL-48 — Made-up members on the Shared Spaces page (Low)
 - **Found:** 2026-11-20, while building V4-27.
@@ -910,6 +940,12 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Direction (owner, 2026-11-20):** one change with BL-25, after V4-07 and before the V4.0 release, not part of any stage-4 item. An undo snapshot no
   longer carries the embedding, and a memory restored by undo is marked as needing one, so the re-embed path from
   V4-03 (`mypa embeddings reembed --missing`) fills it in the current model.
+- **Done:** 2026-11-24 (`fix/undo-batch`, with BL-25). `RollbackSnapshot` drops any `embedding` from a memory
+  snapshot and gives a restored memory a zero vector of the stored size (an undone update only when it changes the
+  text); an old snapshot that still holds a vector is not rewritten and its vector is ignored. The undo's own log
+  entry and its reply leave an old vector out. `TestUndo_RestoredMemoryIsEmbeddedInTheCurrentModel`: after a
+  re-embed into another model, a restored memory holds no vector of the old one, `reembed --missing` finds it and it
+  is found by meaning again, from a new snapshot and from an old one.
 
 ## Operations (owner)
 

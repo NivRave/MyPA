@@ -18,7 +18,7 @@ import (
 // commands and the sign-in link, never household content.
 func TestCan_WalksEveryRoleAndActionPair(t *testing.T) {
 	owner := map[identity.Action]bool{identity.UseAssistant: true, identity.SignInDashboard: true, identity.UseDashboard: true,
-		identity.ManageHousehold: true, identity.ManageMembers: true, identity.ViewMemberActivity: true}
+		identity.ManageHousehold: true, identity.ManageMembers: true, identity.ViewMemberActivity: true, identity.UndoOthersChanges: true}
 	adult := map[identity.Action]bool{identity.UseAssistant: true, identity.SignInDashboard: true, identity.UseDashboard: true}
 	chatOnly := map[identity.Action]bool{identity.UseAssistant: true}
 	// A guest may do nothing until topics can be shared with a guest by name (BL-46).
@@ -28,7 +28,7 @@ func TestCan_WalksEveryRoleAndActionPair(t *testing.T) {
 	operatorAdds := map[identity.Action]bool{identity.RunBackup: true, identity.RestoreBackup: true, identity.RunDoctor: true, identity.SignInDashboard: true}
 
 	require.Len(t, want, len(identity.Roles), "every role has a row")
-	require.Len(t, identity.Actions, 9, "a new action needs a column here")
+	require.Len(t, identity.Actions, 10, "a new action needs a column here")
 	for _, r := range identity.Roles {
 		for _, operator := range []bool{false, true} {
 			st := identitytest.NewStore()

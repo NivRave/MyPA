@@ -47,7 +47,7 @@ type TopicMemory struct {
 	ValidFrom         time.Time       `json:"valid_from"`
 	ValidUntil        *time.Time      `json:"valid_until,omitempty"`
 	IsPinned          bool            `json:"is_pinned" gorm:"default:false"`
-	Embedding         pgvector.Vector `json:"embedding,omitempty" gorm:"type:vector(3072)"`
+	Embedding         pgvector.Vector `json:"-" gorm:"type:vector(3072)"` // never in a JSON snapshot: 3,072 numbers per undo entry, and of one model only (BL-25, BL-57)
 	CreatedAt         time.Time       `json:"created_at"`
 }
 

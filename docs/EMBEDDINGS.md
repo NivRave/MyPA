@@ -44,8 +44,8 @@ docker compose start app
   one transaction: if anything fails (a quota error, a vector of the wrong size), nothing is
   changed and the memories stay as they were. It costs one embedding request per 50 memories.
 - `reembed --missing` embeds only the memories that have no embedding (saved while the embedding
-  service failed, or with `save_topic_memory` before V4-06, BL-24), in the recorded model. It
-  refuses when `EMBEDDING_MODEL` is not the recorded model.
+  service failed, with `save_topic_memory` before V4-06, BL-24, or brought back by undo, BL-57),
+  in the recorded model. It refuses when `EMBEDDING_MODEL` is not the recorded model.
 - Both refuse while the app is consuming messages (the queue has a consumer). `--skip-stop-check`
   skips that check; the re-embed holds a write lock on the memories, so a running app would wait
   on every memory it saves until the re-embed ends.

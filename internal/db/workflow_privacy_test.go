@@ -72,7 +72,7 @@ func TestAutomationRules_AWorkflowIsSeenOnlyByItsPerson(t *testing.T) {
 	log := models.MutationLog{ID: uuid.NewString(), UserID: "dana-wf", Topic: "automation", Action: "delete",
 		EntityType: "AutomationRule", EntityID: "1", BeforeJSON: string(before), Summary: "Deleted workflow"}
 	require.NoError(t, client.InsertMutationLog(dana, log))
-	require.NoError(t, client.RollbackSnapshot(context.Background(), dana, log, "automation_rules"))
+	require.NoError(t, client.RollbackSnapshot(context.Background(), dana, log, "automation_rules", models.UndoViaChat))
 	got, err = client.GetAutomationRule(dana, workflow.ID)
 	require.NoError(t, err)
 	require.NotNil(t, got, "undo restores the deleted workflow")
