@@ -26,7 +26,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-13 | Low | `.env.example` `ALLOWED_USERS` example comment uses a real-format `+972 50…` number (not the owner's); switch to the reserved fictional `+1555010xxxx` range like the SQL-logging test | done 2026-11-17 (`fix/bl-13`, DP-16) — now `+1 202 555 01xx` (the real fictional range; `+1555010xxxx` is not it), plus a tree-wide guard |
 | BL-14 | Medium | Memory consolidation is implemented but never runs: nothing schedules or calls it | open — tracked as V4-14 |
 | BL-15 | Low | Two code comments point to `docs/PLAN.md`, which does not exist | open |
-| BL-16 | Medium | No re-encryption path for old-format (unsalted) ciphertexts, so the legacy decryption fallback cannot be removed safely | open — tracked as V4-07 |
+| BL-16 | Medium | No re-encryption path for old-format (unsalted) ciphertexts, so the legacy decryption fallback cannot be removed safely | open — the pass is V4-07, the removal V4-45 (DE-12) |
 | BL-17 | Low | WhatsApp message splitter cuts by bytes and can split a character in unbroken non-Latin text | open |
 | BL-18 | Low | A document sent on Telegram gets no answer at all | open — the channel layer (V4-31) is the natural place |
 | BL-19 | Low | Reminder and transcription labels render as italics, probably meant as bold | open |
@@ -222,7 +222,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   it blind would make those Google sign-ins and API headers unreadable. This is separate from OP-2, which is
   about tokens encrypted under the old public fallback key.
 - **Fix:** a one-off re-encryption pass over the three stores that rewrites each value in the current format
-  and reports how many old-format values remain; delete the fallback only when the report shows zero (V4-07).
+  and reports how many old-format values remain; delete the fallback only when the report shows zero. Split by DE-12:
+  the pass ships in V4-07, and V4-45 deletes the fallback after the pass has run on the live V4.0 install.
 
 ### BL-17 — WhatsApp splitter can cut inside a character (Low)
 - **Found:** 2026-11-19, while writing the channel conformance suite (V4-34).
