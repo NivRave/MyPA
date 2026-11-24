@@ -2,6 +2,7 @@ package shared
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/nivik/mypa/internal/identity"
@@ -58,6 +59,12 @@ func (n *Notifier) HandleMutationEvent(ctx context.Context, event events.Mutatio
 
 	normTopic := strings.ToLower(strings.TrimSpace(event.Topic))
 	if normTopic == "" {
+		return nil
+	}
+
+	// A row its person did not share (an unshared transaction or calendar event) is theirs alone,
+	// in chat and on the dashboard (V4-35, BL-44), so it is not announced to the others either.
+	if unshared(event.AfterJSON) {
 		return nil
 	}
 
@@ -158,6 +165,21 @@ func (n *Notifier) HandleMutationEvent(ctx context.Context, event events.Mutatio
 	}
 
 	return errors.Join(errs...)
+}
+
+// unshared reports whether an event's after-image is a row marked not shared (`"is_shared": false`).
+// A row without the field, or an after-image that is not a JSON object, is not.
+func unshared(afterJSON string) bool {
+	if strings.TrimSpace(afterJSON) == "" {
+		return false
+	}
+	var row struct {
+		IsShared *bool `json:"is_shared"`
+	}
+	if err := json.Unmarshal([]byte(afterJSON), &row); err != nil {
+		return false
+	}
+	return row.IsShared != nil && !*row.IsShared
 }
 
 // FormatNotification formats a human-friendly cross-user alert string.

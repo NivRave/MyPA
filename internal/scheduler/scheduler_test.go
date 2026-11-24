@@ -97,10 +97,8 @@ func TestReloadWorkflows_WithPostgres(t *testing.T) {
 		IsActive:          false,
 		CreatedAt:         time.Now(),
 	}
-	err = client.DB.Create(&inactiveRule).Error
-	require.NoError(t, err)
-	// The column's default (true) replaces a false IsActive on create (BL-62): switch it off.
-	require.NoError(t, client.DB.Model(&inactiveRule).Update("is_active", false).Error)
+	// Created inactive, as the rule tools create it (BL-62: it used to be stored active).
+	require.NoError(t, client.CreateAutomationRule(householdtest.Scope(t, client, "fam-test", "test-scheduler-user", "family"), &inactiveRule))
 
 	assert.NotPanics(t, func() {
 		ReloadWorkflows(nil, client, runner)

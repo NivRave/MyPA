@@ -170,9 +170,6 @@ func TestSessionAuth_EachRoleSeesAndChangesOnlyWhatItMay(t *testing.T) {
 	memID := r.data["saveTopicMemory"].(map[string]any)["id"].(string)
 	r = gql(t, h, S["noa"], `mutation { logFinancialTransaction(type: "expense", category: "health", merchant: "Noa clinic", amount: 80, currency: "ILS", isShared: false) { id } }`, nil)
 	require.Empty(t, r.errs)
-	// isShared: false is stored as true today (the model's default:true drops a false on insert,
-	// BL-43, chat included); store it as the person asked, so the visibility rule is what is tested.
-	require.NoError(t, c.DB.Model(&models.FinancialTransaction{}).Where("merchant = ?", "Noa clinic").Update("is_shared", false).Error)
 	r = gql(t, h, S["noa"], `mutation { createScheduleEvent(topic: "health", title: "Noa appointment", startTime: "2026-12-01T10:00:00Z", endTime: "2026-12-01T11:00:00Z", isShared: false) { id } }`, nil)
 	require.Empty(t, r.errs)
 	eventID := r.data["createScheduleEvent"].(map[string]any)["id"].(string)

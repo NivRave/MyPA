@@ -49,6 +49,7 @@ func TestFinanceRepo_Transactions_CRUDAndIsolation(t *testing.T) {
 		Amount:          5000.0,
 		Currency:        "USD",
 		TransactionDate: txDate,
+		IsShared:        true, // the household's; an unshared one is its person's own (BL-44)
 	}
 	require.NoError(t, repo.CreateTransaction(ctx, scopeFor(t, client, famA), &txA2))
 	require.NotZero(t, txA2.ID)
@@ -63,6 +64,7 @@ func TestFinanceRepo_Transactions_CRUDAndIsolation(t *testing.T) {
 		Amount:          45.0,
 		Currency:        "USD",
 		TransactionDate: txDate,
+		IsShared:        true,
 	}
 	require.NoError(t, repo.CreateTransaction(ctx, scopeFor(t, client, famB), &txB))
 	require.NotZero(t, txB.ID)
@@ -123,6 +125,7 @@ func TestFinanceRepo_AggregationsAndSummary(t *testing.T) {
 		Merchant:        "Trader Joe's",
 		Amount:          80.0,
 		TransactionDate: now,
+		IsShared:        true, // the household's; an unshared one is its person's own (BL-44)
 	}
 	require.NoError(t, repo.CreateTransaction(ctx, scopeFor(t, client, fam), &t1))
 
@@ -134,6 +137,7 @@ func TestFinanceRepo_AggregationsAndSummary(t *testing.T) {
 		Merchant:        "Trader Joe's",
 		Amount:          120.0,
 		TransactionDate: now,
+		IsShared:        true,
 	}
 	require.NoError(t, repo.CreateTransaction(ctx, scopeFor(t, client, fam), &t2))
 
@@ -145,6 +149,7 @@ func TestFinanceRepo_AggregationsAndSummary(t *testing.T) {
 		Merchant:        "Electric Co",
 		Amount:          150.0,
 		TransactionDate: now,
+		IsShared:        true,
 	}
 	require.NoError(t, repo.CreateTransaction(ctx, scopeFor(t, client, fam), &t3))
 
@@ -155,6 +160,7 @@ func TestFinanceRepo_AggregationsAndSummary(t *testing.T) {
 		Category:        "salary",
 		Amount:          3000.0,
 		TransactionDate: now,
+		IsShared:        true,
 	}
 	require.NoError(t, repo.CreateTransaction(ctx, scopeFor(t, client, fam), &tIncome))
 

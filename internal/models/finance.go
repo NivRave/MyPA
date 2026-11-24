@@ -49,7 +49,7 @@ type FinancialTransaction struct {
 	Amount          float64   `json:"amount"`
 	Currency        string    `json:"currency"`
 	TransactionDate time.Time `json:"transaction_date" gorm:"index;index:idx_financial_transactions_family_date,priority:2,sort:desc;index:idx_financial_transactions_user_date,priority:2,sort:desc"`
-	IsShared        bool      `json:"is_shared" gorm:"default:true"`
+	IsShared        bool      `json:"is_shared"` // no tag default: GORM would store it in place of a false (BL-43)
 	Source          string    `json:"source"` // "chat", "receipt_photo", "email"
 	Notes           string    `json:"notes"`
 	CreatedAt       time.Time `json:"created_at"`
@@ -92,7 +92,7 @@ type RecurringBill struct {
 	Currency       string    `json:"currency"`
 	BillingCycle   string    `json:"billing_cycle"` // "monthly", "yearly"
 	NextDueDay     int       `json:"next_due_day"`  // Day of month 1-31
-	AutoRenew      bool      `json:"auto_renew" gorm:"default:true"`
+	AutoRenew      bool      `json:"auto_renew"` // no tag default: GORM would store it in place of a false (BL-43)
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }

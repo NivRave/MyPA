@@ -186,6 +186,7 @@ the family first.
    this key" is not affected by V4-45: it was written with another `ENCRYPTION_KEY` or is damaged
    (that Google sign-in needs `/connect` again), or it is a sign-in an old release cached
    unencrypted, which the app encrypts the next time it reads it.
+7. Review the yes/no settings stored before the upgrade (the upgrade notes below).
 
 **To roll back:** stop the app, restore the set from step 3 without migrating, check out `v3.4.x`
 and start it.
@@ -195,6 +196,34 @@ docker compose --profile tools run --rm -e BACKUP_AGE_IDENTITY_FILE=/backups/bac
   transfer import backup_<time>.manifest.json --replace --no-migrate
 git checkout v3.4.x
 docker compose up -d --build --remove-orphans
+```
+
+### Upgrade notes: yes/no settings stored before V4.0 (BL-43, BL-62)
+
+Before V4.0 the app could not store "no" in seven yes/no columns: every `false` it was given was
+stored as `true` (the model's default took its place). Since V4.0 each value is stored as given,
+and migration 12 (`00012_no_true_defaults.sql`) removes the columns' `DEFAULT true`. **The upgrade
+does not change any row.** A row stored before it that says `true` may have been meant as `false`,
+and nothing in the database tells the two apart. Review these once after upgrading:
+
+| Table | Column | A wrong `true` means | Correct it with |
+| :--- | :--- | :--- | :--- |
+| `financial_transactions` | `is_shared` | a transaction its person logged as private is visible to every member, in chat and on the dashboard | nothing in the app yet (BL-66): ask its person, then an `UPDATE` of that row |
+| `shared_spaces` | `can_view` | the members of a topic set to "no view" are still notified of each change in it | the dashboard's Shared Spaces page, or `configure_shared_topic` in chat |
+| `shared_spaces` | `can_edit` | a topic set to "no edit" is shown, and described to the assistant, as editable; nothing enforces the setting | the same |
+| `automation_rules` | `is_active` | a rule created switched off runs on its schedule or its events | the toggle on the dashboard's Automations page |
+| `recurring_bills` | `auto_renew` | a bill set to manual renewal is shown as renewing itself (a label only) | `manage_recurring_bills` (`update`) in chat |
+| `schedule_events` | `sync_to_google` | an event meant to stay in MyPA is labelled as synced ("Google Synced" in the event list, `[Google]` in the assistant's context). It was **not** sent to Google: chat decided that from the value asked, and the dashboard never sends events to Google. Do not delete anything in Google Calendar because of this column | nothing in the app; the label is harmless |
+| `topic_calendar_configs` | `include_in_morning_briefing` | nothing today: the setting is stored and shown, and no briefing reads it | `configure_topic_calendar` in chat, before something starts reading it |
+
+To list the rows to review (read-only; `mypa` is the default database user and name):
+
+```
+docker compose exec postgres psql -U mypa -d mypa -c "SELECT id, user_id, merchant, amount, transaction_date FROM financial_transactions WHERE is_shared ORDER BY transaction_date"
+docker compose exec postgres psql -U mypa -d mypa -c "SELECT id, topic, owner_user_id, shared_with_user_id, can_view, can_edit FROM shared_spaces"
+docker compose exec postgres psql -U mypa -d mypa -c "SELECT id, name, trigger_type, is_active FROM automation_rules WHERE is_active"
+docker compose exec postgres psql -U mypa -d mypa -c "SELECT id, name, auto_renew FROM recurring_bills WHERE auto_renew"
+docker compose exec postgres psql -U mypa -d mypa -c "SELECT user_id, topic, include_in_morning_briefing FROM topic_calendar_configs WHERE include_in_morning_briefing"
 ```
 
 ## B. Move to another machine (or restore the baseline backup into V4 elsewhere)
@@ -225,7 +254,8 @@ On the new machine, with V4 checked out and a `.env` prepared:
    and, if you used a passphrase, `mypa-backup-key.txt` and the passphrase file. The private
    backup key goes back to being kept off the machine only.
 9. `docker compose up -d --build`, then `/doctor`. After restoring a baseline (`v3.4.x`) backup,
-   also run `reencrypt` as in section A, step 6.
+   also run `reencrypt` as in section A, step 6, and review the yes/no settings as in section A's
+   upgrade notes.
 10. The old install stays stopped. Keep it until the new one has proven itself; its database is
     untouched.
 

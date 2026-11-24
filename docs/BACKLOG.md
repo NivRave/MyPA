@@ -53,8 +53,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-40 | Low | `/doctor` does not say that linking is off when `LINK_CODE_SECRET` is not set | open |
 | BL-41 | Medium | An owner cannot yet remove a member's channel account | open — owner roles exist since V4-35 |
 | BL-42 | Low | Wrong pairing codes do not count toward the install-wide limit on typed codes | open — pairing codes end with V4-36 |
-| BL-43 | High | A `false` is stored as `true` in every boolean column whose model says `default:true` (`is_shared` on transactions, `can_view` and `can_edit` on shared spaces, `is_active`, `auto_renew`, `sync_to_google`, `include_in_morning_briefing`) | open |
-| BL-44 | Medium | In chat, the finance tools list the household's unshared transactions of every member, while the dashboard shows each member only their own | open — decide with BL-43 |
+| BL-43 | High | A `false` is stored as `true` in every boolean column whose model says `default:true` (`is_shared` on transactions, `can_view` and `can_edit` on shared spaces, `is_active`, `auto_renew`, `sync_to_google`, `include_in_morning_briefing`) | done 2026-11-24 (`fix/bl-43-stored-booleans`): no non-zero tag default, migration 12; rows stored before are for the owner to review (docs/RESTORE_AND_MIGRATE.md) |
+| BL-44 | Medium | In chat, the finance tools list the household's unshared transactions of every member, while the dashboard shows each member only their own | done 2026-11-24 (`fix/bl-43-stored-booleans`): owner's decision, the dashboard's rule on every finance read |
 | BL-45 | Low | `dashboard/README.md` documents `NEXT_PUBLIC_GRAPHQL_API_KEY`, which nothing reads | open |
 | BL-46 | Medium | Guests cannot be used yet: a guest sees only the topics shared with them by name, and nothing shares a topic with a guest by name | open — needs a roadmap item (proposal: with V4-36 invites or V4-11 tiers) |
 | BL-47 | Medium | A household settings change goes to the mutation log, so `/undo` stops working until the next undoable change | open |
@@ -72,10 +72,12 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-59 | Low | `TestReembed_ToAnotherSizeAfterTheDocumentedMigration` fails on a CRLF checkout of docs/EMBEDDINGS.md | open |
 | BL-60 | Low | `audit_events.prompt_tokens` and `completion_tokens` are never written | open |
 | BL-61 | Low | The dashboard's Sessions page shows "View History" and "Revoke" buttons that do nothing | open |
-| BL-62 | Medium | An automation rule created inactive is stored active: the column's default replaces a false `IsActive` | open |
+| BL-62 | Medium | An automation rule created inactive is stored active: the column's default replaces a false `IsActive` | done 2026-11-24 (`fix/bl-43-stored-booleans`, with BL-43) |
 | BL-63 | Medium | A cron rule whose action is a plain instruction does nothing when it fires | open |
 | BL-64 | Low | The Redis token cache still accepts a Google sign-in stored unencrypted, a legacy branch outside V4-07 and V4-45 | open |
 | BL-65 | Low | `/undo` and the dashboard rollback act on the household's newest change, so one member can undo another person's new workflow | open |
+| BL-66 | Medium | A financial transaction cannot be changed or deleted after it is logged, so a person cannot make a wrongly shared one private | open |
+| BL-67 | Medium | A household automation rule fires on another member's unshared transaction, and a webhook rule sends the whole row to its maker's URL | open — owner's decision |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -510,6 +512,10 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** write `is_active` explicitly on create (`Select("*")`, or an update after the insert in the same
   transaction), or drop the default from the tag with a migration that keeps the column default. Test: a rule
   created with `is_active: false` is stored false and is not scheduled.
+- **Done:** 2026-11-24 with BL-43 (`fix/bl-43-stored-booleans`). `Select("*")` would not have helped: GORM puts the
+  default in place of a zero value even for a selected column. The tag has no default, and migration 12 drops the
+  column's. Tests: `TestStoredValues_AFalseIsStoredAsAsked`, `TestDashboard_AFalseIsStoredAsAsked`,
+  `TestChat_ARuleCreatedInactiveIsStoredInactive`, and `TestReloadWorkflows_WithPostgres` without its workaround.
 
 ### BL-63 — A cron rule whose action is a plain instruction does nothing (Medium)
 - **Found:** 2026-11-24, while folding the workflows into cron rules (V4-07).
@@ -548,6 +554,35 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** decide whether undo of a person's own row is that person's: either filter `RollbackLast` to the caller's
   own mutations for person-owned entities, or check the owner in `RollbackSnapshot`. Test: another member's `/undo`
   leaves a person's new workflow in place.
+
+### BL-66 — A transaction cannot be changed or deleted after it is logged (Medium)
+- **Found:** 2026-11-24, while writing the BL-43 upgrade notes.
+- **Evidence:** the finance tools (`log_financial_transaction`, `get_financial_summary`, `set_category_budget`,
+  `manage_recurring_bills`) and the GraphQL schema (`logFinancialTransaction`) create and read transactions; no tool,
+  mutation or repository method updates or deletes one (`FinanceRepository` has no `UpdateTransaction`).
+- **Impact:** a transaction stored shared that its person meant as private (every one logged before BL-43's fix was
+  stored shared) stays visible to the household. The only correction is an `UPDATE` in the database by the owner.
+  A wrong amount or category cannot be corrected either.
+- **Fix:** an update (at least `is_shared`, amount, category, merchant) and a delete, for the transaction's own person
+  only, in chat and on the dashboard, announced and undoable like other changes. Test: another member cannot change
+  or delete it; its person can make it private, and it then leaves the other members' lists and totals.
+
+### BL-67 — Household automation rules see every member's unshared rows (Medium)
+- **Found:** 2026-11-24, while fixing BL-44 (review of the partner notifier).
+- **Evidence:** `automation.Runner` matches every mutation event of the household against its active rules
+  (`HandleMutationEvent`; `EvaluateCondition` reads `Summary` and `AfterJSON`). A rule one member made
+  (`trigger_topic` `finance`, `min_amount` 500) fires on another member's unshared transaction: `notify:` tells its
+  maker (the rule's own text, so only that it fired), and a webhook rule POSTs the whole event, merchant and amount
+  included, to the maker's URL (`ExecuteAction`, `internal/domains/automation/runner.go`).
+- **Impact:** a person's private transaction (or unshared calendar event) reaches another member through a rule,
+  the one path left after BL-44.
+- **Also:** the partner notifier skips an unshared row by its after-image only. A delete carries only `BeforeJSON`
+  (chat `delete_calendar_event`, dashboard `deleteScheduleEvent`), so deleting an unshared calendar event in a topic
+  with a notifying shared space announces its title. Fix with the same change: `unshared` also reads `BeforeJSON`
+  when there is no after-image.
+- **Fix:** decide whether a household rule acts on another person's unshared rows. If not, the runner skips an event
+  whose after-image says `"is_shared": false` unless the rule's person is the event's actor. Test: Omer's rule does
+  not fire on Dana's private transaction and fires on her shared one and on his own private one.
 
 ### BL-30 — Other tests change the process environment and do not restore it exactly (Low)
 - **Found:** 2026-11-19, in the search of every `_test.go` file done for BL-27.
@@ -727,6 +762,14 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** write these fields explicitly (`Select("*")` or `*bool` with the default) and add a test per
   model that a `false` round-trips; decide whether rows written so far can be corrected (they cannot be
   told apart from rows meant as `true`).
+- **Done:** 2026-11-24 (`fix/bl-43-stored-booleans`). The seven fields carry no tag default (GORM puts a tag default
+  in place of a zero value on insert, `Select("*")` included); migration `00012_no_true_defaults.sql` drops the
+  columns' `DEFAULT true` and changes no row. Every constructor already set the fields, so no caller changed.
+  `TestModels_NoDefaultReplacesAChosenZeroValue` fails on any model field whose default differs from its zero value
+  (two string defaults whose empty value means "not given" are listed). Round trips on create and on update from
+  true to false, through the repositories (on the AutoMigrate and the migrated schema), the dashboard mutations
+  and the chat tools. Rows written before are not rewritten: docs/RESTORE_AND_MIGRATE.md lists them for the owner
+  to review. A transaction has no edit path to correct one (BL-66).
 
 ### BL-44 — Chat shows other members' unshared transactions (Medium)
 - **Found:** 2026-11-20, while building V4-35.
@@ -736,6 +779,15 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Impact:** the two surfaces disagree about the same row; chat is the wider one.
 - **Fix:** apply the same rule in the finance repository (`is_shared OR` the person's own), after BL-43, so
   the rows mean what they say.
+- **Done:** 2026-11-24 (`fix/bl-43-stored-booleans`), the owner's decision: in chat a member sees their own unshared
+  transactions and the household's shared ones. `FinanceRepo.transactions` applies it to every transaction read:
+  the list, one transaction, the summary (its per-member totals included), the month's category totals (the prompt
+  and the budget check) and the anomaly average. The dashboard query relies on it (its limit now counts visible
+  rows only). The partner notifier announced every finance change, an unshared transaction's amount and merchant
+  included; it no longer announces a row marked `"is_shared": false` (a transaction or a calendar event). Tests:
+  `TestFinanceRepo_AMemberReadsSharedAndTheirOwnTransactions`, `TestChat_AMemberSeesSharedAndTheirOwnTransactions`
+  (two members of one household), `TestNotifier_AnUnsharedRowIsNotAnnounced`. Household automation rules still
+  see every member's rows: BL-67.
 
 ### BL-46 — Guests cannot be used yet (Medium)
 - **Found:** 2026-11-20, V4-35 review.
