@@ -178,6 +178,7 @@ func (m *Module) executeDeleteWorkflow(ctx context.Context, callCtx orchestrator
 	if _, ok := ownWorkflow(rule, callCtx); !ok {
 		return fmt.Sprintf("Error deleting workflow: you have no workflow with ID %d.", id), nil
 	}
+	beforeBytes, _ := json.Marshal(rule) // the snapshot /undo restores
 	if err := repo.DeleteAutomationRule(s, id); err != nil {
 		return fmt.Sprintf("Error deleting workflow: %v", err), nil
 	}
@@ -192,6 +193,7 @@ func (m *Module) executeDeleteWorkflow(ctx context.Context, callCtx orchestrator
 			ActorUserID: actorID,
 			HouseholdID: s.HouseholdID(),
 			FamilyGroup: s.LegacyLabel(),
+			BeforeJSON:  string(beforeBytes),
 			Summary:     fmt.Sprintf("Deleted workflow #%d", id),
 			Timestamp:   time.Now(),
 		})

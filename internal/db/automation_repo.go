@@ -180,13 +180,29 @@ func (c *Client) CreateAutomationRule(s identity.Scope, rule *models.AutomationR
 	return nil
 }
 
+// workflowsOfOthersHidden confines a scoped rule query so that a scheduled workflow (a cron rule
+// whose action is a prompt, V4-07) is seen, changed and deleted by its own person only. A
+// workflow was one person's own before migration 11 folded it into the household's rules, and it
+// stays so on every path: the rule tools, the dashboard and the toggle. Other rules are the
+// household's, as before. The test matches automation.PromptOf.
+func workflowsOfOthersHidden(q *gorm.DB, s identity.Scope) *gorm.DB {
+	const workflow = `(trigger_type ~* '^\s*cron\s*$' AND action_instruction ~* '^\s*prompt:')`
+	key := strings.TrimSpace(s.PersonKey())
+	if key == "" {
+		return q.Where("NOT " + workflow)
+	}
+	mine, args := personIs("user_id", "person_id", key)
+	return q.Where("(NOT "+workflow+" OR "+mine+")", args...)
+}
+
 // GetAutomationRule retrieves an AutomationRule of the scope's household by ID.
-// Returns (nil, nil) if not found.
+// Returns (nil, nil) if not found, or if it is another person's workflow.
 func (c *Client) GetAutomationRule(s identity.Scope, id uint) (*models.AutomationRule, error) {
 	query, err := c.scoped(s)
 	if err != nil {
 		return nil, err
 	}
+	query = workflowsOfOthersHidden(query, s)
 	var rule models.AutomationRule
 	result := query.Where("id = ?", id).First(&rule)
 	if result.Error != nil {
@@ -198,13 +214,14 @@ func (c *Client) GetAutomationRule(s identity.Scope, id uint) (*models.Automatio
 	return &rule, nil
 }
 
-// ListAutomationRules lists the scope household's AutomationRules, optionally by trigger topic.
+// ListAutomationRules lists the scope household's AutomationRules, optionally by trigger topic,
+// without other people's workflows.
 func (c *Client) ListAutomationRules(s identity.Scope, triggerTopic string) ([]models.AutomationRule, error) {
 	query, err := c.scoped(s)
 	if err != nil {
 		return nil, err
 	}
-	query = query.Model(&models.AutomationRule{})
+	query = workflowsOfOthersHidden(query.Model(&models.AutomationRule{}), s)
 
 	normTopic := strings.ToLower(strings.TrimSpace(triggerTopic))
 	if normTopic != "" && normTopic != "all" && normTopic != "*" {
@@ -235,7 +252,8 @@ func (c *Client) ListActiveAutomationRules(triggerTopic string) ([]models.Automa
 	return rules, nil
 }
 
-// UpdateAutomationRule updates an existing AutomationRule of the scope's household.
+// UpdateAutomationRule updates an existing AutomationRule of the scope's household. Another
+// person's workflow is not found.
 func (c *Client) UpdateAutomationRule(s identity.Scope, rule *models.AutomationRule) error {
 	if rule == nil || rule.ID == 0 {
 		return fmt.Errorf("automation rule with an ID is required")
@@ -244,6 +262,7 @@ func (c *Client) UpdateAutomationRule(s identity.Scope, rule *models.AutomationR
 	if err != nil {
 		return err
 	}
+	query = workflowsOfOthersHidden(query, s)
 	if err := stamp(s, &rule.HouseholdID, &rule.FamilyGroup); err != nil {
 		return err
 	}
@@ -273,12 +292,13 @@ func (c *Client) UpdateAutomationRule(s identity.Scope, rule *models.AutomationR
 }
 
 // DeleteAutomationRule removes an AutomationRule of the scope's household by ID. A rule of
-// another household is left untouched (no error, nothing deleted).
+// another household, or another person's workflow, is left untouched (no error, nothing deleted).
 func (c *Client) DeleteAutomationRule(s identity.Scope, id uint) error {
 	query, err := c.scoped(s)
 	if err != nil {
 		return err
 	}
+	query = workflowsOfOthersHidden(query, s)
 	result := query.Where("id = ?", id).Delete(&models.AutomationRule{})
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete automation rule: %w", result.Error)
