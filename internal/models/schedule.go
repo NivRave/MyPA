@@ -25,7 +25,7 @@ type ScheduleEvent struct {
 	StartTime             time.Time `json:"start_time" gorm:"index;index:idx_schedule_events_family_start,priority:2,sort:asc;index:idx_schedule_events_user_start,priority:2,sort:asc"`
 	EndTime               time.Time `json:"end_time" gorm:"index"`
 	RecurrenceRule        string    `json:"recurrence_rule"`
-	SyncToGoogle          bool      `json:"sync_to_google" gorm:"default:true"`
+	SyncToGoogle          bool      `json:"sync_to_google"` // no tag default: GORM would store it in place of a false (BL-43)
 	IsShared              bool      `json:"is_shared" gorm:"default:false"`
 	CreatedByUserID       string    `json:"created_by_user_id"`
 	CreatedByPersonID     *string   `json:"created_by_person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind created_by_user_id, filled by the database (migration 4)
@@ -42,7 +42,7 @@ type TopicCalendarConfig struct {
 	ColorID                  string    `json:"color_id"`
 	PrefixTag                string    `json:"prefix_tag"`
 	TargetCalendarID         string    `json:"target_calendar_id"`
-	IncludeInMorningBriefing bool      `json:"include_in_morning_briefing" gorm:"default:true"`
+	IncludeInMorningBriefing bool      `json:"include_in_morning_briefing"` // no tag default: GORM would store it in place of a false (BL-43)
 	SyncToGoogleDefault      *bool     `json:"sync_to_google_default,omitempty"`
 	UpdatedAt                time.Time `json:"updated_at"`
 }

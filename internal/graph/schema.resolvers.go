@@ -1911,12 +1911,11 @@ func (r *queryResolver) FinancialTransactions(ctx context.Context, category *str
 		return nil, err
 	}
 
+	// V4-35: an unshared transaction is its person's own. The repository reads only the shared
+	// ones and the caller's own (BL-44), the same rule chat has, so the limit counts those only.
 	var res []*model.FinancialTransaction
 	for i := range dbTxs {
-		// V4-35: an unshared transaction is its person's own.
-		if dbTxs[i].IsShared || ownedBy(hs, dbTxs[i].UserID, dbTxs[i].PersonID) {
-			res = append(res, toModelFinancialTransaction(&dbTxs[i]))
-		}
+		res = append(res, toModelFinancialTransaction(&dbTxs[i]))
 	}
 	return res, nil
 }

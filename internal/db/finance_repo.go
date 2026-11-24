@@ -66,7 +66,9 @@ type HistoricalAverageResult struct {
 
 // FinanceRepository defines operations for transactions, budgets, anomaly detection, and recurring bills.
 type FinanceRepository interface {
-	// Every method is confined to the scope's household (V4-30, ADR 0002 Decision 3).
+	// Every method is confined to the scope's household (V4-30, ADR 0002 Decision 3). Every
+	// transaction read is further confined to the household's shared transactions and the scope
+	// person's own unshared ones (BL-44, ADR 0002 Decision 1).
 
 	// Transactions
 	CreateTransaction(ctx context.Context, s identity.Scope, tx *models.FinancialTransaction) error
@@ -111,6 +113,25 @@ func (r *FinanceRepo) scoped(ctx context.Context, s identity.Scope) (*gorm.DB, e
 	return r.db.WithContext(ctx).Where("household_id = ?", s.HouseholdID()), nil
 }
 
+// transactions starts a transaction query confined to what the scope's person may read (BL-44,
+// ADR 0002 Decision 1, the dashboard's rule since V4-35): the household's shared transactions and
+// the person's own unshared ones. A scope without a person reads the shared ones only. Every
+// transaction read goes through it, so a list, a summary, a total or an average never carries
+// another member's unshared transaction.
+func (r *FinanceRepo) transactions(ctx context.Context, s identity.Scope) (*gorm.DB, error) {
+	q, err := r.scoped(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+	q = q.Model(&models.FinancialTransaction{})
+	key := strings.TrimSpace(s.PersonKey())
+	if key == "" {
+		return q.Where("is_shared = true"), nil
+	}
+	mine, args := personIs("user_id", "person_id", key)
+	return q.Where("(is_shared = true OR "+mine+")", args...), nil
+}
+
 // CreateTransaction inserts a new financial transaction into the database.
 func (r *FinanceRepo) CreateTransaction(ctx context.Context, s identity.Scope, tx *models.FinancialTransaction) error {
 	if tx == nil {
@@ -141,9 +162,10 @@ func (r *FinanceRepo) CreateTransaction(ctx context.Context, s identity.Scope, t
 	return nil
 }
 
-// GetTransaction retrieves a single transaction by ID.
+// GetTransaction retrieves a single transaction by ID. Another member's unshared transaction is
+// not found.
 func (r *FinanceRepo) GetTransaction(ctx context.Context, s identity.Scope, id uint) (*models.FinancialTransaction, error) {
-	q, err := r.scoped(ctx, s)
+	q, err := r.transactions(ctx, s)
 	if err != nil {
 		return nil, err
 	}
@@ -158,13 +180,13 @@ func (r *FinanceRepo) GetTransaction(ctx context.Context, s identity.Scope, id u
 	return &tx, nil
 }
 
-// ListTransactions returns filtered transactions of the scope's household.
+// ListTransactions returns the filtered transactions of the scope's household that its person
+// may read: the shared ones and their own.
 func (r *FinanceRepo) ListTransactions(ctx context.Context, s identity.Scope, filter TransactionFilter) ([]models.FinancialTransaction, error) {
-	q, err := r.scoped(ctx, s)
+	q, err := r.transactions(ctx, s)
 	if err != nil {
 		return nil, err
 	}
-	q = q.Model(&models.FinancialTransaction{})
 
 	if filter.UserID != "" {
 		where, args := personIs("user_id", "person_id", filter.UserID)
@@ -205,14 +227,13 @@ func (r *FinanceRepo) ListTransactions(ctx context.Context, s identity.Scope, fi
 func (r *FinanceRepo) GetMonthlyCategorySpend(ctx context.Context, s identity.Scope, category string, year int, month time.Month) (float64, error) {
 	start := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
-	q, err := r.scoped(ctx, s)
+	q, err := r.transactions(ctx, s)
 	if err != nil {
 		return 0, err
 	}
 
 	var total float64
-	row := q.Model(&models.FinancialTransaction{}).
-		Where("type = ? AND category = ? AND transaction_date >= ? AND transaction_date < ?",
+	row := q.Where("type = ? AND category = ? AND transaction_date >= ? AND transaction_date < ?",
 			models.TransactionTypeExpense, models.NormalizeFinanceCategory(category), start, end).
 		Select("COALESCE(SUM(amount), 0)").Row()
 
@@ -226,7 +247,7 @@ func (r *FinanceRepo) GetMonthlyCategorySpend(ctx context.Context, s identity.Sc
 func (r *FinanceRepo) GetMonthlyTotalsByCategory(ctx context.Context, s identity.Scope, year int, month time.Month) (map[string]float64, error) {
 	start := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
-	q, err := r.scoped(ctx, s)
+	q, err := r.transactions(ctx, s)
 	if err != nil {
 		return nil, err
 	}
@@ -236,8 +257,7 @@ func (r *FinanceRepo) GetMonthlyTotalsByCategory(ctx context.Context, s identity
 		Total    float64
 	}
 	var sums []catSum
-	err = q.Model(&models.FinancialTransaction{}).
-		Where("type = ? AND transaction_date >= ? AND transaction_date < ?",
+	err = q.Where("type = ? AND transaction_date >= ? AND transaction_date < ?",
 			models.TransactionTypeExpense, start, end).
 		Select("category, COALESCE(SUM(amount), 0) as total").
 		Group("category").Scan(&sums).Error
@@ -259,15 +279,19 @@ func (r *FinanceRepo) GetMonthlyTotalsByCategory(ctx context.Context, s identity
 func (r *FinanceRepo) GetHistoricalAverage(ctx context.Context, s identity.Scope, category, merchant string, excludeID uint) (*HistoricalAverageResult, error) {
 	cleanMerchant := strings.TrimSpace(merchant)
 	cleanCategory := models.NormalizeFinanceCategory(category)
-	if !s.Valid() {
-		return nil, identity.ErrNoScope
+	// Each query needs a chain of its own; both read only what the scope's person may read.
+	byMerchant, err := r.transactions(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+	byCategory, err := r.transactions(ctx, s)
+	if err != nil {
+		return nil, err
 	}
 
 	// 1. Try merchant match first if merchant provided
 	if cleanMerchant != "" {
-		q := r.db.WithContext(ctx).Model(&models.FinancialTransaction{}).
-			Where("household_id = ? AND type = ? AND LOWER(merchant) = ?",
-				s.HouseholdID(), models.TransactionTypeExpense, strings.ToLower(cleanMerchant))
+		q := byMerchant.Where("type = ? AND LOWER(merchant) = ?", models.TransactionTypeExpense, strings.ToLower(cleanMerchant))
 		if excludeID > 0 {
 			q = q.Where("id != ?", excludeID)
 		}
@@ -277,7 +301,7 @@ func (r *FinanceRepo) GetHistoricalAverage(ctx context.Context, s identity.Scope
 			Count int64
 		}
 		var res avgResult
-		err := q.Select("COALESCE(AVG(amount), 0) as avg, COUNT(*) as count").Scan(&res).Error
+		err = q.Select("COALESCE(AVG(amount), 0) as avg, COUNT(*) as count").Scan(&res).Error
 		if err != nil {
 			return nil, fmt.Errorf("failed to query historical merchant average: %w", err)
 		}
@@ -292,9 +316,7 @@ func (r *FinanceRepo) GetHistoricalAverage(ctx context.Context, s identity.Scope
 
 	// 2. Fall back to category match
 	if cleanCategory != "" {
-		q := r.db.WithContext(ctx).Model(&models.FinancialTransaction{}).
-			Where("household_id = ? AND type = ? AND category = ?",
-				s.HouseholdID(), models.TransactionTypeExpense, cleanCategory)
+		q := byCategory.Where("type = ? AND category = ?", models.TransactionTypeExpense, cleanCategory)
 		if excludeID > 0 {
 			q = q.Where("id != ?", excludeID)
 		}
@@ -304,7 +326,7 @@ func (r *FinanceRepo) GetHistoricalAverage(ctx context.Context, s identity.Scope
 			Count int64
 		}
 		var res avgResult
-		err := q.Select("COALESCE(AVG(amount), 0) as avg, COUNT(*) as count").Scan(&res).Error
+		err = q.Select("COALESCE(AVG(amount), 0) as avg, COUNT(*) as count").Scan(&res).Error
 		if err != nil {
 			return nil, fmt.Errorf("failed to query historical category average: %w", err)
 		}

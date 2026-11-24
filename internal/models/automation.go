@@ -33,7 +33,7 @@ type AutomationRule struct {
 	TriggerTopic      string    `json:"trigger_topic" gorm:"index"`
 	ConditionJSON     string    `json:"condition_json" gorm:"type:jsonb"`
 	ActionInstruction string    `json:"action_instruction"`
-	IsActive          bool      `json:"is_active" gorm:"default:true;index"`
+	IsActive          bool      `json:"is_active" gorm:"index"` // no tag default: GORM would store it in place of a false (BL-62)
 	CreatedAt         time.Time `json:"created_at"`
 }
 

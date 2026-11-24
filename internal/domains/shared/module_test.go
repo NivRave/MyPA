@@ -372,6 +372,39 @@ func TestNotifier_CrossUserRouting(t *testing.T) {
 	assert.Contains(t, notifiedMessages[0], "[Shared • Baby]")
 }
 
+// BL-44 review: a row its person did not share (`"is_shared": false` in the event's after-image,
+// a transaction or a calendar event) is not announced to the other members, even under a default
+// shared topic; a shared one still is.
+func TestNotifier_AnUnsharedRowIsNotAnnounced(t *testing.T) {
+	repo := newInMemoryRepo()
+	repo.setUsers("TheSmiths", []models.User{
+		{ID: "user-sarah", PlatformID: "tg-100", Name: "Sarah", FamilyGroup: "TheSmiths"},
+		{ID: "user-john", PlatformID: "tg-200", Name: "John", FamilyGroup: "TheSmiths"},
+	})
+	var sent []string
+	notifier := NewNotifier(repo, func(_ context.Context, recipientID, text string) error {
+		sent = append(sent, recipientID+": "+text)
+		return nil
+	})
+	ctx := context.Background()
+	event := func(topic, entity, after, summary string) events.MutationEvent {
+		return events.MutationEvent{Topic: topic, Action: "create", EntityType: entity, ActorUserID: "user-sarah",
+			FamilyGroup: "TheSmiths", HouseholdID: hid("TheSmiths"), AfterJSON: after, Summary: summary}
+	}
+
+	require.NoError(t, notifier.HandleMutationEvent(ctx, event("finance", "FinancialTransaction",
+		`{"id":7,"merchant":"Clinic","amount":20,"is_shared":false}`, "Logged expense USD 20.00 for health (Clinic)")))
+	require.NoError(t, notifier.HandleMutationEvent(ctx, event("family", "ScheduleEvent",
+		`{"id":8,"title":"Therapy","is_shared":false}`, "Created event Therapy")))
+	assert.Empty(t, sent, "an unshared row is its person's own")
+
+	require.NoError(t, notifier.HandleMutationEvent(ctx, event("finance", "FinancialTransaction",
+		`{"id":9,"merchant":"Market","amount":50,"is_shared":true}`, "Logged expense USD 50.00 for groceries (Market)")))
+	require.Len(t, sent, 1, "a shared one is announced as before")
+	assert.Contains(t, sent[0], "tg-200: ")
+	assert.Contains(t, sent[0], "Market")
+}
+
 func TestNotifier_SilentAndPrivateTopics(t *testing.T) {
 	repo := newInMemoryRepo()
 	repo.setUsers("TheSmiths", []models.User{

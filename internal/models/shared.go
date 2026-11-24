@@ -28,8 +28,8 @@ type SharedSpace struct {
 	OwnerPersonID      *string   `json:"owner_person_id,omitempty" gorm:"type:uuid;index"`       // V4-32: the person behind owner_user_id, filled by the database (migration 4)
 	SharedWithUserID   string    `json:"shared_with_user_id" gorm:"size:100"`                    // Empty or "*" means all members of FamilyGroup
 	SharedWithPersonID *string   `json:"shared_with_person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind shared_with_user_id, filled by the database (migration 4)
-	CanView            bool      `json:"can_view" gorm:"default:true"`
-	CanEdit            bool      `json:"can_edit" gorm:"default:true"`
+	CanView            bool      `json:"can_view"` // no tag default: GORM would store it in place of a false (BL-43)
+	CanEdit            bool      `json:"can_edit"`
 	NotifyMode         string    `json:"notify_mode" gorm:"size:20;default:'instant'"` // "instant" | "digest" | "silent"
 	UpdatedAt          time.Time `json:"updated_at"`
 }

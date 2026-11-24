@@ -89,6 +89,21 @@ func AutoMigrateSchema(db *gorm.DB) error {
 	if err := db.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error; err != nil {
 		return fmt.Errorf("failed to create vector extension: %w", err)
 	}
+	allModels := schemaModels()
+	if err := db.AutoMigrate(allModels...); err != nil {
+		return fmt.Errorf("failed to migrate database: %w", err)
+	}
+	if err := ApplyCustomIndexes(db); err != nil {
+		return fmt.Errorf("failed to apply custom database indexes: %w", err)
+	}
+	if err := applyHouseholdForeignKeys(db, allModels); err != nil {
+		return err
+	}
+	return applyPersonKeys(db)
+}
+
+// schemaModels lists every GORM model of the schema: the base models, then the registered ones.
+func schemaModels() []interface{} {
 	baseModels := []interface{}{
 		&models.Household{}, // first: every household_id references it (V4-30)
 		&models.AuditSession{},
@@ -110,17 +125,7 @@ func AutoMigrateSchema(db *gorm.DB) error {
 		// V4-03: which embedding model made the stored memory vectors.
 		&models.EmbeddingSpace{},
 	}
-	allModels := append(baseModels, GetRegisteredModels()...)
-	if err := db.AutoMigrate(allModels...); err != nil {
-		return fmt.Errorf("failed to migrate database: %w", err)
-	}
-	if err := ApplyCustomIndexes(db); err != nil {
-		return fmt.Errorf("failed to apply custom database indexes: %w", err)
-	}
-	if err := applyHouseholdForeignKeys(db, allModels); err != nil {
-		return err
-	}
-	return applyPersonKeys(db)
+	return append(baseModels, GetRegisteredModels()...)
 }
 
 // Ping verifies database liveness.
