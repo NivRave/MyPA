@@ -89,8 +89,7 @@ func TestReloadWorkflows_SchedulesEachRuleOnItsPersonsClock(t *testing.T) {
 	rule("tz-ny", "TzNewYork", "America/New_York", `{"cron": "0 9 * * *"}`, "notify: stand-up")
 	rule("tz-install", "TzInstall", "", `{"cron": "0 9 * * *"}`, "https://example.com/hook")
 	rule("tz-own", "TzOwn", "America/New_York", `{"cron": "CRON_TZ=Asia/Tokyo 0 9 * * *", "urgent": true}`, "notify: own zone")
-	require.NoError(t, client.SaveWorkflow(models.Workflow{UserID: "tz-ny", Name: "wf", CronExpression: "30 18 * * *",
-		Instruction: "Summarise my day", IsActive: true, CreatedAt: time.Now()}))
+	wf := workflowRule(t, client, "tz-ny", "TzNewYork", "wf", "30 18 * * *", "Summarise my day")
 
 	ReloadWorkflows(nil, client, automation.NewRunner(client, nil), "Asia/Jerusalem")
 	workflowMu.Lock()
@@ -111,21 +110,19 @@ func TestReloadWorkflows_SchedulesEachRuleOnItsPersonsClock(t *testing.T) {
 	ny, jerusalem, tokyo := mustZone(t, "America/New_York"), mustZone(t, "Asia/Jerusalem"), mustZone(t, "Asia/Tokyo")
 	ruleID := func(person string) string {
 		var r models.AutomationRule
-		require.NoError(t, client.DB.Where("user_id = ?", person).First(&r).Error)
+		require.NoError(t, client.DB.Where("user_id = ? AND name = ?", person, person).First(&r).Error)
 		return ruleName(r)
 	}
 	assert.True(t, next(ruleID("tz-ny")).Equal(time.Date(2026, 11, 20, 9, 0, 0, 0, ny)), "09:00 in New York")
 	assert.True(t, next(ruleID("tz-install")).Equal(time.Date(2026, 11, 20, 9, 0, 0, 0, jerusalem)), "a household without a zone uses the install's")
 	assert.True(t, next(ruleID("tz-own")).Equal(time.Date(2026, 11, 20, 9, 0, 0, 0, tokyo)), "CRON_TZ in the expression wins")
 
-	var wf models.Workflow
-	require.NoError(t, client.DB.Where("user_id = ?", "tz-ny").First(&wf).Error)
-	assert.True(t, next(workflowName(wf)).Equal(time.Date(2026, 11, 19, 18, 30, 0, 0, ny)), "a workflow follows its person's zone too")
+	assert.True(t, next(ruleName(wf)).Equal(time.Date(2026, 11, 19, 18, 30, 0, 0, ny)), "a workflow follows its person's zone too")
 
 	assert.True(t, byName[ruleID("tz-ny")].holdable, "a notify rule is held in quiet hours")
 	assert.False(t, byName[ruleID("tz-install")].holdable, "a webhook rule is not")
 	assert.False(t, byName[ruleID("tz-own")].holdable, "an urgent rule is not")
-	assert.True(t, byName[workflowName(wf)].holdable, "a workflow's answer reaches its person")
+	assert.True(t, byName[ruleName(wf)].holdable, "a workflow's answer reaches its person")
 
 	// The workflow cron holds exactly these jobs; the release check runs on the main cron.
 	workflowMu.Lock()

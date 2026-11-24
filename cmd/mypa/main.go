@@ -5,6 +5,7 @@
 //	mypa transfer <command>            restore and migrate (V4-43); see docs/RESTORE_AND_MIGRATE.md
 //	mypa access grant owner|operator <person>  recovery: make a person an owner or the operator (V4-35)
 //	mypa embeddings status|reembed     the stored memory vectors and their model (V4-03); see docs/EMBEDDINGS.md
+//	mypa reencrypt [--dry-run]         rewrite old-format (unsalted) encrypted values in the current format (V4-07)
 //
 // Every role keeps the durable hand-off: a webhook is verified, normalised and published to the
 // inbound.messages queue, and the worker consumes it from there, even inside one process. So a
@@ -48,6 +49,11 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "embeddings" {
 		logging.Setup()
 		os.Exit(embeddingsMain(os.Args[2:]))
+	}
+	// `mypa reencrypt [--dry-run]`: the re-encryption pass (V4-07, BL-16).
+	if len(os.Args) > 1 && os.Args[1] == "reencrypt" {
+		logging.Setup()
+		os.Exit(reencryptMain(os.Args[2:]))
 	}
 	// `mypa channel-setup <channel> [--submit]`: a channel's guided setup (V4-41).
 	if len(os.Args) > 1 && os.Args[1] == "channel-setup" {

@@ -2,8 +2,6 @@ package models
 
 import (
 	"time"
-
-	"github.com/pgvector/pgvector-go"
 )
 
 // The inbound message type is channel.Inbound (V4-31); it replaced models.Message.
@@ -105,17 +103,6 @@ type PairingCode struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// Memory represents a long-term fact or preference about a user.
-type Memory struct {
-	ID        uint            `json:"id" gorm:"primarykey"`
-	UserID    string          `json:"user_id" gorm:"index"`
-	PersonID  *string         `json:"person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind user_id, filled by the database (migration 4)
-	Scope     string          `json:"scope" gorm:"index;default:'personal'"`      // "personal" or "family"
-	Fact      string          `json:"fact"`
-	Embedding pgvector.Vector `json:"embedding" gorm:"type:vector(3072)"`
-	CreatedAt time.Time       `json:"created_at"`
-}
-
 // ScheduledReminder represents a message to be sent to a user at a specific time.
 type ScheduledReminder struct {
 	ID        uint      `json:"id" gorm:"primarykey"`
@@ -126,16 +113,4 @@ type ScheduledReminder struct {
 	IsSent    bool      `json:"is_sent" gorm:"index"`
 	Urgent    bool      `json:"urgent" gorm:"not null;default:false"` // V4-05: delivered even during quiet hours; any other reminder due then waits until they end
 	CreatedAt time.Time `json:"created_at"`
-}
-
-// Workflow represents a scheduled recurring task (macro).
-type Workflow struct {
-	ID             uint      `json:"id" gorm:"primarykey"`
-	UserID         string    `json:"user_id" gorm:"index"`
-	PersonID       *string   `json:"person_id,omitempty" gorm:"type:uuid;index"` // V4-32: the person behind user_id, filled by the database (migration 4)
-	Name           string    `json:"name"`
-	CronExpression string    `json:"cron_expression"`
-	Instruction    string    `json:"instruction"`
-	IsActive       bool      `json:"is_active" gorm:"index"`
-	CreatedAt      time.Time `json:"created_at"`
 }

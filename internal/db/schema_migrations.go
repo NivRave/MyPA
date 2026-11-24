@@ -28,15 +28,15 @@ const migrationTable = "goose_db_version"
 // goMigrations are migrations implemented in Go (registered alongside the embedded SQL files).
 func goMigrations() []*goose.Migration {
 	return []*goose.Migration{
-		// 2: copy legacy `memories` rows into `topic_memories` (P2-4). Previously ran inside
+		// 2: copy the v1 `memories` rows into `topic_memories` (P2-4). Previously ran inside
 		// NewClient on every start; idempotent, so it is safe on databases that already ran it.
 		goose.NewGoMigration(2, &goose.GoFunc{RunTx: func(ctx context.Context, tx *sql.Tx) error {
-			res, err := tx.ExecContext(ctx, legacyMemoriesSQL)
+			res, err := tx.ExecContext(ctx, migration2SQL)
 			if err != nil {
-				return fmt.Errorf("migrate legacy memories: %w", err)
+				return fmt.Errorf("copy v1 memories: %w", err)
 			}
 			if n, _ := res.RowsAffected(); n > 0 {
-				slog.Info("migrated legacy memories into topic_memories", "rows", n)
+				slog.Info("copied v1 memories into topic_memories", "rows", n)
 			}
 			return nil
 		}}, nil),

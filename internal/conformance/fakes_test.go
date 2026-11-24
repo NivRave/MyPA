@@ -290,10 +290,6 @@ func (d *memoryDB) RedeemPairingCode(codeID string, u models.User, channelName s
 	return errNotFound
 }
 
-func (d *memoryDB) SaveWorkflow(models.Workflow) error                 { return nil }
-func (d *memoryDB) GetUserWorkflows(string) ([]models.Workflow, error) { return nil, nil }
-func (d *memoryDB) DeleteWorkflow(uint, string) error                  { return nil }
-
 // user returns a stored user by platform ID (test accessor).
 func (d *memoryDB) user(platformID string) (models.User, bool) {
 	d.mu.Lock()

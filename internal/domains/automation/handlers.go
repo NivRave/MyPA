@@ -2,10 +2,8 @@ package automation
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/nivik/mypa/internal/db"
-	"github.com/nivik/mypa/internal/domains/toolutil"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -44,15 +42,6 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 		}
 	}
 
-	switch toolName {
-	case "schedule_workflow":
-		return m.executeScheduleWorkflow(ctx, callCtx, args)
-	case "list_workflows":
-		return m.executeListWorkflows(ctx, callCtx, args)
-	case "delete_workflow":
-		return m.executeDeleteWorkflow(ctx, callCtx, args)
-	}
-
 	repo, err := m.resolveRepo(callCtx)
 	if err != nil {
 		return "", err
@@ -71,6 +60,12 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 		return m.executeListAutomationRules(ctx, callCtx, repo, args)
 	case "delete_automation_rule":
 		return m.executeDeleteAutomationRule(ctx, callCtx, repo, args)
+	case "schedule_workflow":
+		return m.executeScheduleWorkflow(ctx, callCtx, repo, args)
+	case "list_workflows":
+		return m.executeListWorkflows(callCtx, repo)
+	case "delete_workflow":
+		return m.executeDeleteWorkflow(ctx, callCtx, repo, args)
 	default:
 		return "", fmt.Errorf("automation: unknown tool %q", toolName)
 	}
@@ -370,139 +365,4 @@ func (m *Module) executeDeleteAutomationRule(ctx context.Context, callCtx orches
 	}
 
 	return fmt.Sprintf("Successfully deleted automation rule %d.", ruleID), nil
-}
-
-func (m *Module) executeScheduleWorkflow(ctx context.Context, callCtx orchestrator.CallContext, args map[string]interface{}) (string, error) {
-	name := toolutil.String(args, "name")
-	cronExp := toolutil.String(args, "cron_expression")
-	instruction := toolutil.String(args, "instruction")
-
-	if name == "" || cronExp == "" || instruction == "" {
-		return "Missing required parameters (name, cron_expression, instruction)", nil
-	}
-
-	actorID := callCtx.ActorID()
-	s := callCtx.Scope
-
-	if callCtx.DB == nil {
-		return "❌ Database client not configured.", nil
-	}
-
-	wf := models.Workflow{
-		UserID:         actorID,
-		Name:           name,
-		CronExpression: cronExp,
-		Instruction:    instruction,
-		IsActive:       true,
-		CreatedAt:      time.Now(),
-	}
-
-	if err := callCtx.DB.SaveWorkflow(wf); err != nil {
-		return fmt.Sprintf("Error scheduling workflow: %v", err), nil
-	}
-
-	if callCtx.Extra != nil {
-		if fn, ok := callCtx.Extra["workflows_changed"].(func()); ok && fn != nil {
-			fn()
-		}
-	}
-	m.mu.RLock()
-	cb := m.workflowsChanged
-	m.mu.RUnlock()
-	if cb != nil {
-		cb()
-	}
-
-	if bus := m.resolveEventBus(callCtx); bus != nil {
-		afterBytes, _ := json.Marshal(wf)
-		_ = toolutil.PublishMutation(ctx, bus, events.MutationEvent{
-			Topic:       "automation",
-			Action:      "create",
-			EntityType:  "Workflow",
-			EntityID:    fmt.Sprintf("%s:%s", actorID, name),
-			ActorUserID: actorID,
-			HouseholdID: s.HouseholdID(),
-			FamilyGroup: s.LegacyLabel(),
-			AfterJSON:   string(afterBytes),
-			Summary:     fmt.Sprintf("Scheduled workflow '%s' on cron %s", name, cronExp),
-			Timestamp:   time.Now(),
-		})
-	}
-
-	return fmt.Sprintf("✅ **Workflow Scheduled!**\n\n'%s' will run on schedule: %s", name, cronExp), nil
-}
-
-func (m *Module) executeListWorkflows(ctx context.Context, callCtx orchestrator.CallContext, args map[string]interface{}) (string, error) {
-	actorID := callCtx.ActorID()
-	if callCtx.DB == nil {
-		return "❌ Database client not configured.", nil
-	}
-
-	workflows, err := callCtx.DB.GetUserWorkflows(actorID)
-	if err != nil {
-		return fmt.Sprintf("Error listing workflows: %v", err), nil
-	}
-	if len(workflows) == 0 {
-		return "You have no active workflows scheduled.", nil
-	}
-
-	workflowsJSON, _ := json.Marshal(workflows)
-	return fmt.Sprintf("Here are your active workflows:\n%s", string(workflowsJSON)), nil
-}
-
-func (m *Module) executeDeleteWorkflow(ctx context.Context, callCtx orchestrator.CallContext, args map[string]interface{}) (string, error) {
-	idVal := toolutil.String(args, "id")
-	if idVal == "" {
-		idInt := toolutil.Int(args, "id", 0)
-		if idInt > 0 {
-			idVal = fmt.Sprintf("%d", idInt)
-		}
-	}
-	if idVal == "" {
-		return "Missing id parameter", nil
-	}
-
-	var id uint
-	if _, err := fmt.Sscanf(idVal, "%d", &id); err != nil {
-		return "Invalid id parameter: must be a number", nil
-	}
-
-	actorID := callCtx.ActorID()
-	s := callCtx.Scope
-
-	if callCtx.DB == nil {
-		return "❌ Database client not configured.", nil
-	}
-
-	if err := callCtx.DB.DeleteWorkflow(id, actorID); err != nil {
-		return fmt.Sprintf("Error deleting workflow: %v", err), nil
-	}
-
-	if callCtx.Extra != nil {
-		if fn, ok := callCtx.Extra["workflows_changed"].(func()); ok && fn != nil {
-			fn()
-		}
-	}
-	m.mu.RLock()
-	cb := m.workflowsChanged
-	m.mu.RUnlock()
-	if cb != nil {
-		cb()
-	}
-
-	if bus := m.resolveEventBus(callCtx); bus != nil {
-		_ = toolutil.PublishMutation(ctx, bus, events.MutationEvent{
-			Topic:       "automation",
-			Action:      "delete",
-			EntityType:  "Workflow",
-			EntityID:    fmt.Sprintf("%d", id),
-			ActorUserID: actorID,
-			HouseholdID: s.HouseholdID(),
-			FamilyGroup: s.LegacyLabel(),
-			Summary:     fmt.Sprintf("Deleted workflow #%d", id),
-			Timestamp:   time.Now(),
-		})
-	}
-
-	return "Workflow deleted successfully.", nil
 }

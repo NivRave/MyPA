@@ -44,8 +44,7 @@ var unscopedMethods = map[string]string{
 	// Person-keyed tables (no household_id; see personKeyedTables).
 	"InsertAuditSession": "person-keyed", "InsertAuditEvent": "person-keyed", "GetUniqueUsers": "person-keyed",
 	"GetLastAuditSessionForUser": "person-keyed", "SaveReminder": "person-keyed", "GetDueReminders": "person-keyed scan",
-	"MarkReminderSent": "person-keyed", "SaveWorkflow": "person-keyed", "GetActiveWorkflows": "person-keyed scan",
-	"GetUserWorkflows": "person-keyed", "DeleteWorkflow": "person-keyed",
+	"MarkReminderSent": "person-keyed",
 	"SaveEncryptedCredential": "person-keyed", "GetEncryptedCredential": "person-keyed",
 	"CheckIdempotency": "person-keyed", "SaveIdempotency": "person-keyed",
 	"UpsertUserPreference": "person-keyed", "GetUserPreference": "person-keyed",

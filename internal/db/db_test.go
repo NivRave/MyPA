@@ -166,7 +166,7 @@ func TestReminders(t *testing.T) {
 	assert.Empty(t, dueAgain)
 }
 
-func TestTopicMemories_VectorSearchAndFallback(t *testing.T) {
+func TestTopicMemories_VectorSearch(t *testing.T) {
 	client, cleanup := setupTestDB(t)
 	defer cleanup()
 
@@ -214,36 +214,8 @@ func TestTopicMemories_VectorSearchAndFallback(t *testing.T) {
 	require.Len(t, results, 1)
 	assert.Equal(t, "Baby drinks 150ml milk formula", results[0].Fact)
 	assert.Equal(t, "baby", results[0].Topic)
-
-	// 2. A fact that exists only in the legacy table becomes searchable after the P2-4 migration
-	// (there is no runtime fallback to the legacy table any more).
-	legacyUser := "user-legacy-only"
-	// A user without a label: their own household, as Migration A gives them (V4-30).
-	require.NoError(t, client.DB.Create(&models.User{PlatformID: legacyUser, Name: "Legacy", HouseholdID: householdFor(t, client, legacyUser).ID}).Error)
-	ls := scopeAs(t, client, legacyUser, legacyUser, "family")
-	legacyVec := make([]float32, 3072)
-	legacyVec[2] = 1.0
-	require.NoError(t, client.DB.Create(&models.Memory{
-		UserID:    legacyUser,
-		Fact:      "Grandma's birthday is on June 12",
-		Scope:     "personal",
-		Embedding: pgvector.NewVector(legacyVec),
-		CreatedAt: time.Now(),
-	}).Error)
-
-	queryLegacy := make([]float32, 3072)
-	queryLegacy[2] = 0.9
-	before, err := client.SearchSimilarMemories(ctx, ls, pgvector.NewVector(queryLegacy), 1)
-	require.NoError(t, err)
-	assert.Empty(t, before, "no runtime read of the legacy table")
-
-	_, err = MigrateLegacyMemories(client.DB)
-	require.NoError(t, err)
-	fbResults, err := client.SearchSimilarMemories(ctx, ls, pgvector.NewVector(queryLegacy), 1)
-	require.NoError(t, err)
-	require.Len(t, fbResults, 1)
-	assert.Equal(t, "Grandma's birthday is on June 12", fbResults[0].Fact)
-	assert.Equal(t, models.TopicPersonal, fbResults[0].Topic)
+	// The v1 `memories` rows are copied by migrations 2 and 11, which drops the table (V4-07):
+	// TestMigration11_CopiesTheLastMemoriesAndDropsTheTable.
 }
 
 func TestSharedReminders_DueAndSent(t *testing.T) {

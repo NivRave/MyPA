@@ -98,7 +98,7 @@ func ResetRegisteredModels() {
 // 1. Audit session single and composite B-tree indexes.
 // 2. High-volume multi-tenant composite indexes (mutation_logs, financial_transactions,
 //    baby_care_logs, schedule_events, shared_task_reminders).
-// 3. pgvector halfvec(3072) HNSW cosine distance vector indexes on topic_memories and memories.
+// 3. The pgvector halfvec(3072) HNSW cosine distance vector index on topic_memories.
 func ApplyCustomIndexes(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("database handle cannot be nil")
@@ -165,7 +165,6 @@ func ApplyCustomIndexes(db *gorm.DB) error {
 	// pgvector HNSW vector indexes (halfvec(3072) required for dimensions > 2000)
 	vectorIndexes := []string{
 		`CREATE INDEX IF NOT EXISTS idx_topic_memories_embedding ON topic_memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops);`,
-		`CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops);`,
 	}
 
 	for _, stmt := range vectorIndexes {

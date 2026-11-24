@@ -96,9 +96,6 @@ type DBClient interface {
 	UsersInHousehold(ctx context.Context, s identity.Scope) ([]models.User, error)
 	// HouseholdOwners lists the owners of the scope's household, by their membership (V4-35).
 	HouseholdOwners(ctx context.Context, s identity.Scope) ([]models.User, error)
-	SaveWorkflow(w models.Workflow) error
-	GetUserWorkflows(userID string) ([]models.Workflow, error)
-	DeleteWorkflow(id uint, userID string) error
 }
 
 // AccountStore holds people's channel accounts and the link codes that join them (V4-32, ADR 0002

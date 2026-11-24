@@ -82,7 +82,7 @@ func TestDB_PgvectorHNSW_HalfvecSyntaxAndFallbackSafety(t *testing.T) {
 	// 1. Test standard vector HNSW limit:
 	// In pgvector, standard vector type has a hard 2,000-dimension limit for HNSW indexes.
 	// Attempting to index a 3072-dimension vector without halfvec casting MUST fail in Postgres.
-	naiveDDL := `CREATE INDEX idx_test_naive_hnsw ON memories USING hnsw (embedding vector_cosine_ops);`
+	naiveDDL := `CREATE INDEX idx_test_naive_hnsw ON topic_memories USING hnsw (embedding vector_cosine_ops);`
 	err := client.DB.Exec(naiveDDL).Error
 	require.Error(t, err, "Naive vector(3072) HNSW index must fail because 3072 dimensions exceeds Postgres 2,000-dim limit")
 	assert.True(t,
@@ -92,7 +92,7 @@ func TestDB_PgvectorHNSW_HalfvecSyntaxAndFallbackSafety(t *testing.T) {
 	t.Logf("Empirically confirmed PostgreSQL rejection of naive vector(3072) HNSW: %v", err)
 
 	// 2. Test halfvec(3072) HNSW index:
-	// Verify that ApplyCustomIndexes succeeded during NewClient and both HNSW halfvec indexes exist.
+	// Verify that ApplyCustomIndexes succeeded during NewClient and the HNSW halfvec index exists.
 	var count int64
 	err = client.DB.Raw("SELECT count(*) FROM pg_indexes WHERE indexname = 'idx_topic_memories_embedding'").Scan(&count).Error
 	require.NoError(t, err)
@@ -100,7 +100,7 @@ func TestDB_PgvectorHNSW_HalfvecSyntaxAndFallbackSafety(t *testing.T) {
 
 	err = client.DB.Raw("SELECT count(*) FROM pg_indexes WHERE indexname = 'idx_memories_embedding'").Scan(&count).Error
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), count, "idx_memories_embedding halfvec HNSW index must exist")
+	assert.Zero(t, count, "the legacy memories table and its index are gone (migration 11, V4-07)")
 
 	// 3. Fallback safety verification:
 	// If an invalid or unsupported vector index statement is executed inside ApplyCustomIndexes,

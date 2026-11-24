@@ -133,7 +133,6 @@ func TestEngine_ConfirmCommand_RedeemsStagedMetaTool(t *testing.T) {
 	})
 	expectHouseholds(dbMock)
 	dbMock.EXPECT().UserForAccount(gomock.Any(), gomock.Any(), "user-alice").Return(user, nil).AnyTimes()
-	dbMock.EXPECT().SaveWorkflow(gomock.Any()).Return(nil)
 
 	// Stage a workflow creation action
 	stagedAction := state.PendingMetaToolAction{
@@ -164,19 +163,15 @@ func TestEngine_ConfirmCommand_RedeemsStagedMetaTool(t *testing.T) {
 	}
 
 	reg := NewRegistry()
+	var executedFor, executedInstruction string
 	reg.Register(&testToolModule{
 		name:  "automation",
 		decls: []*genai.FunctionDeclaration{{Name: "schedule_workflow"}},
 		exec: func(ctx context.Context, callCtx CallContext, toolName string, args map[string]interface{}) (string, error) {
 			name, _ := args["name"].(string)
 			cronExp, _ := args["cron_expression"].(string)
-			instruction, _ := args["instruction"].(string)
-			_ = eng.db.SaveWorkflow(models.Workflow{
-				UserID:         callCtx.ActorID(),
-				Name:           name,
-				CronExpression: cronExp,
-				Instruction:    instruction,
-			})
+			executedInstruction, _ = args["instruction"].(string)
+			executedFor = callCtx.ActorID()
 			return fmt.Sprintf("✅ **Workflow Scheduled!**\n\n'%s' will run on schedule: %s", name, cronExp), nil
 		},
 	})
@@ -191,6 +186,8 @@ func TestEngine_ConfirmCommand_RedeemsStagedMetaTool(t *testing.T) {
 	err = eng.ProcessMessage(context.Background(), confirmMsg)
 	require.NoError(t, err)
 	assert.Contains(t, sentMessage, "✅ **Confirmed and Executed:** `schedule_workflow`")
+	assert.Equal(t, "user-alice", executedFor, "the staged tool ran for the person who confirmed")
+	assert.Equal(t, "Summarize daily schedule", executedInstruction, "with the staged arguments")
 
 	// Ensure pending action is cleared
 	cleared, err := store.GetAndClearPendingMetaTool(context.Background(), "user-alice")

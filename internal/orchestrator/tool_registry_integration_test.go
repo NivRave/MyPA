@@ -2,6 +2,7 @@ package orchestrator_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -220,9 +221,62 @@ func (m *mockTavilyClient) Search(ctx context.Context, query string) (string, er
 }
 
 type mockDBClient struct {
-	savedReminders   []models.ScheduledReminder
-	savedWorkflows   []models.Workflow
-	deletedWorkflows []uint
+	savedReminders []models.ScheduledReminder
+}
+
+// recordingAutomationRepo keeps the rules the automation tools write. Since V4-07 a scheduled
+// workflow is a cron automation rule, so the workflow tools write here. IDs start at 42.
+type recordingAutomationRepo struct {
+	db.AutomationRepository
+	mu      sync.Mutex
+	nextID  uint
+	rules   map[uint]models.AutomationRule
+	created []models.AutomationRule
+	deleted []uint
+}
+
+func newRecordingAutomationRepo() *recordingAutomationRepo {
+	return &recordingAutomationRepo{nextID: 42, rules: map[uint]models.AutomationRule{}}
+}
+
+func (r *recordingAutomationRepo) CreateAutomationRule(_ identity.Scope, rule *models.AutomationRule) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rule.ID = r.nextID
+	r.nextID++
+	r.rules[rule.ID] = *rule
+	r.created = append(r.created, *rule)
+	return nil
+}
+
+func (r *recordingAutomationRepo) GetAutomationRule(s identity.Scope, id uint) (*models.AutomationRule, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rule, ok := r.rules[id]
+	if !ok || rule.HouseholdID != s.HouseholdID() {
+		return nil, nil
+	}
+	return &rule, nil
+}
+
+func (r *recordingAutomationRepo) ListAutomationRules(s identity.Scope, _ string) ([]models.AutomationRule, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []models.AutomationRule
+	for _, rule := range r.rules {
+		if rule.HouseholdID == s.HouseholdID() {
+			out = append(out, rule)
+		}
+	}
+	return out, nil
+}
+
+func (r *recordingAutomationRepo) DeleteAutomationRule(_ identity.Scope, id uint) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.rules, id)
+	r.deleted = append(r.deleted, id)
+	return nil
 }
 
 func (m *mockDBClient) SearchSimilarMemories(ctx context.Context, s identity.Scope, embedding pgvector.Vector, limit int) ([]models.TopicMemory, error) {
@@ -288,23 +342,6 @@ func (m *mockDBClient) RedeemPairingCode(codeID string, u models.User, _ string)
 func (m *mockDBClient) UserForAccount(_ context.Context, _, externalID string) (*models.User, error) {
 	return m.GetUser(externalID)
 }
-func (m *mockDBClient) SaveWorkflow(w models.Workflow) error {
-	m.savedWorkflows = append(m.savedWorkflows, w)
-	return nil
-}
-func (m *mockDBClient) GetUserWorkflows(userID string) ([]models.Workflow, error) {
-	var out []models.Workflow
-	for _, w := range m.savedWorkflows {
-		if w.UserID == userID {
-			out = append(out, w)
-		}
-	}
-	return out, nil
-}
-func (m *mockDBClient) DeleteWorkflow(id uint, userID string) error {
-	m.deletedWorkflows = append(m.deletedWorkflows, id)
-	return nil
-}
 
 type mockLLMClient struct {
 	lastPrompt string
@@ -345,7 +382,8 @@ func TestARCH01_28Tools_ModularizationAndDynamicDispatch(t *testing.T) {
 	memRepo := &recordingMemoryRepo{}
 	modMemory := memory.NewModule(memRepo)
 	modShared := shared.NewModule(nil, eventBus, nil)
-	modAuto := automation.NewModule(nil, automation.WithEventBus(eventBus))
+	autoRepo := newRecordingAutomationRepo()
+	modAuto := automation.NewModule(autoRepo, automation.WithEventBus(eventBus))
 
 	reg.Register(modCal)
 	reg.Register(modGmail)
@@ -511,8 +549,10 @@ func TestARCH01_28Tools_ModularizationAndDynamicDispatch(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, handled)
 		assert.Contains(t, res, "Workflow Scheduled")
-		require.Len(t, mockDB.savedWorkflows, 1)
-		assert.Equal(t, "canonical_user_42", mockDB.savedWorkflows[0].UserID)
+		require.Len(t, autoRepo.created, 1)
+		assert.Equal(t, "canonical_user_42", autoRepo.created[0].UserID)
+		assert.Equal(t, "cron", autoRepo.created[0].TriggerType, "a workflow is a cron rule (V4-07)")
+		assert.Equal(t, "prompt: Summarize daily tasks", autoRepo.created[0].ActionInstruction)
 	})
 
 	t.Run("Unknown Tool Returns Handled=false Without Crashing", func(t *testing.T) {
@@ -558,7 +598,8 @@ func TestARCH04_All28Tools_AntiIDOR_IdentitySpoofingStress(t *testing.T) {
 	memRepo := &recordingMemoryRepo{}
 	reg.Register(memory.NewModule(memRepo))
 	reg.Register(shared.NewModule(nil, eventBus, nil))
-	reg.Register(automation.NewModule(nil, automation.WithEventBus(eventBus)))
+	autoRepo := newRecordingAutomationRepo()
+	reg.Register(automation.NewModule(autoRepo, automation.WithEventBus(eventBus)))
 
 	legitUser := &models.User{
 		ID:          "uuid-legit-victim-111",
@@ -668,19 +709,19 @@ func TestARCH04_All28Tools_AntiIDOR_IdentitySpoofingStress(t *testing.T) {
 	args["instruction"] = "Send data"
 	_, _, err = reg.Execute(ctx, callCtx, "schedule_workflow", args)
 	require.NoError(t, err)
-	require.NotEmpty(t, mockDB.savedWorkflows)
-	lastWf := mockDB.savedWorkflows[len(mockDB.savedWorkflows)-1]
+	require.NotEmpty(t, autoRepo.created)
+	lastWf := autoRepo.created[len(autoRepo.created)-1]
 	assert.Equal(t, "canonical_victim_platform_id", lastWf.UserID, "Workflow must be saved with canonical ActorID()")
 	assert.NotEqual(t, "attacker_spoofed_user", lastWf.UserID)
 	assertLastMutationEvent(t, receivedEvents, "canonical_victim_platform_id", "canonical_victim_family_group")
 
 	// 10. Automation: delete_workflow
 	args = copyMap(spoofedPayload)
-	args["id"] = "42"
+	args["id"] = fmt.Sprint(lastWf.ID)
 	_, _, err = reg.Execute(ctx, callCtx, "delete_workflow", args)
 	require.NoError(t, err)
-	require.NotEmpty(t, mockDB.deletedWorkflows)
-	assert.Equal(t, uint(42), mockDB.deletedWorkflows[len(mockDB.deletedWorkflows)-1])
+	require.NotEmpty(t, autoRepo.deleted)
+	assert.Equal(t, lastWf.ID, autoRepo.deleted[len(autoRepo.deleted)-1])
 	assertLastMutationEvent(t, receivedEvents, "canonical_victim_platform_id", "canonical_victim_family_group")
 }
 

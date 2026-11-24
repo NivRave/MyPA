@@ -121,53 +121,102 @@ func Encrypt(plaintext []byte, passphrase string) ([]byte, error) {
 	return ciphertext, nil
 }
 
-// Decrypt decrypts ciphertext using AES-256-GCM.
-// It supports both HKDF-SHA256 salted ciphertexts and legacy unsalted ciphertexts.
-func Decrypt(ciphertext []byte, passphrase string) ([]byte, error) {
+// Format is the wire format a ciphertext is in, as read with one key.
+type Format int
+
+const (
+	// FormatUnreadable: neither format opens it with this key (another key, a damaged value, or
+	// not a ciphertext at all).
+	FormatUnreadable Format = iota
+	// FormatCurrent: the salted format Encrypt writes, [salt][nonce][ciphertext+tag], its key
+	// derived with HKDF-SHA256 from the secret and the value's own salt.
+	FormatCurrent
+	// FormatUnsalted: the old format, [nonce][ciphertext+tag] under SHA-256 of the secret. Decrypt
+	// still reads it through a fallback until V4-45 removes it (BL-16, DE-12); `mypa reencrypt`
+	// rewrites such values in the current format (V4-07).
+	FormatUnsalted
+)
+
+// Inspect opens a ciphertext and reports which format opened it. An unreadable value is not an
+// error: it returns FormatUnreadable. The error is for a missing key only.
+func Inspect(ciphertext []byte, passphrase string) ([]byte, Format, error) {
+	rawSecret, err := getRawSecret(passphrase)
+	if err != nil {
+		return nil, FormatUnreadable, err
+	}
+	if plaintext, ok := openSalted(ciphertext, rawSecret); ok {
+		return plaintext, FormatCurrent, nil
+	}
+	if plaintext, ok := openUnsalted(ciphertext, rawSecret); ok {
+		return plaintext, FormatUnsalted, nil
+	}
+	return nil, FormatUnreadable, nil
+}
+
+// DecryptCurrent decrypts the current (salted) format only, with no fallback: what Decrypt becomes
+// once V4-45 removes the unsalted fallback.
+func DecryptCurrent(ciphertext []byte, passphrase string) ([]byte, error) {
 	rawSecret, err := getRawSecret(passphrase)
 	if err != nil {
 		return nil, err
 	}
-
-	// Primary: HKDF salted format (>= 44 bytes)
-	if len(ciphertext) >= MinCiphertextSize {
-		salt := ciphertext[:SaltSize]
-		nonce := ciphertext[SaltSize : SaltSize+NonceSize]
-		encryptedData := ciphertext[SaltSize+NonceSize:]
-
-		key, err := deriveKeyWithSalt(rawSecret, salt)
-		if err == nil {
-			block, bErr := aes.NewCipher(key)
-			if bErr == nil {
-				gcm, gErr := cipher.NewGCM(block)
-				if gErr == nil {
-					plaintext, openErr := gcm.Open(nil, nonce, encryptedData, nil)
-					if openErr == nil {
-						return plaintext, nil
-					}
-				}
-			}
-		}
+	if plaintext, ok := openSalted(ciphertext, rawSecret); ok {
+		return plaintext, nil
 	}
-
-	// Fallback: Legacy unsalted format (>= 28 bytes)
-	if len(ciphertext) >= NonceSize+TagSize {
-		legacyKey := sha256.Sum256(rawSecret)
-		block, bErr := aes.NewCipher(legacyKey[:])
-		if bErr == nil {
-			gcm, gErr := cipher.NewGCM(block)
-			if gErr == nil {
-				nonce := ciphertext[:NonceSize]
-				encryptedData := ciphertext[NonceSize:]
-				plaintext, openErr := gcm.Open(nil, nonce, encryptedData, nil)
-				if openErr == nil {
-					return plaintext, nil
-				}
-			}
-		}
-	}
-
 	return nil, errors.New("failed to decrypt or authenticate ciphertext")
+}
+
+// Decrypt decrypts ciphertext using AES-256-GCM.
+// It supports both HKDF-SHA256 salted ciphertexts and legacy unsalted ciphertexts.
+func Decrypt(ciphertext []byte, passphrase string) ([]byte, error) {
+	plaintext, format, err := Inspect(ciphertext, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	if format == FormatUnreadable {
+		return nil, errors.New("failed to decrypt or authenticate ciphertext")
+	}
+	return plaintext, nil
+}
+
+// openSalted opens the current format: HKDF salted (>= 44 bytes).
+func openSalted(ciphertext, rawSecret []byte) ([]byte, bool) {
+	if len(ciphertext) < MinCiphertextSize {
+		return nil, false
+	}
+	salt := ciphertext[:SaltSize]
+	nonce := ciphertext[SaltSize : SaltSize+NonceSize]
+	encryptedData := ciphertext[SaltSize+NonceSize:]
+	key, err := deriveKeyWithSalt(rawSecret, salt)
+	if err != nil {
+		return nil, false
+	}
+	return openGCM(key, nonce, encryptedData)
+}
+
+// openUnsalted opens the legacy unsalted format (>= 28 bytes). V4-45 deletes it.
+func openUnsalted(ciphertext, rawSecret []byte) ([]byte, bool) {
+	if len(ciphertext) < NonceSize+TagSize {
+		return nil, false
+	}
+	legacyKey := sha256.Sum256(rawSecret)
+	return openGCM(legacyKey[:], ciphertext[:NonceSize], ciphertext[NonceSize:])
+}
+
+func openGCM(key, nonce, encryptedData []byte) ([]byte, bool) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, false
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, false
+	}
+	plaintext, err := gcm.Open(nil, nonce, encryptedData, nil)
+	if err != nil {
+		return nil, false
+	}
+	return plaintext, true
 }
 
 // EncryptString encrypts a string and returns a base64-encoded ciphertext.

@@ -7,10 +7,14 @@ import (
 	"github.com/nivik/mypa/internal/models"
 )
 
-// NotifiesPerson reports whether the rule's action sends its person a message ("notify: ..."),
-// which is what quiet hours hold back (V4-05). A webhook or any other action reaches no one and
-// runs on time.
+// NotifiesPerson reports whether the rule's action reaches its person: a message ("notify: ...")
+// or, for a cron rule, a turn whose answer goes to them (a scheduled workflow, "prompt: ...",
+// V4-07). That is what quiet hours hold back (V4-05). A webhook or any other action reaches no one
+// and runs on time.
 func NotifiesPerson(rule models.AutomationRule) bool {
+	if _, ok := PromptOf(rule); ok {
+		return true
+	}
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(rule.ActionInstruction)), "notify:")
 }
 

@@ -555,20 +555,6 @@ func (mr *MockDBClientMockRecorder) CreatePairingCode(s, pc any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreatePairingCode", reflect.TypeOf((*MockDBClient)(nil).CreatePairingCode), s, pc)
 }
 
-// DeleteWorkflow mocks base method.
-func (m *MockDBClient) DeleteWorkflow(id uint, userID string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteWorkflow", id, userID)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DeleteWorkflow indicates an expected call of DeleteWorkflow.
-func (mr *MockDBClientMockRecorder) DeleteWorkflow(id, userID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteWorkflow", reflect.TypeOf((*MockDBClient)(nil).DeleteWorkflow), id, userID)
-}
-
 // GetDueReminders mocks base method.
 func (m *MockDBClient) GetDueReminders() ([]models.ScheduledReminder, error) {
 	m.ctrl.T.Helper()
@@ -657,21 +643,6 @@ func (m *MockDBClient) GetUser(platformID string) (*models.User, error) {
 func (mr *MockDBClientMockRecorder) GetUser(platformID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUser", reflect.TypeOf((*MockDBClient)(nil).GetUser), platformID)
-}
-
-// GetUserWorkflows mocks base method.
-func (m *MockDBClient) GetUserWorkflows(userID string) ([]models.Workflow, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUserWorkflows", userID)
-	ret0, _ := ret[0].([]models.Workflow)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetUserWorkflows indicates an expected call of GetUserWorkflows.
-func (mr *MockDBClientMockRecorder) GetUserWorkflows(userID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserWorkflows", reflect.TypeOf((*MockDBClient)(nil).GetUserWorkflows), userID)
 }
 
 // HouseholdByID mocks base method.
@@ -773,20 +744,6 @@ func (m *MockDBClient) SaveReminder(reminder models.ScheduledReminder) error {
 func (mr *MockDBClientMockRecorder) SaveReminder(reminder any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveReminder", reflect.TypeOf((*MockDBClient)(nil).SaveReminder), reminder)
-}
-
-// SaveWorkflow mocks base method.
-func (m *MockDBClient) SaveWorkflow(w models.Workflow) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SaveWorkflow", w)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// SaveWorkflow indicates an expected call of SaveWorkflow.
-func (mr *MockDBClientMockRecorder) SaveWorkflow(w any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveWorkflow", reflect.TypeOf((*MockDBClient)(nil).SaveWorkflow), w)
 }
 
 // SearchSimilarMemories mocks base method.

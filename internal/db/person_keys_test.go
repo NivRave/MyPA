@@ -81,7 +81,7 @@ func TestPersonKeys_EveryPersonColumnHasAFilledCompanion(t *testing.T) {
 	}
 	sort.Strings(listed)
 	assert.Equal(t, found, listed, "every person column in the schema is listed in personColumns, and nothing else")
-	require.Len(t, listed, 28, "the 28 person columns of Migration B")
+	require.Len(t, listed, 26, "the 28 person columns of Migration B, less memories.user_id and workflows.user_id (migration 11, V4-07)")
 
 	hh := householdColumns(t, sqlDB)
 	h := seedHousehold(t, sqlDB, "fam")

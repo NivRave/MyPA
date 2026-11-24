@@ -32,7 +32,7 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 | GraphQL API & dashboard routes | [SYSTEM.md §7](./SYSTEM.md#7-graphql-api--nextjs-dashboard-reference) |
 | Environment variables & cron jobs | [SYSTEM.md §8](./SYSTEM.md#8-configuration-environment-variables--cron-schedules) |
 | Adding a feature | [SYSTEM.md §9](./SYSTEM.md#9-step-by-step-feature-development-playbook-8-architectural-sections) and [AGENTS.md](./AGENTS.md) |
-| Upgrading, moving and restoring an install | [docs/RESTORE_AND_MIGRATE.md](./docs/RESTORE_AND_MIGRATE.md) |
+| Upgrading, moving and restoring an install, and rewriting old-format secrets after the upgrade (`mypa reencrypt`) | [docs/RESTORE_AND_MIGRATE.md](./docs/RESTORE_AND_MIGRATE.md) |
 | Embedding model and re-embedding memories | [docs/EMBEDDINGS.md](./docs/EMBEDDINGS.md) |
 | Roadmap | [docs/ROADMAP.md](./docs/ROADMAP.md) |
 | Design decisions | [docs/DECISIONS_LOG.md](./docs/DECISIONS_LOG.md), [docs/adr/](./docs/adr/) |

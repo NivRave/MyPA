@@ -18,9 +18,7 @@ var personKeyedTables = map[string]string{
 	"households":             "the tenant itself",
 	"audit_sessions":         "one person's conversation log, read by user ID",
 	"audit_events":           "events of an audit session",
-	"memories":               "legacy per-user memories, copied into topic_memories (P2-4)",
 	"scheduled_reminders":    "one person's own reminders",
-	"workflows":              "one person's own scheduled macros",
 	"encrypted_credentials":  "one person's encrypted Google token",
 	"idempotency_records":    "per-user duplicate-execution guard",
 	"topic_calendar_configs": "one person's calendar preferences per topic",
@@ -79,8 +77,8 @@ func TestHouseholdSchema_EveryHouseholdColumnIsGuarded(t *testing.T) {
 
 	// Every model the app migrates is classified.
 	all := append([]interface{}{
-		&models.Household{}, &models.AuditSession{}, &models.AuditEvent{}, &models.Memory{},
-		&models.ScheduledReminder{}, &models.User{}, &models.PairingCode{}, &models.Workflow{},
+		&models.Household{}, &models.AuditSession{}, &models.AuditEvent{},
+		&models.ScheduledReminder{}, &models.User{}, &models.PairingCode{},
 		&models.Person{}, &models.ChannelAccount{}, &models.Membership{}, &models.AccessToken{}, &models.Session{},
 	}, GetRegisteredModels()...)
 	RegisterWave1Models()
