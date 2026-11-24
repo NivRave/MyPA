@@ -287,13 +287,19 @@ func TestAdversarial_RollbackAtomicityOnFailure(t *testing.T) {
 	familyGroup := "durability_atomic_fam"
 	scope := householdtest.Scope(t, client, familyGroup, actorID, "family") // V4-30: the tenant
 
+	// A real row of the household, so the rollback reaches the failing statement (BL-65 reads the
+	// row first and refuses a missing one before any statement runs).
+	row := models.BabyCareLog{BabyID: 1, HouseholdID: scope.HouseholdID(), FamilyGroup: familyGroup, LogType: "feeding",
+		Timestamp: time.Now(), LoggedByUserID: actorID}
+	require.NoError(t, client.DB.Create(&row).Error)
+
 	mutID := uuid.New().String()
 	mLog := models.MutationLog{
 		ID:          mutID,
 		Topic:       "baby",
 		Action:      "update",
 		EntityType:  "BabyCareLog",
-		EntityID:    "1",
+		EntityID:    fmt.Sprint(row.ID),
 		UserID:      actorID,
 		FamilyGroup: familyGroup,
 		BeforeJSON:  `{"non_existent_column_fail": "crash"}`,
@@ -307,8 +313,9 @@ func TestAdversarial_RollbackAtomicityOnFailure(t *testing.T) {
 	defer client.DB.Delete(&models.MutationLog{}, "id = ?", mutID)
 
 	res, err := module.Rollback(ctx, scope, mutID)
-	assert.Error(t, err, "Rollback with invalid columns must return an SQL error")
+	require.Error(t, err, "Rollback with invalid columns must return an SQL error")
 	assert.Nil(t, res)
+	assert.Contains(t, err.Error(), "non_existent_column_fail", "the failure is the statement's, not a missing row")
 
 	// Verify that is_undone was NOT set to true
 	refreshed, err := client.GetMutationLogByID(scope, mutID)

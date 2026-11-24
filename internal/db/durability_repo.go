@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/pgvector/pgvector-go"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -123,6 +124,48 @@ func (c *Client) GetLastMutation(s identity.Scope) (*models.MutationLog, error) 
 	return &log, nil
 }
 
+// GetLastUndoableMutation retrieves what /undo undoes: the newest active mutation of the scope's
+// household that is the scope's person's own change (BL-65) and whose entity type is one of
+// entityTypes, the types undo can roll back (BL-47: a change undo cannot roll back, such as an
+// identity table's, never blocks it). Entity types are matched trimmed and ignoring case.
+func (c *Client) GetLastUndoableMutation(s identity.Scope, entityTypes []string) (*models.MutationLog, error) {
+	query, err := c.scoped(s)
+	if err != nil {
+		return nil, err
+	}
+	if len(entityTypes) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	norm := make([]string, 0, len(entityTypes))
+	for _, t := range entityTypes {
+		norm = append(norm, strings.ToLower(strings.TrimSpace(t)))
+	}
+	own, args := ownMutations(s)
+	var log models.MutationLog
+	result := query.Where("is_undone = ?", false).
+		Where("LOWER(BTRIM(entity_type)) IN ?", norm).
+		Where(own, args...).
+		Order("created_at desc").First(&log)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return &log, nil
+}
+
+// ownMutations is the SQL form of MutationIsOwn: the scope's person's changes by person_id, or by
+// the old key where person_id is empty. A scope without a person has no changes of its own.
+func ownMutations(s identity.Scope) (string, []interface{}) {
+	key, pid := strings.TrimSpace(s.PersonKey()), strings.TrimSpace(s.PersonID())
+	switch {
+	case pid != "":
+		return "(person_id = ? OR (person_id IS NULL AND user_id IN (?, ?)))", []interface{}{pid, key, pid}
+	case key != "":
+		return "(person_id IS NULL AND user_id = ?)", []interface{}{key}
+	default:
+		return "FALSE", nil
+	}
+}
+
 // MarkMutationUndone marks a mutation log entry of the scope's household as rolled back.
 func (c *Client) MarkMutationUndone(s identity.Scope, id string) error {
 	query, err := c.scoped(s)
@@ -217,7 +260,14 @@ func (c *Client) ExportTopicData(s identity.Scope, topic string, format string, 
 // household_id, to the log's own user), and a statement that matches no row fails the whole
 // rollback. A restored snapshot always lands in the scope's household: snapshots written before
 // V4-30 carry no household_id, and a crafted one must never move a row into another household.
-func (c *Client) RollbackSnapshot(ctx context.Context, s identity.Scope, requested models.MutationLog, tableName string) error {
+//
+// Whose change it is and whose row it touches are checked here too, on the locked log and on the
+// row as it is and as it would be restored (MayUndo, BL-65): via says where the undo was asked
+// from. A memory brought back by undo never gets a vector from a snapshot: a snapshot's vector
+// belongs to whichever model made it (BL-57). A restored memory, or one whose text the undo
+// changes, gets a zero vector, which `mypa embeddings reembed --missing` fills in the current
+// model; an undo that leaves the text as it is keeps the row's current vector.
+func (c *Client) RollbackSnapshot(ctx context.Context, s identity.Scope, requested models.MutationLog, tableName string, via models.UndoVia) error {
 	if !s.Valid() {
 		return identity.ErrNoScope
 	}
@@ -231,6 +281,9 @@ func (c *Client) RollbackSnapshot(ctx context.Context, s identity.Scope, request
 		}
 		if err != nil {
 			return fmt.Errorf("failed to load mutation %s: %w", requested.ID, err)
+		}
+		if err := MayUndo(s, via, log, tableName); err != nil {
+			return err
 		}
 		householdScoped := tx.Migrator().HasColumn(tableName, "household_id")
 		if !householdScoped && !tx.Migrator().HasColumn(tableName, "user_id") {
@@ -252,10 +305,32 @@ func (c *Client) RollbackSnapshot(ctx context.Context, s identity.Scope, request
 			m["user_id"] = log.UserID
 		}
 
+		// current is the row as it is now, locked until the rollback commits so that whose it is
+		// cannot change between the check and the write; a row missing from this household fails
+		// the rollback.
+		current := func(op string) (UndoRowState, error) {
+			row := map[string]interface{}{}
+			err := target().Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", log.EntityID).Take(&row).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("failed to rollback %s on table %s: row %s not found in this household", op, tableName, log.EntityID)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("failed to rollback %s on table %s: %w", op, tableName, err)
+			}
+			return row, nil
+		}
+
 		switch strings.ToLower(log.Action) {
 		case "create":
 			if log.EntityID == "" {
 				return fmt.Errorf("cannot rollback create mutation without entity_id")
+			}
+			cur, err := current("create")
+			if err != nil {
+				return err
+			}
+			if err := MayUndo(s, via, log, tableName, cur); err != nil {
+				return err
 			}
 			res := target().Where("id = ?", log.EntityID).Delete(nil)
 			if res.Error != nil {
@@ -274,6 +349,28 @@ func (c *Client) RollbackSnapshot(ctx context.Context, s identity.Scope, request
 			}
 			delete(beforeMap, "id") // the row being restored is the log's entity, never another one
 			confine(beforeMap)
+			cur, err := current("update")
+			if err != nil {
+				return err
+			}
+			restored := UndoRowState{}
+			for k, v := range cur {
+				restored[k] = v
+			}
+			for k, v := range beforeMap {
+				restored[k] = v
+			}
+			if err := MayUndo(s, via, log, tableName, cur, restored); err != nil {
+				return err
+			}
+			if tableName == embeddedTable {
+				delete(beforeMap, "embedding")
+				if fact, ok := beforeMap["fact"]; ok && text(fact) != text(cur["fact"]) {
+					if err := markNeedsEmbedding(tx, beforeMap); err != nil {
+						return err
+					}
+				}
+			}
 			res := target().Where("id = ?", log.EntityID).Updates(beforeMap)
 			if res.Error != nil {
 				return fmt.Errorf("failed to rollback update on table %s: %w", tableName, res.Error)
@@ -290,6 +387,14 @@ func (c *Client) RollbackSnapshot(ctx context.Context, s identity.Scope, request
 				return fmt.Errorf("failed to parse before_json for table %s: %w", tableName, err)
 			}
 			confine(beforeMap)
+			if err := MayUndo(s, via, log, tableName, beforeMap); err != nil {
+				return err
+			}
+			if tableName == embeddedTable {
+				if err := markNeedsEmbedding(tx, beforeMap); err != nil {
+					return err
+				}
+			}
 			res := tx.Table(tableName).Create(beforeMap)
 			if res.Error != nil {
 				return fmt.Errorf("failed to rollback delete on table %s: %w", tableName, res.Error)
@@ -305,4 +410,16 @@ func (c *Client) RollbackSnapshot(ctx context.Context, s identity.Scope, request
 		}
 		return nil
 	})
+}
+
+// markNeedsEmbedding replaces whatever vector a memory snapshot holds with "no embedding yet": a
+// zero vector of the stored size (models.TopicMemory.BeforeCreate), which `mypa embeddings
+// reembed --missing` fills in the current model (BL-57).
+func markNeedsEmbedding(tx *gorm.DB, row map[string]interface{}) error {
+	dims, err := embeddingColumnDimensions(tx)
+	if err != nil {
+		return err
+	}
+	row["embedding"] = pgvector.NewVector(make([]float32, dims))
+	return nil
 }

@@ -141,6 +141,28 @@ func (r *inMemoryDurabilityRepo) GetLastMutation(s identity.Scope) (*models.Muta
 	return nil, errors.New("no active mutations found")
 }
 
+// GetLastUndoableMutation mirrors db.Client's: the scope's person's own newest active change of an
+// undoable entity type (BL-47, BL-65).
+func (r *inMemoryDurabilityRepo) GetLastUndoableMutation(s identity.Scope, entityTypes []string) (*models.MutationLog, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
+	undoable := map[string]bool{}
+	for _, t := range entityTypes {
+		undoable[strings.ToLower(strings.TrimSpace(t))] = true
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for i := len(r.mutationLogs) - 1; i >= 0; i-- {
+		item := r.mutationLogs[i]
+		if item.IsUndone || item.HouseholdID != s.HouseholdID() || !undoable[strings.ToLower(strings.TrimSpace(item.EntityType))] || !db.MutationIsOwn(s, item) {
+			continue
+		}
+		return &item, nil
+	}
+	return nil, errors.New("no active mutations found")
+}
+
 func (r *inMemoryDurabilityRepo) MarkMutationUndone(s identity.Scope, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -153,7 +175,7 @@ func (r *inMemoryDurabilityRepo) MarkMutationUndone(s identity.Scope, id string)
 	return errors.New("mutation log not found")
 }
 
-func (r *inMemoryDurabilityRepo) RollbackSnapshot(ctx context.Context, s identity.Scope, log models.MutationLog, tableName string) error {
+func (r *inMemoryDurabilityRepo) RollbackSnapshot(ctx context.Context, s identity.Scope, log models.MutationLog, tableName string, via models.UndoVia) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i, l := range r.mutationLogs {

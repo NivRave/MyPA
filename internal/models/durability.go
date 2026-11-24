@@ -55,3 +55,15 @@ type RollbackResult struct {
 	Detail        string `json:"detail"`
 	AlreadyUndone bool   `json:"already_undone"`
 }
+
+// UndoVia is where an undo is asked from, which decides whose changes it may roll back (BL-65):
+// in chat (/undo, undo_last_action) only the caller's own; in the dashboard an owner may also
+// roll back another member's change to the household's shared data.
+type UndoVia string
+
+const (
+	// UndoViaChat is /undo and undo_last_action.
+	UndoViaChat UndoVia = "chat"
+	// UndoViaDashboard is the dashboard's rollbackMutation.
+	UndoViaDashboard UndoVia = "dashboard"
+)
