@@ -157,3 +157,44 @@ func TestDelivery_LateReminderJoinsTheChatHistory(t *testing.T) {
 	assert.Equal(t, "assistant", history[0].Role)
 	assert.Equal(t, "🔔 Reminder: water the plants", history[0].Content)
 }
+
+// BL-55: a scheduled prompt rule's run is a turn the assistant started. It does not count as the
+// person writing (last_inbound_at stays as it was, so the delivery policy does not predict a
+// window WhatsApp does not have), and its answer is a notification handed to the policy.
+func TestDelivery_APromptRuleRunIsATurnTheAssistantStarted(t *testing.T) {
+	client := newTestDBClient(t)
+	mr := miniredis.RunT(t)
+	store, err := state.NewStore("redis://" + mr.Addr())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctrl := gomock.NewController(t)
+	model := mocks.NewMockLLMClient(ctrl)
+	model.EXPECT().GenerateEmbedding(gomock.Any(), gomock.Any()).Return(nil, errors.New("no embeddings in this test")).AnyTimes()
+	model.EXPECT().Chat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&llm.Response{Text: "You spent 840 this week."}, nil).AnyTimes()
+
+	quietPerson(t, client, "wf-dana", "WfDana", "UTC", "", "")
+	ctx := context.Background()
+	before, err := client.AccountOf(ctx, "telegram", "wf-dana")
+	require.NoError(t, err)
+	require.NotNil(t, before)
+
+	spy := &spyTelegramClient{}
+	rec := &recordingDelivery{}
+	engine := orchestrator.NewEngine(nil, store, client, model, adapterstest.Registry(spy, nil),
+		nil, nil, nil, nil, nil, nil, nil, "UTC").WithAccounts(client, []byte("bl55-link-secret-0123456789abcdef")).WithDelivery(rec)
+	require.True(t, engine.StartAssistantTurn(ctx, "wf-dana", "Summarise my week's spending", "rule-cron-1-1"))
+	engine.Wait()
+
+	after, err := client.AccountOf(ctx, "telegram", "wf-dana")
+	require.NoError(t, err)
+	assert.Equal(t, before.LastInboundAt, after.LastInboundAt, "the person did not write")
+
+	got := rec.got()
+	require.NotEmpty(t, got)
+	assert.Equal(t, "wf-dana", got[0].Key)
+	assert.Equal(t, proactive.Notification, got[0].Category)
+	assert.Equal(t, "You spent 840 this week.", got[0].Text)
+	assert.Empty(t, sentTexts(spy), "the answer goes through the policy, not straight to the chat")
+}

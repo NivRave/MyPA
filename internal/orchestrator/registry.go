@@ -38,6 +38,9 @@ type CallContext struct {
 	Extra               map[string]interface{}
 	HasUntrustedContent bool
 	UntrustedSources    []string
+	// Location is the person's time zone (BL-50): their household's, else the install's
+	// DEFAULT_TIMEZONE. The engine sets it; Loc falls back when it is nil.
+	Location *time.Location
 }
 
 // Packs are the feature packs the call's household has switched on (V4-27). A call without a
@@ -55,6 +58,20 @@ func packsOf(s identity.Scope) packs.Set {
 
 // ErrPackOff is returned for a tool whose pack the household has switched off (V4-27).
 var ErrPackOff = errors.New("pack switched off")
+
+// Loc is the person's time zone (BL-50): Location as the engine set it, else the household's zone,
+// else UTC. A time a tool reads without an offset is a time on this clock.
+func (c CallContext) Loc() *time.Location {
+	if c.Location != nil {
+		return c.Location
+	}
+	if tz := strings.TrimSpace(c.Scope.TimeZone("")); tz != "" {
+		if loc, err := time.LoadLocation(tz); err == nil {
+			return loc
+		}
+	}
+	return time.UTC
+}
 
 // ActorID returns the canonical external identifier of the active actor on their channel (a user
 // ID or a phone number, whatever the adapter reports as the sender).

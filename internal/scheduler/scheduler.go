@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/events"
@@ -172,7 +171,7 @@ func ReloadWorkflows(engine *orchestrator.Engine, dbClient *db.Client, runner *a
 				// Held in quiet hours when it reaches its person (a notify action, a workflow's
 				// turn, or the turn it runs without a runner) and its condition does not mark it
 				// urgent.
-				holdable := !automation.CronRuleUrgent(ruleCopy.ConditionJSON) && (runner == nil || automation.NotifiesPerson(ruleCopy))
+				holdable := !automation.RuleUrgent(ruleCopy.ConditionJSON) && (runner == nil || automation.NotifiesPerson(ruleCopy))
 
 				jobs = append(jobs, job{name: ruleName(ruleCopy), userID: ruleCopy.UserID, sched: sched, holdable: holdable, run: func() {
 					// A scheduled workflow (V4-07): its instruction is a turn for its person.
@@ -340,31 +339,16 @@ func automationsOn(dbClient *db.Client, householdID string) bool {
 // workflow starts.
 var startTurn = executeWorkflowMessage
 
-// executeWorkflowMessage runs an instruction as a turn for a person, in the conversation they last
-// wrote in, so the answer reaches them there.
-func executeWorkflowMessage(engine *orchestrator.Engine, dbClient *db.Client, userID, instruction, msgID string) {
-	if dbClient == nil || engine == nil {
+// executeWorkflowMessage runs an instruction as a turn the assistant started for a person (BL-55):
+// it does not count as them writing, it runs on the account they want notifications on, and its
+// answer is a notification through the delivery policy (Engine.StartAssistantTurn).
+func executeWorkflowMessage(engine *orchestrator.Engine, _ *db.Client, userID, instruction, msgID string) {
+	if engine == nil {
 		return
 	}
-	log, err := dbClient.GetLastAuditSessionForUser(userID)
-	if err != nil || log == nil {
-		slog.Warn("failed to get last audit log for workflow", "user_id", userID, "error", err)
-		return
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if !engine.StartAssistantTurn(ctx, userID, instruction, msgID) {
+		slog.Warn("scheduled instruction not started", "user_id", userID)
 	}
-
-	msg := channel.Inbound{
-		MessageID:    msgID,
-		Conversation: channel.Conversation{ID: log.ChatID},
-		Sender:       userID,
-		Text:         instruction,
-		Channel:      log.Source,
-	}
-
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		if err := engine.ProcessMessage(ctx, msg); err != nil {
-			slog.Error("workflow execution failed", "error", err)
-		}
-	}()
 }

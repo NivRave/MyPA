@@ -29,6 +29,7 @@ import (
 
 	"github.com/nivik/mypa/internal/channel"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/quiet"
 )
 
 // Categories of proactive message.
@@ -114,6 +115,9 @@ type Request struct {
 	DueAt time.Time
 	// ExpiresAt is when a held message is given up; zero means by its category.
 	ExpiresAt time.Time
+	// HoldInQuietHours makes a message that reaches its person during their quiet hours wait in
+	// its row until the hours end (BL-49), unless the context is marked Urgent.
+	HoldInQuietHours bool
 }
 
 // Policy decides and records how each proactive message is delivered.
@@ -124,6 +128,7 @@ type Policy struct {
 	now      func() time.Time
 	zone     func(ctx context.Context, personID string) *time.Location
 	lateSend func(ctx context.Context, d models.ProactiveDelivery)
+	quiet    func(ctx context.Context, personID string) quiet.Clock
 }
 
 // Option configures a Policy.
@@ -142,6 +147,24 @@ func WithZone(zone func(ctx context.Context, personID string) *time.Location) Op
 // on its first attempt is the caller's to record (Deliver returns it), so it is not reported here.
 func WithLateSend(f func(ctx context.Context, d models.ProactiveDelivery)) Option {
 	return func(p *Policy) { p.lateSend = f }
+}
+
+// WithQuietHours gives the person's clock (their zone and quiet hours), for a message that asks to
+// wait out the person's quiet hours (Request.HoldInQuietHours). Without it nothing is held for them.
+func WithQuietHours(clock func(ctx context.Context, personID string) quiet.Clock) Option {
+	return func(p *Policy) { p.quiet = clock }
+}
+
+type urgentKey struct{}
+
+// Urgent marks a message as urgent (V4-05's sense: it must reach the person even during their
+// quiet hours). The senders that only pass a context and a text use it.
+func Urgent(ctx context.Context) context.Context { return context.WithValue(ctx, urgentKey{}, true) }
+
+// IsUrgent reports whether the context carries Urgent.
+func IsUrgent(ctx context.Context) bool {
+	v, _ := ctx.Value(urgentKey{}).(bool)
+	return v
 }
 
 // New returns a policy over the store, the people and the channels.
@@ -186,11 +209,33 @@ func (p *Policy) Deliver(ctx context.Context, req Request) (*models.ProactiveDel
 	if d.ExpiresAt.IsZero() {
 		d.ExpiresAt = now.Add(holdFor(req.Category))
 	}
+	// BL-49: a message that waits out its person's quiet hours is recorded pending until they end;
+	// the minute tick (Sweep) then sends it. An urgent one goes now.
+	if until, ok := p.quietUntil(ctx, req, personID, now); ok {
+		d.State, d.NextAttemptAt, d.Reason = models.DeliveryPending, &until, "quiet_hours"
+		if !d.ExpiresAt.After(until) {
+			d.ExpiresAt = until.Add(holdFor(req.Category))
+		}
+		if err := p.store.CreateDelivery(ctx, d); err != nil {
+			return nil, fmt.Errorf("proactive: record the message: %w", err)
+		}
+		slog.Info("proactive message held for quiet hours", "delivery_id", d.ID, "category", d.Category, "person_id", personID, "until", until)
+		return d, nil
+	}
 	if err := p.store.CreateDelivery(ctx, d); err != nil {
 		return nil, fmt.Errorf("proactive: record the message: %w", err)
 	}
 	p.attempt(ctx, d, false)
 	return d, nil
+}
+
+// quietUntil reports whether the message waits for its person's quiet hours to end, and when they
+// end. Only a message that asks to (HoldInQuietHours), is not urgent, and has a clock to read.
+func (p *Policy) quietUntil(ctx context.Context, req Request, personID string, now time.Time) (time.Time, bool) {
+	if !req.HoldInQuietHours || IsUrgent(ctx) || p.quiet == nil {
+		return time.Time{}, false
+	}
+	return p.quiet(ctx, personID).QuietUntil(now)
 }
 
 func holdFor(category string) time.Duration {

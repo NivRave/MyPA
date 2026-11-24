@@ -241,7 +241,7 @@ func TestAdversarial_CrossTenantIsolation_Mutations(t *testing.T) {
 	})
 
 	t.Run("Reject_SaveAutomationRule_CrossTenant", func(t *testing.T) {
-		_, _ = resolver.Mutation().SaveAutomationRule(ctxNonAdmin, "Backdoor", "event_mutation", "baby", "{}", "steal data", nil)
+		_, _ = resolver.Mutation().SaveAutomationRule(ctxNonAdmin, "Backdoor", "event_mutation", "baby", "{}", "notify: steal data", nil)
 		assertVictimUntouched(t, client, victim.ID)
 	})
 
@@ -425,7 +425,7 @@ func TestAdversarial_CrossTenant_RecordIDOR(t *testing.T) {
 	})
 
 	// 2. Seed an AutomationRule in VictimFamily
-	rule, err := resolver.Mutation().SaveAutomationRule(adminCtx, "VictimSecurityRule", "event_mutation", "house", "{}", "alert 911", nil)
+	rule, err := resolver.Mutation().SaveAutomationRule(adminCtx, "VictimSecurityRule", "event_mutation", "house", "{}", "notify: alert 911", nil)
 	require.NoError(t, err)
 	require.NotNil(t, rule)
 
@@ -844,7 +844,7 @@ func seedVictimData(t *testing.T, resolver *graph.Resolver, client *db.Client) {
 	require.NoError(t, err)
 	_, err = m.RegisterExternalAPI(v, victimMarker, "https://93.184.216.34/hook", nil, nil)
 	require.NoError(t, err)
-	_, err = m.SaveAutomationRule(v, victimMarker, "event_mutation", "baby", "{}", victimMarker, nil)
+	_, err = m.SaveAutomationRule(v, victimMarker, "event_mutation", "baby", "{}", "notify: "+victimMarker, nil)
 	require.NoError(t, err)
 	_, err = m.SavePersonalCrmContact(v, victimMarker, nil, nil, nil, nil)
 	require.NoError(t, err)

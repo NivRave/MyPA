@@ -266,6 +266,13 @@ func (m *Module) executeCreateAutomationRule(ctx context.Context, callCtx orches
 		return "", fmt.Errorf("action_instruction is required")
 	}
 
+	// BL-63: a plain instruction on a cron rule is stored as a prompt; on an event rule it would do
+	// nothing, so the rule is not created.
+	actionInstruction, err := NormalizeAction(triggerType, actionInstruction)
+	if err != nil {
+		return "❌ Rule not created: " + err.Error(), nil
+	}
+
 	conditionJSON := strings.TrimSpace(getStringArg(args, "condition_json"))
 	if conditionJSON == "" {
 		conditionJSON = "{}"

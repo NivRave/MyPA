@@ -2,7 +2,6 @@ package shared
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/nivik/mypa/internal/identity"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/models"
+	"github.com/nivik/mypa/internal/proactive"
 )
 
 // NotificationSender defines a callback to dispatch partner/family alerts.
@@ -63,9 +63,15 @@ func (n *Notifier) HandleMutationEvent(ctx context.Context, event events.Mutatio
 	}
 
 	// A row its person did not share (an unshared transaction or calendar event) is theirs alone,
-	// in chat and on the dashboard (V4-35, BL-44), so it is not announced to the others either.
-	if unshared(event.AfterJSON) {
+	// in chat and on the dashboard (V4-35, BL-44), so it is not announced to the others either. A
+	// delete carries only the before-image, which counts the same way (BL-67).
+	if event.Unshared() {
 		return nil
+	}
+	// A notification waits out its recipient's quiet hours (BL-49), unless the row it announces is
+	// urgent, as an urgent reminder is (V4-05).
+	if event.Urgent() {
+		ctx = proactive.Urgent(ctx)
 	}
 
 	// 1. Check sharing permissions and notify mode
@@ -165,21 +171,6 @@ func (n *Notifier) HandleMutationEvent(ctx context.Context, event events.Mutatio
 	}
 
 	return errors.Join(errs...)
-}
-
-// unshared reports whether an event's after-image is a row marked not shared (`"is_shared": false`).
-// A row without the field, or an after-image that is not a JSON object, is not.
-func unshared(afterJSON string) bool {
-	if strings.TrimSpace(afterJSON) == "" {
-		return false
-	}
-	var row struct {
-		IsShared *bool `json:"is_shared"`
-	}
-	if err := json.Unmarshal([]byte(afterJSON), &row); err != nil {
-		return false
-	}
-	return row.IsShared != nil && !*row.IsShared
 }
 
 // FormatNotification formats a human-friendly cross-user alert string.

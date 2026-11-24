@@ -23,6 +23,7 @@ import (
 	"github.com/nivik/mypa/internal/netguard"
 	"github.com/nivik/mypa/internal/orchestrator"
 	"github.com/nivik/mypa/internal/packs"
+	"github.com/nivik/mypa/internal/proactive"
 	"github.com/robfig/cron/v3"
 )
 
@@ -596,6 +597,11 @@ func (r *Runner) HandleMutationEvent(ctx context.Context, ev events.MutationEven
 		if rule.HouseholdID == "" || rule.HouseholdID != ev.HouseholdID {
 			continue
 		}
+		// BL-67: a row its person did not share is theirs alone, so another member's rule does not
+		// act on it (its webhook would send the whole row). The rule's own person's rows count.
+		if ev.Unshared() && !ruleOfActor(rule, ev) {
+			continue
+		}
 
 		// Topic matching: if TriggerTopic is set and not wildcard, it must match event topic
 		if rule.TriggerTopic != "" && rule.TriggerTopic != "*" {
@@ -644,6 +650,21 @@ func (r *Runner) HandleMutationEvent(ctx context.Context, ev events.MutationEven
 	return nil
 }
 
+// ruleOfActor reports whether the rule's person made the event. Events name their actor by the
+// platform ID (the rule tools, the calendar) or by users.id, which is people.id (finance), so both
+// of the rule's keys count: user_id and the person_id the database fills (V4-32). A rule whose
+// person is unknown matches only by user_id: when in doubt an unshared row is not acted on.
+func ruleOfActor(rule models.AutomationRule, ev events.MutationEvent) bool {
+	actor := strings.TrimSpace(ev.ActorUserID)
+	if actor == "" {
+		return false
+	}
+	if strings.TrimSpace(rule.UserID) == actor {
+		return true
+	}
+	return rule.PersonID != nil && strings.TrimSpace(*rule.PersonID) == actor
+}
+
 // ExecuteAction performs the action defined on the automation rule. Both the event runner and the
 // scheduler's cron rules come through here, so a household with the Automations pack off runs no
 // rule (V4-27): the action is skipped, not failed, and its data is kept.
@@ -675,9 +696,15 @@ func (r *Runner) ExecuteAction(ctx context.Context, rule models.AutomationRule, 
 		}
 	} else if strings.HasPrefix(strings.ToLower(action), "notify:") {
 		// Proactive notification action
+		// It waits out its person's quiet hours (BL-49) unless the rule is marked urgent, as a
+		// scheduled one does (V4-05).
 		msg := strings.TrimSpace(action[len("notify:"):])
 		if r.notificationSender != nil && rule.UserID != "" {
-			_ = r.notificationSender(ctx, rule.UserID, msg)
+			sendCtx := ctx
+			if RuleUrgent(rule.ConditionJSON) {
+				sendCtx = proactive.Urgent(ctx)
+			}
+			_ = r.notificationSender(sendCtx, rule.UserID, msg)
 		}
 	}
 

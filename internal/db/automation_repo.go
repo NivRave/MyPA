@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/nivik/mypa/internal/identity"
@@ -448,4 +449,25 @@ func (c *Client) DeleteCRMContact(s identity.Scope, id uint) error {
 		return fmt.Errorf("crm contact %d not found", id)
 	}
 	return nil
+}
+
+// IdleRuleCount counts the household's automation rules whose action does nothing when they fire
+// (BL-63, for /doctor): not a webhook, not a notify: message, and not a prompt: on a cron rule. A
+// plain instruction was such an action before BL-63; existing rules are not rewritten. The tests
+// match the automation package's (isWebhookAction, isNotifyAction, PromptOf).
+func (c *Client) IdleRuleCount(ctx context.Context, s identity.Scope) (int64, error) {
+	query, err := c.scoped(s)
+	if err != nil {
+		return 0, err
+	}
+	var n int64
+	err = query.WithContext(ctx).Model(&models.AutomationRule{}).
+		Where(`NOT (action_instruction ~ '^\s*https?://'
+			OR action_instruction ~* '^\s*(webhook|notify):'
+			OR (trigger_type ~* '^\s*cron\s*$' AND action_instruction ~* '^\s*prompt:'))`).
+		Count(&n).Error
+	if err != nil {
+		return 0, fmt.Errorf("count idle automation rules: %w", err)
+	}
+	return n, nil
 }

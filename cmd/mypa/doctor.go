@@ -127,6 +127,13 @@ func newHealthReporter(cfg *config.Config, channels *channel.Registry, store *st
 			},
 		},
 		doctor.HeldMessages{Counts: dbClient.DeliveryCounts}, // V4-33
+		doctor.IdleRules{Count: func(ctx context.Context, householdID string) (int64, error) { // BL-63
+			scope, err := identity.ForStoredRow(ctx, dbClient, householdID, "")
+			if err != nil {
+				return 0, err
+			}
+			return dbClient.IdleRuleCount(ctx, scope)
+		}},
 	)
 	return doctor.New(checks...)
 }

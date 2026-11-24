@@ -830,3 +830,27 @@ func TestScheduleReminder_Execution(t *testing.T) {
 	assert.Equal(t, "Pick up dry cleaning", dbMock.savedReminders[0].Message)
 	assert.False(t, dbMock.savedReminders[0].IsSent)
 }
+
+// BL-67: a delete carries only the before-image, so deleting an unshared calendar event in a
+// topic that notifies announced its title. An unshared row is its person's own on every action.
+func TestNotifier_DeletingAnUnsharedRowIsNotAnnounced(t *testing.T) {
+	repo := newInMemoryRepo()
+	repo.setUsers("TheSmiths", []models.User{
+		{ID: "user-sarah", PlatformID: "tg-100", Name: "Sarah", FamilyGroup: "TheSmiths"},
+		{ID: "user-john", PlatformID: "tg-200", Name: "John", FamilyGroup: "TheSmiths"},
+	})
+	var sent []string
+	notifier := NewNotifier(repo, func(_ context.Context, recipientID, text string) error {
+		sent = append(sent, recipientID+": "+text)
+		return nil
+	})
+	del := func(before string) events.MutationEvent {
+		return events.MutationEvent{Topic: "family", Action: "delete", EntityType: "ScheduleEvent", ActorUserID: "user-sarah",
+			FamilyGroup: "TheSmiths", HouseholdID: hid("TheSmiths"), BeforeJSON: before, Summary: "Deleted event Therapy"}
+	}
+	require.NoError(t, notifier.HandleMutationEvent(context.Background(), del(`{"id":8,"title":"Therapy","is_shared":false}`)))
+	assert.Empty(t, sent, "deleting an unshared event announces nothing")
+
+	require.NoError(t, notifier.HandleMutationEvent(context.Background(), del(`{"id":9,"title":"Dinner","is_shared":true}`)))
+	assert.Len(t, sent, 1, "deleting a shared one is announced as before")
+}

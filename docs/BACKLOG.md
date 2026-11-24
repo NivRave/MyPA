@@ -59,13 +59,13 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-46 | Medium | Guests cannot be used yet: a guest sees only the topics shared with them by name, and nothing shares a topic with a guest by name | open — needs a roadmap item (proposal: with V4-36 invites or V4-11 tiers) |
 | BL-47 | Medium | A household settings change goes to the mutation log, so `/undo` stops working until the next undoable change | done 2026-11-24 (`fix/undo-batch`): off the log, and `/undo` skips entity types it cannot undo |
 | BL-48 | Low | The Shared Spaces dashboard page shows two made-up members ("Dana (Admin)", "Omer (Family)") | open |
-| BL-49 | Medium | Partner notifications and event-triggered automation messages ignore quiet hours | open |
-| BL-50 | Medium | The reminder tools read a due time without an offset as UTC and confirm it in the server's zone | open |
+| BL-49 | Medium | Partner notifications and event-triggered automation messages ignore quiet hours | done 2026-11-24 (`fix/time-automation-batch`) |
+| BL-50 | Medium | The reminder tools read a due time without an offset as UTC and confirm it in the server's zone | done 2026-11-24 (`fix/time-automation-batch`) |
 | BL-51 | Low | Topic calendar colours never reach Google: no real client implements `CreateEventWithColor` | open |
 | BL-52 | Low | `internal/llm/tools.go` keeps a static copy of 27 module tools whose schemas have drifted from the modules | open |
 | BL-53 | Low | `update_calendar_event` and `list_calendar_events` read a time without an offset as UTC when no zone is given | open |
 | BL-54 | Low | WhatsApp templates exist in English only | open |
-| BL-55 | Medium | A legacy workflow run counts as the person writing, and its answer bypasses the delivery policy | open |
+| BL-55 | Medium | A legacy workflow run counts as the person writing, and its answer bypasses the delivery policy | done 2026-11-24 (`fix/time-automation-batch`) |
 | BL-56 | Low | Telegram's "bot was blocked by the user" is an error, not a "not reachable" refusal | open |
 | BL-57 | Medium | Undo restores a memory's old embedding, which after a re-embed into another model is in the wrong vector space | done 2026-11-24 (`fix/undo-batch`, with BL-25) |
 | BL-58 | Medium | A turn kept local (`LLM_LOCAL_DOMAINS`) is in the history later cloud turns send; voice and tools reach their own services | open |
@@ -73,11 +73,11 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-60 | Low | `audit_events.prompt_tokens` and `completion_tokens` are never written | open |
 | BL-61 | Low | The dashboard's Sessions page shows "View History" and "Revoke" buttons that do nothing | open |
 | BL-62 | Medium | An automation rule created inactive is stored active: the column's default replaces a false `IsActive` | done 2026-11-24 (`fix/bl-43-stored-booleans`, with BL-43) |
-| BL-63 | Medium | A cron rule whose action is a plain instruction does nothing when it fires | open |
+| BL-63 | Medium | A cron rule whose action is a plain instruction does nothing when it fires | done 2026-11-24 (`fix/time-automation-batch`) |
 | BL-64 | Low | The Redis token cache still accepts a Google sign-in stored unencrypted, a legacy branch outside V4-07 and V4-45 | open |
 | BL-65 | Low | `/undo` and the dashboard rollback act on the household's newest change, so one member can undo another person's new workflow | done 2026-11-24 (`fix/undo-batch`): chat undoes one's own; the dashboard by role |
 | BL-66 | Medium | A financial transaction cannot be changed or deleted after it is logged, so a person cannot make a wrongly shared one private | open |
-| BL-67 | Medium | A household automation rule fires on another member's unshared transaction, and a webhook rule sends the whole row to its maker's URL | open — owner's decision |
+| BL-67 | Medium | A household automation rule fires on another member's unshared transaction, and a webhook rule sends the whole row to its maker's URL | done 2026-11-24 (`fix/time-automation-batch`) |
 | BL-68 | Medium | Many chat writes are logged with an action undo cannot roll back (`transaction_logged`, `rule_created`, `upsert`, `supersede` ...), so `/undo` after one fails, and keeps failing | open — owner's decision |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
@@ -534,6 +534,13 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   changes what existing rules do on the next fire, so check the live rules first) or refuse it when the rule is
   created, and say so in the tool's description. Test: a cron rule with a plain instruction does what the
   description says.
+- **Done:** 2026-11-24 (`fix/time-automation-batch`), the owner's decision: a new rule created with a plain instruction on a
+  cron trigger is stored as `prompt:` and runs as a turn for its person (`automation.NormalizeAction`, used by
+  `create_automation_rule` and the `saveAutomationRule` mutation; the tool's description says so). On an event
+  trigger such a rule would do nothing, so it is refused when it is created. Existing rules are not changed;
+  `/doctor` (Automation rules, `db.Client.IdleRuleCount`) counts the household's rules whose action does nothing.
+  Tests: `TestCronRule_APlainInstructionRunsAsATurn`, `TestCreateRule_APlainInstructionIsAPromptOnASchedule`,
+  `TestSchemaResolvers_SaveAutomationRule_APlainInstruction`, `TestIdleRules`.
 
 ### BL-64 — The token cache still accepts an unencrypted Google sign-in (Low)
 - **Found:** 2026-11-24, while building the re-encryption pass (V4-07).
@@ -593,6 +600,12 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** decide whether a household rule acts on another person's unshared rows. If not, the runner skips an event
   whose after-image says `"is_shared": false` unless the rule's person is the event's actor. Test: Omer's rule does
   not fire on Dana's private transaction and fires on her shared one and on his own private one.
+- **Done:** 2026-11-24 (`fix/time-automation-batch`), the owner's decision: a household rule does not act on another person's
+  unshared rows. The runner skips an event whose row is `"is_shared": false` unless the rule's person is the event's
+  actor; the row is read from the after-image, or the before-image on a delete (`events.MutationEvent.Unshared`,
+  which the partner notifier uses too, so deleting an unshared calendar event announces nothing). Tests:
+  `TestRunner_ARuleSkipsAnotherMembersUnsharedRow`, `TestRunner_AnActorNamedByPersonIDIsTheRulesPerson` (an event names
+  its actor by platform ID or `users.id`; the rule's `user_id` and `person_id` both count), `TestNotifier_DeletingAnUnsharedRowIsNotAnnounced`.
 
 ### BL-68 — Many chat writes cannot be undone, and then block `/undo` (Medium)
 - **Found:** 2026-11-24, while fixing BL-47.
@@ -860,6 +873,12 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   hour. Neither has a schedule to work the hold out from, so holding them needs stored messages.
 - **Fix:** hold them in a small outbox released when the person's quiet hours end, or decide they are
   exempt. Fits V4-33, which adds holding a message until a channel can take it.
+- **Done:** 2026-11-24 (`fix/time-automation-batch`), the owner's decision: both respect the recipient's quiet hours. They are
+  held in their `proactive_deliveries` row (pending until the hours end, reason `quiet_hours`;
+  `proactive.Request.HoldInQuietHours`, `proactive.WithQuietHours`), not a second outbox, and the minute tick sends
+  them. Urgent ones go at once: a rule whose condition says `"urgent": true` (`automation.RuleUrgent`), and a
+  partner notification about a row marked urgent. Tests: `TestPartnerAndRuleNotifications_WaitForTheRecipientsQuietHours`,
+  `TestDeliver_ANotificationInQuietHoursWaitsUntilTheyEnd`, `TestDeliver_AnUrgentNotificationIsNotHeld`.
 
 ### BL-50 — Reminder tools read a due time without an offset as UTC (Medium)
 - **Found:** 2026-11-20, while building V4-05.
@@ -870,6 +889,11 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   enforces it. The scheduler side (V4-05) uses the person's zone.
 - **Fix:** parse with `toolutil.ParseTimeInLocation` in the household's zone (the engine's `location`) and
   confirm in that zone; this needs the install default zone in `CallContext`.
+- **Done:** 2026-11-24 (`fix/time-automation-batch`), the owner's decision: both reminder tools read a due time without an
+  offset in the person's zone (`CallContext.Loc()`: the household's, else `DEFAULT_TIMEZONE`, which the engine sets
+  as `CallContext.Location`) and confirm it in that zone; a time with an offset is read as before. Tests:
+  `TestScheduleReminder_ANaiveDueTimeIsThePersonsLocalTime`, `TestCreateSharedReminder_ANaiveDueTimeIsThePersonsLocalTime`,
+  `TestScheduleReminder_FallsBackToTheInstallZone`, `TestCallContext_CarriesThePersonsZone`.
 
 ### BL-51 — Topic calendar colours never reach Google (Low)
 - **Found:** 2026-11-20, while building V4-08.
@@ -914,6 +938,10 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** run a workflow as a turn the assistant started, with its answer delivered as a
   notification through the policy (an exported engine method, as `SendDueBriefings` does for the
   briefing), and on the person's delivery account rather than their latest session.
+- **Done:** 2026-11-24 (`fix/time-automation-batch`), the owner's decision: a `prompt:` rule (the legacy workflows are such
+  rules since V4-07) runs as a turn the assistant started (`Engine.StartAssistantTurn`): no `RecordInbound`, no
+  `Release`, on the person's delivery account, its answer a notification through the delivery policy. Test:
+  `TestDelivery_APromptRuleRunIsATurnTheAssistantStarted`.
 
 ### BL-56 — Telegram's "blocked by the user" is an error, not a refusal (Low)
 - **Found:** 2026-11-20, while building V4-33.

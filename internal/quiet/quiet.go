@@ -125,6 +125,20 @@ func (c Clock) QuietAt(t time.Time) bool {
 	return c.Window.Contains(c.local(t))
 }
 
+// QuietUntil reports whether t falls in the person's quiet hours and, if so, when they end: the
+// first moment after t that is outside them (BL-49).
+func (c Clock) QuietUntil(t time.Time) (time.Time, bool) {
+	if !c.QuietAt(t) {
+		return time.Time{}, false
+	}
+	l := c.local(t)
+	day := l.Day()
+	if c.Window.start > c.Window.end && l.Hour()*60+l.Minute() >= c.Window.start {
+		day++ // the window crosses midnight and t is in its evening part; time.Date normalises
+	}
+	return time.Date(l.Year(), l.Month(), day, c.Window.end/60, c.Window.end%60, 0, 0, l.Location()), true
+}
+
 // WindowEndingAt reports whether t is in the minute the person's quiet hours end, and if so when
 // that window started (the evening before, for a window that crosses midnight).
 func (c Clock) WindowEndingAt(t time.Time) (time.Time, bool) {

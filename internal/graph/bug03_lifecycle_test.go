@@ -106,7 +106,7 @@ func TestBUG03_Lifecycle_RetentionAndImmediateVisibility(t *testing.T) {
 	triggerType := "mutation"
 	triggerTopic := "baby"
 	condition := `{"logType":"feeding"}`
-	action := "Send notification to partner"
+	action := "notify: Send notification to partner" // BL-63: an event rule's action is a webhook or notify:
 
 	createdRule, err := resolver.Mutation().SaveAutomationRule(
 		ctxTenantUser,
