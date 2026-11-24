@@ -370,3 +370,25 @@ func TestSchemaResolvers_MultiTenantSecurity(t *testing.T) {
 	require.NoError(t, resolver.DB.DB.Table("topic_memories").Where("family_group = ?", famB).Count(&inB).Error)
 	assert.Zero(t, inB, "nothing reaches Family B")
 }
+
+// BL-63: the mutation stores a rule's action as the chat tool does. A plain instruction on a
+// cron rule is a prompt: (a turn for its person when it fires); on an event rule it would do
+// nothing, so the rule is refused and nothing is stored.
+func TestSchemaResolvers_SaveAutomationRule_APlainInstruction(t *testing.T) {
+	resolver, _, cleanup := setupTestResolver(t)
+	defer cleanup()
+
+	fam := "fam-" + uuid.New().String()
+	households(t, resolver.DB, fam)
+	ctx := signedIn(t, resolver, fam, "usr-"+uuid.New().String(), "member")
+
+	rule, err := resolver.Mutation().SaveAutomationRule(ctx, "Digest", "cron", "*", `{"cron":"0 20 * * *"}`, "Send the evening digest", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "prompt: Send the evening digest", rule.ActionInstruction)
+
+	_, err = resolver.Mutation().SaveAutomationRule(ctx, "On spend", "event_mutation", "finance", "{}", "Tell me when Dana spends", nil)
+	require.Error(t, err)
+	rules, err := resolver.Query().AutomationRules(ctx)
+	require.NoError(t, err)
+	require.Len(t, rules, 1, "the refused rule is not stored")
+}

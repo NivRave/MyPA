@@ -3,6 +3,7 @@ package automation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -200,4 +201,51 @@ func (m *Module) executeDeleteWorkflow(ctx context.Context, callCtx orchestrator
 	}
 
 	return "Workflow deleted successfully.", nil
+}
+
+// The kinds of rule action ExecuteAction and the scheduler carry out (BL-63). Anything else does
+// nothing when the rule fires; /doctor counts such rules (db.Client.IdleRuleCount, which matches
+// these tests).
+
+// ErrActionDoesNothing is returned for a rule triggered by an event whose action is an instruction:
+// only a scheduled rule carries one out (BL-63).
+var ErrActionDoesNothing = errors.New("a rule triggered by an event can call a webhook ('https://...') or send a message ('notify: ...'); " +
+	"an instruction for the assistant to carry out runs only on a schedule (trigger_type 'cron')")
+
+// NormalizeAction is the action a new rule is stored with (BL-63): a webhook or a notify: message
+// as given; on a cron rule anything else is an instruction the assistant carries out as a turn,
+// stored as "prompt: <instruction>". On a rule triggered by an event an instruction would do
+// nothing, so it is refused with ErrActionDoesNothing. The chat tool and the GraphQL mutation both
+// create rules through it; existing rules are not rewritten.
+func NormalizeAction(triggerType, action string) (string, error) {
+	action = strings.TrimSpace(action)
+	switch {
+	case isWebhookAction(action) || isNotifyAction(action):
+		return action, nil
+	case strings.EqualFold(strings.TrimSpace(triggerType), "cron"):
+		if isPromptAction(action) {
+			return action, nil
+		}
+		return PromptPrefix + " " + action, nil
+	default:
+		return "", ErrActionDoesNothing
+	}
+}
+
+// isWebhookAction reports a webhook: a URL, or "webhook: <url>".
+func isWebhookAction(action string) bool {
+	a := strings.TrimSpace(action)
+	return strings.HasPrefix(a, "http://") || strings.HasPrefix(a, "https://") || hasPrefixFold(a, "webhook:")
+}
+
+// isNotifyAction reports a message to the rule's person: "notify: <text>".
+func isNotifyAction(action string) bool { return hasPrefixFold(strings.TrimSpace(action), "notify:") }
+
+// isPromptAction reports an instruction run as a turn: "prompt: <instruction>" (a cron rule only).
+func isPromptAction(action string) bool {
+	return hasPrefixFold(strings.TrimSpace(action), PromptPrefix)
+}
+
+func hasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
 }

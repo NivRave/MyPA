@@ -222,7 +222,7 @@ func TestResolver_Mutations_EmitEvents(t *testing.T) {
 	assert.Equal(t, "fam-test", autoRepo.createdAPIs[0].FamilyGroup)
 
 	// 4. SaveAutomationRule mutation (fixes BUG-03)
-	ruleLog, err := resolver.Mutation().SaveAutomationRule(ctx, "BabyRule", "mutation", "baby", "{}", "notify partner", nil)
+	ruleLog, err := resolver.Mutation().SaveAutomationRule(ctx, "BabyRule", "mutation", "baby", "{}", "notify: partner", nil)
 	require.NoError(t, err)
 	require.NotNil(t, ruleLog)
 	require.Len(t, autoRepo.createdRules, 1)

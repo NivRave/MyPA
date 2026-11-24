@@ -153,15 +153,17 @@ func (e *Engine) buildCallContext(ctx context.Context, user *models.User, msg ch
 			return e.sendMessage(nCtx, msg, text)
 		}
 		// Someone else: where they want notifications (V4-32).
-		if err := e.deliverTo(nCtx, targetUserID, text); err != nil {
+		if err := e.deliverPartnerNotification(nCtx, targetUserID, text); err != nil {
 			return fmt.Errorf("no active channel found for user: %s", targetUserID)
 		}
 		return nil
 	}
 
+	scope := e.scopeOf(ctx, user)
 	callCtx := CallContext{
 		User:             user,
-		Scope:            e.scopeOf(ctx, user),
+		Scope:            scope,
+		Location:         e.location(scope), // the household's zone, else DEFAULT_TIMEZONE (BL-50)
 		Message:          msg,
 		DB:               e.db,
 		LLM:              e.model(), // metered: a tool's model call counts for the turn (V4-04)

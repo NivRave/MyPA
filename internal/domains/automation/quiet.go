@@ -18,10 +18,11 @@ func NotifiesPerson(rule models.AutomationRule) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(rule.ActionInstruction)), "notify:")
 }
 
-// CronRuleUrgent reports whether a cron rule's condition marks it urgent
-// (`{"cron": "0 23 * * *", "urgent": true}`): its message then goes out even during its person's
-// quiet hours. A plain cron string, or a condition without the key, is not urgent.
-func CronRuleUrgent(conditionJSON string) bool {
+// RuleUrgent reports whether a rule's condition marks it urgent (`{"cron": "0 23 * * *",
+// "urgent": true}`): its message then goes out even during its person's quiet hours, for a cron
+// rule (V4-05) and an event rule (BL-49) alike. A plain cron string, or a condition without the key,
+// is not urgent.
+func RuleUrgent(conditionJSON string) bool {
 	trimmed := strings.TrimSpace(conditionJSON)
 	if !strings.HasPrefix(trimmed, "{") {
 		return false

@@ -143,3 +143,26 @@ func TestClock_BriefingDue(t *testing.T) {
 	assert.True(t, ny.BriefingDue(time.Date(2026, 11, 20, 8, 0, 0, 0, zone(t, "America/New_York"))))
 	assert.False(t, ny.BriefingDue(day(8, 0)))
 }
+
+// BL-49: QuietUntil is the end of the window t is in, on the person's clock, across midnight on
+// either side of it.
+func TestClock_QuietUntil(t *testing.T) {
+	c := NewClock(Settings{TimeZone: "Asia/Jerusalem", Start: "22:00", End: "07:00"}, "")
+	at := func(d, h, m int) time.Time { return time.Date(2026, 11, d, h, m, 0, 0, c.Loc) }
+
+	end, ok := c.QuietUntil(at(20, 23, 30))
+	require.True(t, ok)
+	assert.True(t, end.Equal(at(21, 7, 0)), "evening part: the next morning, got %s", end)
+	end, ok = c.QuietUntil(at(21, 3, 0))
+	require.True(t, ok)
+	assert.True(t, end.Equal(at(21, 7, 0)), "morning part: this morning, got %s", end)
+	_, ok = c.QuietUntil(at(21, 7, 0))
+	assert.False(t, ok, "the end is outside the window")
+
+	day := NewClock(Settings{TimeZone: "Asia/Jerusalem", Start: "13:00", End: "15:00"}, "")
+	end, ok = day.QuietUntil(time.Date(2026, 11, 20, 14, 0, 0, 0, day.Loc))
+	require.True(t, ok)
+	assert.True(t, end.Equal(time.Date(2026, 11, 20, 15, 0, 0, 0, day.Loc)))
+	_, ok = NewClock(Settings{}, "").QuietUntil(at(20, 23, 30))
+	assert.False(t, ok, "no quiet hours, nothing held")
+}

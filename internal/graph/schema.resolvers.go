@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/nivik/mypa/internal/db"
+	"github.com/nivik/mypa/internal/domains/automation"
 	"github.com/nivik/mypa/internal/domains/toolutil"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/graph/model"
@@ -1187,6 +1188,13 @@ func (r *mutationResolver) RegisterExternalAPI(ctx context.Context, name string,
 // SaveAutomationRule is the resolver for the saveAutomationRule field.
 func (r *mutationResolver) SaveAutomationRule(ctx context.Context, name string, triggerType string, triggerTopic string, conditionJSON string, actionInstruction string, isActive *bool) (*model.AutomationRule, error) {
 	actorID, hs, err := r.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// BL-63: the same action rule as the chat tool: an instruction on a cron rule is a prompt:, one
+	// on an event rule would do nothing and is refused.
+	actionInstruction, err = automation.NormalizeAction(triggerType, actionInstruction)
 	if err != nil {
 		return nil, err
 	}

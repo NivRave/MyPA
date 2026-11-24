@@ -102,7 +102,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					},
 					"due_time": {
 						Type:        genai.TypeString,
-						Description: "Optional ISO 8601 due timestamp (e.g. '2026-11-03T19:00:00Z').",
+						Description: dueTimeDescription,
 					},
 					"assigned_to_user_id": {
 						Type:        genai.TypeString,
@@ -159,7 +159,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					},
 					"due_time": {
 						Type:        genai.TypeString,
-						Description: "The date and time when the reminder should trigger (in ISO 8601 / RFC 3339 format).",
+						Description: dueTimeDescription,
 					},
 					"urgent": {
 						Type:        genai.TypeBoolean,
@@ -295,6 +295,9 @@ func (m *Module) executeConfigureSharedTopic(ctx context.Context, callCtx orches
 		topic, familyGroup, canView, canEdit, notifyMode), nil
 }
 
+// dueTimeDescription is the due time of both reminder tools (BL-50).
+const dueTimeDescription = "When the reminder is due, in ISO 8601 (e.g. '2026-11-03T19:00:00'). A time without an offset is read in the person's own time zone; one with an offset ('Z', '+02:00') is that exact instant."
+
 // urgentDescription is the urgent flag of both reminder tools (V4-05).
 const urgentDescription = "Set true only when the reminder must reach the person even during their quiet hours: they ask for that, or it is about medication or safety. Any other reminder due in quiet hours waits until they end. Default false."
 
@@ -306,7 +309,9 @@ func (m *Module) executeScheduleReminder(ctx context.Context, callCtx orchestrat
 		return "❌ message and due_time are required to schedule a reminder.", nil
 	}
 
-	dueTime, err := toolutil.ParseTime(dueTimeStr)
+	// BL-50: a time without an offset is the person's local time, not UTC.
+	loc := callCtx.Loc()
+	dueTime, err := toolutil.ParseTimeInLocation(dueTimeStr, loc)
 	if err != nil {
 		return "❌ Failed to parse due time. Please use ISO 8601 format.", nil
 	}
@@ -338,11 +343,11 @@ func (m *Module) executeScheduleReminder(ctx context.Context, callCtx orchestrat
 		ActorUserID: actorID,
 		HouseholdID: callCtx.Scope.HouseholdID(),
 		FamilyGroup: callCtx.Scope.LegacyLabel(),
-		Summary:     fmt.Sprintf("Scheduled reminder for %s: %s", dueTime.Format(time.RFC822), message),
+		Summary:     fmt.Sprintf("Scheduled reminder for %s: %s", dueTime.In(loc).Format(time.RFC822), message),
 		Timestamp:   time.Now(),
 	})
 
-	return fmt.Sprintf("✅ **Reminder Set!**\n\nI will remind you at %s: \"%s\"", dueTime.In(time.Local).Format(time.RFC822), message), nil
+	return fmt.Sprintf("✅ **Reminder Set!**\n\nI will remind you at %s: \"%s\"", dueTime.In(loc).Format(time.RFC822), message), nil
 }
 
 func (m *Module) executeCreateSharedReminder(ctx context.Context, callCtx orchestrator.CallContext, repo Repository, args map[string]interface{}) (string, error) {
@@ -360,11 +365,12 @@ func (m *Module) executeCreateSharedReminder(ctx context.Context, callCtx orches
 
 	assignedTo, _ := args["assigned_to_user_id"].(string)
 
+	// BL-50: a time without an offset is the person's local time, not UTC. A due time that cannot
+	// be read leaves the reminder without one, as before.
+	loc := callCtx.Loc()
 	var dueTime *time.Time
 	if dueStr, ok := args["due_time"].(string); ok && strings.TrimSpace(dueStr) != "" {
-		if t, err := time.Parse(time.RFC3339, strings.TrimSpace(dueStr)); err == nil {
-			dueTime = &t
-		} else if t, err := time.Parse("2006-01-02T15:04:05", strings.TrimSpace(dueStr)); err == nil {
+		if t, err := toolutil.ParseTimeInLocation(dueStr, loc); err == nil {
 			dueTime = &t
 		}
 	}
@@ -406,7 +412,7 @@ func (m *Module) executeCreateSharedReminder(ctx context.Context, callCtx orches
 
 	dueMsg := ""
 	if reminder.DueTime != nil {
-		dueMsg = fmt.Sprintf(" due at %s", reminder.DueTime.Format("2006-01-02 15:04"))
+		dueMsg = fmt.Sprintf(" due at %s", reminder.DueTime.In(loc).Format("2006-01-02 15:04"))
 	}
 
 	return fmt.Sprintf("Created shared task/reminder #%d: '%s' under topic '%s'%s for family group '%s'.",

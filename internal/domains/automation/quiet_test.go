@@ -15,11 +15,11 @@ func TestNotifiesPerson(t *testing.T) {
 	assert.False(t, NotifiesPerson(models.AutomationRule{}))
 }
 
-func TestCronRuleUrgent(t *testing.T) {
-	assert.True(t, CronRuleUrgent(`{"cron": "0 23 * * *", "urgent": true}`))
-	assert.False(t, CronRuleUrgent(`{"cron": "0 23 * * *", "urgent": false}`))
-	assert.False(t, CronRuleUrgent(`{"cron": "0 23 * * *"}`))
-	assert.False(t, CronRuleUrgent(`0 23 * * *`))
-	assert.False(t, CronRuleUrgent(`{"urgent": "yes"}`), "only a JSON true counts")
-	assert.False(t, CronRuleUrgent(`{not json`))
+func TestRuleUrgent(t *testing.T) {
+	assert.True(t, RuleUrgent(`{"cron": "0 23 * * *", "urgent": true}`))
+	assert.False(t, RuleUrgent(`{"cron": "0 23 * * *", "urgent": false}`))
+	assert.False(t, RuleUrgent(`{"cron": "0 23 * * *"}`))
+	assert.False(t, RuleUrgent(`0 23 * * *`))
+	assert.False(t, RuleUrgent(`{"urgent": "yes"}`), "only a JSON true counts")
+	assert.False(t, RuleUrgent(`{not json`))
 }

@@ -538,7 +538,19 @@ func TestTransfer_BaselineDumpRestoresAndMigrates(t *testing.T) {
 	t.Log("\n" + health.Markdown())
 	assert.True(t, health.Healthy(), "/doctor must report no failures after restoring the baseline")
 	assert.Zero(t, health.Count(doctor.StatusFail))
-	assert.Zero(t, health.Count(doctor.StatusWarn))
+	// BL-63: the baseline holds one automation rule whose action is a plain instruction, which does
+	// nothing when it fires. It is not rewritten; /doctor reports it so the owner can fix it, and
+	// that is the only warning.
+	var warnings []doctor.Result
+	for _, r := range health.Results {
+		if r.Status == doctor.StatusWarn {
+			warnings = append(warnings, r)
+		}
+	}
+	if assert.Len(t, warnings, 1) {
+		assert.Equal(t, "Automation rules", warnings[0].Check)
+		assert.Contains(t, warnings[0].Detail, "1 automation rule(s) do nothing")
+	}
 	passed := map[string]bool{}
 	for _, r := range health.Results {
 		if r.Status == doctor.StatusOK {

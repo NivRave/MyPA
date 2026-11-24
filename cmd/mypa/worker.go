@@ -246,6 +246,7 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 	var recordLate func(ctx context.Context, d models.ProactiveDelivery)
 	delivery := proactive.New(dbClient, dbClient, channels,
 		proactive.WithZone(personZone(dbClient, cfg.Server.DefaultTimezone)),
+		proactive.WithQuietHours(personClock(dbClient, cfg.Server.DefaultTimezone)), // BL-49
 		proactive.WithLateSend(func(ctx context.Context, d models.ProactiveDelivery) {
 			if recordLate != nil {
 				recordLate(ctx, d)
@@ -254,9 +255,11 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 
 	// Proactive Notification Sender for Shared Spaces and Automations: these callers hold only the
 	// recipient's person key, so the message goes to the account that person wants notifications
-	// on (V4-32), through the delivery policy (V4-33).
+	// on (V4-32), through the delivery policy (V4-33). Partner notifications and automations'
+	// notify: messages wait out the recipient's quiet hours unless urgent (BL-49); the Google
+	// sign-in confirmation (notifier, below) answers what the person just did and goes at once.
 	notifier := channelNotifier{channels: channels, accounts: dbClient, delivery: delivery}
-	notificationSender := notifier.SendMessage
+	notificationSender := notifier.respectingQuietHours().SendMessage
 
 	// Track 1C: Shared Spaces & Partner Sync Notifier
 	sharedNotifier := shared.NewNotifier(dbClient, notificationSender)
@@ -396,6 +399,15 @@ type channelNotifier struct {
 	channels *channel.Registry
 	accounts deliveryAccounts
 	delivery notificationPolicy
+	// holdInQuietHours makes what it sends wait out the recipient's quiet hours (BL-49).
+	holdInQuietHours bool
+}
+
+// respectingQuietHours is the notifier for partner notifications and automations' notify:
+// messages (BL-49): what it sends waits out the recipient's quiet hours, unless it is urgent.
+func (n channelNotifier) respectingQuietHours() channelNotifier {
+	n.holdInQuietHours = true
+	return n
 }
 
 // notificationPolicy is the part of the delivery policy the notifier uses.
@@ -406,12 +418,25 @@ type notificationPolicy interface {
 // personZone is the time zone of a person, by their ID, for the note on a late message: their
 // household's, else the install's.
 func personZone(c *db.Client, fallback string) func(ctx context.Context, personID string) *time.Location {
+	clock := personClock(c, fallback)
 	return func(ctx context.Context, personID string) *time.Location {
+		return clock(ctx, personID).Loc
+	}
+}
+
+// personClock is a person's clock, by their ID: their household's zone, else the install's, and
+// their quiet hours (V4-05). A failed lookup is no quiet hours: nothing is held on a guess.
+func personClock(c *db.Client, fallback string) func(ctx context.Context, personID string) quiet.Clock {
+	return func(ctx context.Context, personID string) quiet.Clock {
 		var s quiet.Settings
 		if u, err := c.UserByID(ctx, personID); err == nil && u != nil {
-			s, _ = c.QuietSettings(ctx, u.PlatformID)
+			if qs, qerr := c.QuietSettings(ctx, u.PlatformID); qerr == nil {
+				s = qs
+			} else {
+				slog.Warn("quiet hours not read; sending as if there were none", "person_id", personID, "error", qerr)
+			}
 		}
-		return quiet.NewClock(s, fallback).Loc
+		return quiet.NewClock(s, fallback)
 	}
 }
 
@@ -429,7 +454,8 @@ func joinStepsOf(notifier AuthNotifier) func() []channel.JoinStep {
 
 func (n channelNotifier) SendMessage(ctx context.Context, recipientID, text string) error {
 	if n.delivery != nil {
-		_, err := n.delivery.Deliver(ctx, proactive.Request{Key: recipientID, Category: proactive.Notification, Text: text})
+		_, err := n.delivery.Deliver(ctx, proactive.Request{Key: recipientID, Category: proactive.Notification, Text: text,
+			HoldInQuietHours: n.holdInQuietHours})
 		if !errors.Is(err, proactive.ErrNoPerson) {
 			return err
 		}

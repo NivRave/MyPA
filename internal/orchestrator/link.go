@@ -133,9 +133,20 @@ func (e *Engine) deliveryAddress(ctx context.Context, key string) (channel.Addre
 }
 
 // deliverTo sends a notification to the person behind key: through the delivery policy (V4-33),
-// which sends it where they want notifications, elsewhere, or holds it.
+// which sends it where they want notifications, elsewhere, or holds it. It goes at any hour (an
+// account change announced to the owners must not wait).
 func (e *Engine) deliverTo(ctx context.Context, key, text string) error {
-	_, err := e.deliverProactive(ctx, key, proactive.Request{Category: proactive.Notification, Text: text})
+	return e.notify(ctx, key, text, false)
+}
+
+// deliverPartnerNotification sends a notification a tool addresses to another person. It waits out
+// their quiet hours unless the context is urgent (BL-49).
+func (e *Engine) deliverPartnerNotification(ctx context.Context, key, text string) error {
+	return e.notify(ctx, key, text, true)
+}
+
+func (e *Engine) notify(ctx context.Context, key, text string, holdInQuietHours bool) error {
+	_, err := e.deliverProactive(ctx, key, proactive.Request{Category: proactive.Notification, Text: text, HoldInQuietHours: holdInQuietHours})
 	return err
 }
 

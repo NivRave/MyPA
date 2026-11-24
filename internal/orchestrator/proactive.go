@@ -154,3 +154,34 @@ func (e *Engine) handleReport(ctx context.Context, msg channel.Inbound) error {
 
 // isNoPerson reports whether a delivery failed because the key names nobody.
 func isNoPerson(err error) bool { return errors.Is(err, proactive.ErrNoPerson) }
+
+// StartAssistantTurn runs an instruction as a turn the assistant started for the person behind
+// userID: a scheduled prompt: rule (BL-55). Like the morning briefing it does not count as the
+// person writing (no RecordInbound, no Release), it runs on the account they want notifications
+// on (V4-32), and its answer is a notification handed to the delivery policy (V4-33). It returns
+// whether the turn was started; Wait blocks until it finishes.
+func (e *Engine) StartAssistantTurn(ctx context.Context, userID, instruction, msgID string) bool {
+	to, _, err := e.deliveryAddress(ctx, userID)
+	if err != nil {
+		slog.Warn("no channel to run the scheduled instruction on", "user_id", userID, "error", err)
+		return false
+	}
+	msg := channel.Inbound{
+		Channel:      to.Channel,
+		MessageID:    msgID,
+		Sender:       to.Person,
+		Conversation: channel.Conversation{ID: to.Conversation},
+		Text:         instruction,
+	}
+	turn := &proactiveTurn{key: userID, category: proactive.Notification}
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		bgCtx, cancel := context.WithTimeout(withProactiveTurn(startedByAssistant(context.Background()), turn), 5*time.Minute)
+		defer cancel()
+		if err := e.ProcessMessage(bgCtx, msg); err != nil {
+			slog.Error("scheduled instruction failed", "user_id", userID, "error", err)
+		}
+	}()
+	return true
+}

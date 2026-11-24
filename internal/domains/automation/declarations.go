@@ -106,7 +106,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					},
 					"action_instruction": {
 						Type:        genai.TypeString,
-						Description: "Action to take when triggered: webhook URL (e.g. 'https://api.example.com/webhook'), notification instruction ('notify: Check the thermostat'), or task instruction.",
+						Description: "What the rule does when it fires: call a webhook (a URL, e.g. 'https://api.example.com/webhook'), send the person a message ('notify: Check the thermostat'), or, on a schedule only (trigger_type 'cron'), carry out an instruction as a turn for the person, whose answer they receive ('prompt: Summarise this week's spending'). A plain instruction on a cron rule is stored as 'prompt: ...'; a rule triggered by an event cannot carry out an instruction and is refused.",
 					},
 					"is_active": {
 						Type:        genai.TypeBoolean,
