@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/identity/identitytest"
 	"github.com/nivik/mypa/internal/models"
 	"github.com/nivik/mypa/internal/orchestrator"
@@ -131,10 +132,25 @@ func TestDeleteWorkflow_DeletesOnlyTheCallersOwnWorkflow(t *testing.T) {
 	assert.Len(t, rules, 2)
 
 	reloads = 0
+	bus := events.NewEventBus()
+	var published []events.MutationEvent
+	bus.SubscribeSync(func(_ context.Context, ev events.MutationEvent) error {
+		published = append(published, ev)
+		return nil
+	})
+	dana.EventBus = bus
 	res, err = mod.Execute(ctx, dana, "delete_workflow", map[string]interface{}{"id": fmt.Sprint(mine)})
 	require.NoError(t, err)
 	assert.Equal(t, "Workflow deleted successfully.", res)
 	assert.Equal(t, 1, reloads)
+	// The deletion carries the rule as it was, which is what /undo restores.
+	require.Len(t, published, 1)
+	assert.Equal(t, "delete", published[0].Action)
+	assert.Equal(t, "AutomationRule", published[0].EntityType)
+	var before models.AutomationRule
+	require.NoError(t, json.Unmarshal([]byte(published[0].BeforeJSON), &before))
+	assert.Equal(t, mine, before.ID)
+	assert.Equal(t, "prompt: x", before.ActionInstruction)
 	rules, _ = repo.ListAutomationRules(dana.Scope, "")
 	require.Len(t, rules, 1)
 	assert.Equal(t, plain.ID, rules[0].ID)

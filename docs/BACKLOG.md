@@ -75,6 +75,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-62 | Medium | An automation rule created inactive is stored active: the column's default replaces a false `IsActive` | open |
 | BL-63 | Medium | A cron rule whose action is a plain instruction does nothing when it fires | open |
 | BL-64 | Low | The Redis token cache still accepts a Google sign-in stored unencrypted, a legacy branch outside V4-07 and V4-45 | open |
+| BL-65 | Low | `/undo` and the dashboard rollback act on the household's newest change, so one member can undo another person's new workflow | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -534,6 +535,19 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   branch is never removed. No current code writes one.
 - **Fix:** with V4-45 or V4-23 (which moves the tokens into Postgres): count such values in the pass or at start,
   then remove the branch once none is left. Test: a plaintext token is refused.
+
+### BL-65 — One member's undo can remove another person's new workflow (Low)
+- **Found:** 2026-11-24, by the V4-07 review.
+- **Evidence:** `RollbackLast` (`internal/domains/durability/module.go`) takes the household's newest mutation, and
+  `RollbackSnapshot` (`internal/db/durability_repo.go`) deletes the created row with a household filter only. Since
+  V4-07 a workflow is an automation rule, which is on the undo allowlist; before, `Workflow` was not, so a workflow
+  could not be undone at all. Every scoped rule read and write hides another person's workflow
+  (`workflowsOfOthersHidden`); undo does not go through it.
+- **Impact:** when the household's newest change is a person's `schedule_workflow`, another member's `/undo` deletes
+  that workflow. The same holds for every person-owned row in a household table today.
+- **Fix:** decide whether undo of a person's own row is that person's: either filter `RollbackLast` to the caller's
+  own mutations for person-owned entities, or check the owner in `RollbackSnapshot`. Test: another member's `/undo`
+  leaves a person's new workflow in place.
 
 ### BL-30 — Other tests change the process environment and do not restore it exactly (Low)
 - **Found:** 2026-11-19, in the search of every `_test.go` file done for BL-27.
