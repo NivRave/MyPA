@@ -515,8 +515,16 @@ func TestTransfer_BaselineDumpRestoresAndMigrates(t *testing.T) {
 		assert.Zero(t, mismatched, "%s: every row is in the household its label names", table)
 	}
 	var fact string
-	require.NoError(t, target.client.DB.Model(&models.TopicMemory{}).Where("user_id = ?", "1001").Pluck("fact", &fact).Error)
+	require.NoError(t, target.client.DB.Model(&models.TopicMemory{}).Where("user_id = ? AND topic = ?", "1001", "house").Pluck("fact", &fact).Error)
 	assert.Equal(t, "The boiler is serviced every November.", fact)
+	// V4-07: the legacy memory and workflow are kept, in the tables that replaced them.
+	var copied int64
+	require.NoError(t, target.client.DB.Model(&models.TopicMemory{}).Where("user_id = ? AND fact = ?", "1001", "Prefers tea to coffee.").Count(&copied).Error)
+	assert.Equal(t, int64(1), copied, "the baseline's legacy memory is in topic_memories")
+	var wf models.AutomationRule
+	require.NoError(t, target.client.DB.Where("user_id = ? AND name = ?", "1001", "Morning summary").First(&wf).Error)
+	assert.Equal(t, "cron", wf.TriggerType)
+	assert.Equal(t, "prompt: Summarise my day", wf.ActionInstruction, "the baseline's workflow is a cron rule")
 	var instructions string
 	require.NoError(t, target.client.DB.Model(&models.UserPreference{}).Where("user_id = ?", "1001").Pluck("standing_instructions", &instructions).Error)
 	assert.Equal(t, "Keep answers short.", instructions)
@@ -548,8 +556,12 @@ var baselineCounts = filepath.Join("testdata", "baseline_v3.4.0.counts.json")
 
 // baselineCountChanges records, per table, the row count expected after migrating the baseline
 // when a V4 migration deliberately changes it (for example by moving rows into another table).
-// Empty while no migration does.
-var baselineCountChanges = map[string]int{}
+var baselineCountChanges = map[string]int{
+	// Migration 11 (V4-07): the baseline's memories row had no copy in topic_memories, so it is
+	// copied before the table is dropped; its workflow becomes a cron automation rule.
+	"memories": 0, "topic_memories": 2,
+	"workflows": 0, "automation_rules": 2,
+}
 
 // writeBaselineFixture dumps a seeded database at the v3.4.0 schema. It refuses to run once the
 // schema has moved on: from then on the fixture can only be produced from the v3.4.0 tag.

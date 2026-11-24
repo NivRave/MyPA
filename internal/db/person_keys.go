@@ -70,8 +70,20 @@ var migration4PersonColumns = []personColumn{
 	{"workflows", "user_id", "person_id"},
 }
 
+// droppedTables are tables of migration4PersonColumns that a later migration dropped: memories
+// and workflows, by migration 11 (V4-07).
+var droppedTables = map[string]bool{"memories": true, "workflows": true}
+
 // personColumns is every person column today.
-func personColumns() []personColumn { return migration4PersonColumns }
+func personColumns() []personColumn {
+	var out []personColumn
+	for _, c := range migration4PersonColumns {
+		if !droppedTables[c.Table] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
 
 // personOfFunctionSQL maps an old person key to people.id (see the package comment above).
 const personOfFunctionSQL = `CREATE OR REPLACE FUNCTION public.mypa_person_of(key text) RETURNS uuid

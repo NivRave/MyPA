@@ -36,23 +36,25 @@ func TestAdversarial_ConcurrencyDataRaceStress(t *testing.T) {
 
 	// Cleanup
 	defer func() {
-		client.DB.Where("user_id = ?", testUser).Delete(&models.Workflow{})
 		client.DB.Where("user_id = ?", testUser).Delete(&models.AutomationRule{})
 	}()
-	client.DB.Where("user_id = ?", testUser).Delete(&models.Workflow{})
 	client.DB.Where("user_id = ?", testUser).Delete(&models.AutomationRule{})
 
-	// Insert initial test workflows and cron rules
+	// Insert initial scheduled workflows (cron rules whose action is a prompt, V4-07) and cron rules
 	for i := 1; i <= 5; i++ {
-		wf := models.Workflow{
-			UserID:         testUser,
-			Name:           fmt.Sprintf("Race Workflow %d", i),
-			CronExpression: "0 8 * * *",
-			Instruction:    "Do work",
-			IsActive:       true,
-			CreatedAt:      time.Now(),
+		wf := models.AutomationRule{
+			UserID:            testUser,
+			HouseholdID:       householdtest.Household(t, client, testFam).ID,
+			FamilyGroup:       testFam,
+			Name:              fmt.Sprintf("Race Workflow %d", i),
+			TriggerType:       "cron",
+			TriggerTopic:      "*",
+			ConditionJSON:     `{"cron": "0 8 * * *"}`,
+			ActionInstruction: automation.PromptPrefix + " Do work",
+			IsActive:          true,
+			CreatedAt:         time.Now(),
 		}
-		require.NoError(t, client.SaveWorkflow(wf))
+		require.NoError(t, client.DB.Create(&wf).Error)
 
 		rule := models.AutomationRule{
 			UserID:            testUser,

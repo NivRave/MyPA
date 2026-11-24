@@ -83,8 +83,8 @@ func NewClientAutoMigrate(dsn string) (*Client, error) {
 	return c, nil
 }
 
-// AutoMigrateSchema creates/updates tables from the Go models, applies the custom indexes and the
-// legacy-memory data copy — the pre-goose startup behaviour (tests/dev only).
+// AutoMigrateSchema creates/updates tables from the Go models and applies the custom indexes,
+// foreign keys and person keys — the pre-goose startup behaviour (tests/dev only).
 func AutoMigrateSchema(db *gorm.DB) error {
 	if err := db.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error; err != nil {
 		return fmt.Errorf("failed to create vector extension: %w", err)
@@ -93,11 +93,9 @@ func AutoMigrateSchema(db *gorm.DB) error {
 		&models.Household{}, // first: every household_id references it (V4-30)
 		&models.AuditSession{},
 		&models.AuditEvent{},
-		&models.Memory{},
 		&models.ScheduledReminder{},
 		&models.User{},
 		&models.PairingCode{},
-		&models.Workflow{},
 		// V4-32: people and their channel accounts, memberships and access tokens.
 		&models.Person{},
 		&models.ChannelAccount{},
@@ -122,13 +120,7 @@ func AutoMigrateSchema(db *gorm.DB) error {
 	if err := applyHouseholdForeignKeys(db, allModels); err != nil {
 		return err
 	}
-	if err := applyPersonKeys(db); err != nil {
-		return err
-	}
-	if _, err := MigrateLegacyMemories(db); err != nil {
-		return err
-	}
-	return nil
+	return applyPersonKeys(db)
 }
 
 // Ping verifies database liveness.
@@ -322,42 +314,3 @@ func (c *Client) RedeemPairingCode(codeID string, user models.User, channelName 
 	})
 }
 
-// SaveWorkflow creates a new workflow macro.
-func (c *Client) SaveWorkflow(wf models.Workflow) error {
-	result := c.DB.Create(&wf)
-	if result.Error != nil {
-		return fmt.Errorf("failed to insert workflow: %w", result.Error)
-	}
-	return nil
-}
-
-// GetActiveWorkflows fetches all active workflows.
-func (c *Client) GetActiveWorkflows() ([]models.Workflow, error) {
-	var workflows []models.Workflow
-	result := c.DB.Where("is_active = ?", true).Find(&workflows)
-	if result.Error != nil {
-		return nil, fmt.Errorf("failed to fetch active workflows: %w", result.Error)
-	}
-	return workflows, nil
-}
-
-// GetUserWorkflows fetches all active workflows for a specific user.
-func (c *Client) GetUserWorkflows(userID string) ([]models.Workflow, error) {
-	var workflows []models.Workflow
-	where, args := personIs("user_id", "person_id", userID)
-	result := c.DB.Where(where, args...).Where("is_active = ?", true).Find(&workflows)
-	if result.Error != nil {
-		return nil, fmt.Errorf("failed to fetch user workflows: %w", result.Error)
-	}
-	return workflows, nil
-}
-
-// DeleteWorkflow deactivates or deletes a workflow.
-func (c *Client) DeleteWorkflow(id uint, userID string) error {
-	where, args := personIs("user_id", "person_id", userID)
-	result := c.DB.Where("id = ?", id).Where(where, args...).Delete(&models.Workflow{})
-	if result.Error != nil {
-		return fmt.Errorf("failed to delete workflow: %w", result.Error)
-	}
-	return nil
-}

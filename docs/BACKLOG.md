@@ -26,7 +26,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-13 | Low | `.env.example` `ALLOWED_USERS` example comment uses a real-format `+972 50…` number (not the owner's); switch to the reserved fictional `+1555010xxxx` range like the SQL-logging test | done 2026-11-17 (`fix/bl-13`, DP-16) — now `+1 202 555 01xx` (the real fictional range; `+1555010xxxx` is not it), plus a tree-wide guard |
 | BL-14 | Medium | Memory consolidation is implemented but never runs: nothing schedules or calls it | open — tracked as V4-14 |
 | BL-15 | Low | Two code comments point to `docs/PLAN.md`, which does not exist | open |
-| BL-16 | Medium | No re-encryption path for old-format (unsalted) ciphertexts, so the legacy decryption fallback cannot be removed safely | open — the pass is V4-07, the removal V4-45 (DE-12) |
+| BL-16 | Medium | No re-encryption path for old-format (unsalted) ciphertexts, so the legacy decryption fallback cannot be removed safely | pass built — `mypa reencrypt` (V4-07); the removal is V4-45, after the pass has reported zero on the live V4.0 install (DE-12) |
 | BL-17 | Low | WhatsApp message splitter cuts by bytes and can split a character in unbroken non-Latin text | open |
 | BL-18 | Low | A document sent on Telegram gets no answer at all | open — the channel layer (V4-31) is the natural place |
 | BL-19 | Low | Reminder and transcription labels render as italics, probably meant as bold | open |
@@ -72,6 +72,10 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-59 | Low | `TestReembed_ToAnotherSizeAfterTheDocumentedMigration` fails on a CRLF checkout of docs/EMBEDDINGS.md | open |
 | BL-60 | Low | `audit_events.prompt_tokens` and `completion_tokens` are never written | open |
 | BL-61 | Low | The dashboard's Sessions page shows "View History" and "Revoke" buttons that do nothing | open |
+| BL-62 | Medium | An automation rule created inactive is stored active: the column's default replaces a false `IsActive` | open |
+| BL-63 | Medium | A cron rule whose action is a plain instruction does nothing when it fires | open |
+| BL-64 | Low | The Redis token cache still accepts a Google sign-in stored unencrypted, a legacy branch outside V4-07 and V4-45 | open |
+| BL-65 | Low | `/undo` and the dashboard rollback act on the household's newest change, so one member can undo another person's new workflow | open |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -494,6 +498,56 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Impact:** an owner who presses "Revoke" may believe a member's access was taken away; nothing happens.
 - **Fix:** remove both buttons, or wire "View History" to `/logs` filtered by the person; revoking access belongs
   to the household admin area (V4-37). Test: the page has no button without an action.
+
+### BL-62 — An automation rule created inactive is stored active (Medium)
+- **Found:** 2026-11-24, while tightening `TestReloadWorkflows_WithPostgres` (V4-07).
+- **Evidence:** `models.AutomationRule.IsActive` is tagged `gorm:"default:true"`. GORM leaves a zero value out of the
+  insert when the field has a default, so `Create` with `IsActive: false` stores `true`. `create_automation_rule`
+  with `is_active: false` (`internal/domains/automation/handlers.go`, `executeCreateAutomationRule`) therefore
+  creates an active rule, and the scheduler and the event runner run it. The test now switches its rule off with an
+  update after creating it.
+- **Impact:** a rule the person asked to create switched off runs anyway, on its schedule or on matching events.
+- **Fix:** write `is_active` explicitly on create (`Select("*")`, or an update after the insert in the same
+  transaction), or drop the default from the tag with a migration that keeps the column default. Test: a rule
+  created with `is_active: false` is stored false and is not scheduled.
+
+### BL-63 — A cron rule whose action is a plain instruction does nothing (Medium)
+- **Found:** 2026-11-24, while folding the workflows into cron rules (V4-07).
+- **Evidence:** `create_automation_rule` describes `action_instruction` as a webhook URL, `notify: ...` "or task
+  instruction". `Runner.ExecuteAction` acts on a webhook and on `notify:` only; anything else publishes
+  `rule_executed` and does nothing. The scheduler runs a plain instruction as a turn only when it has no runner,
+  which production always has. V4-07 gave scheduled workflows an explicit `prompt:` action instead of changing what
+  existing plain rules do.
+- **Impact:** a person who creates a scheduled rule with a task instruction is told it was created, and it never
+  does anything.
+- **Fix:** decide what a plain instruction means: either treat it as `prompt:` (a turn for the rule's person; this
+  changes what existing rules do on the next fire, so check the live rules first) or refuse it when the rule is
+  created, and say so in the tool's description. Test: a cron rule with a plain instruction does what the
+  description says.
+
+### BL-64 — The token cache still accepts an unencrypted Google sign-in (Low)
+- **Found:** 2026-11-24, while building the re-encryption pass (V4-07).
+- **Evidence:** `state.Store.getOAuthToken` (`internal/state/store.go`) treats a value that does not decrypt as an
+  unencrypted token when it parses as JSON with an `access_token`, and encrypts it on that read. The pass reports
+  such a value as "not readable with this key" and leaves it. V4-45 removes only the unsalted fallback in
+  `internal/crypto`.
+- **Impact:** a plaintext token written by a very old release stays readable in Redis until it is next read; the
+  branch is never removed. No current code writes one.
+- **Fix:** with V4-45 or V4-23 (which moves the tokens into Postgres): count such values in the pass or at start,
+  then remove the branch once none is left. Test: a plaintext token is refused.
+
+### BL-65 — One member's undo can remove another person's new workflow (Low)
+- **Found:** 2026-11-24, by the V4-07 review.
+- **Evidence:** `RollbackLast` (`internal/domains/durability/module.go`) takes the household's newest mutation, and
+  `RollbackSnapshot` (`internal/db/durability_repo.go`) deletes the created row with a household filter only. Since
+  V4-07 a workflow is an automation rule, which is on the undo allowlist; before, `Workflow` was not, so a workflow
+  could not be undone at all. Every scoped rule read and write hides another person's workflow
+  (`workflowsOfOthersHidden`); undo does not go through it.
+- **Impact:** when the household's newest change is a person's `schedule_workflow`, another member's `/undo` deletes
+  that workflow. The same holds for every person-owned row in a household table today.
+- **Fix:** decide whether undo of a person's own row is that person's: either filter `RollbackLast` to the caller's
+  own mutations for person-owned entities, or check the owner in `RollbackSnapshot`. Test: another member's `/undo`
+  leaves a person's new workflow in place.
 
 ### BL-30 — Other tests change the process environment and do not restore it exactly (Low)
 - **Found:** 2026-11-19, in the search of every `_test.go` file done for BL-27.

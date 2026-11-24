@@ -171,7 +171,21 @@ the family first.
    ```
    docker compose up -d --build --remove-orphans
    ```
+   Migration 11 (V4-07) retires two old tables on the way: any fact still only in the old
+   `memories` table is copied into the memories, and each scheduled workflow becomes a cron
+   automation rule (the workflow tools still list and delete it).
 5. Send `/doctor` as the operator (every former admin is the operator since V4-35).
+6. Rewrite the secrets still in the old encryption format (V4-07). The dry run only counts; the
+   second command rewrites them, and is safe while the app runs:
+   ```
+   docker compose run --rm app reencrypt --dry-run
+   docker compose run --rm app reencrypt
+   ```
+   It must end with "No old-format value remains in any store". V4.1 stops reading the old
+   format (V4-45), so do this before upgrading to it. A value it reports as "not readable with
+   this key" is not affected by V4-45: it was written with another `ENCRYPTION_KEY` or is damaged
+   (that Google sign-in needs `/connect` again), or it is a sign-in an old release cached
+   unencrypted, which the app encrypts the next time it reads it.
 
 **To roll back:** stop the app, restore the set from step 3 without migrating, check out `v3.4.x`
 and start it.
@@ -210,7 +224,8 @@ On the new machine, with V4 checked out and a `.env` prepared:
 8. Delete every key file from `backups/`: `backup-key.txt`, `mypa-keys.age`, `mypa-keys.env`,
    and, if you used a passphrase, `mypa-backup-key.txt` and the passphrase file. The private
    backup key goes back to being kept off the machine only.
-9. `docker compose up -d --build`, then `/doctor`.
+9. `docker compose up -d --build`, then `/doctor`. After restoring a baseline (`v3.4.x`) backup,
+   also run `reencrypt` as in section A, step 6.
 10. The old install stays stopped. Keep it until the new one has proven itself; its database is
     untouched.
 

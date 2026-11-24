@@ -20,7 +20,6 @@ import (
 	"github.com/nivik/mypa/internal/config"
 	"github.com/nivik/mypa/internal/doctor"
 	"github.com/nivik/mypa/internal/models"
-	"github.com/pgvector/pgvector-go"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/modules/rabbitmq"
@@ -30,13 +29,12 @@ import (
 // seedEveryOtherTable adds one row to every table that install.seed leaves empty, so that the
 // seeded database holds data of every feature: baby, house and vehicles, finance, automations
 // and the personal CRM, sharing, calendar, memory, undo history, audit and pairing. Together with
-// seed, every table of the v3.4.0 schema has at least one row.
+// seed, every table of the v3.4.0 schema that this build still has holds at least one row (V4-07
+// dropped memories and workflows; testdata/baseline_v3.4.0.dump, written at v3.4.0, has both).
 func seedEveryOtherTable(i *install) {
 	i.t.Helper()
 	now := time.Now().UTC().Truncate(time.Second)
 	later := now.Add(72 * time.Hour)
-	embedding := make([]float32, 3072)
-	embedding[3] = 1
 	levi := householdtest.Household(i.t, i.client, "Levi").ID // V4-30: rows carry their household
 
 	baby := models.BabyProfile{HouseholdID: levi, FamilyGroup: "Levi", Name: "Noa", DateOfBirth: now.AddDate(0, -4, 0), UpdatedByUserID: "1001"}
@@ -46,8 +44,6 @@ func seedEveryOtherTable(i *install) {
 	rows := []any{
 		// Core
 		&models.PairingCode{Code: "482913", Role: "family", HouseholdID: levi, FamilyGroup: "Levi", ExpiresAt: later},
-		&models.Memory{UserID: "1001", Scope: "personal", Fact: "Prefers tea to coffee.", Embedding: pgvector.NewVector(embedding)},
-		&models.Workflow{UserID: "1001", Name: "Morning summary", CronExpression: "0 7 * * *", Instruction: "Summarise my day", IsActive: true},
 		&models.AuditSession{ID: sessionID, UserID: "1001", ChatID: "1001", Source: "telegram", UserPrompt: "hello", FinalResponse: "hi", StartTime: now, EndTime: now, Status: "success"},
 		&models.AuditEvent{ID: uuid.NewString(), SessionID: sessionID, EventType: "tool_execution", ActionName: "get_current_time", RequestPayload: "{}", ResponsePayload: "{}", StartTime: now, EndTime: now},
 		// Durability

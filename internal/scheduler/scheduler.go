@@ -106,7 +106,7 @@ func StartCronJobs(engine *orchestrator.Engine, dbClient *db.Client, runner *aut
 		releaseHeld(jobs, memo(clockOf), time.Now())
 	})
 
-	// Every 5 minutes, reload dynamic workflows and cron automation rules
+	// Every 5 minutes, reload the cron automation rules (scheduled workflows among them)
 	_, _ = c.AddFunc("*/5 * * * *", func() {
 		ReloadWorkflows(engine, dbClient, runner, tz)
 	})
@@ -118,16 +118,17 @@ func StartCronJobs(engine *orchestrator.Engine, dbClient *db.Client, runner *aut
 	c.Start()
 	slog.Info("Cron scheduler started")
 
-	// Start workflows and cron rules immediately
+	// Schedule the cron rules immediately
 	ReloadWorkflows(engine, dbClient, runner, tz)
 
 	return c
 }
 
-// ReloadWorkflows fetches all active workflows and cron automation rules from the DB and rebuilds the workflow cron.
-// Concurrency-safe via workflowMu. Each runs on its person's clock (V4-05): the expression is read
-// in their household's time zone, and a run that reaches them during their quiet hours is held
-// until the hours end.
+// ReloadWorkflows fetches the active cron automation rules from the DB and rebuilds the workflow
+// cron. A scheduled workflow is one of them since V4-07: a cron rule whose action is a prompt,
+// run as a turn for its person. Concurrency-safe via workflowMu. Each runs on its person's clock
+// (V4-05): the expression is read in their household's time zone, and a run that reaches them
+// during their quiet hours is held until the hours end.
 func ReloadWorkflows(engine *orchestrator.Engine, dbClient *db.Client, runner *automation.Runner, defaultTimezone ...string) {
 	workflowMu.Lock()
 	defer workflowMu.Unlock()
@@ -146,39 +147,8 @@ func ReloadWorkflows(engine *orchestrator.Engine, dbClient *db.Client, runner *a
 	workflowCron = cron.New(cron.WithLocation(loc))
 	var jobs []job
 
-	// 1. Load legacy workflows
-	var workflows []models.Workflow
-	if dbClient != nil {
-		var err error
-		workflows, err = dbClient.GetActiveWorkflows()
-		if err != nil {
-			slog.Error("failed to get active workflows", "error", err)
-		} else {
-			for _, wf := range workflows {
-				wfCopy := wf // prevent loop variable capture issue
-				// V4-27: a workflow is part of the Automations pack of its person's household.
-				if !workflowMayRun(dbClient, wfCopy.UserID) {
-					continue
-				}
-				sched, schedErr := scheduleIn(wfCopy.CronExpression, clockOf(wfCopy.UserID).Loc)
-				if schedErr != nil {
-					slog.Error("failed to schedule legacy workflow", "workflow_id", wfCopy.ID, "cron", wfCopy.CronExpression, "error", schedErr)
-					continue
-				}
-				// A workflow is a turn whose answer goes to its person: held in their quiet hours.
-				jobs = append(jobs, job{name: workflowName(wfCopy), userID: wfCopy.UserID, sched: sched, holdable: true, run: func() {
-					if !workflowMayRun(dbClient, wfCopy.UserID) { // switched off since the last reload
-						return
-					}
-					slog.Info("Running legacy workflow", "id", wfCopy.ID, "name", wfCopy.Name)
-					executeWorkflowMessage(engine, dbClient, wfCopy.UserID, wfCopy.Instruction, fmt.Sprintf("wf-%d-%d", wfCopy.ID, time.Now().Unix()))
-				}})
-			}
-		}
-	}
-
-	// 2. Load active cron automation rules (BUG-05). This scans every household (a scheduled
-	// job); each rule runs in the scope of its own stored household_id (V4-30).
+	// The active cron automation rules (BUG-05). This scans every household (a scheduled job);
+	// each rule runs in the scope of its own stored household_id (V4-30).
 	var cronRules []models.AutomationRule
 	if dbClient != nil && dbClient.DB != nil {
 		if findErr := dbClient.DB.Where("LOWER(trigger_type) = ? AND is_active = ?", "cron", true).Find(&cronRules).Error; findErr == nil {
@@ -199,11 +169,21 @@ func ReloadWorkflows(engine *orchestrator.Engine, dbClient *db.Client, runner *a
 					slog.Error("failed to schedule automation rule cron", "rule_id", ruleCopy.ID, "cron", cronExpr, "error", schedErr)
 					continue
 				}
-				// Held in quiet hours when it messages its person (a notify action, or the turn
-				// it runs without a runner) and its condition does not mark it urgent.
+				// Held in quiet hours when it reaches its person (a notify action, a workflow's
+				// turn, or the turn it runs without a runner) and its condition does not mark it
+				// urgent.
 				holdable := !automation.CronRuleUrgent(ruleCopy.ConditionJSON) && (runner == nil || automation.NotifiesPerson(ruleCopy))
 
 				jobs = append(jobs, job{name: ruleName(ruleCopy), userID: ruleCopy.UserID, sched: sched, holdable: holdable, run: func() {
+					// A scheduled workflow (V4-07): its instruction is a turn for its person.
+					if instruction, ok := automation.PromptOf(ruleCopy); ok {
+						if !automationsOn(dbClient, ruleCopy.HouseholdID) { // switched off since the last reload
+							return
+						}
+						slog.Info("Running scheduled workflow", "rule_id", ruleCopy.ID)
+						startTurn(engine, dbClient, ruleCopy.UserID, instruction, fmt.Sprintf("rule-cron-%d-%d", ruleCopy.ID, time.Now().Unix()))
+						return
+					}
 					slog.Info("Running cron automation rule", "id", ruleCopy.ID, "name", ruleCopy.Name)
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer cancel()
@@ -243,12 +223,12 @@ func ReloadWorkflows(engine *orchestrator.Engine, dbClient *db.Client, runner *a
 	currentJobs = jobs
 
 	workflowCron.Start()
-	slog.Info("Workflows and cron rules reloaded", "legacy_count", len(workflows), "cron_rule_count", len(cronRules))
+	slog.Info("Cron rules reloaded", "cron_rule_count", len(cronRules), "scheduled", len(jobs))
 }
 
-// job is one scheduled automation: a cron rule or a legacy workflow (V4-05).
+// job is one scheduled cron rule (V4-05).
 type job struct {
-	name     string // for logs and tests: "rule 12", "workflow 3"
+	name     string // for logs and tests: "rule 12"
 	userID   string // the person whose clock it follows
 	sched    cron.Schedule
 	holdable bool // it reaches its person and is not urgent: held during their quiet hours
@@ -256,7 +236,6 @@ type job struct {
 }
 
 func ruleName(r models.AutomationRule) string { return fmt.Sprintf("rule %d", r.ID) }
-func workflowName(w models.Workflow) string   { return fmt.Sprintf("workflow %d", w.ID) }
 
 // clockFunc returns the clock of the person behind a user ID.
 type clockFunc func(userID string) quiet.Clock
@@ -357,19 +336,12 @@ func automationsOn(dbClient *db.Client, householdID string) bool {
 	return set.Has(packs.Automations)
 }
 
-// workflowMayRun reports whether a legacy workflow of this person may run: workflows carry no
-// household, so it is the household of the person's users row.
-func workflowMayRun(dbClient *db.Client, userID string) bool {
-	if dbClient == nil {
-		return false
-	}
-	u, err := dbClient.GetUser(userID)
-	if err != nil || u == nil {
-		return false
-	}
-	return automationsOn(dbClient, u.HouseholdID)
-}
+// startTurn runs an instruction as a turn for a person; tests replace it to see what a scheduled
+// workflow starts.
+var startTurn = executeWorkflowMessage
 
+// executeWorkflowMessage runs an instruction as a turn for a person, in the conversation they last
+// wrote in, so the answer reaches them there.
 func executeWorkflowMessage(engine *orchestrator.Engine, dbClient *db.Client, userID, instruction, msgID string) {
 	if dbClient == nil || engine == nil {
 		return

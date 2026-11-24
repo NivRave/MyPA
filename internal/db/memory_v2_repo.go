@@ -165,7 +165,7 @@ func (r *MemoryV2Repo) SearchSimilarMemories(ctx context.Context, s identity.Sco
 	if err != nil {
 		return nil, err
 	}
-	// No legacy `memories` fallback (P2-4): MigrateLegacyMemories copies v1 rows at startup.
+	// No legacy `memories` fallback: migrations 2 and 11 copied the v1 rows (P2-4, V4-07).
 	return memories, nil
 }
 

@@ -73,17 +73,15 @@ as a new version.
    <!-- size-checklist -->
    - `internal/models/embedding.go`: `EmbeddingDimensions`
    - `internal/models/memory_v2.go`: the `vector(N)` tag of `TopicMemory.Embedding`
-   - `internal/models/models.go`: the `vector(N)` tag of the legacy `Memory.Embedding`
    - `internal/db/vector.go`: `halfvecCosineDistanceSQL`, which must match the index expression
-   - `internal/db/migrations.go`: the two HNSW index statements (`ApplyCustomIndexes`)
+   - `internal/db/migrations.go`: the HNSW index statement (`ApplyCustomIndexes`)
    - `internal/db/migrations/00001_baseline.sql`: history, never edited
    - `internal/db/migrations/00009_embedding_space.sql`: history, never edited
    <!-- /size-checklist -->
 
 2. **Migration.** Add the next versioned migration with this content, the size (768 in the
    example) replaced by the new one. It drops the old vectors, which cannot be converted, and
-   rebuilds the indexes. If V4-07 has dropped the legacy `memories` table, leave out its three
-   lines.
+   rebuilds the index.
 
    <!-- size-change-migration -->
    ```sql
@@ -91,9 +89,6 @@ as a new version.
    DROP INDEX IF EXISTS public.idx_topic_memories_embedding;
    ALTER TABLE public.topic_memories ALTER COLUMN embedding TYPE public.vector(768) USING array_fill(0, ARRAY[768])::public.vector(768);
    CREATE INDEX idx_topic_memories_embedding ON public.topic_memories USING hnsw (((embedding)::public.halfvec(768)) public.halfvec_cosine_ops);
-   DROP INDEX IF EXISTS public.idx_memories_embedding;
-   ALTER TABLE public.memories ALTER COLUMN embedding TYPE public.vector(768) USING array_fill(0, ARRAY[768])::public.vector(768);
-   CREATE INDEX idx_memories_embedding ON public.memories USING hnsw (((embedding)::public.halfvec(768)) public.halfvec_cosine_ops);
 
    -- +goose Down
    -- Not reversible: the old vectors are gone. Roll back by restoring the backup taken before.

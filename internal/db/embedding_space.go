@@ -25,8 +25,8 @@ import (
 // by another model, or have another size, than the one configured.
 var ErrEmbeddingSpaceMismatch = errors.New("the stored memory vectors were made by another embedding model")
 
-// embeddedTable is the table whose embeddings are searched. The legacy `memories`
-// table is not: nothing reads its vectors (P2-4), and V4-07 drops it.
+// embeddedTable is the table whose embeddings are searched, the only table that stores them since
+// migration 11 dropped the legacy `memories` table (V4-07).
 const embeddedTable = "topic_memories"
 
 // zeroVectorSQL is true for a vector of zeros, the "no embedding yet" a memory gets when its
