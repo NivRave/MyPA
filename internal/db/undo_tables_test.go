@@ -22,5 +22,5 @@ func TestUndoModels_EveryUndoableTableHasItsModel(t *testing.T) {
 			assert.Equal(t, table, s.Table, "the model of %s", table)
 		}
 	}
-	assert.Len(t, undoModels, 19)
+	assert.Len(t, undoModels, 20) // BL-69 added scheduled_reminders
 }

@@ -202,6 +202,39 @@ func (c *Client) SaveReminder(reminder models.ScheduledReminder) error {
 	return nil
 }
 
+// CreateReminder inserts a reminder to oneself and fills in its ID, so the change that made it can
+// be undone (BL-69).
+func (c *Client) CreateReminder(reminder *models.ScheduledReminder) error {
+	if reminder == nil {
+		return fmt.Errorf("reminder cannot be nil")
+	}
+	if err := c.DB.Create(reminder).Error; err != nil {
+		return fmt.Errorf("failed to insert reminder: %w", err)
+	}
+	return nil
+}
+
+// ClaimReminder marks a due reminder as sent before it is handed over, only if it still exists and
+// was not sent yet; claimed is false otherwise (BL-69). The update locks the row, so it and an
+// /undo of the reminder (which locks it too) never both win: either the undo deletes it first and
+// nothing is sent, or the claim comes first and the undo says it has gone out.
+func (c *Client) ClaimReminder(id uint) (claimed bool, err error) {
+	res := c.DB.Model(&models.ScheduledReminder{}).Where("id = ? AND is_sent = ?", id, false).Update("is_sent", true)
+	if res.Error != nil {
+		return false, fmt.Errorf("failed to claim reminder %d: %w", id, res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// ReleaseReminder undoes ClaimReminder for a reminder that could not be handed over, so it stays
+// due (BL-69).
+func (c *Client) ReleaseReminder(id uint) error {
+	if err := c.DB.Model(&models.ScheduledReminder{}).Where("id = ?", id).Update("is_sent", false).Error; err != nil {
+		return fmt.Errorf("failed to release reminder %d: %w", id, err)
+	}
+	return nil
+}
+
 // GetDueReminders fetches reminders that are due to be sent (due_time <= now) and haven't been sent yet.
 func (c *Client) GetDueReminders() ([]models.ScheduledReminder, error) {
 	var reminders []models.ScheduledReminder

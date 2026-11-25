@@ -24,7 +24,7 @@ import (
 // the rollback give the same answer.
 
 // undoPersonKeyedTables are undoable tables without household_id: each row is one person's own.
-var undoPersonKeyedTables = map[string]bool{"user_preferences": true, "topic_calendar_configs": true}
+var undoPersonKeyedTables = map[string]bool{"user_preferences": true, "topic_calendar_configs": true, "scheduled_reminders": true}
 
 // workflowTrigger and workflowAction match a scheduled workflow, as workflowsOfOthersHidden does
 // in SQL (automation.PromptOf).

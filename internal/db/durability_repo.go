@@ -75,6 +75,11 @@ func (c *Client) InsertMutationLog(s identity.Scope, log models.MutationLog) err
 
 // GetMutationLogsByTopic retrieves recent mutation logs of the scope's household, optionally
 // filtered by topic. If topic is empty or "all", all topics are returned.
+//
+// BL-70: it reads what the scope's person may see, the dashboard's rule for the mutation log
+// (mutationLogs): their own entries in full; another member's only for an owner
+// (identity.ViewMemberActivity), as its action and entity type, without its summary or snapshots.
+// The chat's change history and its export read here.
 func (c *Client) GetMutationLogsByTopic(s identity.Scope, topic string, limit int) ([]models.MutationLog, error) {
 	if limit <= 0 {
 		limit = 50
@@ -82,6 +87,10 @@ func (c *Client) GetMutationLogsByTopic(s identity.Scope, topic string, limit in
 	query, err := c.scoped(s)
 	if err != nil {
 		return nil, err
+	}
+	if !s.Can(identity.ViewMemberActivity) {
+		own, args := ownMutations(s)
+		query = query.Where(own, args...)
 	}
 	query = query.Order("created_at desc").Limit(limit)
 	if topic != "" && !strings.EqualFold(topic, "all") {
@@ -92,7 +101,20 @@ func (c *Client) GetMutationLogsByTopic(s identity.Scope, topic string, limit in
 	if result.Error != nil {
 		return nil, fmt.Errorf("failed to query mutation logs: %w", result.Error)
 	}
+	for i := range logs {
+		if !MutationIsOwn(s, logs[i]) {
+			logs[i] = redactedMutation(logs[i])
+		}
+	}
 	return logs, nil
+}
+
+// redactedMutation is another member's entry as an owner sees it: that a change of its kind to an
+// entity of its type happened, without what it said or held (BL-70, as the dashboard shows it).
+func redactedMutation(l models.MutationLog) models.MutationLog {
+	l.Summary = fmt.Sprintf("%s %s", l.Label(), l.EntityType)
+	l.BeforeJSON, l.AfterJSON, l.AlsoJSON = "", "", nil
+	return l
 }
 
 // GetMutationLogByID retrieves a mutation log of the scope's household by its ID. A log of
@@ -387,6 +409,10 @@ func undoRow(tx *gorm.DB, s identity.Scope, via models.UndoVia, log models.Mutat
 		}
 		if err := MayUndo(s, via, log, tableName, cur); err != nil {
 			return err
+		}
+		// BL-69: a reminder that has gone out cannot be called back; nothing is changed.
+		if tableName == "scheduled_reminders" && truthy(cur["is_sent"]) {
+			return ErrReminderSent
 		}
 		res := target().Where(key+" = ?", entityID).Delete(nil)
 		if res.Error != nil {

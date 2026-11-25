@@ -232,7 +232,7 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 		},
 		{
 			Name:        "list_recent_changes",
-			Description: "Lists recent data mutations and changes across life domains (the household's topics, schedule, memory). Use when user asks 'what did I change recently?', 'show audit log', or 'who updated what?'.",
+			Description: "Lists recent data mutations and changes across life domains (the household's topics, schedule, memory). Use when user asks 'what did I change recently?', 'show audit log', or 'who updated what?'. It shows the user's own changes in full; an owner also sees that another member's change of a type happened, without its details.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
@@ -453,6 +453,12 @@ func (m *Module) executeRollbackInternal(ctx context.Context, s identity.Scope, 
 			}
 			if errors.Is(err, db.ErrCannotUndo) {
 				return notUndoable(s, log), nil
+			}
+			if errors.Is(err, db.ErrReminderSent) {
+				// BL-69: the reminder went out; the change stays, and its entry is not marked undone.
+				res := notUndoable(s, log)
+				res.Detail = db.ReminderSentMessage(*log)
+				return res, nil
 			}
 			return nil, fmt.Errorf("snapshot rollback failed: %w", err)
 		}

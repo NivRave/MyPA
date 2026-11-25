@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"github.com/nivik/mypa/internal/models"
 )
 
 // zeroWidthSpace is inserted into closing tags found inside wrapped content (see neutralizeTag).
@@ -92,18 +94,62 @@ var destructiveActionsWhenUntrusted = map[string]map[string]bool{
 	"log_financial_transaction": {"delete": true},
 }
 
+// sharingCallsWhenUntrusted are the calls that widen who sees something, gated in untrusted turns
+// (BL-72): injected text must not make a person's data visible to others. A call that makes
+// something more private is not gated. Sharing a memory (save_topic_memory with scope family) and
+// an entity profile are gated as whole tools above.
+var sharingCallsWhenUntrusted = map[string]func(args map[string]interface{}) bool{
+	// A transaction made shared: its person's private transaction becomes the household's.
+	"log_financial_transaction": func(a map[string]interface{}) bool {
+		action, _ := a["action"].(string)
+		shared, set := argBool(a, "is_shared")
+		return strings.EqualFold(strings.TrimSpace(action), "update") && set && shared
+	},
+	// A topic opened to the household or a member: can_view is true unless asked false.
+	"configure_shared_topic": func(a map[string]interface{}) bool {
+		view, set := argBool(a, "can_view")
+		return !set || view
+	},
+	// A shared calendar event: the household sees it, and it is added to the partner's Google
+	// Calendar. Read as the tool reads it: a yes/no is_shared decides; without one (or with text in
+	// its place, which the tool ignores) an event of a topic shared by default is shared.
+	"create_calendar_event": func(a map[string]interface{}) bool {
+		if shared, ok := a["is_shared"].(bool); ok {
+			return shared
+		}
+		topic, _ := a["topic"].(string)
+		return models.IsDefaultSharedTopic(topic)
+	},
+}
+
+// argBool reads a yes/no argument as the tools do; set is false when it is absent or unreadable.
+func argBool(args map[string]interface{}, key string) (value, set bool) {
+	switch v := args[key].(type) {
+	case bool:
+		return v, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1", "yes":
+			return true, true
+		case "false", "0", "no":
+			return false, true
+		}
+	}
+	return false, false
+}
+
 // RequiresConfirmationWhenUntrusted reports whether toolName is gated in untrusted turns: the
-// whole tool, or, given the call's arguments, the destructive action it was asked for.
+// whole tool, or, given the call's arguments, the destructive action it was asked for (BL-66) or
+// a call that widens who sees something (BL-72).
 func RequiresConfirmationWhenUntrusted(toolName string, args ...map[string]interface{}) bool {
 	if confirmationRequiredWhenUntrusted[toolName] {
 		return true
 	}
-	actions := destructiveActionsWhenUntrusted[toolName]
-	if actions == nil {
-		return false
-	}
 	for _, a := range args {
-		if action, _ := a["action"].(string); actions[strings.ToLower(strings.TrimSpace(action))] {
+		if action, _ := a["action"].(string); destructiveActionsWhenUntrusted[toolName][strings.ToLower(strings.TrimSpace(action))] {
+			return true
+		}
+		if widens := sharingCallsWhenUntrusted[toolName]; widens != nil && widens(a) {
 			return true
 		}
 	}

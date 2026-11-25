@@ -269,12 +269,39 @@ func sizeChangeMigration(t *testing.T) string {
 	t.Helper()
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "EMBEDDINGS.md"))
 	require.NoError(t, err)
-	m := regexp.MustCompile("(?s)<!-- size-change-migration -->\\s*```sql\\n(.*?)```").FindSubmatch(doc)
-	require.NotNil(t, m, "docs/EMBEDDINGS.md must hold the size-change migration in a marked sql block")
+	up, err := sizeChangeMigrationIn(doc)
+	require.NoError(t, err)
+	return up
+}
+
+// sizeChangeMigrationIn finds the size-change migration's Up SQL in the doc's text.
+func sizeChangeMigrationIn(doc []byte) (string, error) {
+	m := regexp.MustCompile("(?s)<!-- size-change-migration -->\\s*```sql\\r?\\n(.*?)```").FindSubmatch(doc) // BL-59: LF or CRLF
+	if m == nil {
+		return "", errors.New("docs/EMBEDDINGS.md must hold the size-change migration in a marked sql block")
+	}
 	sql := strings.ReplaceAll(string(m[1]), "\r\n", "\n")
 	up := strings.SplitN(sql, "-- +goose Down", 2)[0]
-	require.Contains(t, up, "-- +goose Up")
-	return strings.Replace(up, "-- +goose Up", "", 1)
+	if !strings.Contains(up, "-- +goose Up") {
+		return "", errors.New("the size-change migration has no -- +goose Up")
+	}
+	return strings.Replace(up, "-- +goose Up", "", 1), nil
+}
+
+// BL-59: the doc is read with Windows line endings too (a Windows checkout, or the race run in a
+// container that mounts one), and gives the same SQL.
+func TestSizeChangeMigration_IsFoundWithEitherLineEnding(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "EMBEDDINGS.md"))
+	require.NoError(t, err)
+	lf := []byte(strings.ReplaceAll(string(doc), "\r\n", "\n"))
+	crlf := []byte(strings.ReplaceAll(string(lf), "\n", "\r\n"))
+
+	fromLF, err := sizeChangeMigrationIn(lf)
+	require.NoError(t, err)
+	fromCRLF, err := sizeChangeMigrationIn(crlf)
+	require.NoError(t, err, "a CRLF copy of the doc")
+	assert.Equal(t, fromLF, fromCRLF)
+	assert.Contains(t, fromLF, "ALTER TABLE")
 }
 
 // The documented path to an embedding model of another size: the schema migration from

@@ -485,6 +485,13 @@ func (e *Engine) ProcessMessage(ctx context.Context, msg channel.Inbound) (err e
 	return err
 }
 
+// reminderClaimer claims a due reminder before it is sent, and releases it when it could not be
+// (db.Client, BL-69).
+type reminderClaimer interface {
+	ClaimReminder(id uint) (bool, error)
+	ReleaseReminder(id uint) error
+}
+
 // CheckAndSendReminders checks the database for due reminders and sends them. A reminder that is
 // not urgent waits while its recipient is in their quiet hours (V4-05): it stays due, so the first
 // pass after the window ends sends it. A due reminder is handed to the delivery policy (V4-33),
@@ -507,6 +514,19 @@ func (e *Engine) CheckAndSendReminders() {
 			cancel()
 			continue
 		}
+		// BL-69: claim it first, so an /undo of it either cancels it before this point (and it is not
+		// sent) or finds it gone out. A client that cannot claim (a test double) sends as before.
+		claimer, claims := e.db.(reminderClaimer)
+		if claims {
+			claimed, err := claimer.ClaimReminder(reminder.ID)
+			if err != nil || !claimed {
+				if err != nil {
+					slog.Warn("reminder not claimed; it stays due", "reminder_id", reminder.ID, "error", err)
+				}
+				cancel()
+				continue
+			}
+		}
 		formattedMsg := fmt.Sprintf("🔔 *Reminder:*\n\n%s", reminder.Message)
 		historyKey, err := e.deliverProactive(ctx, reminder.UserID, proactive.Request{
 			Category:       proactive.Reminder,
@@ -518,6 +538,11 @@ func (e *Engine) CheckAndSendReminders() {
 		cancel()
 		if err != nil {
 			slog.Warn("reminder not sent; it stays due", "reminder_id", reminder.ID, "user_id", reminder.UserID, "error", err)
+			if claims {
+				if rerr := claimer.ReleaseReminder(reminder.ID); rerr != nil {
+					slog.Error("failed to release a reminder that was not sent", "reminder_id", reminder.ID, "error", rerr)
+				}
+			}
 			continue
 		}
 

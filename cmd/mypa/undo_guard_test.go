@@ -66,7 +66,6 @@ var notUndoable = map[string]string{
 	"create_contact":     "Google Contacts: the change is made in the person's Google account; MyPA keeps no copy to restore",
 	"call_external_api":  "a request to an outside service: what it did there cannot be called back",
 	"undo_last_action":   "undo itself: its own entry is written as already undone, and an undo is not undone",
-	"schedule_reminder":  "a reminder to oneself is kept per person outside the household's data and is not on the undo allowlist (BL-69)",
 }
 
 // undoProof is one write of one tool: args returns its arguments, after making what the call needs.
@@ -284,6 +283,9 @@ var undoProofs = []undoProof{
 	{tool: "configure_shared_topic", name: "existing", args: func(e *undoEnv) map[string]interface{} {
 		e.must("configure_shared_topic", map[string]interface{}{"topic": "work", "notify_mode": "instant"})
 		return map[string]interface{}{"topic": "work", "notify_mode": "silent"}
+	}},
+	{tool: "schedule_reminder", args: func(e *undoEnv) map[string]interface{} { // BL-69
+		return map[string]interface{}{"message": e.unique("Call the plumber"), "due_time": "2026-12-01T07:00:00Z"}
 	}},
 	{tool: "create_shared_reminder", args: func(e *undoEnv) map[string]interface{} {
 		return map[string]interface{}{"title": e.unique("Buy milk"), "topic": "family"}

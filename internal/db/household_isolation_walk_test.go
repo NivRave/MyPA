@@ -43,7 +43,7 @@ var unscopedMethods = map[string]string{
 	"ListActiveMemoriesForConsolidation": "scheduled scan",
 	// Person-keyed tables (no household_id; see personKeyedTables).
 	"InsertAuditSession": "person-keyed", "InsertAuditEvent": "person-keyed", "GetUniqueUsers": "person-keyed",
-	"GetLastAuditSessionForUser": "person-keyed", "SaveReminder": "person-keyed", "GetDueReminders": "person-keyed scan",
+	"GetLastAuditSessionForUser": "person-keyed", "SaveReminder": "person-keyed", "CreateReminder": "person-keyed", "ClaimReminder": "person-keyed", "ReleaseReminder": "person-keyed", "GetDueReminders": "person-keyed scan",
 	"MarkReminderSent": "person-keyed",
 	"SaveEncryptedCredential": "person-keyed", "GetEncryptedCredential": "person-keyed",
 	"CheckIdempotency": "person-keyed", "SaveIdempotency": "person-keyed",
