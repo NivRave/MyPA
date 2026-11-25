@@ -444,6 +444,21 @@ func personClock(c *db.Client, fallback string) func(ctx context.Context, person
 // (V4-41), for the dashboard's pairing codes.
 func (n channelNotifier) JoinSteps() []channel.JoinStep { return n.channels.JoinSteps() }
 
+// SendToAccount sends to one specific account, whatever the person prefers: an account change is
+// announced on each of the person's accounts (BL-41, ADR 0002 Decision 4).
+func (n channelNotifier) SendToAccount(ctx context.Context, a models.ChannelAccount, text string) error {
+	return n.channels.SendText(ctx, channel.Address{Channel: a.Channel, Person: a.ExternalID}, text)
+}
+
+// announcerOf returns the notifier as the dashboard's account announcer when it can reach single
+// accounts (the channel layer's), else nil: nothing is announced.
+func announcerOf(notifier AuthNotifier) graph.AccountAnnouncer {
+	if a, ok := notifier.(graph.AccountAnnouncer); ok {
+		return a
+	}
+	return nil
+}
+
 // joinStepsOf returns the notifier's JoinSteps when it is the channel layer's, else nil.
 func joinStepsOf(notifier AuthNotifier) func() []channel.JoinStep {
 	if js, ok := notifier.(interface{ JoinSteps() []channel.JoinStep }); ok {
@@ -602,6 +617,7 @@ func setupAppRouter(oauthCfg *calendar.OAuthConfig, store *state.Store, notifier
 			PromptCache:    promptCache,
 			JoinStepsOf:    joinStepsOf(notifier), // V4-41: shown with pairing codes
 			UsageView:      usage,                 // V4-04: the caps and the install's zone
+			Announcer:      announcerOf(notifier), // BL-41: an owner's removal of a member's account
 		})
 		srv := graph.NewServer(resolvers) // with the pack guard (V4-27)
 

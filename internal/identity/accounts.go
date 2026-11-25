@@ -25,8 +25,10 @@ var (
 	ErrOtherHousehold = errors.New("identity: people of different households cannot be merged")
 	// ErrLastAccount: a person's only account cannot be removed.
 	ErrLastAccount = errors.New("identity: the last account cannot be removed")
-	// ErrNotOlder: removing another account needs an older account (or an owner, V4-35).
+	// ErrNotOlder: removing another account needs an older account (or an owner, BL-41).
 	ErrNotOlder = errors.New("identity: only an older account can remove this one")
+	// ErrNotPermitted: only an owner of the household may manage a member's accounts (BL-41).
+	ErrNotPermitted = errors.New("identity: only an owner of the household may do this")
 	// ErrNoSuchAccount: the account is not one of the person's.
 	ErrNoSuchAccount = errors.New("identity: no such account")
 	// ErrAccountTooNew: an account linked less than NewAccountQuarantine ago cannot issue codes.

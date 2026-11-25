@@ -99,6 +99,16 @@ func (r *mutationResolver) GeneratePairingCode(ctx context.Context, role string)
 	}, nil
 }
 
+// RemoveMemberAccount is the resolver for the removeMemberAccount field.
+func (r *mutationResolver) RemoveMemberAccount(ctx context.Context, personID string, accountID string) (bool, error) {
+	// BL-41: an owner, in their own household only (the household is never an argument).
+	_, hs, err := r.callerMay(ctx, identity.ManageMembers)
+	if err != nil {
+		return false, err
+	}
+	return r.removeMemberAccount(ctx, hs, personID, accountID)
+}
+
 // UpdateHousehold is the resolver for the updateHousehold field.
 func (r *mutationResolver) UpdateHousehold(ctx context.Context, name *string, language *string, timeZone *string, currency *string) (*model.Household, error) {
 	_, hs, err := r.caller(ctx)
@@ -151,9 +161,10 @@ func (r *mutationResolver) SaveTopicMemory(ctx context.Context, topic string, su
 	if tagsJSON != nil && *tagsJSON != "" {
 		tJSON = *tagsJSON
 	}
-	sc := "personal"
-	if scope != nil && *scope != "" {
-		sc = *scope
+	// BL-26: stored as one of the two scopes every read matches.
+	sc := dbmodels.ScopePersonal
+	if scope != nil {
+		sc = dbmodels.NormalizeMemoryScope(*scope)
 	}
 
 	mem := dbmodels.TopicMemory{
@@ -702,6 +713,15 @@ func (r *mutationResolver) LogBabyCare(ctx context.Context, babyID string, logTy
 	actorID, hs, err := r.caller(ctx)
 	if err != nil {
 		return nil, err
+	}
+	// BL-38: the baby is loaded through the caller's household first, as the chat tool does; a baby
+	// of another household, or a missing one, is refused and nothing is written.
+	baby, err := r.babyRepo().GetBabyProfile(hs, uBabyID)
+	if err != nil {
+		return nil, err
+	}
+	if baby == nil {
+		return nil, fmt.Errorf("baby profile not found")
 	}
 
 	ts := time.Now()
@@ -1561,6 +1581,16 @@ func (r *queryResolver) ActivePairingCodes(ctx context.Context) ([]*model.Pairin
 		})
 	}
 	return codes, nil
+}
+
+// MemberAccounts is the resolver for the memberAccounts field.
+func (r *queryResolver) MemberAccounts(ctx context.Context, personID string) ([]*model.MemberAccount, error) {
+	// BL-41: an owner, in their own household only.
+	_, hs, err := r.callerMay(ctx, identity.ManageMembers)
+	if err != nil {
+		return nil, err
+	}
+	return r.memberAccounts(ctx, hs, personID)
 }
 
 // JoinSteps is the resolver for the joinSteps field.

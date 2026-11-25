@@ -1,6 +1,8 @@
 import { revalidatePath } from 'next/cache';
-import { graphqlFetch, getMe, type User, type PairingCode, type JoinStep } from '@/lib/graphql';
+import { redirect } from 'next/navigation';
+import { graphqlFetch, getMe, type User, type PairingCode, type JoinStep, type MemberAccount } from '@/lib/graphql';
 import { JoinSteps } from '@/components/JoinSteps';
+import { MemberAccounts, type MemberWithAccounts } from '@/components/MemberAccounts';
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +44,47 @@ const GENERATE_PAIRING_CODE_MUTATION = `
   }
 `;
 
-export default async function UsersPage() {
+// BL-41: an owner lists each member's channel accounts and removes one; the last one stays.
+const GET_MEMBER_ACCOUNTS = `
+  query GetMemberAccounts($personId: ID!) {
+    memberAccounts(personId: $personId) {
+      id
+      personId
+      channel
+      label
+      linkedAt
+    }
+  }
+`;
+
+const REMOVE_MEMBER_ACCOUNT_MUTATION = `
+  mutation RemoveMemberAccount($personId: ID!, $accountId: ID!) {
+    removeMemberAccount(personId: $personId, accountId: $accountId)
+  }
+`;
+
+// The link carries only a code for the refusal; the page shows its own text for it, never text
+// from the link. A Map, so a code such as __proto__ finds nothing rather than an inherited value.
+const REFUSALS = new Map<string, string>([
+  ['last', "That is the person's last account, so it cannot be removed."],
+  ['denied', "Only an owner of the household may remove a member's account."],
+  ['missing', 'That account is not in your household any more.'],
+  ['failed', 'The account could not be removed; nothing was changed.'],
+]);
+
+function refusalCode(message: string): string {
+  if (message.includes('last account')) return 'last';
+  if (message.includes('permission denied')) return 'denied';
+  if (message.includes('no such account')) return 'missing';
+  return 'failed';
+}
+
+export default async function UsersPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ accountError?: string }>;
+}) {
+  const params = await searchParams;
   const me = await getMe();
   const isOwner = me?.role === 'owner';
   const data: { users: User[]; activePairingCodes: PairingCode[]; joinSteps: JoinStep[] } = {
@@ -60,6 +102,36 @@ export default async function UsersPage() {
     }
   } catch (err) {
     console.error('Failed to fetch users and codes:', err);
+  }
+
+  const memberAccounts: MemberWithAccounts[] = [];
+  if (isOwner) {
+    for (const u of data.users) {
+      try {
+        const res = await graphqlFetch<{ memberAccounts: MemberAccount[] }>(GET_MEMBER_ACCOUNTS, { personId: u.id });
+        memberAccounts.push({ id: u.id, name: u.name, accounts: res.memberAccounts });
+      } catch (err) {
+        console.error('Failed to fetch member accounts:', err);
+      }
+    }
+  }
+
+  async function removeAccount(formData: FormData) {
+    'use server';
+    const personId = formData.get('personId') as string;
+    const accountId = formData.get('accountId') as string;
+    let refusal = '';
+    try {
+      await graphqlFetch(REMOVE_MEMBER_ACCOUNT_MUTATION, { personId, accountId });
+    } catch (err) {
+      console.error('removeMemberAccount failed:', err);
+      refusal = refusalCode(err instanceof Error ? err.message : '');
+    }
+    revalidatePath('/users');
+    if (refusal) {
+      redirect('/users?accountError=' + refusal);
+    }
+    redirect('/users');
   }
 
   async function createCode(formData: FormData) {
@@ -178,6 +250,12 @@ export default async function UsersPage() {
         </div>
         )}
       </div>
+
+      {isOwner && memberAccounts.length > 0 && (
+        <div className="mt-8">
+          <MemberAccounts members={memberAccounts} removeAction={removeAccount} error={params?.accountError ? REFUSALS.get(params.accountError) : undefined} />
+        </div>
+      )}
     </div>
   );
 }

@@ -39,6 +39,7 @@ var packFields = map[string]packs.ID{
 // Core (V4-27); Gmail has no fields.
 var coreFields = map[string]bool{
 	"me": true, "household": true, "users": true, "activePairingCodes": true, "joinSteps": true, "topicMemories": true,
+	"memberAccounts": true, "removeMemberAccount": true, // BL-41
 	"entityProfiles": true, "sharedSpaces": true, "sharedTasks": true, "scheduleEvents": true,
 	"topicCalendarConfigs": true, "userPreference": true, "personalCrmContacts": true, "mutationLogs": true,
 	"auditSessions": true, "userSessions": true, "usage": true, // usage: V4-04

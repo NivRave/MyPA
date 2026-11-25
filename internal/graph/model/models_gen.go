@@ -175,6 +175,16 @@ type Me struct {
 	Household  *Household `json:"household"`
 }
 
+// One of a member's channel accounts, as an owner sees it (BL-41): the channel and the end of the number or handle, never all of it.
+type MemberAccount struct {
+	ID       string `json:"id"`
+	PersonID string `json:"personId"`
+	Channel  string `json:"channel"`
+	// The channel and the last four characters of the number or handle, e.g. '<channel> ending 0123'.
+	Label    string    `json:"label"`
+	LinkedAt time.Time `json:"linkedAt"`
+}
+
 type Mutation struct {
 }
 

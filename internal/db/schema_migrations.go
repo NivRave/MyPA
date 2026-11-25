@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"strings"
 
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/database"
@@ -50,7 +51,64 @@ func goMigrations() []*goose.Migration {
 			logUnmappedPersonKeys(unmapped)
 			return nil
 		}}, nil),
+		// 13: BL-26. save_topic_memory stored scope as the model sent it, and every read matches
+		// "personal" or "family" exactly, so a memory saved as "Family" was found by nobody. Each
+		// stored scope is corrected by the rule saves now apply (models.NormalizeMemoryScope). A
+		// data fix: Down changes nothing, since the old spellings carry no meaning.
+		goose.NewGoMigration(13, &goose.GoFunc{RunTx: func(ctx context.Context, tx *sql.Tx) error {
+			toFamily, toPersonal, err := normaliseMemoryScopes(ctx, tx)
+			if err != nil {
+				return fmt.Errorf("normalise memory scopes: %w", err)
+			}
+			slog.Info("memory scopes normalised", "to_family", toFamily, "to_personal", toPersonal)
+			return nil
+		}}, &goose.GoFunc{Mode: goose.TransactionEnabled}),
 	}
+}
+
+// normaliseMemoryScopes is migration 13 (BL-26): a scope that is "family" after trimming and
+// lower-casing becomes family; any other value that is not already "personal" or "family" becomes
+// personal. The rule is applied in Go, with the same strings.TrimSpace and strings.ToLower saves
+// use (models.NormalizeMemoryScope; written out here so the migration stays as it ran), so every
+// kind of white space is trimmed as on a save. It reads only the ID and the scope of rows whose
+// scope is not a literal, and returns how many rows each kind changed.
+func normaliseMemoryScopes(ctx context.Context, tx *sql.Tx) (toFamily, toPersonal int64, err error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, scope FROM public.topic_memories
+		WHERE scope IS NULL OR scope NOT IN ('personal', 'family')`)
+	if err != nil {
+		return 0, 0, err
+	}
+	var family, personal []int64
+	for rows.Next() {
+		var id int64
+		var scope sql.NullString
+		if err := rows.Scan(&id, &scope); err != nil {
+			_ = rows.Close()
+			return 0, 0, err
+		}
+		if strings.ToLower(strings.TrimSpace(scope.String)) == "family" {
+			family = append(family, id)
+		} else {
+			personal = append(personal, id)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return 0, 0, err
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+	for _, set := range []struct {
+		scope string
+		ids   []int64
+	}{{"family", family}, {"personal", personal}} {
+		for _, id := range set.ids {
+			if _, err := tx.ExecContext(ctx, `UPDATE public.topic_memories SET scope = $1 WHERE id = $2`, set.scope, id); err != nil {
+				return 0, 0, err
+			}
+		}
+	}
+	return int64(len(family)), int64(len(personal)), nil
 }
 
 func newMigrationProvider(sqlDB *sql.DB) (*goose.Provider, error) {

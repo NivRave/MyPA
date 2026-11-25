@@ -173,7 +173,10 @@ the family first.
    ```
    Migration 11 (V4-07) retires two old tables on the way: any fact still only in the old
    `memories` table is copied into the memories, and each scheduled workflow becomes a cron
-   automation rule (the workflow tools still list and delete it).
+   automation rule (the workflow tools still list and delete it). Migration 13 (BL-26) corrects
+   memories saved with a scope other than `personal` or `family`: one spelled `Family` (in any
+   case, with spaces) becomes `family`, and so visible to the household again; anything else
+   becomes `personal`. It logs only how many rows of each kind it changed.
 5. Send `/doctor` as the operator (every former admin is the operator since V4-35).
 6. Rewrite the secrets still in the old encryption format (V4-07). The dry run only counts; the
    second command rewrites them, and is safe while the app runs:

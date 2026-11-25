@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
 	"gorm.io/gorm"
@@ -142,8 +143,8 @@ func (c *Client) SetPreferredAccount(ctx context.Context, personID, accountID st
 
 // RemoveAccount removes one of the person's accounts on behalf of another (or the same) account
 // of that person: an account may remove itself; removing another needs an older account; the
-// last account is never removed (ADR 0002 Decision 4). Owners removing a member's account come
-// with roles (V4-35).
+// last account is never removed (ADR 0002 Decision 4). An owner removes a member's account with
+// RemoveMemberAccount (BL-41).
 func (c *Client) RemoveAccount(ctx context.Context, actorAccountID, targetAccountID string) error {
 	return c.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var actor models.ChannelAccount
@@ -171,6 +172,96 @@ func (c *Client) RemoveAccount(ctx context.Context, actorAccountID, targetAccoun
 		}
 		return tx.Where("id = ? AND person_id = ?", target.ID, actor.PersonID).Delete(&models.ChannelAccount{}).Error
 	})
+}
+
+// memberOfScope checks that the scope may manage members (an owner's) and that personID is a member
+// of the scope's household (BL-41). A person of another household is ErrNoSuchAccount, as a
+// missing one is: an owner learns nothing about other households.
+func memberOfScope(tx *gorm.DB, s identity.Scope, personID string) error {
+	if !s.Valid() {
+		return identity.ErrNoScope
+	}
+	if !s.Can(identity.ManageMembers) {
+		return identity.ErrNotPermitted
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(personID)); err != nil {
+		return identity.ErrNoSuchAccount
+	}
+	var n int64
+	if err := tx.Model(&models.Membership{}).
+		Where("person_id = ? AND household_id = ?", strings.TrimSpace(personID), s.HouseholdID()).Count(&n).Error; err != nil {
+		return fmt.Errorf("member lookup: %w", err)
+	}
+	if n == 0 {
+		return identity.ErrNoSuchAccount
+	}
+	return nil
+}
+
+// MemberAccounts lists a member's channel accounts, oldest first, for an owner of the member's
+// household (BL-41).
+func (c *Client) MemberAccounts(ctx context.Context, s identity.Scope, personID string) ([]models.ChannelAccount, error) {
+	tx := c.DB.WithContext(ctx)
+	if err := memberOfScope(tx, s, personID); err != nil {
+		return nil, err
+	}
+	var out []models.ChannelAccount
+	err := tx.Where("person_id = ?", strings.TrimSpace(personID)).Order("linked_at, id").Find(&out).Error
+	return out, err
+}
+
+// RemoveMemberAccount removes one of a member's channel accounts on an owner's behalf (BL-41, ADR
+// 0002 Decision 4): only an owner, only a member of the owner's own household, and never the
+// person's last account, the rule /unlink keeps. In the same transaction the removal is written to
+// the audit record: an audit session from the dashboard naming the owner, the person, the account's
+// ID and its channel, never its number or handle. It returns the removed account and the person's
+// remaining ones.
+func (c *Client) RemoveMemberAccount(ctx context.Context, s identity.Scope, personID, accountID string) (*models.ChannelAccount, []models.ChannelAccount, error) {
+	personID, accountID = strings.TrimSpace(personID), strings.TrimSpace(accountID)
+	var removed *models.ChannelAccount
+	var remaining []models.ChannelAccount
+	err := c.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := memberOfScope(tx, s, personID); err != nil {
+			return err
+		}
+		var accounts []models.ChannelAccount
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("person_id = ?", personID).Order("linked_at, id").Find(&accounts).Error; err != nil {
+			return err
+		}
+		for i := range accounts {
+			if accounts[i].ID == accountID {
+				a := accounts[i]
+				removed = &a
+			} else {
+				remaining = append(remaining, accounts[i])
+			}
+		}
+		switch {
+		case removed == nil:
+			return identity.ErrNoSuchAccount
+		case len(accounts) <= 1:
+			return identity.ErrLastAccount
+		}
+		if err := tx.Where("id = ? AND person_id = ?", removed.ID, personID).Delete(&models.ChannelAccount{}).Error; err != nil {
+			return err
+		}
+		now := time.Now()
+		return tx.Create(&models.AuditSession{
+			ID:          uuid.NewString(),
+			UserID:      s.PersonKey(),
+			Source:      "dashboard",
+			UserPrompt:  "remove a member's account",
+			Status:      "success",
+			StartTime:   now,
+			EndTime:     now,
+			ToolSummary: fmt.Sprintf("account_remove: purpose=remove outcome=removed by=owner person_id=%s account_id=%s channel=%s", personID, removed.ID, removed.Channel),
+		}).Error
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return removed, remaining, nil
 }
 
 // IssueLinkCode stores a new link code for the issuing account's person, inside the scope's

@@ -19,6 +19,22 @@ const (
 	TopicPersonal = "personal"
 )
 
+// The two memory scopes every read matches exactly.
+const (
+	ScopePersonal = "personal"
+	ScopeFamily   = "family"
+)
+
+// NormalizeMemoryScope is the scope a memory is stored with (BL-26), as the removed remember_fact
+// read it: trimmed and lower-cased, "family" is family and anything else is personal. Migration 13
+// corrected the rows stored before by the same rule.
+func NormalizeMemoryScope(s string) string {
+	if strings.ToLower(strings.TrimSpace(s)) == ScopeFamily {
+		return ScopeFamily
+	}
+	return ScopePersonal
+}
+
 // Supported canonical entity profile types.
 const (
 	EntityTypeBaby     = "baby"

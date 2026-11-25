@@ -43,6 +43,16 @@ type Resolver struct {
 	// UsageView is what the usage query shows besides the rows: the caps and the install's
 	// zone (V4-04).
 	UsageView UsageSettings
+	// Announcer tells a person's accounts and the owners about a change to the person's accounts
+	// (BL-41, ADR 0002 Decision 4); nil sends nothing.
+	Announcer AccountAnnouncer
+}
+
+// AccountAnnouncer sends the announcement of an account change: to one specific account, or to a
+// person by key through the delivery policy.
+type AccountAnnouncer interface {
+	SendToAccount(ctx context.Context, a models.ChannelAccount, text string) error
+	SendMessage(ctx context.Context, personKey, text string) error
 }
 
 // UsageSettings are the daily token caps (0 = none) and the install's time zone (DEFAULT_TIMEZONE;
@@ -84,6 +94,7 @@ type ResolverConfig struct {
 	PromptCache    PromptInvalidator
 	JoinStepsOf    func() []channel.JoinStep
 	UsageView      UsageSettings
+	Announcer      AccountAnnouncer
 }
 
 // NewResolver constructs a Resolver instance with injected repository interfaces.
@@ -103,6 +114,7 @@ func NewResolver(cfg ResolverConfig) *Resolver {
 		PromptCache:    cfg.PromptCache,
 		JoinStepsOf:    cfg.JoinStepsOf,
 		UsageView:      cfg.UsageView,
+		Announcer:      cfg.Announcer,
 	}
 
 	if r.DB != nil {

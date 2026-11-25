@@ -156,9 +156,11 @@ func TestAutomationRepo_AutomationRules_CRUDAndIsolation(t *testing.T) {
 	assert.Empty(t, activeBabyAfter, "Deactivated rule must not be returned by ListActiveAutomationRules")
 
 	// 5. DeleteAutomationRule with tenant scoping
-	// Attempt delete with wrong tenant should not delete
+	// Attempt delete with wrong tenant should not delete. BL-39: it is not-found, as every other
+	// delete by ID that matches no row (before, it reported success).
 	err = repo.DeleteAutomationRule(scopeFor(t, client, famB), ruleA.ID)
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
 
 	recheckStillThere, err := repo.GetAutomationRule(scopeFor(t, client, famA), ruleA.ID)
 	require.NoError(t, err)

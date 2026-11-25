@@ -49,7 +49,7 @@ func TestAutomationRules_AWorkflowIsSeenOnlyByItsPerson(t *testing.T) {
 	off := *workflow
 	off.IsActive = false
 	assert.Error(t, client.UpdateAutomationRule(omer, &off), "another member cannot change or toggle it")
-	require.NoError(t, client.DeleteAutomationRule(omer, workflow.ID))
+	require.Error(t, client.DeleteAutomationRule(omer, workflow.ID), "another member's delete is not-found (BL-39)")
 	got, err = client.GetAutomationRule(dana, workflow.ID)
 	require.NoError(t, err)
 	require.NotNil(t, got, "another member's delete leaves it")

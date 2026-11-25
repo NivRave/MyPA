@@ -90,3 +90,51 @@ func TestSaveTopicMemory_IsRecalledByMeaning(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, "The boiler is serviced every November.", got[0].Fact)
 }
+
+// BL-26: save_topic_memory normalises scope as the removed remember_fact did (trim, lower-case,
+// "family" or else "personal"). A save with "Family" is stored as family and found by another
+// member of the family; any other value is personal.
+func TestSaveTopicMemory_ScopeIsNormalised(t *testing.T) {
+	client, cleanup := testutil.NewTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := db.NewMemoryV2Repo(client.DB)
+	mod := memory.NewModule(repo)
+	llm := topicEmbedder{}
+	dana := householdtest.Scope(t, client, "scope_family", "scope_dana", "family")
+	omer := householdtest.Scope(t, client, "scope_family", "scope_omer", "family")
+	callCtx := orchestrator.CallContext{
+		User:     &models.User{PlatformID: "scope_dana", FamilyGroup: "scope_family"},
+		Scope:    dana,
+		LLM:      llm,
+		EventBus: events.NewEventBus(),
+	}
+
+	for _, args := range []map[string]interface{}{
+		{"topic": "house", "fact": "The boiler is serviced every November.", "scope": "Family"},
+		{"topic": "health", "fact": "Dana is allergic to peanuts.", "scope": " Shared "},
+	} {
+		res, err := mod.Execute(ctx, callCtx, "save_topic_memory", args)
+		require.NoError(t, err)
+		require.Contains(t, res, `"status":"saved"`)
+	}
+	var stored []models.TopicMemory
+	require.NoError(t, client.DB.Order("fact").Find(&stored).Error)
+	require.Len(t, stored, 2)
+	assert.Equal(t, "personal", stored[0].Scope, "an unknown value is personal")
+	assert.Equal(t, "family", stored[1].Scope, `"Family" is stored as family`)
+
+	boiler, err := llm.GenerateEmbedding(ctx, "When is the boiler due?")
+	require.NoError(t, err)
+	got, err := repo.SearchSimilarMemories(ctx, omer, pgvector.NewVector(boiler), 5)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "another family member finds the family memory")
+	assert.Equal(t, "The boiler is serviced every November.", got[0].Fact)
+	peanut, err := llm.GenerateEmbedding(ctx, "peanut")
+	require.NoError(t, err)
+	got, err = repo.SearchSimilarMemories(ctx, omer, pgvector.NewVector(peanut), 5)
+	require.NoError(t, err)
+	for _, m := range got {
+		assert.NotEqual(t, "Dana is allergic to peanuts.", m.Fact, "a personal memory stays private")
+	}
+}

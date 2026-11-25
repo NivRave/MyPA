@@ -175,6 +175,15 @@ export interface User {
   createdAt: string;
 }
 
+// BL-41: one of a member's channel accounts, as an owner sees it (Query.memberAccounts).
+export interface MemberAccount {
+  id: string;
+  personId: string;
+  channel: string;
+  label: string;
+  linkedAt: string;
+}
+
 // V4-41: what a new person does on one channel before their first message (Query.joinSteps).
 export interface JoinStep {
   channel: string;
