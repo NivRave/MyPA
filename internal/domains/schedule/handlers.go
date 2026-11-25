@@ -438,6 +438,12 @@ func (m *Module) executeConfigureTopicCalendar(ctx context.Context, callCtx orch
 	userID := callerID(callCtx)
 
 	cfg, _ := repo.GetTopicCalendarConfig(userID, topic)
+	// BL-68: whether the topic was configured, and how, decides how undo reverses this.
+	action, beforeJSON := "create", ""
+	if cfg != nil {
+		b, _ := json.Marshal(models.SnapshotMap(cfg))
+		action, beforeJSON = "update", string(b)
+	}
 	if cfg == nil {
 		cfg = &models.TopicCalendarConfig{
 			UserID:                   userID,
@@ -475,13 +481,15 @@ func (m *Module) executeConfigureTopicCalendar(ctx context.Context, callCtx orch
 		afterBytes, _ := json.Marshal(cfg)
 		_ = bus.Publish(ctx, events.MutationEvent{
 			Topic:       "schedule",
-			Action:      "configure",
+			Action:      action,
+			Kind:        "configure",
 			EntityType:  "TopicCalendarConfig",
 			EntityID:    strconv.FormatUint(uint64(cfg.ID), 10),
 			ActorUserID: userID,
 			// V4-30: without the household the mutation log drops the event, so it could not be undone.
 			HouseholdID: callCtx.Scope.HouseholdID(),
 			FamilyGroup: callCtx.Scope.LegacyLabel(),
+			BeforeJSON:  beforeJSON,
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Configured virtual sub-calendar for topic '%s' (Prefix: [%s], Color: %s)", cfg.Topic, cfg.PrefixTag, cfg.ColorID),
 			Timestamp:   time.Now(),
@@ -643,7 +651,7 @@ func (m *Module) executeDeleteEvent(ctx context.Context, callCtx orchestrator.Ca
 
 	bus := m.resolveEventBus(callCtx)
 	if bus != nil {
-		beforeBytes, _ := json.Marshal(existing)
+		beforeBytes, _ := json.Marshal(models.SnapshotMap(existing))
 		_ = bus.Publish(ctx, events.MutationEvent{
 			Topic:       "schedule",
 			Action:      "delete",
@@ -691,7 +699,7 @@ func (m *Module) executeUpdateEvent(ctx context.Context, callCtx orchestrator.Ca
 		return fmt.Sprintf("Event with ID %d not found.", eventID), nil
 	}
 
-	beforeBytes, _ := json.Marshal(existing)
+	beforeBytes, _ := json.Marshal(models.SnapshotMap(existing))
 
 	if title := strings.TrimSpace(getStringArg(args, "title")); title != "" {
 		existing.Title = title

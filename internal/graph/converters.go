@@ -347,7 +347,7 @@ func toModelMutationLog(m *dbmodels.MutationLog) *model.MutationLog {
 		UserID:      m.UserID,
 		FamilyGroup: m.FamilyGroup,
 		Topic:       m.Topic,
-		Action:      m.Action,
+		Action:      m.Label(), // BL-68: the name the audit page has always shown
 		EntityType:  m.EntityType,
 		EntityID:    m.EntityID,
 		BeforeJSON:  before,

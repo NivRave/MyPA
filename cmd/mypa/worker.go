@@ -22,18 +22,8 @@ import (
 	"github.com/nivik/mypa/internal/crypto"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/domains/automation"
-	"github.com/nivik/mypa/internal/domains/baby"
 	"github.com/nivik/mypa/internal/domains/durability"
-	"github.com/nivik/mypa/internal/domains/finance"
-	"github.com/nivik/mypa/internal/domains/house"
-	"github.com/nivik/mypa/internal/domains/memory"
-	"github.com/nivik/mypa/internal/domains/preferences"
-	"github.com/nivik/mypa/internal/domains/schedule"
 	"github.com/nivik/mypa/internal/domains/shared"
-	"github.com/nivik/mypa/internal/domains/web_research"
-	"github.com/nivik/mypa/internal/domains/workspace_contacts"
-	"github.com/nivik/mypa/internal/domains/workspace_gmail"
-	"github.com/nivik/mypa/internal/domains/workspace_tasks"
 	"github.com/nivik/mypa/internal/events"
 	"github.com/nivik/mypa/internal/gmail"
 	"github.com/nivik/mypa/internal/graph"
@@ -235,10 +225,6 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 		})
 	}
 
-	// Track 1B: Topic Memory Module (topic memory, entity profiles)
-	memoryRepo := db.NewMemoryV2Repo(dbClient.DB)
-	memoryModule := memory.NewModule(memoryRepo)
-
 	// V4-33: every message the assistant starts itself goes through the delivery policy, which
 	// records it, chooses a route from each channel's rule and holds what no channel takes yet.
 	// A reminder that goes out late joins the person's chat history through the engine, which is
@@ -264,49 +250,26 @@ func startWorker(cfg *config.Config, channels *channel.Registry) (w *worker, err
 	// Track 1C: Shared Spaces & Partner Sync Notifier
 	sharedNotifier := shared.NewNotifier(dbClient, notificationSender)
 	sharedNotifier.RegisterWithBus(eventBus)
-	sharedModule := shared.NewModule(dbClient, eventBus, sharedNotifier)
 
-	// Track 1D: Multi-Schedule & Virtual Sub-Calendars
-	calendarFactory := orchestrator.NewCalendarFactory(store.GetOAuthToken, oauthCfg)
-	scheduleModule := schedule.NewModule(dbClient, schedule.WithCalendarFactory(calendarFactory), schedule.WithEventBus(eventBus))
-
-	// Track 2E: Baby & Family Care Tracker
-	babyModule := baby.NewModule(dbClient, baby.WithEventBus(eventBus))
-
-	// Track 2F: House Maintenance, Contracts & Vehicle Vault
-	houseModule := house.NewModule(dbClient, house.WithEventBus(eventBus))
-
-	// Track 2G: Financial Tracking & Budget Intelligence
-	financeModule := finance.NewModule(dbClient, finance.WithEventBus(eventBus))
-
-	// Track 2H: On-Demand External APIs, Automations & Personal CRM
+	// Automations run rules only with the Automations pack on (V4-27).
 	automationRunner := automation.NewRunner(dbClient, eventBus, automation.WithNotificationSender(notificationSender),
-		automation.WithHouseholdPacks(dbClient.HouseholdPacks)) // rules run only with the Automations pack on (V4-27)
-	automationModule := automation.NewModule(dbClient, automation.WithEventBus(eventBus), automation.WithRunner(automationRunner))
+		automation.WithHouseholdPacks(dbClient.HouseholdPacks))
 
-	// Core: a person's preferences and the personal CRM, outside every pack (V4-27)
-	preferencesModule := preferences.NewModule(dbClient, preferences.WithEventBus(eventBus))
-
-	// Register all Wave 0, Wave 1, and Wave 2 domain modules in the ToolRegistry
-	workspaceGmailModule := workspace_gmail.NewModule(workspace_gmail.WithClient(gmailClient), workspace_gmail.WithEventBus(eventBus))
-	workspaceTasksModule := workspace_tasks.NewModule(workspace_tasks.WithClient(tasksClient), workspace_tasks.WithEventBus(eventBus))
-	workspaceContactsModule := workspace_contacts.NewModule(workspace_contacts.WithClient(contactsClient), workspace_contacts.WithEventBus(eventBus))
-	webResearchModule := web_research.NewModule(web_research.WithClient(tavilyClient))
-
-	registry.Register(workspaceGmailModule)
-	registry.Register(workspaceTasksModule)
-	registry.Register(workspaceContactsModule)
-	registry.Register(webResearchModule)
-
-	registry.Register(durabilityModule)
-	registry.Register(memoryModule)
-	registry.Register(sharedModule)
-	registry.Register(scheduleModule)
-	registry.Register(babyModule)
-	registry.Register(houseModule)
-	registry.Register(financeModule)
-	registry.Register(automationModule)
-	registry.Register(preferencesModule)
+	// Register every domain module in the ToolRegistry (tool_modules.go).
+	for _, mod := range toolModules(toolDeps{
+		db:             dbClient,
+		bus:            eventBus,
+		durability:     durabilityModule,
+		sharedNotifier: sharedNotifier,
+		calendars:      orchestrator.NewCalendarFactory(store.GetOAuthToken, oauthCfg),
+		runner:         automationRunner,
+		gmail:          gmailClient,
+		tasks:          tasksClient,
+		contacts:       contactsClient,
+		web:            tavilyClient,
+	}) {
+		registry.Register(mod)
+	}
 
 	// Wire registry declarations into llmClient
 	llmClient.AddFunctionDeclarations(registry.AllDeclarations()...)

@@ -308,24 +308,35 @@ func (m *Module) executeSaveTopicMemory(ctx context.Context, callCtx orchestrato
 		return "", fmt.Errorf("failed to save topic memory: %w", err)
 	}
 
-	// Link and supersede older memory if requested
+	// Link and supersede older memory if requested. BL-68: the older memory's state before is kept,
+	// so /undo removes the new memory and brings the older one back in one step.
+	var also []models.UndoAlso
+	kind := ""
 	if supersedesID > 0 {
-		if err := repo.SupersedeMemory(ctx, hs, supersedesID, mem.ID); err != nil {
-			// Log error but keep newly created memory
-			fmt.Printf("warning: failed to supersede memory %d: %v\n", supersedesID, err)
+		old, err := repo.GetTopicMemory(ctx, hs, supersedesID)
+		switch {
+		case err != nil || old == nil:
+			fmt.Printf("warning: failed to supersede memory %d: not found (%v)\n", supersedesID, err)
+		default:
+			if err := repo.SupersedeMemory(ctx, hs, supersedesID, mem.ID); err != nil {
+				// Log error but keep newly created memory
+				fmt.Printf("warning: failed to supersede memory %d: %v\n", supersedesID, err)
+				break
+			}
+			kind = "supersede"
+			also = append(also, models.UndoAlso{EntityType: "TopicMemory", EntityID: strconv.FormatUint(uint64(old.ID), 10),
+				Before: map[string]interface{}{"superseded_by_id": old.SupersededByID, "valid_until": old.ValidUntil}})
 		}
 	}
 
 	// Emit MutationEvent
 	if callCtx.EventBus != nil {
-		action := "create"
-		if supersedesID > 0 {
-			action = "supersede"
-		}
 		afterBytes, _ := json.Marshal(mem)
 		_ = callCtx.EventBus.Publish(ctx, events.MutationEvent{
 			Topic:       "memory",
-			Action:      action,
+			Action:      "create",
+			Kind:        kind,
+			Also:        also,
 			EntityType:  "TopicMemory",
 			EntityID:    strconv.FormatUint(uint64(mem.ID), 10),
 			ActorUserID: userID,
@@ -419,8 +430,18 @@ func (m *Module) executeUpsertEntityProfile(ctx context.Context, callCtx orchest
 	}
 	profile.SetAttributes(attrs)
 
+	// BL-68: whether the profile existed, and as what, decides how undo reverses the upsert.
+	existing, err := repo.GetEntityProfile(ctx, hs, topic, entityName)
+	if err != nil {
+		return "", fmt.Errorf("failed to check entity profile: %w", err)
+	}
 	if err := repo.UpsertEntityProfile(ctx, hs, &profile); err != nil {
 		return "", fmt.Errorf("failed to upsert entity profile: %w", err)
+	}
+	action, beforeJSON := "create", ""
+	if existing != nil {
+		b, _ := json.Marshal(models.SnapshotMap(existing))
+		action, beforeJSON = "update", string(b)
 	}
 
 	// Emit MutationEvent
@@ -428,12 +449,14 @@ func (m *Module) executeUpsertEntityProfile(ctx context.Context, callCtx orchest
 		afterBytes, _ := json.Marshal(profile)
 		_ = callCtx.EventBus.Publish(ctx, events.MutationEvent{
 			Topic:       "memory",
-			Action:      "upsert",
+			Action:      action,
+			Kind:        "upsert",
 			EntityType:  "EntityProfile",
 			EntityID:    strconv.FormatUint(uint64(profile.ID), 10),
 			ActorUserID: userID,
 			HouseholdID: hs.HouseholdID(),
 			FamilyGroup: hs.LegacyLabel(),
+			BeforeJSON:  beforeJSON,
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Updated entity profile %s (%s • %s)", profile.EntityName, profile.EntityType, profile.Topic),
 			Timestamp:   time.Now(),

@@ -76,9 +76,13 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-63 | Medium | A cron rule whose action is a plain instruction does nothing when it fires | done 2026-11-24 (`fix/time-automation-batch`) |
 | BL-64 | Low | The Redis token cache still accepts a Google sign-in stored unencrypted, a legacy branch outside V4-07 and V4-45 | open |
 | BL-65 | Low | `/undo` and the dashboard rollback act on the household's newest change, so one member can undo another person's new workflow | done 2026-11-24 (`fix/undo-batch`): chat undoes one's own; the dashboard by role |
-| BL-66 | Medium | A financial transaction cannot be changed or deleted after it is logged, so a person cannot make a wrongly shared one private | open |
+| BL-66 | Medium | A financial transaction cannot be changed or deleted after it is logged, so a person cannot make a wrongly shared one private | done 2026-11-25 (`fix/undo-complete-batch`): its own person changes or deletes it, in chat and on the dashboard |
 | BL-67 | Medium | A household automation rule fires on another member's unshared transaction, and a webhook rule sends the whole row to its maker's URL | done 2026-11-24 (`fix/time-automation-batch`) |
-| BL-68 | Medium | Many chat writes are logged with an action undo cannot roll back (`transaction_logged`, `rule_created`, `upsert`, `supersede` ...), so `/undo` after one fails, and keeps failing | open — owner's decision |
+| BL-68 | Medium | Many chat writes are logged with an action undo cannot roll back (`transaction_logged`, `rule_created`, `upsert`, `supersede` ...), so `/undo` after one fails, and keeps failing | done 2026-11-25 (`fix/undo-complete-batch`): logged as create/update/delete, with an undo guard |
+| BL-69 | Low | `schedule_reminder` (a reminder to oneself) cannot be undone: `ScheduledReminder` is not on the undo allowlist and its event names no row | open |
+| BL-70 | Medium | In chat, `list_recent_changes` and `export_topic_data` show every member's change summaries, a private transaction's included | open |
+| BL-71 | Low | `TestReembed_ToAnotherSizeAfterTheDocumentedMigration` fails on a Windows checkout: its regex expects LF after the doc's code fence | open |
+| BL-72 | Low | Making a private transaction shared (`log_financial_transaction` `update`) is not gated in an untrusted turn, so injected text could reveal it | open — owner's decision |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -588,6 +592,19 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** an update (at least `is_shared`, amount, category, merchant) and a delete, for the transaction's own person
   only, in chat and on the dashboard, announced and undoable like other changes. Test: another member cannot change
   or delete it; its person can make it private, and it then leaves the other members' lists and totals.
+- **Done:** 2026-11-25 (`fix/undo-complete-batch`), the owner's decision: `log_financial_transaction` takes `action`
+  `update` or `delete` with `transaction_id` (sharing, amount, category, merchant, date, type, currency, notes); the
+  dashboard has `updateFinancialTransaction` and `deleteFinancialTransaction` (the finance page edits the viewer's own,
+  `FinancialTransaction.isMine`). Both go through `db.FinanceRepository.UpdateOwnTransaction`/`DeleteOwnTransaction`,
+  which find the caller's own transactions only, so another member and an owner are refused (`ErrNotOwnTransaction`).
+  A chat delete is gated in an untrusted turn like the other destructive tools (`destructiveActionsWhenUntrusted`); the
+  dashboard's deletes have no confirmation step, and this one follows them. Both are logged as `update`/`delete` with
+  their snapshot, announced, and undoable; the budget and anomaly checks run on the new values; one made private is
+  skipped by the partner notifier and by another member's rule (`MutationEvent.Unshared`). Tests:
+  `TestChat_APersonChangesAndDeletesTheirOwnTransaction`, `TestChat_AChangedTransactionCountsWithItsNewValues`,
+  `TestChat_OnlyItsPersonMayChangeOrDeleteATransaction`, `TestChat_APrivateTransactionIsNotRevealedByTheNotifierOrARule`,
+  `TestDashboard_APersonChangesAndDeletesTheirOwnTransaction`, `TestDeletingATransactionIsGatedInAnUntrustedTurn`.
+  Gating an update that shares a private transaction is left to the owner (BL-72).
 
 ### BL-67 — Household automation rules see every member's unshared rows (Medium)
 - **Found:** 2026-11-24, while fixing BL-44 (review of the partner notifier).
@@ -627,6 +644,66 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** decide between (a) logging these as `create`/`update`/`delete` with the snapshots undo needs (`upsert` and
   `supersede` need both rows), or (b) having `/undo` skip actions it cannot roll back as well, which then undoes an
   older change without saying so. Test: `/undo` right after logging a transaction in chat removes it.
+- **Done:** 2026-11-25 (`fix/undo-complete-batch`), the owner's decision (a): every chat and dashboard write to an
+  allowlisted entity is logged as `create`, `update` or `delete` with the snapshots undo needs (an upsert by whether the
+  row existed; completing a reminder is an update). The old name stays in `kind` (`MutationEvent.Kind`,
+  `mutation_logs.kind`, migration 14), and every reader (the partner notifier's verb, a rule's `action` condition, the
+  audit page, `list_recent_changes`, the CSV export) reads `Label()`, so what people see and what rules match is
+  unchanged. A memory saved in place of an older one, and a baby measurement that updates the profile, record the other
+  row in `also_json`; one undo puts both back. Snapshots keep empty fields (`models.Snapshot`). Old entries: undone
+  where the stored snapshot is enough (`db.UndoPlan`), otherwise `/undo` names the change and changes nothing
+  (`db.CannotUndoMessage`). The dashboard's new budget and first preferences were logged as updates with no earlier
+  state; they are creates now. The guard: `cmd/mypa/undo_guard_test.go` walks every tool the worker registers
+  (`toolModules`) and proves `/undo` reverses each write, or names why it cannot (`notUndoable`). Tests:
+  `TestUndoGuard_EveryToolIsClassified`, `TestUndoGuard_UndoReversesEveryWrite` (one subtest per write, the
+  transaction and the replaced memory among them), `TestUndoGuard_CatchesAWriteToolWithNoUndo`,
+  `TestUndo_AnOldEntryWithAUsableSnapshotIsUndone`, `TestUndo_AnOldEntryWithoutASnapshotIsNamedAndNothingChanges`,
+  `TestDashboard_ANewBudgetAndFirstPreferencesAreUndone`. After review: a rule's record that it ran no longer stands
+  in front of the change that fired it, a webhook receives the old action name, an owner is never shown another
+  member's summary, and an old whole-row snapshot's empty fields are cleared (`TestUndo_ARulesRecordThatItRanDoesNotBlockUndo`,
+  `TestWebhook_TheReceiverSeesTheChangeUnderItsOwnName`, `TestUndoGuard_PeopleAndRulesSeeTheSameNames`,
+  `TestUndo_AnOwnerIsNotShownAnotherMembersSummary`, `TestUndo_AnOldWholeRowSnapshotClearsTheFieldsItLeftOut`).
+
+### BL-69 — A reminder to oneself cannot be undone (Low)
+- **Found:** 2026-11-25, by the undo guard written for BL-68.
+- **Evidence:** `schedule_reminder` (`internal/domains/shared/module.go`) saves a `ScheduledReminder` and logs it with
+  the entity ID `<person>:<unix time>`, not the row's ID (`DBClient.SaveReminder` returns none), and
+  `ScheduledReminder` is not on the undo allowlist (`db.UndoTables`). The guard lists it in `notUndoable`.
+- **Impact:** `/undo` right after "remind me at 7" skips it and undoes the person's previous undoable change, if any.
+- **Fix:** return the new row's ID from `SaveReminder`, log it as a `create` of a person-keyed table, and add
+  `scheduled_reminders` to the allowlist (undo confines a table without `household_id` to the log's own user); then
+  move its proof into `undoProofs`.
+
+### BL-70 — Chat's change history shows other members' private changes (Medium)
+- **Found:** 2026-11-25, while fixing BL-66.
+- **Evidence:** `list_recent_changes` and `export_topic_data` read `GetMutationLogsByTopic`
+  (`internal/db/durability_repo.go`), which filters by household only, and print each entry's summary (and, in the
+  export, its snapshots). The dashboard's `mutationLogs` shows an adult only their own entries and an owner the others'
+  without summaries or snapshots.
+- **Impact:** another member can read in chat that a person logged, changed or deleted a private transaction, with its
+  amount and merchant.
+- **Fix:** give the chat tools the dashboard's rule: the caller's own entries in full; others' only for an owner, as
+  "action entity type" without summaries or snapshots. Test: Omer's private transaction is not in Dana's chat history.
+
+### BL-71 — A docs test fails on a Windows checkout (Low)
+- **Found:** 2026-11-25, in the full test run for BL-68.
+- **Evidence:** `sizeChangeMigration` (`internal/db/embedding_space_test.go`) finds the SQL block in `docs/EMBEDDINGS.md`
+  with ```` ```sql\n ````; with `core.autocrlf=true` the working copy has CRLF, so the block is not found and
+  `TestReembed_ToAnotherSizeAfterTheDocumentedMigration` fails. The race run in a container mounts the same working
+  copy. The file's content in git is unchanged.
+- **Impact:** a false failure on Windows; none in CI (Linux checkout).
+- **Fix:** match `\r?\n` in the regex (the test already strips CRs from the SQL it reads), or pin the doc to LF in
+  `.gitattributes`. Test: the test passes on a CRLF copy of the doc.
+
+### BL-72 — Sharing a private transaction is not gated in an untrusted turn (Low)
+- **Found:** 2026-11-25, by the review of BL-66.
+- **Evidence:** the owner's decision for BL-66 gates only the delete (`destructiveActionsWhenUntrusted` in
+  `internal/orchestrator/security.go`). `log_financial_transaction` with `action: "update"` and `is_shared: true`
+  runs in a turn that read an email or a web page.
+- **Impact:** injected text could make a person's private transaction shared; the partner notifier then announces
+  it to the household. Before BL-66 no path changed a transaction at all.
+- **Fix:** decide whether an update that sets `is_shared: true` is gated too (the gate reads the call's arguments,
+  so it can be gated for that case only). Test: after untrusted content it is staged for CONFIRM.
 
 ### BL-30 — Other tests change the process environment and do not restore it exactly (Low)
 - **Found:** 2026-11-19, in the search of every `_test.go` file done for BL-27.
@@ -824,7 +901,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   (two string defaults whose empty value means "not given" are listed). Round trips on create and on update from
   true to false, through the repositories (on the AutoMigrate and the migrated schema), the dashboard mutations
   and the chat tools. Rows written before are not rewritten: docs/RESTORE_AND_MIGRATE.md lists them for the owner
-  to review. A transaction has no edit path to correct one (BL-66).
+  to review. A transaction had no edit path to correct one; its person has one since BL-66.
 
 ### BL-44 — Chat shows other members' unshared transactions (Medium)
 - **Found:** 2026-11-20, while building V4-35.
@@ -873,7 +950,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Done:** 2026-11-24 (`fix/undo-batch`), both: `updateHousehold` publishes nothing and logs at INFO (household,
   person, names of the settings changed); `RollbackLast` reads `GetLastUndoableMutation`, which skips entity types
   not on the allowlist. Tests: `TestUndo_HouseholdSettingsChangeDoesNotBlockUndo`, `TestUndo_SkipsEntriesThatCannotBeUndone`.
-  An action undo cannot roll back on an undoable entity type still blocks it: BL-68.
+  An action undo cannot roll back on an undoable entity type still blocked it: fixed by BL-68.
 
 ### BL-48 — Made-up members on the Shared Spaces page (Low)
 - **Found:** 2026-11-20, while building V4-27.

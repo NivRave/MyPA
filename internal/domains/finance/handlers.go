@@ -2,6 +2,7 @@ package finance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
@@ -29,7 +30,17 @@ func (m *Module) Execute(ctx context.Context, callCtx orchestrator.CallContext, 
 
 	switch toolName {
 	case "log_financial_transaction":
-		return m.executeLogTransaction(ctx, callCtx, repo, s, args)
+		// BL-66: one tool logs a transaction, and changes or deletes the caller's own.
+		switch strings.ToLower(strings.TrimSpace(parseString(args["action"], "log"))) {
+		case "", "log":
+			return m.executeLogTransaction(ctx, callCtx, repo, s, args)
+		case "update":
+			return m.executeUpdateTransaction(ctx, callCtx, repo, s, args)
+		case "delete":
+			return m.executeDeleteTransaction(ctx, callCtx, repo, s, args)
+		default:
+			return "", fmt.Errorf("unsupported action %q, expected 'log', 'update', or 'delete'", parseString(args["action"], ""))
+		}
 	case "get_financial_summary":
 		return m.executeGetSummary(ctx, callCtx, repo, s, args)
 	case "set_category_budget":
@@ -62,22 +73,8 @@ func (m *Module) executeLogTransaction(ctx context.Context, callCtx orchestrator
 
 	txDate := parseDateOrDefault(args["transaction_date"], time.Now())
 
-	var warnings []string
-
 	// 1. Anomaly check for expenses: check if > 30% higher than historical average
-	if txType == models.TransactionTypeExpense {
-		hist, err := repo.GetHistoricalAverage(ctx, s, category, merchant, 0)
-		if err == nil && hist != nil && hist.Count >= 1 && hist.Average > 0 {
-			anomalyThreshold := hist.Average * 1.30
-			if amount > anomalyThreshold {
-				pctHigher := ((amount - hist.Average) / hist.Average) * 100.0
-				warnings = append(warnings, fmt.Sprintf(
-					"⚠️ ANOMALY DETECTED: This bill of %s %.2f is %.1f%% higher than your historical average (%s %.2f based on %d prior %s transactions).",
-					currency, amount, pctHigher, currency, hist.Average, hist.Count, hist.MatchedOn,
-				))
-			}
-		}
-	}
+	warnings := anomalyWarnings(ctx, repo, s, txType, category, merchant, currency, amount, 0)
 
 	// 2. Persist the transaction
 	userID := ""
@@ -106,34 +103,13 @@ func (m *Module) executeLogTransaction(ctx context.Context, callCtx orchestrator
 	}
 
 	// 3. Category budget threshold check for expenses
-	if txType == models.TransactionTypeExpense {
-		monthlySpend, err := repo.GetMonthlyCategorySpend(ctx, s, category, txDate.Year(), txDate.Month())
-		if err == nil {
-			budget, err := repo.GetCategoryBudget(ctx, s, category)
-			if err == nil && budget != nil && budget.MonthlyLimit > 0 {
-				thresholdRatio := budget.ThresholdRatio()
-				thresholdAmount := budget.MonthlyLimit * thresholdRatio
-				pctUsed := (monthlySpend / budget.MonthlyLimit) * 100.0
-
-				if monthlySpend > budget.MonthlyLimit {
-					warnings = append(warnings, fmt.Sprintf(
-						"🚨 BUDGET EXCEEDED: Category '%s' spending has reached %s %.2f, exceeding the monthly budget limit of %s %.2f (%.1f%% used).",
-						category, currency, monthlySpend, currency, budget.MonthlyLimit, pctUsed,
-					))
-				} else if monthlySpend >= thresholdAmount {
-					warnings = append(warnings, fmt.Sprintf(
-						"⚠️ BUDGET ALERT: Category '%s' spending has reached %s %.2f (%.1f%% of monthly budget %s %.2f, alert threshold: %.1f%%).",
-						category, currency, monthlySpend, pctUsed, currency, budget.MonthlyLimit, thresholdRatio*100.0,
-					))
-				}
-			}
-		}
-	}
+	warnings = append(warnings, budgetWarnings(ctx, repo, s, tx)...)
 
 	// 4. Emit MutationEvent
 	m.emitMutation(ctx, callCtx, events.MutationEvent{
 		Topic:       "finance",
-		Action:      "transaction_logged",
+		Action:      "create",
+		Kind:        "transaction_logged",
 		EntityType:  "FinancialTransaction",
 		EntityID:    strconv.FormatUint(uint64(tx.ID), 10),
 		ActorUserID: userID,
@@ -144,8 +120,13 @@ func (m *Module) executeLogTransaction(ctx context.Context, callCtx orchestrator
 	}, tx)
 
 	// 5. Construct response
+	return describeTransaction(fmt.Sprintf("✅ Transaction logged successfully (ID: %d):\n", tx.ID), tx, false, warnings), nil
+}
+
+// describeTransaction is the reply about one transaction, with its notices.
+func describeTransaction(head string, tx *models.FinancialTransaction, withSharing bool, warnings []string) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("✅ Transaction logged successfully (ID: %d):\n", tx.ID))
+	sb.WriteString(head)
 	displayType := tx.Type
 	if len(displayType) > 0 {
 		displayType = strings.ToUpper(displayType[:1]) + displayType[1:]
@@ -160,6 +141,13 @@ func (m *Module) executeLogTransaction(ctx context.Context, callCtx orchestrator
 	if tx.Notes != "" {
 		sb.WriteString(fmt.Sprintf("- Notes: %s\n", tx.Notes))
 	}
+	if withSharing {
+		if tx.IsShared {
+			sb.WriteString("- Shared with the household\n")
+		} else {
+			sb.WriteString("- Private: only you see it\n")
+		}
+	}
 
 	if len(warnings) > 0 {
 		sb.WriteString("\nNotices & Alerts:\n")
@@ -167,8 +155,175 @@ func (m *Module) executeLogTransaction(ctx context.Context, callCtx orchestrator
 			sb.WriteString(fmt.Sprintf("- %s\n", w))
 		}
 	}
+	return sb.String()
+}
 
-	return sb.String(), nil
+// anomalyWarnings is the anomaly check of an expense: more than 30% above the historical average
+// of its merchant, else of its category. excludeID leaves the transaction itself out of the
+// average when it is being changed (BL-66).
+func anomalyWarnings(ctx context.Context, repo db.FinanceRepository, s identity.Scope, txType, category, merchant, currency string, amount float64, excludeID uint) []string {
+	if txType != models.TransactionTypeExpense {
+		return nil
+	}
+	hist, err := repo.GetHistoricalAverage(ctx, s, category, merchant, excludeID)
+	if err != nil || hist == nil || hist.Count < 1 || hist.Average <= 0 {
+		return nil
+	}
+	if amount <= hist.Average*1.30 {
+		return nil
+	}
+	pctHigher := ((amount - hist.Average) / hist.Average) * 100.0
+	return []string{fmt.Sprintf(
+		"⚠️ ANOMALY DETECTED: This bill of %s %.2f is %.1f%% higher than your historical average (%s %.2f based on %d prior %s transactions).",
+		currency, amount, pctHigher, currency, hist.Average, hist.Count, hist.MatchedOn,
+	)}
+}
+
+// budgetWarnings is the budget check of an expense as stored: its category's spend this month
+// against the category's budget.
+func budgetWarnings(ctx context.Context, repo db.FinanceRepository, s identity.Scope, tx *models.FinancialTransaction) []string {
+	if tx.Type != models.TransactionTypeExpense {
+		return nil
+	}
+	category, currency, txDate := tx.Category, tx.Currency, tx.TransactionDate
+	monthlySpend, err := repo.GetMonthlyCategorySpend(ctx, s, category, txDate.Year(), txDate.Month())
+	if err != nil {
+		return nil
+	}
+	budget, err := repo.GetCategoryBudget(ctx, s, category)
+	if err != nil || budget == nil || budget.MonthlyLimit <= 0 {
+		return nil
+	}
+	thresholdRatio := budget.ThresholdRatio()
+	thresholdAmount := budget.MonthlyLimit * thresholdRatio
+	pctUsed := (monthlySpend / budget.MonthlyLimit) * 100.0
+
+	if monthlySpend > budget.MonthlyLimit {
+		return []string{fmt.Sprintf(
+			"🚨 BUDGET EXCEEDED: Category '%s' spending has reached %s %.2f, exceeding the monthly budget limit of %s %.2f (%.1f%% used).",
+			category, currency, monthlySpend, currency, budget.MonthlyLimit, pctUsed,
+		)}
+	}
+	if monthlySpend >= thresholdAmount {
+		return []string{fmt.Sprintf(
+			"⚠️ BUDGET ALERT: Category '%s' spending has reached %s %.2f (%.1f%% of monthly budget %s %.2f, alert threshold: %.1f%%).",
+			category, currency, monthlySpend, pctUsed, currency, budget.MonthlyLimit, thresholdRatio*100.0,
+		)}
+	}
+	return nil
+}
+
+// transactionID is the transaction an update or a delete names.
+func transactionID(args map[string]interface{}) (uint, error) {
+	id := parseInt(args["transaction_id"], 0)
+	if id <= 0 {
+		return 0, fmt.Errorf("transaction_id is required to change or delete a transaction")
+	}
+	return uint(id), nil
+}
+
+// notYours is the refusal for a transaction that is not the caller's own: another member's, an
+// owner's caller included, or none at all (BL-66).
+func notYours(id uint) error {
+	return fmt.Errorf("transaction %d is not one of your transactions: only the person who logged a transaction can change or delete it", id)
+}
+
+// executeUpdateTransaction changes the caller's own transaction (BL-66): whether it is shared,
+// its amount, category, merchant, date, type, currency or notes. The budget and anomaly checks then
+// run on the new values; the change is announced and undoable like any other.
+func (m *Module) executeUpdateTransaction(ctx context.Context, callCtx orchestrator.CallContext, repo db.FinanceRepository, s identity.Scope, args map[string]interface{}) (string, error) {
+	id, err := transactionID(args)
+	if err != nil {
+		return "", err
+	}
+	if _, ok := args["amount"]; ok && parseFloat(args["amount"], 0) <= 0 {
+		return "", fmt.Errorf("transaction amount must be greater than 0")
+	}
+	if d := parseString(args["transaction_date"], ""); d != "" {
+		if _, err := parseFlexDate(d); err != nil {
+			return "", fmt.Errorf("transaction_date: %w", err)
+		}
+	}
+	before, after, err := repo.UpdateOwnTransaction(ctx, s, id, func(tx *models.FinancialTransaction) {
+		if _, ok := args["amount"]; ok {
+			tx.Amount = parseFloat(args["amount"], tx.Amount)
+		}
+		if c := parseString(args["category"], ""); c != "" {
+			tx.Category = c
+		}
+		if v, ok := args["merchant"]; ok {
+			tx.Merchant = parseString(v, tx.Merchant)
+		}
+		if t := parseString(args["type"], ""); t != "" {
+			tx.Type = t
+		}
+		if c := parseString(args["currency"], ""); c != "" {
+			tx.Currency = c
+		}
+		if v, ok := args["notes"]; ok {
+			tx.Notes = parseString(v, tx.Notes)
+		}
+		if d := parseString(args["transaction_date"], ""); d != "" {
+			tx.TransactionDate = parseDateOrDefault(d, tx.TransactionDate)
+		}
+		if v, ok := args["is_shared"]; ok {
+			tx.IsShared = parseBool(v, tx.IsShared)
+		}
+	})
+	if errors.Is(err, db.ErrNotOwnTransaction) {
+		return "", notYours(id)
+	}
+	if err != nil {
+		return "", err
+	}
+
+	warnings := anomalyWarnings(ctx, repo, s, after.Type, after.Category, after.Merchant, after.Currency, after.Amount, after.ID)
+	warnings = append(warnings, budgetWarnings(ctx, repo, s, after)...)
+
+	m.emitMutation(ctx, callCtx, events.MutationEvent{
+		Topic:       "finance",
+		Action:      "update",
+		EntityType:  "FinancialTransaction",
+		EntityID:    strconv.FormatUint(uint64(after.ID), 10),
+		ActorUserID: m.resolveUserID(callCtx),
+		HouseholdID: s.HouseholdID(),
+		FamilyGroup: s.LegacyLabel(),
+		BeforeJSON:  models.Snapshot(before),
+		Summary:     fmt.Sprintf("Changed %s %s %.2f for %s (%s)", after.Type, after.Currency, after.Amount, after.Category, after.Merchant),
+		Timestamp:   time.Now(),
+	}, after)
+
+	return describeTransaction(fmt.Sprintf("✅ Transaction %d updated:\n", after.ID), after, true, warnings), nil
+}
+
+// executeDeleteTransaction deletes the caller's own transaction (BL-66); /undo brings it back.
+func (m *Module) executeDeleteTransaction(ctx context.Context, callCtx orchestrator.CallContext, repo db.FinanceRepository, s identity.Scope, args map[string]interface{}) (string, error) {
+	id, err := transactionID(args)
+	if err != nil {
+		return "", err
+	}
+	deleted, err := repo.DeleteOwnTransaction(ctx, s, id)
+	if errors.Is(err, db.ErrNotOwnTransaction) {
+		return "", notYours(id)
+	}
+	if err != nil {
+		return "", err
+	}
+	m.emitMutation(ctx, callCtx, events.MutationEvent{
+		Topic:       "finance",
+		Action:      "delete",
+		EntityType:  "FinancialTransaction",
+		EntityID:    strconv.FormatUint(uint64(deleted.ID), 10),
+		ActorUserID: m.resolveUserID(callCtx),
+		HouseholdID: s.HouseholdID(),
+		FamilyGroup: s.LegacyLabel(),
+		BeforeJSON:  models.Snapshot(deleted),
+		Summary:     fmt.Sprintf("Deleted %s %s %.2f for %s (%s)", deleted.Type, deleted.Currency, deleted.Amount, deleted.Category, deleted.Merchant),
+		Timestamp:   time.Now(),
+	}, nil)
+
+	return fmt.Sprintf("🗑️ Transaction %d deleted: %s %s %.2f for %s (%s). Say /undo to bring it back.",
+		deleted.ID, deleted.Type, deleted.Currency, deleted.Amount, deleted.Category, deleted.Merchant), nil
 }
 
 // executeGetSummary produces an aggregated financial summary.
@@ -291,18 +446,29 @@ func (m *Module) executeSetBudget(ctx context.Context, callCtx orchestrator.Call
 		AlertThresholdPct: threshold,
 	}
 
+	// BL-68: whether the budget existed decides how undo reverses the change.
+	existing, err := repo.GetCategoryBudget(ctx, s, category)
+	if err != nil {
+		return "", fmt.Errorf("failed to check category budget: %w", err)
+	}
 	if err := repo.SetCategoryBudget(ctx, s, budget); err != nil {
 		return "", fmt.Errorf("failed to set category budget: %w", err)
+	}
+	action, beforeJSON := "create", ""
+	if existing != nil {
+		action, beforeJSON = "update", models.Snapshot(existing)
 	}
 
 	m.emitMutation(ctx, callCtx, events.MutationEvent{
 		Topic:       "finance",
-		Action:      "budget_set",
+		Action:      action,
+		Kind:        "budget_set",
 		EntityType:  "CategoryBudget",
 		EntityID:    strconv.FormatUint(uint64(budget.ID), 10),
 		ActorUserID: m.resolveUserID(callCtx),
 		HouseholdID: s.HouseholdID(),
 		FamilyGroup: s.LegacyLabel(),
+		BeforeJSON:  beforeJSON,
 		Summary:     fmt.Sprintf("Set %s monthly budget to %s %.2f (alert at %.0f%%)", budget.Category, budget.Currency, budget.MonthlyLimit, budget.AlertThresholdPct),
 		Timestamp:   time.Now(),
 	}, budget)
@@ -375,7 +541,8 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 
 		m.emitMutation(ctx, callCtx, events.MutationEvent{
 			Topic:       "finance",
-			Action:      "recurring_bill_added",
+			Action:      "create",
+			Kind:        "recurring_bill_added",
 			EntityType:  "RecurringBill",
 			EntityID:    strconv.FormatUint(uint64(bill.ID), 10),
 			ActorUserID: m.resolveUserID(callCtx),
@@ -401,6 +568,7 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 		if !isAuthorized {
 			return "", fmt.Errorf("recurring bill %d not found or permission denied", id)
 		}
+		beforeJSON := models.Snapshot(existing) // the snapshot /undo restores (BL-68)
 
 		if n := parseString(args["name"], ""); n != "" {
 			existing.Name = n
@@ -430,12 +598,14 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 
 		m.emitMutation(ctx, callCtx, events.MutationEvent{
 			Topic:       "finance",
-			Action:      "recurring_bill_updated",
+			Action:      "update",
+			Kind:        "recurring_bill_updated",
 			EntityType:  "RecurringBill",
 			EntityID:    strconv.FormatUint(uint64(existing.ID), 10),
 			ActorUserID: m.resolveUserID(callCtx),
 			HouseholdID: s.HouseholdID(),
 			FamilyGroup: s.LegacyLabel(),
+			BeforeJSON:  beforeJSON,
 			Summary:     fmt.Sprintf("Updated recurring bill %s (ID %d)", existing.Name, existing.ID),
 			Timestamp:   time.Now(),
 		}, existing)
@@ -460,14 +630,17 @@ func (m *Module) executeManageBills(ctx context.Context, callCtx orchestrator.Ca
 			return "", fmt.Errorf("failed to delete recurring bill: %w", err)
 		}
 
+		beforeJSON := models.Snapshot(existing) // the snapshot /undo restores (BL-68)
 		m.emitMutation(ctx, callCtx, events.MutationEvent{
 			Topic:       "finance",
-			Action:      "recurring_bill_deleted",
+			Action:      "delete",
+			Kind:        "recurring_bill_deleted",
 			EntityType:  "RecurringBill",
 			EntityID:    strconv.FormatUint(uint64(id), 10),
 			ActorUserID: m.resolveUserID(callCtx),
 			HouseholdID: s.HouseholdID(),
 			FamilyGroup: s.LegacyLabel(),
+			BeforeJSON:  beforeJSON,
 			Summary:     fmt.Sprintf("Deleted recurring bill %s (ID %d)", existing.Name, id),
 			Timestamp:   time.Now(),
 		}, existing)

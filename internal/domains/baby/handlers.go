@@ -127,11 +127,12 @@ func (m *Module) executeUpsertProfile(ctx context.Context, callCtx orchestrator.
 	age := CalculateAge(profile.DateOfBirth, profile.DueDate, time.Now())
 
 	action := "create"
-	if profileID > 0 {
-		action = "update"
+	var before interface{}
+	if existing != nil {
+		action, before = "update", existing // BL-68: the profile as it was, which /undo restores
 	}
 	summary := fmt.Sprintf("Saved baby profile for %s (Age: %s)", profile.Name, age.FormattedAge)
-	m.publishMutation(ctx, callCtx, action, "BabyProfile", strconv.FormatUint(uint64(profile.ID), 10), scope, userID, summary)
+	m.publishMutation(ctx, callCtx, action, "", "BabyProfile", strconv.FormatUint(uint64(profile.ID), 10), scope, userID, summary, before)
 
 	resp := map[string]interface{}{
 		"status":       "success",
@@ -223,7 +224,10 @@ func (m *Module) executeLogCare(ctx context.Context, callCtx orchestrator.CallCo
 		return "", fmt.Errorf("failed to record care log: %w", err)
 	}
 
-	// Measurement update on profile
+	// Measurement update on profile. BL-68: the profile as it was is kept, so /undo removes the log
+	// and puts the profile back in one step.
+	var also []models.UndoAlso
+	profileBefore := rowState(profile)
 	if logType == "measurement" {
 		updated := false
 		if (strings.EqualFold(unit, "kg") || strings.EqualFold(unit, "g") || strings.EqualFold(unit, "grams")) && valueNum > 0 {
@@ -238,14 +242,14 @@ func (m *Module) executeLogCare(ctx context.Context, callCtx orchestrator.CallCo
 			profile.HeightCm = valueNum
 			updated = true
 		}
-		if updated {
-			_ = repo.UpsertBabyProfile(scope, profile)
+		if updated && repo.UpsertBabyProfile(scope, profile) == nil && profileBefore != nil {
+			also = append(also, models.UndoAlso{EntityType: "BabyProfile", EntityID: strconv.FormatUint(uint64(profile.ID), 10), Before: profileBefore})
 		}
 	}
 
 	// Prepare user-friendly summary
 	summary := formatLogSummary(profile.Name, careLog)
-	m.publishMutation(ctx, callCtx, "create", "BabyCareLog", strconv.FormatUint(uint64(careLog.ID), 10), scope, userID, summary)
+	m.publishMutation(ctx, callCtx, "create", "", "BabyCareLog", strconv.FormatUint(uint64(careLog.ID), 10), scope, userID, summary, nil, also...)
 
 	resp := map[string]interface{}{
 		"status":    "success",
@@ -453,6 +457,17 @@ func (m *Module) executeManageInventory(ctx context.Context, callCtx orchestrato
 		unit := getStringArg(args, "unit")
 		threshold := getFloatArg(args, "low_threshold")
 
+		// BL-68: setting a new item creates it; setting an existing one updates it.
+		existing, err := repo.GetBabyInventoryItemByName(scope, itemName)
+		if err != nil {
+			return "", err
+		}
+		action := "create"
+		var before interface{}
+		if existing != nil {
+			action, before = "update", existing
+		}
+
 		item := models.BabyInventoryItem{
 			FamilyGroup:       scope.LegacyLabel(),
 			ItemName:          itemName,
@@ -465,7 +480,8 @@ func (m *Module) executeManageInventory(ctx context.Context, callCtx orchestrato
 		}
 
 		summary := fmt.Sprintf("Updated inventory: %s quantity set to %.1f %s", itemName, qty, unit)
-		m.publishMutation(ctx, callCtx, "update", "BabyInventoryItem", strconv.FormatUint(uint64(item.ID), 10), scope, userID, summary)
+		// Shown and matched as "update", as before BL-68, whether the item was new or not.
+		m.publishMutation(ctx, callCtx, action, "update", "BabyInventoryItem", strconv.FormatUint(uint64(item.ID), 10), scope, userID, summary, before)
 
 		resp := map[string]interface{}{
 			"status":  "success",
@@ -487,6 +503,12 @@ func (m *Module) executeManageInventory(ctx context.Context, callCtx orchestrato
 		item, err := repo.GetBabyInventoryItemByName(scope, itemName)
 		if err != nil {
 			return "", err
+		}
+		// BL-68: adjusting a new item creates it; an existing one is updated, from this state.
+		action := "create"
+		var before interface{}
+		if item != nil {
+			action, before = "update", rowState(item)
 		}
 		if item == nil {
 			// Create new with delta
@@ -517,7 +539,7 @@ func (m *Module) executeManageInventory(ctx context.Context, callCtx orchestrato
 		}
 
 		summary := fmt.Sprintf("Adjusted inventory: %s changed by %+.1f (Now: %.1f %s)", itemName, delta, item.QuantityRemaining, item.Unit)
-		m.publishMutation(ctx, callCtx, "update", "BabyInventoryItem", strconv.FormatUint(uint64(item.ID), 10), scope, userID, summary)
+		m.publishMutation(ctx, callCtx, action, "update", "BabyInventoryItem", strconv.FormatUint(uint64(item.ID), 10), scope, userID, summary, before)
 
 		resp := map[string]interface{}{
 			"status":  "success",

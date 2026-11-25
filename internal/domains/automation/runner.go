@@ -408,7 +408,9 @@ func EvaluateCondition(conditionJSON string, ev events.MutationEvent) (bool, err
 
 		switch normKey {
 		case "action":
-			if !strings.EqualFold(ev.Action, valStr) {
+			// BL-68: a rule names the change as it always has (its kind, such as
+			// "transaction_logged"), so a rule written before keeps matching exactly what it did.
+			if !strings.EqualFold(ev.Label(), valStr) {
 				return false, nil
 			}
 		case "entity_type":
@@ -484,7 +486,7 @@ func matchFieldCondition(field, op string, targetVal interface{}, ev events.Muta
 	// Check event fields first
 	switch strings.ToLower(field) {
 	case "action":
-		actualVal = ev.Action
+		actualVal = ev.Label() // BL-68, as in EvaluateCondition
 	case "topic":
 		actualVal = ev.Topic
 	case "entity_type":
@@ -689,7 +691,11 @@ func (r *Runner) ExecuteAction(ctx context.Context, rule models.AutomationRule, 
 	}
 
 	if webhookURL != "" {
-		eventJSON, _ := json.Marshal(ev)
+		// BL-68: the receiver gets the event as it always has, the change under its own name in
+		// "action" ("transaction_logged", not the create undo reads).
+		posted := ev
+		posted.Action, posted.Kind = ev.Label(), ""
+		eventJSON, _ := json.Marshal(posted)
 		_, err := r.CallExternal(ctx, "POST", webhookURL, nil, string(eventJSON))
 		if err != nil {
 			return fmt.Errorf("webhook call failed: %w", err)
@@ -718,7 +724,7 @@ func (r *Runner) ExecuteAction(ctx context.Context, rule models.AutomationRule, 
 			ActorUserID: rule.UserID,
 			HouseholdID: rule.HouseholdID,
 			FamilyGroup: rule.FamilyGroup,
-			Summary:     fmt.Sprintf("Automation rule %q executed for event %s.%s", rule.Name, ev.Topic, ev.Action),
+			Summary:     fmt.Sprintf("Automation rule %q executed for event %s.%s", rule.Name, ev.Topic, ev.Label()),
 			Timestamp:   time.Now(),
 		})
 	}

@@ -2,6 +2,7 @@ package shared
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/nivik/mypa/internal/identity"
 	"strings"
@@ -23,6 +24,7 @@ type Repository interface {
 	GetSharedSpace(s identity.Scope, topic string) (*models.SharedSpace, error)
 	CreateSharedReminder(s identity.Scope, reminder *models.SharedTaskReminder) error
 	CompleteSharedReminder(s identity.Scope, id uint, completedByUserID string) (*models.SharedTaskReminder, error)
+	GetSharedReminder(s identity.Scope, id uint) (*models.SharedTaskReminder, error)
 	ListSharedReminders(s identity.Scope, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error)
 	UsersInHousehold(ctx context.Context, s identity.Scope) ([]models.User, error)
 }
@@ -274,19 +276,31 @@ func (m *Module) executeConfigureSharedTopic(ctx context.Context, callCtx orches
 		NotifyMode:       notifyMode,
 	}
 
+	// BL-68: whether the topic was configured, and how, decides how undo reverses this.
+	existing, err := repo.GetSharedSpace(callCtx.Scope, topic)
+	if err != nil {
+		return "", fmt.Errorf("failed to check shared topic: %w", err)
+	}
 	if err := repo.UpsertSharedSpace(callCtx.Scope, &space); err != nil {
 		return "", fmt.Errorf("failed to configure shared topic: %w", err)
+	}
+	action, beforeJSON := "create", ""
+	if existing != nil {
+		b, _ := json.Marshal(models.SnapshotMap(existing))
+		action, beforeJSON = "update", string(b)
 	}
 
 	summary := fmt.Sprintf("Configured sharing for topic '%s' (view: %v, edit: %v, notify: %s)", topic, canView, canEdit, notifyMode)
 	m.publishEvent(ctx, callCtx, events.MutationEvent{
 		Topic:       topic,
-		Action:      "configure",
+		Action:      action,
+		Kind:        "configure",
 		EntityType:  "SharedSpace",
 		EntityID:    fmt.Sprintf("%d", space.ID),
 		ActorUserID: actorID,
 		HouseholdID: callCtx.Scope.HouseholdID(),
 		FamilyGroup: familyGroup,
+		BeforeJSON:  beforeJSON,
 		Summary:     summary,
 		Timestamp:   time.Now(),
 	})
@@ -433,6 +447,20 @@ func (m *Module) executeCompleteSharedReminder(ctx context.Context, callCtx orch
 	completedBy := callCtx.ActorID()
 	familyGroup := callCtx.Scope.LegacyLabel()
 
+	// BL-68: completing a reminder is an update; /undo restores the fields it changes. Only those are
+	// kept: the event's row image decides whether a notification skips quiet hours (an urgent
+	// reminder), and completing one never did.
+	before, err := repo.GetSharedReminder(callCtx.Scope, id)
+	if err != nil {
+		return "", fmt.Errorf("failed to complete shared reminder: %w", err)
+	}
+	if before == nil {
+		return "", fmt.Errorf("shared reminder with id %d not found or permission denied", id)
+	}
+	beforeJSON, _ := json.Marshal(map[string]interface{}{
+		"is_completed": before.IsCompleted, "completed_by_user_id": before.CompletedByUserID, "completed_at": before.CompletedAt,
+	})
+
 	reminder, err := repo.CompleteSharedReminder(callCtx.Scope, id, completedBy)
 	if err != nil {
 		return "", fmt.Errorf("failed to complete shared reminder: %w", err)
@@ -452,12 +480,14 @@ func (m *Module) executeCompleteSharedReminder(ctx context.Context, callCtx orch
 	summary := reminder.Title
 	m.publishEvent(ctx, callCtx, events.MutationEvent{
 		Topic:       reminder.Topic,
-		Action:      "complete",
+		Action:      "update",
+		Kind:        "complete",
 		EntityType:  "SharedTaskReminder",
 		EntityID:    fmt.Sprintf("%d", reminder.ID),
 		ActorUserID: completedBy,
 		HouseholdID: callCtx.Scope.HouseholdID(),
 		FamilyGroup: familyGroup,
+		BeforeJSON:  string(beforeJSON),
 		Summary:     summary,
 		Timestamp:   time.Now(),
 	})

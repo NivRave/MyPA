@@ -103,6 +103,28 @@ describe('Domain Pages Component Tests', () => {
       expect(screen.getByText('High-speed Fiber Internet')).toBeInTheDocument();
       expect(screen.getByText(/\$800\.00/)).toBeInTheDocument();
     });
+
+    // BL-66: only the person who logged a transaction may change or delete it.
+    it('offers edit and delete on the viewer\'s own transactions only', async () => {
+      const tx = (id: string, merchant: string, isMine: boolean, isShared: boolean) => ({
+        id, userId: 'usr', familyGroup: 'Smith Family', type: 'expense', category: 'dining', merchant, amount: 20,
+        currency: 'USD', transactionDate: '2026-11-20T00:00:00Z', isShared, source: 'chat', notes: '',
+        createdAt: '2026-11-20T00:00:00Z', isMine,
+      });
+      mockedGraphqlFetch.mockResolvedValueOnce({
+        financialTransactions: [tx('tx-mine', 'My Cafe', true, false), tx('tx-other', 'Their Cafe', false, true)],
+        categoryBudgets: [],
+        recurringBills: [],
+      });
+
+      render(await FinancePage());
+
+      expect(screen.getByText('Private · Edit')).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(1);
+      expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(1);
+      expect(screen.getByDisplayValue('My Cafe')).toBeInTheDocument();
+      expect(screen.queryByDisplayValue('Their Cafe')).not.toBeInTheDocument();
+    });
   });
 
   describe('HousePage', () => {

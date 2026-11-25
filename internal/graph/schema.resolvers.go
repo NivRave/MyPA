@@ -8,6 +8,7 @@ package graph
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -220,7 +221,7 @@ func (r *mutationResolver) DeleteTopicMemory(ctx context.Context, id string) (bo
 	if beforeMem == nil || !memoryVisible(hs, beforeMem) {
 		return false, errNotYours("topic memory", id)
 	}
-	beforeJSON := toJSON(beforeMem)
+	beforeJSON := snapshotJSON(beforeMem)
 
 	if err := r.memoryRepo().DeleteTopicMemory(ctx, hs, uID); err != nil {
 		return false, err
@@ -262,7 +263,7 @@ func (r *mutationResolver) PinTopicMemory(ctx context.Context, id string, isPinn
 	if beforeMem == nil || !memoryVisible(hs, beforeMem) {
 		return nil, errNotYours("topic memory", id)
 	}
-	beforeJSON := toJSON(beforeMem)
+	beforeJSON := snapshotJSON(beforeMem)
 
 	pinnedMem, err := r.memoryRepo().PinTopicMemory(ctx, hs, uID, isPinned)
 	if err != nil {
@@ -294,7 +295,7 @@ func (r *mutationResolver) UpsertEntityProfile(ctx context.Context, topic string
 	}
 
 	beforeProfile, _ := r.memoryRepo().GetEntityProfile(ctx, hs, topic, entityName)
-	beforeJSON := toJSON(beforeProfile)
+	beforeJSON := snapshotJSON(beforeProfile)
 
 	profile := dbmodels.EntityProfile{
 		Topic:           topic,
@@ -346,7 +347,7 @@ func (r *mutationResolver) UpdateSharedSpace(ctx context.Context, topic string, 
 	}
 
 	beforeSpace, _ := r.sharedRepo().GetSharedSpace(hs, topic)
-	beforeJSON := toJSON(beforeSpace)
+	beforeJSON := snapshotJSON(beforeSpace)
 
 	space := dbmodels.SharedSpace{
 		Topic:            topic,
@@ -455,7 +456,7 @@ func (r *mutationResolver) CompleteSharedTask(ctx context.Context, id string, co
 	if beforeTask == nil {
 		return nil, fmt.Errorf("shared reminder with id %d not found", uID)
 	}
-	beforeJSON := toJSON(beforeTask)
+	beforeJSON := snapshotJSON(beforeTask)
 
 	task, err := r.sharedRepo().CompleteSharedReminder(hs, uID, completer)
 	if err != nil {
@@ -557,7 +558,7 @@ func (r *mutationResolver) DeleteScheduleEvent(ctx context.Context, id string) (
 	if event == nil || (!event.IsShared && !ownedBy(hs, event.UserID, event.PersonID)) {
 		return false, errNotYours("schedule event", id)
 	}
-	beforeJSON := toJSON(event)
+	beforeJSON := snapshotJSON(event)
 
 	if err := r.scheduleRepo().DeleteScheduleEvent(hs, uID); err != nil {
 		return false, err
@@ -588,7 +589,7 @@ func (r *mutationResolver) SaveTopicCalendarConfig(ctx context.Context, topic st
 	}
 
 	beforeCfg, _ := r.scheduleRepo().GetTopicCalendarConfig(actorID, topic)
-	beforeJSON := toJSON(beforeCfg)
+	beforeJSON := snapshotJSON(beforeCfg)
 
 	briefing := true
 	if includeInMorningBriefing != nil {
@@ -654,7 +655,7 @@ func (r *mutationResolver) UpsertBabyProfile(ctx context.Context, name string, d
 			break
 		}
 	}
-	beforeJSON := toJSON(beforeProfile)
+	beforeJSON := snapshotJSON(beforeProfile)
 
 	p := dbmodels.BabyProfile{
 		Name:            name,
@@ -780,7 +781,7 @@ func (r *mutationResolver) UpdateBabyInventory(ctx context.Context, itemName str
 	}
 
 	beforeItem, _ := r.babyRepo().GetBabyInventoryItemByName(hs, itemName)
-	beforeJSON := toJSON(beforeItem)
+	beforeJSON := snapshotJSON(beforeItem)
 
 	item := dbmodels.BabyInventoryItem{
 		ItemName:          itemName,
@@ -930,7 +931,7 @@ func (r *mutationResolver) CompleteHomeMaintenance(ctx context.Context, id strin
 	if beforeItem == nil {
 		return nil, fmt.Errorf("home maintenance item %s not found", id)
 	}
-	beforeJSON := toJSON(beforeItem)
+	beforeJSON := snapshotJSON(beforeItem)
 
 	updatedItem, err := r.houseRepo().CompleteMaintenanceItem(hs, uID, time.Now(), actorID)
 	if err != nil {
@@ -969,7 +970,7 @@ func (r *mutationResolver) SaveVehicleAsset(ctx context.Context, name string, li
 			break
 		}
 	}
-	beforeJSON := toJSON(beforeAsset)
+	beforeJSON := snapshotJSON(beforeAsset)
 
 	v := dbmodels.VehicleAsset{
 		Name:             name,
@@ -1065,7 +1066,112 @@ func (r *mutationResolver) LogFinancialTransaction(ctx context.Context, typeArg 
 		Timestamp:   time.Now(),
 	})
 
-	return toModelFinancialTransaction(&tx), nil
+	out := toModelFinancialTransaction(&tx)
+	out.IsMine = true
+	return out, nil
+}
+
+// UpdateFinancialTransaction is the resolver for the updateFinancialTransaction field.
+func (r *mutationResolver) UpdateFinancialTransaction(ctx context.Context, id string, typeArg *string, category *string, merchant *string, amount *float64, currency *string, transactionDate *time.Time, notes *string, isShared *bool) (*model.FinancialTransaction, error) {
+	uID, err := toolutil.ParseID(id)
+	if err != nil {
+		return nil, fmt.Errorf("invalid transaction id: %w", err)
+	}
+	actorID, hs, err := r.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if amount != nil && *amount <= 0 {
+		return nil, fmt.Errorf("transaction amount must be greater than 0")
+	}
+
+	// BL-66: only the transaction's own person may change it, an owner included; the repository
+	// finds the caller's own transactions only.
+	before, after, err := r.financeRepo().UpdateOwnTransaction(ctx, hs, uID, func(tx *dbmodels.FinancialTransaction) {
+		if typeArg != nil {
+			tx.Type = *typeArg
+		}
+		if category != nil && strings.TrimSpace(*category) != "" {
+			tx.Category = *category
+		}
+		if merchant != nil {
+			tx.Merchant = strings.TrimSpace(*merchant)
+		}
+		if amount != nil {
+			tx.Amount = *amount
+		}
+		if currency != nil && strings.TrimSpace(*currency) != "" {
+			tx.Currency = *currency
+		}
+		if transactionDate != nil {
+			tx.TransactionDate = *transactionDate
+		}
+		if notes != nil {
+			tx.Notes = *notes
+		}
+		if isShared != nil {
+			tx.IsShared = *isShared
+		}
+	})
+	if errors.Is(err, db.ErrNotOwnTransaction) {
+		return nil, errNotYours("financial transaction", id)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	r.publishEvent(ctx, events.MutationEvent{
+		Topic:       "finance",
+		Action:      "update",
+		EntityType:  "financial_transaction",
+		EntityID:    uintToStr(after.ID),
+		ActorUserID: actorID,
+		HouseholdID: hs.HouseholdID(),
+		FamilyGroup: hs.LegacyLabel(),
+		BeforeJSON:  snapshotJSON(before),
+		AfterJSON:   toJSON(after),
+		Summary:     fmt.Sprintf("Changed financial transaction: %.2f %s at %s (%s)", after.Amount, after.Currency, after.Merchant, after.Category),
+		Timestamp:   time.Now(),
+	})
+
+	out := toModelFinancialTransaction(after)
+	out.IsMine = true
+	return out, nil
+}
+
+// DeleteFinancialTransaction is the resolver for the deleteFinancialTransaction field.
+func (r *mutationResolver) DeleteFinancialTransaction(ctx context.Context, id string) (bool, error) {
+	uID, err := toolutil.ParseID(id)
+	if err != nil {
+		return false, fmt.Errorf("invalid transaction id: %w", err)
+	}
+	actorID, hs, err := r.caller(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	// BL-66: only the transaction's own person may delete it, an owner included.
+	deleted, err := r.financeRepo().DeleteOwnTransaction(ctx, hs, uID)
+	if errors.Is(err, db.ErrNotOwnTransaction) {
+		return false, errNotYours("financial transaction", id)
+	}
+	if err != nil {
+		return false, err
+	}
+
+	r.publishEvent(ctx, events.MutationEvent{
+		Topic:       "finance",
+		Action:      "delete",
+		EntityType:  "financial_transaction",
+		EntityID:    uintToStr(deleted.ID),
+		ActorUserID: actorID,
+		HouseholdID: hs.HouseholdID(),
+		FamilyGroup: hs.LegacyLabel(),
+		BeforeJSON:  snapshotJSON(deleted),
+		Summary:     fmt.Sprintf("Deleted financial transaction: %.2f %s at %s (%s)", deleted.Amount, deleted.Currency, deleted.Merchant, deleted.Category),
+		Timestamp:   time.Now(),
+	})
+	return true, nil
 }
 
 // SetCategoryBudget is the resolver for the setCategoryBudget field.
@@ -1081,7 +1187,7 @@ func (r *mutationResolver) SetCategoryBudget(ctx context.Context, category strin
 	}
 
 	beforeBudget, _ := r.financeRepo().GetCategoryBudget(ctx, hs, category)
-	beforeJSON := toJSON(beforeBudget)
+	beforeJSON := snapshotJSON(beforeBudget)
 
 	b := dbmodels.CategoryBudget{
 		Category:          category,
@@ -1091,8 +1197,13 @@ func (r *mutationResolver) SetCategoryBudget(ctx context.Context, category strin
 		CreatedAt:         time.Now(),
 		UpdatedAt:         time.Now(),
 	}
+	// BL-68: a new budget is a create (undo removes it), an existing one an update.
+	action := "create"
 	if beforeBudget != nil {
 		b.ID = beforeBudget.ID
+		action = "update"
+	} else {
+		beforeJSON = ""
 	}
 
 	if err := r.financeRepo().SetCategoryBudget(ctx, hs, &b); err != nil {
@@ -1101,7 +1212,8 @@ func (r *mutationResolver) SetCategoryBudget(ctx context.Context, category strin
 
 	r.publishEvent(ctx, events.MutationEvent{
 		Topic:       "finance",
-		Action:      "update",
+		Action:      action,
+		Kind:        "update", // shown and matched as before BL-68, new or not
 		EntityType:  "category_budget",
 		EntityID:    uintToStr(b.ID),
 		ActorUserID: actorID,
@@ -1274,7 +1386,7 @@ func (r *mutationResolver) ToggleAutomationRule(ctx context.Context, id string, 
 		return nil, fmt.Errorf("permission denied: unauthorized access to automation rule")
 	}
 
-	beforeJSON := toJSON(rule)
+	beforeJSON := snapshotJSON(rule)
 
 	rule.IsActive = isActive
 	if err := r.autoRepo().UpdateAutomationRule(hs, rule); err != nil {
@@ -1317,7 +1429,7 @@ func (r *mutationResolver) DeleteAutomationRule(ctx context.Context, id string) 
 		return false, fmt.Errorf("permission denied: unauthorized access to automation rule")
 	}
 
-	beforeJSON := toJSON(rule)
+	beforeJSON := snapshotJSON(rule)
 
 	if err := r.autoRepo().DeleteAutomationRule(hs, uID); err != nil {
 		return false, err
@@ -1354,7 +1466,7 @@ func (r *mutationResolver) SaveUserPreference(ctx context.Context, userID string
 	}
 
 	beforePref, _ := r.autoRepo().GetUserPreference(targetUserID)
-	beforeJSON := toJSON(beforePref)
+	beforeJSON := snapshotJSON(beforePref)
 
 	pref := dbmodels.UserPreference{
 		UserID:             targetUserID,
@@ -1364,9 +1476,14 @@ func (r *mutationResolver) SaveUserPreference(ctx context.Context, userID string
 		BriefingTopicsJSON: "[]",
 		UpdatedAt:          time.Now(),
 	}
+	// BL-68: a person's first preferences are a create (undo removes them), later ones an update.
+	action := "create"
 	if beforePref != nil {
 		pref = *beforePref
 		pref.UpdatedAt = time.Now()
+		action = "update"
+	} else {
+		beforeJSON = ""
 	}
 
 	if preferredLanguage != nil {
@@ -1401,9 +1518,10 @@ func (r *mutationResolver) SaveUserPreference(ctx context.Context, userID string
 
 	r.publishEvent(ctx, events.MutationEvent{
 		Topic:       "automation",
-		Action:      "update",
+		Action:      action,
+		Kind:        "update", // shown and matched as before BL-68, new or not
 		EntityType:  "user_preference",
-		EntityID:    targetUserID,
+		EntityID:    pref.UserID,
 		ActorUserID: actorID,
 		HouseholdID: hs.HouseholdID(),
 		FamilyGroup: hs.LegacyLabel(),
@@ -1489,6 +1607,10 @@ func (r *mutationResolver) RollbackMutation(ctx context.Context, mutationID stri
 	res, err := dur.RollbackFromDashboard(ctx, hs, mutationID)
 	if err != nil {
 		return false, err
+	}
+	if res.NotUndoable {
+		// BL-68: a change whose entry cannot say how to reverse it; nothing was changed.
+		return false, fmt.Errorf("%s", res.Detail)
 	}
 	return !res.AlreadyUndone, nil
 }
@@ -1937,7 +2059,9 @@ func (r *queryResolver) FinancialTransactions(ctx context.Context, category *str
 	// ones and the caller's own (BL-44), the same rule chat has, so the limit counts those only.
 	var res []*model.FinancialTransaction
 	for i := range dbTxs {
-		res = append(res, toModelFinancialTransaction(&dbTxs[i]))
+		m := toModelFinancialTransaction(&dbTxs[i])
+		m.IsMine = ownedBy(hs, dbTxs[i].UserID, dbTxs[i].PersonID) // BL-66: only its person may change it
+		res = append(res, m)
 	}
 	return res, nil
 }
@@ -2090,7 +2214,7 @@ func (r *queryResolver) MutationLogs(ctx context.Context, topic *string, limit *
 		m := toModelMutationLog(&dbLogs[i])
 		if !ownedBy(hs, dbLogs[i].UserID, dbLogs[i].PersonID) {
 			m.BeforeJSON, m.AfterJSON = nil, nil
-			m.Summary = fmt.Sprintf("%s %s", dbLogs[i].Action, dbLogs[i].EntityType)
+			m.Summary = fmt.Sprintf("%s %s", dbLogs[i].Label(), dbLogs[i].EntityType)
 		}
 		res = append(res, m)
 	}

@@ -70,6 +70,39 @@ func (r *inMemoryFinanceRepo) GetTransaction(ctx context.Context, s identity.Sco
 	return &cp, nil
 }
 
+// ownOf finds a transaction of the scope's own person (BL-66), as the database does.
+func (r *inMemoryFinanceRepo) ownOf(s identity.Scope, id uint) (*models.FinancialTransaction, error) {
+	tx, ok := r.transactions[id]
+	if !ok || tx.HouseholdID != s.HouseholdID() || (tx.UserID != s.PersonKey() && tx.UserID != s.PersonID()) {
+		return nil, db.ErrNotOwnTransaction
+	}
+	return tx, nil
+}
+
+func (r *inMemoryFinanceRepo) UpdateOwnTransaction(ctx context.Context, s identity.Scope, id uint, change func(*models.FinancialTransaction)) (*models.FinancialTransaction, *models.FinancialTransaction, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tx, err := r.ownOf(s, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	before := *tx
+	change(tx)
+	after := *tx
+	return &before, &after, nil
+}
+
+func (r *inMemoryFinanceRepo) DeleteOwnTransaction(ctx context.Context, s identity.Scope, id uint) (*models.FinancialTransaction, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tx, err := r.ownOf(s, id)
+	if err != nil {
+		return nil, err
+	}
+	delete(r.transactions, id)
+	return tx, nil
+}
+
 func (r *inMemoryFinanceRepo) ListTransactions(ctx context.Context, s identity.Scope, filter db.TransactionFilter) ([]models.FinancialTransaction, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -752,15 +785,19 @@ func TestFinanceModule_MutationEvents(t *testing.T) {
 	eventsMu.Lock()
 	defer eventsMu.Unlock()
 
+	// BL-68: logged as the change undo reverses, under the name people and rules have always seen.
 	require.Len(t, capturedEvents, 3)
-	assert.Equal(t, "transaction_logged", capturedEvents[0].Action)
+	assert.Equal(t, "create", capturedEvents[0].Action)
+	assert.Equal(t, "transaction_logged", capturedEvents[0].Label())
 	assert.Equal(t, "FinancialTransaction", capturedEvents[0].EntityType)
 	assert.Equal(t, "SmithFamily", capturedEvents[0].FamilyGroup)
 
-	assert.Equal(t, "budget_set", capturedEvents[1].Action)
+	assert.Equal(t, "create", capturedEvents[1].Action, "a new budget")
+	assert.Equal(t, "budget_set", capturedEvents[1].Label())
 	assert.Equal(t, "CategoryBudget", capturedEvents[1].EntityType)
 
-	assert.Equal(t, "recurring_bill_added", capturedEvents[2].Action)
+	assert.Equal(t, "create", capturedEvents[2].Action)
+	assert.Equal(t, "recurring_bill_added", capturedEvents[2].Label())
 	assert.Equal(t, "RecurringBill", capturedEvents[2].EntityType)
 }
 

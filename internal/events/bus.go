@@ -12,15 +12,23 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nivik/mypa/internal/models"
 )
 
 // MutationEvent represents a standardized data mutation emitted across domain packages.
 // It powers audit logs, undo/rollback operations, cross-user partner notifications,
 // prompt cache invalidation, and event-driven automations.
 type MutationEvent struct {
-	ID          string `json:"id"`
-	Topic       string `json:"topic"`       // e.g., "baby", "house", "finance", "schedule", "memory"
-	Action      string `json:"action"`      // e.g., "create", "update", "delete", "complete"
+	ID    string `json:"id"`
+	Topic string `json:"topic"` // e.g., "baby", "house", "finance", "schedule", "memory"
+	// Action is what the change did to its row, the one word undo reads: "create", "update" or
+	// "delete" for a change undo can reverse (BL-68); "undo" for an undo; something else for an
+	// event that changes no undoable row ("rule_executed", "cron_tick").
+	Action string `json:"action"`
+	// Kind is the domain's own name for the change ("transaction_logged", "supersede", "complete"),
+	// set when it differs from Action. People and household rules see the change by it, as they did
+	// before BL-68 (Label).
+	Kind        string `json:"kind,omitempty"`
 	EntityType  string `json:"entity_type"` // e.g., "BabyCareLog", "FinancialTransaction"
 	EntityID    string `json:"entity_id"`
 	ActorUserID string `json:"actor_user_id"`
@@ -33,6 +41,19 @@ type MutationEvent struct {
 	AfterJSON   string    `json:"after_json"`
 	Summary     string    `json:"summary"` // Human-readable summary for partner notification & undo log
 	Timestamp   time.Time `json:"timestamp"`
+	// Also are the other rows the change touched, as they were before it, which the same undo puts
+	// back (BL-68): the older memory a new one was saved in place of, the baby profile a measurement
+	// updated. Only the mutation log keeps them; they are never sent anywhere (a webhook rule posts
+	// the event without them).
+	Also []models.UndoAlso `json:"-"`
+}
+
+// Label is the change as people and household rules know it: its Kind, else its Action.
+func (e MutationEvent) Label() string {
+	if k := strings.TrimSpace(e.Kind); k != "" {
+		return k
+	}
+	return e.Action
 }
 
 // ErrBusClosed is returned when an event is published to a closed EventBus.

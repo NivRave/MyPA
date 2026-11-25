@@ -131,6 +131,17 @@ func (m *Module) HandleMutationEvent(ctx context.Context, ev events.MutationEven
 		IsUndone:   isUndone,
 		CreatedAt:  ev.Timestamp,
 	}
+	if k := strings.TrimSpace(ev.Kind); k != "" && !strings.EqualFold(k, ev.Action) {
+		log.Kind = k
+	}
+	if len(ev.Also) > 0 {
+		also, err := json.Marshal(ev.Also)
+		if err != nil {
+			return fmt.Errorf("durability: encode the rows change %s also touched: %w", ev.ID, err)
+		}
+		s := string(also)
+		log.AlsoJSON = &s
+	}
 
 	if err := m.repo.InsertMutationLog(scope, log); err != nil {
 		slog.Error("durability: failed to insert mutation log", "error", err, "id", ev.ID, "topic", ev.Topic)
@@ -396,6 +407,18 @@ func (m *Module) executeRollbackInternal(ctx context.Context, s identity.Scope, 
 		return nil, err
 	}
 
+	// BL-68, the owner's decision 3: a change whose entry cannot say how to reverse it (one logged
+	// before the fix without the snapshot undo needs) is named plainly, and nothing is changed. Undo
+	// never moves on to an older change instead.
+	if _, _, err := db.UndoPlan(*log); err != nil {
+		// Whose row it touched is checked from its snapshots first, as for any undo: another
+		// person's own data is refused, never described.
+		if err := db.MayUndo(s, via, *log, tbl, snapshotState(log.BeforeJSON), snapshotState(log.AfterJSON)); err != nil {
+			return nil, err
+		}
+		return notUndoable(s, log), nil
+	}
+
 	var detail string
 	// Check if a domain registered a custom UndoHandler (e.g. external Google Calendar deletion)
 	if handler, exists := m.getUndoHandler(log.EntityType); exists {
@@ -428,9 +451,12 @@ func (m *Module) executeRollbackInternal(ctx context.Context, s identity.Scope, 
 			if strings.HasPrefix(err.Error(), "permission denied") {
 				return nil, err
 			}
+			if errors.Is(err, db.ErrCannotUndo) {
+				return notUndoable(s, log), nil
+			}
 			return nil, fmt.Errorf("snapshot rollback failed: %w", err)
 		}
-		detail = fmt.Sprintf("Reverted %s '%s' on %s.", log.Action, log.EntityID, log.EntityType)
+		detail = fmt.Sprintf("Reverted %s '%s' on %s.", log.Label(), log.EntityID, log.EntityType)
 		if before := withoutVector(tbl, log.BeforeJSON); before != "" && before != "{}" {
 			detail += fmt.Sprintf(" Restored prior state: %s", before)
 		}
@@ -448,7 +474,7 @@ func (m *Module) executeRollbackInternal(ctx context.Context, s identity.Scope, 
 			FamilyGroup: s.LegacyLabel(),
 			BeforeJSON:  withoutVector(tbl, log.AfterJSON),
 			AfterJSON:   withoutVector(tbl, log.BeforeJSON),
-			Summary:     fmt.Sprintf("Undid %s (%s): %s", log.ID, log.Action, log.Summary),
+			Summary:     fmt.Sprintf("Undid %s (%s): %s", log.ID, log.Label(), log.Summary),
 			Timestamp:   time.Now(),
 		})
 	}
@@ -463,6 +489,26 @@ func (m *Module) executeRollbackInternal(ctx context.Context, s identity.Scope, 
 		Detail:        detail,
 		AlreadyUndone: false,
 	}, nil
+}
+
+// notUndoable is the answer for a change undo cannot reverse: which change it is, and that
+// nothing was changed (BL-68). Another member's change (an owner in the dashboard) is named by its
+// kind and entity type only, as the audit page shows it to an owner: never its summary.
+func notUndoable(s identity.Scope, log *models.MutationLog) *RollbackResult {
+	named := *log
+	if !db.MutationIsOwn(s, *log) {
+		named.Summary = ""
+	}
+	return &RollbackResult{
+		MutationID:  log.ID,
+		Topic:       log.Topic,
+		Action:      log.Label(),
+		EntityType:  log.EntityType,
+		EntityID:    log.EntityID,
+		Summary:     named.Summary,
+		Detail:      db.CannotUndoMessage(named),
+		NotUndoable: true,
+	}
 }
 
 // snapshotState reads a snapshot for db.MayUndo; an empty or unreadable one says nothing.
@@ -502,7 +548,7 @@ func (m *Module) executeUndo(ctx context.Context, callCtx orchestrator.CallConte
 		}
 		return "", err
 	}
-	if res.AlreadyUndone {
+	if res.AlreadyUndone || res.NotUndoable {
 		return res.Detail, nil
 	}
 	return fmt.Sprintf("Successfully undone! %s", res.Detail), nil
@@ -542,7 +588,7 @@ func (m *Module) executeListRecentChanges(ctx context.Context, callCtx orchestra
 			i+1,
 			l.CreatedAt.Format("2006-01-02 15:04:05"),
 			strings.ToUpper(l.Topic),
-			strings.ToUpper(l.Action),
+			strings.ToUpper(l.Label()),
 			l.Summary,
 			l.ID,
 			l.EntityType,

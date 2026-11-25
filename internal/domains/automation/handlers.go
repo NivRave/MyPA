@@ -2,6 +2,7 @@ package automation
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/nivik/mypa/internal/db"
 	"github.com/nivik/mypa/internal/events"
@@ -121,7 +122,8 @@ func (m *Module) executeRegisterExternalAPI(ctx context.Context, callCtx orchest
 	if bus := m.resolveEventBus(callCtx); bus != nil {
 		_ = bus.Publish(ctx, events.MutationEvent{
 			Topic:       "automation",
-			Action:      "register_connector",
+			Action:      "create",
+			Kind:        "register_connector",
 			EntityType:  "ExternalAPIConnector",
 			EntityID:    fmt.Sprint(conn.ID),
 			ActorUserID: userID,
@@ -306,7 +308,8 @@ func (m *Module) executeCreateAutomationRule(ctx context.Context, callCtx orches
 	if bus := m.resolveEventBus(callCtx); bus != nil {
 		_ = bus.Publish(ctx, events.MutationEvent{
 			Topic:       "automation",
-			Action:      "rule_created",
+			Action:      "create",
+			Kind:        "rule_created",
 			EntityType:  "AutomationRule",
 			EntityID:    fmt.Sprint(rule.ID),
 			ActorUserID: userID,
@@ -354,18 +357,21 @@ func (m *Module) executeDeleteAutomationRule(ctx context.Context, callCtx orches
 		return "", fmt.Errorf("automation rule %d not found or permission denied", ruleID)
 	}
 
+	beforeBytes, _ := json.Marshal(models.SnapshotMap(rule)) // the snapshot /undo restores (BL-68)
 	if err := repo.DeleteAutomationRule(s, uint(ruleID)); err != nil {
 		return "", fmt.Errorf("failed to delete automation rule: %w", err)
 	}
 	if bus := m.resolveEventBus(callCtx); bus != nil {
 		_ = bus.Publish(ctx, events.MutationEvent{
 			Topic:       "automation",
-			Action:      "rule_deleted",
+			Action:      "delete",
+			Kind:        "rule_deleted",
 			EntityType:  "AutomationRule",
 			EntityID:    fmt.Sprint(ruleID),
 			ActorUserID: userID,
 			HouseholdID: s.HouseholdID(),
 			FamilyGroup: s.LegacyLabel(),
+			BeforeJSON:  string(beforeBytes),
 			Summary:     fmt.Sprintf("Deleted automation rule %d", ruleID),
 			Timestamp:   time.Now(),
 		})

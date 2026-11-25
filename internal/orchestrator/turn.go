@@ -363,7 +363,7 @@ func (e *Engine) executeSingleTool(ctx context.Context, msg channel.Inbound, his
 	slog.Info("llm requested tool call", "tool", toolCall.Name)
 
 	// P3-1: one list of sensitive tools (security.go) instead of four hard-coded meta tools.
-	if RequiresConfirmationWhenUntrusted(toolCall.Name) {
+	if RequiresConfirmationWhenUntrusted(toolCall.Name, toolCall.Args) {
 		secState := GetTurnSecurityState(ctx)
 		if secState != nil {
 			isUntrusted, sources := secState.IsUntrusted()

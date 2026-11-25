@@ -38,6 +38,10 @@ func newInjectionHarness(t *testing.T, script ...*llm.Response) *injectionHarnes
 		decls = append(decls, &genai.FunctionDeclaration{Name: name})
 		h.ran[name] = new(int64)
 	}
+	for name := range destructiveActionsWhenUntrusted { // BL-66: gated for some actions only
+		decls = append(decls, &genai.FunctionDeclaration{Name: name})
+		h.ran[name] = new(int64)
+	}
 	for _, n := range []string{"search_emails", "list_tasks"} {
 		decls = append(decls, &genai.FunctionDeclaration{Name: n})
 		h.ran[n] = new(int64)

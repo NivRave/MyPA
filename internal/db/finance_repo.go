@@ -10,6 +10,7 @@ import (
 
 	"github.com/nivik/mypa/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func init() {
@@ -74,6 +75,11 @@ type FinanceRepository interface {
 	CreateTransaction(ctx context.Context, s identity.Scope, tx *models.FinancialTransaction) error
 	GetTransaction(ctx context.Context, s identity.Scope, id uint) (*models.FinancialTransaction, error)
 	ListTransactions(ctx context.Context, s identity.Scope, filter TransactionFilter) ([]models.FinancialTransaction, error)
+	// UpdateOwnTransaction applies change to a transaction of the scope's own person and saves it;
+	// DeleteOwnTransaction deletes one (BL-66). Both return the row as it was. Anyone else's
+	// transaction, an owner's caller included, is ErrNotOwnTransaction.
+	UpdateOwnTransaction(ctx context.Context, s identity.Scope, id uint, change func(*models.FinancialTransaction)) (before, after *models.FinancialTransaction, err error)
+	DeleteOwnTransaction(ctx context.Context, s identity.Scope, id uint) (*models.FinancialTransaction, error)
 
 	// Aggregations & Anomaly Detection
 	GetMonthlyCategorySpend(ctx context.Context, s identity.Scope, category string, year int, month time.Month) (float64, error)
@@ -178,6 +184,92 @@ func (r *FinanceRepo) GetTransaction(ctx context.Context, s identity.Scope, id u
 		return nil, fmt.Errorf("failed to get transaction %d: %w", id, result.Error)
 	}
 	return &tx, nil
+}
+
+// ErrNotOwnTransaction is the answer for a transaction that is not the caller's own: another
+// member's, shared or not, or none at all. The two are not told apart (BL-66).
+var ErrNotOwnTransaction = errors.New("transaction not found among your own transactions")
+
+// ownTransaction loads, locked for update, a transaction of the scope's household whose person is
+// the scope's person (by person_id, else by the old key), whatever its sharing.
+func ownTransaction(tx *gorm.DB, s identity.Scope, id uint) (*models.FinancialTransaction, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
+	key := strings.TrimSpace(s.PersonKey())
+	if key == "" {
+		return nil, ErrNotOwnTransaction
+	}
+	mine, args := personIs("user_id", "person_id", key)
+	var row models.FinancialTransaction
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("household_id = ? AND id = ?", s.HouseholdID(), id).
+		Where(mine, args...).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotOwnTransaction
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to load transaction %d: %w", id, err)
+	}
+	return &row, nil
+}
+
+// UpdateOwnTransaction changes a transaction of the scope's own person (BL-66): its sharing,
+// amount, category, merchant, date, type, currency or notes. Its person, household and source stay.
+func (r *FinanceRepo) UpdateOwnTransaction(ctx context.Context, s identity.Scope, id uint, change func(*models.FinancialTransaction)) (before, after *models.FinancialTransaction, err error) {
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		row, err := ownTransaction(tx, s, id)
+		if err != nil {
+			return err
+		}
+		prior := *row
+		change(row)
+		row.ID, row.UserID, row.PersonID, row.HouseholdID, row.FamilyGroup = prior.ID, prior.UserID, prior.PersonID, prior.HouseholdID, prior.FamilyGroup
+		row.Source, row.CreatedAt = prior.Source, prior.CreatedAt
+		row.Category = models.NormalizeFinanceCategory(row.Category)
+		row.Type = models.NormalizeTransactionType(row.Type)
+		row.Currency = strings.ToUpper(strings.TrimSpace(row.Currency))
+		if row.Amount <= 0 {
+			return errors.New("transaction amount must be greater than 0")
+		}
+		if row.Currency == "" {
+			row.Currency = prior.Currency
+		}
+		if err := tx.Model(&models.FinancialTransaction{}).Where("household_id = ? AND id = ?", s.HouseholdID(), id).
+			Updates(map[string]interface{}{
+				"type": row.Type, "category": row.Category, "merchant": row.Merchant, "amount": row.Amount,
+				"currency": row.Currency, "transaction_date": row.TransactionDate, "is_shared": row.IsShared, "notes": row.Notes,
+			}).Error; err != nil {
+			return fmt.Errorf("failed to update transaction %d: %w", id, err)
+		}
+		before, after = &prior, row
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return before, after, nil
+}
+
+// DeleteOwnTransaction deletes a transaction of the scope's own person and returns it as it was
+// (BL-66).
+func (r *FinanceRepo) DeleteOwnTransaction(ctx context.Context, s identity.Scope, id uint) (*models.FinancialTransaction, error) {
+	var deleted *models.FinancialTransaction
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		row, err := ownTransaction(tx, s, id)
+		if err != nil {
+			return err
+		}
+		res := tx.Where("household_id = ? AND id = ?", s.HouseholdID(), id).Delete(&models.FinancialTransaction{})
+		if res.Error != nil {
+			return fmt.Errorf("failed to delete transaction %d: %w", id, res.Error)
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotOwnTransaction
+		}
+		deleted = row
+		return nil
+	})
+	return deleted, err
 }
 
 // ListTransactions returns the filtered transactions of the scope's household that its person
@@ -657,6 +749,14 @@ func (c *Client) GetTransaction(ctx context.Context, s identity.Scope, id uint) 
 
 func (c *Client) ListTransactions(ctx context.Context, s identity.Scope, filter TransactionFilter) ([]models.FinancialTransaction, error) {
 	return c.financeRepo().ListTransactions(ctx, s, filter)
+}
+
+func (c *Client) UpdateOwnTransaction(ctx context.Context, s identity.Scope, id uint, change func(*models.FinancialTransaction)) (before, after *models.FinancialTransaction, err error) {
+	return c.financeRepo().UpdateOwnTransaction(ctx, s, id, change)
+}
+
+func (c *Client) DeleteOwnTransaction(ctx context.Context, s identity.Scope, id uint) (*models.FinancialTransaction, error) {
+	return c.financeRepo().DeleteOwnTransaction(ctx, s, id)
 }
 
 func (c *Client) GetMonthlyCategorySpend(ctx context.Context, s identity.Scope, category string, year int, month time.Month) (float64, error) {

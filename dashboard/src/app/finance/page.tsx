@@ -26,6 +26,7 @@ const GET_FINANCE_DATA_QUERY = `
       isShared
       source
       notes
+      isMine
     }
     categoryBudgets {
       id
@@ -50,6 +51,19 @@ const GET_FINANCE_DATA_QUERY = `
 const LOG_TRANSACTION_MUTATION = `
   mutation LogTx($type: String!, $category: String!, $merchant: String!, $amount: Float!, $currency: String!, $notes: String) {
     logFinancialTransaction(type: $type, category: $category, merchant: $merchant, amount: $amount, currency: $currency, notes: $notes) { id }
+  }
+`;
+
+// BL-66: a person changes or deletes only their own transaction; both are undoable from the audit page.
+const UPDATE_TRANSACTION_MUTATION = `
+  mutation UpdateTx($id: ID!, $category: String, $merchant: String, $amount: Float, $transactionDate: Time, $isShared: Boolean) {
+    updateFinancialTransaction(id: $id, category: $category, merchant: $merchant, amount: $amount, transactionDate: $transactionDate, isShared: $isShared) { id }
+  }
+`;
+
+const DELETE_TRANSACTION_MUTATION = `
+  mutation DeleteTx($id: ID!) {
+    deleteFinancialTransaction(id: $id)
   }
 `;
 
@@ -126,6 +140,37 @@ export default async function FinancePage() {
       });
     } catch (err) {
       console.error("addTransaction failed:", err);
+    }
+    revalidatePath("/finance");
+  }
+
+  async function updateTransaction(formData: FormData) {
+    "use server";
+    const id = formData.get("id") as string;
+    const amount = parseFloat((formData.get("amount") as string) || "");
+    const date = (formData.get("transactionDate") as string) || "";
+    try {
+      await graphqlFetch(UPDATE_TRANSACTION_MUTATION, {
+        id,
+        category: (formData.get("category") as string) || null,
+        merchant: (formData.get("merchant") as string) ?? null,
+        amount: Number.isFinite(amount) && amount > 0 ? amount : null,
+        transactionDate: date ? new Date(`${date}T00:00:00Z`).toISOString() : null,
+        isShared: formData.get("isShared") === "on",
+      });
+    } catch (err) {
+      console.error("updateTransaction failed:", err);
+    }
+    revalidatePath("/finance");
+  }
+
+  async function deleteTransaction(formData: FormData) {
+    "use server";
+    const id = formData.get("id") as string;
+    try {
+      await graphqlFetch(DELETE_TRANSACTION_MUTATION, { id });
+    } catch (err) {
+      console.error("deleteTransaction failed:", err);
     }
     revalidatePath("/finance");
   }
@@ -420,6 +465,7 @@ export default async function FinancePage() {
                 <th className="px-6 py-3 font-medium">Source</th>
                 <th className="px-6 py-3 font-medium">Notes</th>
                 <th className="px-6 py-3 font-medium text-right">Amount</th>
+                <th className="px-6 py-3 font-medium text-right">Yours</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
@@ -441,12 +487,46 @@ export default async function FinancePage() {
                     <td className={`px-6 py-4 text-right font-mono font-bold ${isExpense ? "text-red-600" : "text-emerald-600"}`}>
                       {isExpense ? "-" : "+"}${t.amount.toFixed(2)}
                     </td>
+                    <td className="px-6 py-4 text-right text-xs">
+                      {t.isMine ? (
+                        <details className="inline-block text-left">
+                          <summary className="cursor-pointer text-neutral-500 hover:text-neutral-800">
+                            {t.isShared ? "Edit" : "Private · Edit"}
+                          </summary>
+                          <form action={updateTransaction} className="mt-2 space-y-2 w-56">
+                            <input type="hidden" name="id" value={t.id} />
+                            <input type="number" step="any" name="amount" defaultValue={t.amount} className="w-full border border-neutral-300 rounded p-1" />
+                            <input type="text" name="merchant" defaultValue={t.merchant} className="w-full border border-neutral-300 rounded p-1" />
+                            <select name="category" defaultValue={t.category} className="w-full border border-neutral-300 rounded p-1 bg-white">
+                              <option value="groceries">Groceries</option>
+                              {babyCategory && <option value="baby">Baby</option>}
+                              <option value="house">House</option>
+                              <option value="utilities">Utilities</option>
+                              <option value="dining">Dining</option>
+                              <option value="health">Health</option>
+                              <option value="other">Other</option>
+                            </select>
+                            <input type="date" name="transactionDate" defaultValue={t.transactionDate.slice(0, 10)} className="w-full border border-neutral-300 rounded p-1" />
+                            <label className="flex items-center gap-1 text-neutral-600">
+                              <input type="checkbox" name="isShared" defaultChecked={t.isShared} /> Shared with the household
+                            </label>
+                            <button type="submit" className="w-full py-1 bg-neutral-900 text-white rounded">Save</button>
+                          </form>
+                          <form action={deleteTransaction} className="mt-2">
+                            <input type="hidden" name="id" value={t.id} />
+                            <button type="submit" className="w-full py-1 bg-red-50 text-red-700 hover:bg-red-100 rounded">Delete</button>
+                          </form>
+                        </details>
+                      ) : (
+                        <span className="text-neutral-300">—</span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
               {transactions.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-neutral-500">
+                  <td colSpan={7} className="px-6 py-8 text-center text-neutral-500">
                     No transactions recorded. Log expenses in chat (a photo of a receipt works too) or with the form above.
                   </td>
                 </tr>

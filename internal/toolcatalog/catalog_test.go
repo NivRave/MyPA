@@ -66,36 +66,40 @@ func TestBuild_Sanity(t *testing.T) {
 // ProductionModules must mirror the modules wired in the app's worker, or the docs (and the
 // reachability test that reuses this list) silently miss tools.
 func TestProductionModulesMatchTheWorkerWiring(t *testing.T) {
-	path := filepath.Join(repoRoot, "cmd", "mypa", "worker.go")
-	f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-	require.NoError(t, err)
-
-	domainImports := map[string]bool{} // local package names of internal/domains/* imports
-	for _, imp := range f.Imports {
-		p, _ := strconv.Unquote(imp.Path.Value)
-		if strings.Contains(p, "/internal/domains/") {
-			name := p[strings.LastIndex(p, "/")+1:]
-			if imp.Name != nil {
-				name = imp.Name.Name
-			}
-			domainImports[name] = true
-		}
-	}
+	// The worker builds the durability module itself and the others in toolModules (BL-68: the undo
+	// guard walks that list).
 	var wired []string
-	ast.Inspect(f, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
+	for _, file := range []string{"worker.go", "tool_modules.go"} {
+		path := filepath.Join(repoRoot, "cmd", "mypa", file)
+		f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		require.NoError(t, err)
+
+		domainImports := map[string]bool{} // local package names of internal/domains/* imports
+		for _, imp := range f.Imports {
+			p, _ := strconv.Unquote(imp.Path.Value)
+			if strings.Contains(p, "/internal/domains/") {
+				name := p[strings.LastIndex(p, "/")+1:]
+				if imp.Name != nil {
+					name = imp.Name.Name
+				}
+				domainImports[name] = true
+			}
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "NewModule" {
+				return true
+			}
+			if id, ok := sel.X.(*ast.Ident); ok && domainImports[id.Name] {
+				wired = append(wired, id.Name)
+			}
 			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "NewModule" {
-			return true
-		}
-		if id, ok := sel.X.(*ast.Ident); ok && domainImports[id.Name] {
-			wired = append(wired, id.Name)
-		}
-		return true
-	})
+		})
+	}
 
 	var listed []string
 	for _, m := range ProductionModules() {
