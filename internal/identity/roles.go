@@ -80,7 +80,8 @@ const (
 	UseDashboard Action = "use_dashboard"
 	// ManageHousehold is changing the household's settings.
 	ManageHousehold Action = "manage_household"
-	// ManageMembers is listing the members and their roles, and issuing pairing codes.
+	// ManageMembers is listing the members and their roles, issuing pairing codes, and listing and
+	// removing a member's channel accounts (BL-41).
 	ManageMembers Action = "manage_members"
 	// ViewMemberActivity is seeing each member's activity: who, when and what kind of action,
 	// without the text of their chats or their personal data.

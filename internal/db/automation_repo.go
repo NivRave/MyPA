@@ -293,7 +293,8 @@ func (c *Client) UpdateAutomationRule(s identity.Scope, rule *models.AutomationR
 }
 
 // DeleteAutomationRule removes an AutomationRule of the scope's household by ID. A rule of
-// another household, or another person's workflow, is left untouched (no error, nothing deleted).
+// another household, another person's workflow and a missing rule are left untouched and are
+// not-found, as every other delete by ID (BL-39).
 func (c *Client) DeleteAutomationRule(s identity.Scope, id uint) error {
 	query, err := c.scoped(s)
 	if err != nil {
@@ -303,6 +304,9 @@ func (c *Client) DeleteAutomationRule(s identity.Scope, id uint) error {
 	result := query.Where("id = ?", id).Delete(&models.AutomationRule{})
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete automation rule: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("automation rule %d not found", id)
 	}
 	return nil
 }

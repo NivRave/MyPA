@@ -202,6 +202,14 @@ type ComplexityRoot struct {
 		Role       func(childComplexity int) int
 	}
 
+	MemberAccount struct {
+		Channel  func(childComplexity int) int
+		ID       func(childComplexity int) int
+		Label    func(childComplexity int) int
+		LinkedAt func(childComplexity int) int
+		PersonID func(childComplexity int) int
+	}
+
 	Mutation struct {
 		CompleteHomeMaintenance func(childComplexity int, id string) int
 		CompleteSharedTask      func(childComplexity int, id string, completedByUserID string) int
@@ -215,6 +223,7 @@ type ComplexityRoot struct {
 		LogFinancialTransaction func(childComplexity int, typeArg string, category string, merchant string, amount float64, currency string, notes *string, isShared *bool) int
 		PinTopicMemory          func(childComplexity int, id string, isPinned bool) int
 		RegisterExternalAPI     func(childComplexity int, name string, baseURL string, defaultMethod *string, description *string) int
+		RemoveMemberAccount     func(childComplexity int, personID string, accountID string) int
 		RollbackMutation        func(childComplexity int, mutationID string) int
 		SaveAutomationRule      func(childComplexity int, name string, triggerType string, triggerTopic string, conditionJSON string, actionInstruction string, isActive *bool) int
 		SaveHomeMaintenanceItem func(childComplexity int, taskName string, category string, intervalDays int, nextDueAt time.Time, contractorInfo *string, notes *string) int
@@ -297,6 +306,7 @@ type ComplexityRoot struct {
 		Household             func(childComplexity int) int
 		JoinSteps             func(childComplexity int) int
 		Me                    func(childComplexity int) int
+		MemberAccounts        func(childComplexity int, personID string) int
 		MutationLogs          func(childComplexity int, topic *string, limit *int) int
 		PersonalCrmContacts   func(childComplexity int) int
 		RecurringBills        func(childComplexity int) int
@@ -480,6 +490,7 @@ type ComplexityRoot struct {
 type MutationResolver interface {
 	SignOut(ctx context.Context) (bool, error)
 	GeneratePairingCode(ctx context.Context, role string) (*model.PairingCode, error)
+	RemoveMemberAccount(ctx context.Context, personID string, accountID string) (bool, error)
 	UpdateHousehold(ctx context.Context, name *string, language *string, timeZone *string, currency *string) (*model.Household, error)
 	SetPackEnabled(ctx context.Context, pack string, enabled bool) (*model.Household, error)
 	SaveTopicMemory(ctx context.Context, topic string, subtopic string, fact string, tagsJSON *string, scope *string) (*model.TopicMemory, error)
@@ -515,6 +526,7 @@ type QueryResolver interface {
 	Household(ctx context.Context) (*model.Household, error)
 	Users(ctx context.Context) ([]*model.User, error)
 	ActivePairingCodes(ctx context.Context) ([]*model.PairingCode, error)
+	MemberAccounts(ctx context.Context, personID string) ([]*model.MemberAccount, error)
 	JoinSteps(ctx context.Context) ([]*model.JoinStep, error)
 	TopicMemories(ctx context.Context, topic *string, includeSuperseded *bool) ([]*model.TopicMemory, error)
 	EntityProfiles(ctx context.Context, topic *string, entityType *string) ([]*model.EntityProfile, error)
@@ -1305,6 +1317,37 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Me.Role(childComplexity), true
 
+	case "MemberAccount.channel":
+		if e.ComplexityRoot.MemberAccount.Channel == nil {
+			break
+		}
+
+		return e.ComplexityRoot.MemberAccount.Channel(childComplexity), true
+	case "MemberAccount.id":
+		if e.ComplexityRoot.MemberAccount.ID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.MemberAccount.ID(childComplexity), true
+	case "MemberAccount.label":
+		if e.ComplexityRoot.MemberAccount.Label == nil {
+			break
+		}
+
+		return e.ComplexityRoot.MemberAccount.Label(childComplexity), true
+	case "MemberAccount.linkedAt":
+		if e.ComplexityRoot.MemberAccount.LinkedAt == nil {
+			break
+		}
+
+		return e.ComplexityRoot.MemberAccount.LinkedAt(childComplexity), true
+	case "MemberAccount.personId":
+		if e.ComplexityRoot.MemberAccount.PersonID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.MemberAccount.PersonID(childComplexity), true
+
 	case "Mutation.completeHomeMaintenance":
 		if e.ComplexityRoot.Mutation.CompleteHomeMaintenance == nil {
 			break
@@ -1437,6 +1480,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.RegisterExternalAPI(childComplexity, args["name"].(string), args["baseUrl"].(string), args["defaultMethod"].(*string), args["description"].(*string)), true
+	case "Mutation.removeMemberAccount":
+		if e.ComplexityRoot.Mutation.RemoveMemberAccount == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_removeMemberAccount_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.RemoveMemberAccount(childComplexity, args["personId"].(string), args["accountId"].(string)), true
 	case "Mutation.rollbackMutation":
 		if e.ComplexityRoot.Mutation.RollbackMutation == nil {
 			break
@@ -1965,6 +2019,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.Me(childComplexity), true
+	case "Query.memberAccounts":
+		if e.ComplexityRoot.Query.MemberAccounts == nil {
+			break
+		}
+
+		args, err := ec.field_Query_memberAccounts_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.MemberAccounts(childComplexity, args["personId"].(string)), true
 	case "Query.mutationLogs":
 		if e.ComplexityRoot.Query.MutationLogs == nil {
 			break
@@ -3249,6 +3314,22 @@ func (ec *executionContext) childFields_Me(ctx context.Context, field graphql.Co
 	return nil, fmt.Errorf("no field named %q was found under type Me", field.Name)
 }
 
+func (ec *executionContext) childFields_MemberAccount(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "id":
+		return ec.fieldContext_MemberAccount_id(ctx, field)
+	case "personId":
+		return ec.fieldContext_MemberAccount_personId(ctx, field)
+	case "channel":
+		return ec.fieldContext_MemberAccount_channel(ctx, field)
+	case "label":
+		return ec.fieldContext_MemberAccount_label(ctx, field)
+	case "linkedAt":
+		return ec.fieldContext_MemberAccount_linkedAt(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type MemberAccount", field.Name)
+}
+
 func (ec *executionContext) childFields_MutationLog(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
 	case "id":
@@ -4148,6 +4229,28 @@ func (ec *executionContext) field_Mutation_registerExternalApi_args(ctx context.
 		return nil, err
 	}
 	args["description"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_removeMemberAccount_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "personId",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["personId"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "accountId",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["accountId"] = arg1
 	return args, nil
 }
 
@@ -5098,6 +5201,20 @@ func (ec *executionContext) field_Query_houseContracts_args(ctx context.Context,
 		return nil, err
 	}
 	args["recordType"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_memberAccounts_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "personId",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["personId"] = arg0
 	return args, nil
 }
 
@@ -8137,6 +8254,121 @@ func (ec *executionContext) fieldContext_Me_household(_ context.Context, field g
 	return fc, nil
 }
 
+func (ec *executionContext) _MemberAccount_id(ctx context.Context, field graphql.CollectedField, obj *model.MemberAccount) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_MemberAccount_id(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_MemberAccount_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("MemberAccount", field, false, false, "ID")
+}
+
+func (ec *executionContext) _MemberAccount_personId(ctx context.Context, field graphql.CollectedField, obj *model.MemberAccount) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_MemberAccount_personId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PersonID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_MemberAccount_personId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("MemberAccount", field, false, false, "ID")
+}
+
+func (ec *executionContext) _MemberAccount_channel(ctx context.Context, field graphql.CollectedField, obj *model.MemberAccount) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_MemberAccount_channel(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Channel, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_MemberAccount_channel(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("MemberAccount", field, false, false, "String")
+}
+
+func (ec *executionContext) _MemberAccount_label(ctx context.Context, field graphql.CollectedField, obj *model.MemberAccount) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_MemberAccount_label(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Label, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_MemberAccount_label(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("MemberAccount", field, false, false, "String")
+}
+
+func (ec *executionContext) _MemberAccount_linkedAt(ctx context.Context, field graphql.CollectedField, obj *model.MemberAccount) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_MemberAccount_linkedAt(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.LinkedAt, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v time.Time) graphql.Marshaler {
+			return ec.marshalNTime2timeᚐTime(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_MemberAccount_linkedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("MemberAccount", field, false, false, "Time")
+}
+
 func (ec *executionContext) _Mutation_signOut(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -8198,6 +8430,50 @@ func (ec *executionContext) fieldContext_Mutation_generatePairingCode(ctx contex
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_generatePairingCode_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_removeMemberAccount(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_removeMemberAccount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().RemoveMemberAccount(ctx, fc.Args["personId"].(string), fc.Args["accountId"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_removeMemberAccount(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_removeMemberAccount_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -10363,6 +10639,50 @@ func (ec *executionContext) fieldContext_Query_activePairingCodes(_ context.Cont
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_PairingCode(ctx, field)
 		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_memberAccounts(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_memberAccounts(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().MemberAccounts(ctx, fc.Args["personId"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*model.MemberAccount) graphql.Marshaler {
+			return ec.marshalNMemberAccount2ᚕᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐMemberAccountᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_memberAccounts(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_MemberAccount(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_memberAccounts_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
 	}
 	return fc, nil
 }
@@ -16251,6 +16571,59 @@ func (ec *executionContext) _Me(ctx context.Context, sel ast.SelectionSet, obj *
 	return out
 }
 
+var memberAccountImplementors = []string{"MemberAccount"}
+
+func (ec *executionContext) _MemberAccount(ctx context.Context, sel ast.SelectionSet, obj *model.MemberAccount) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, memberAccountImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := graphql.NewDeferredGroup(ctx)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("MemberAccount")
+		case "id":
+			out.Values[i] = ec._MemberAccount_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "personId":
+			out.Values[i] = ec._MemberAccount_personId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "channel":
+			out.Values[i] = ec._MemberAccount_channel(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "label":
+			out.Values[i] = ec._MemberAccount_label(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "linkedAt":
+			out.Values[i] = ec._MemberAccount_linkedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	if n := len(deferred.Defers); n > 0 {
+		atomic.AddInt32(&ec.Deferred, int32(min(n, math.MaxInt32)))
+		ec.ProcessDeferredGroup(deferred)
+	}
+
+	return out
+}
+
 var mutationImplementors = []string{"Mutation"}
 
 func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet) graphql.Marshaler {
@@ -16280,6 +16653,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "generatePairingCode":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_generatePairingCode(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "removeMemberAccount":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_removeMemberAccount(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
@@ -16823,6 +17203,12 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 				true, true,
 				func(ctx context.Context) graphql.Marshaler {
 					return ec._Query_activePairingCodes(ctx, field)
+				})
+		case "memberAccounts":
+			out.ResolveRootConcurrently(innerCtx, ec.OperationContext, i,
+				true, true,
+				func(ctx context.Context) graphql.Marshaler {
+					return ec._Query_memberAccounts(ctx, field)
 				})
 		case "joinSteps":
 			out.ResolveRootConcurrently(innerCtx, ec.OperationContext, i,
@@ -18688,6 +19074,30 @@ func (ec *executionContext) marshalNMe2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternal
 		return graphql.Null
 	}
 	return ec._Me(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNMemberAccount2ᚕᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐMemberAccountᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.MemberAccount) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNMemberAccount2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐMemberAccount(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNMemberAccount2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐMemberAccount(ctx context.Context, sel ast.SelectionSet, v *model.MemberAccount) graphql.Marshaler {
+	if v == nil {
+		graphql.AddInvalidNullError(ctx, "MemberAccount!")
+		return graphql.Null
+	}
+	return ec._MemberAccount(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalNMutationLog2ᚕᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐMutationLogᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.MutationLog) graphql.Marshaler {

@@ -36,7 +36,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-23 | Low | A failing archive step makes the nightly backup discard its database dump | open |
 | BL-24 | Medium | Memories saved with `save_topic_memory` before V4-06 have no embedding, so they are not recalled by meaning | open: the backfill exists since V4-03 (`mypa embeddings reembed --missing`); running it on the live install is the owner's |
 | BL-25 | Low | Undo snapshots of saved memories carry the full 3,072-number embedding | done 2026-11-24 (`fix/undo-batch`, with BL-57) |
-| BL-26 | Medium | `save_topic_memory` stores `scope` as given, so a value such as `Family` is saved but never found | open |
+| BL-26 | Medium | `save_topic_memory` stores `scope` as given, so a value such as `Family` is saved but never found | done 2026-11-24 (`fix/access-memory-batch`, migration 13) |
 | BL-27 | High | The real-phone-number guard and the `.gitignore` guard are skipped in every full test run, including CI | done 2026-11-19 (`chore/bl-27-guards`) |
 | BL-28 | Low | The one-default-model guard misses a model alias with no version digit (`gemini-flash-latest`) and does not search `.mjs`, `.sh`, `.ps1` or `.sql` files | open |
 | BL-29 | Medium | The LLM client sends `Temperature: 0.2`; Gemini 3.6 Flash ignores sampling parameters and later model generations are to reject them with HTTP 400 | done 2026-11-20 (V4-02, DP-35) |
@@ -48,10 +48,10 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-35 | Medium | A numbered list loses its numbers on both channels, so the typed fallback for choices cannot be answered "with the number" | open: before buttons (V4-10) rely on the fallback |
 | BL-36 | Low | With managed services (`EXTERNAL_*`), the bundled Postgres, Redis and RabbitMQ containers still start and sit idle | open |
 | BL-37 | Low | `go test ./...` on the Windows host, without `-p 1`, fails the Postgres-backed tests after about 3 s | open |
-| BL-38 | Low | The dashboard's `logBabyCare` does not check that the baby ID belongs to the caller's household | open |
-| BL-39 | Low | Deleting an automation rule that is not in the caller's household reports success | open |
+| BL-38 | Low | The dashboard's `logBabyCare` does not check that the baby ID belongs to the caller's household | done 2026-11-24 (`fix/access-memory-batch`) |
+| BL-39 | Low | Deleting an automation rule that is not in the caller's household reports success | done 2026-11-24 (`fix/access-memory-batch`) |
 | BL-40 | Low | `/doctor` does not say that linking is off when `LINK_CODE_SECRET` is not set | open |
-| BL-41 | Medium | An owner cannot yet remove a member's channel account | open — owner roles exist since V4-35 |
+| BL-41 | Medium | An owner cannot yet remove a member's channel account | done 2026-11-24 (`fix/access-memory-batch`, dashboard; chat with V4-38) |
 | BL-42 | Low | Wrong pairing codes do not count toward the install-wide limit on typed codes | open — pairing codes end with V4-36 |
 | BL-43 | High | A `false` is stored as `true` in every boolean column whose model says `default:true` (`is_shared` on transactions, `can_view` and `can_edit` on shared spaces, `is_active`, `auto_renew`, `sync_to_google`, `include_in_morning_briefing`) | done 2026-11-24 (`fix/bl-43-stored-booleans`): no non-zero tag default, migration 12; rows stored before are for the owner to review (docs/RESTORE_AND_MIGRATE.md) |
 | BL-44 | Medium | In chat, the finance tools list the household's unshared transactions of every member, while the dashboard shows each member only their own | done 2026-11-24 (`fix/bl-43-stored-booleans`): owner's decision, the dashboard's rule on every finance read |
@@ -402,6 +402,11 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Fix:** normalise in `executeSaveTopicMemory` (trim, lower-case, `family` or else `personal`), as the
   removed tool did. Test: a save with `"Family"` is stored as `family` and found by a family member's search.
   Consider a one-off correction of existing rows whose scope is neither literal.
+- **Done:** 2026-11-24 (`fix/access-memory-batch`). `models.NormalizeMemoryScope` (trim, lower-case, `family` or
+  else `personal`) is applied by `save_topic_memory` and by the dashboard's `saveTopicMemory`
+  (`TestSaveTopicMemory_ScopeIsNormalised`: `"Family"` is stored as `family` and found by another member).
+  Go migration 13 corrects existing rows by the same rule and logs only the counts
+  (`TestMigration13_NormalisesMemoryScopes`, on the v3.4.0 baseline dump plus added rows).
 
 ### BL-27 — Two repository guards are skipped in every full test run, including CI (High)
 - **Found:** 2026-11-19, in the review of V4-09.
@@ -746,6 +751,8 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Impact:** no data leaks: the log is in the caller's household and nothing of the other household is read.
   It is a dangling reference that the baby summaries of the caller's household ignore.
 - **Fix:** load the profile with `GetBabyProfile(scope, id)` first and refuse when it is not found.
+- **Done:** 2026-11-24 (`fix/access-memory-batch`). `TestLogBabyCare_BabyOfAnotherHouseholdIsRefused`: another
+  household's baby and a missing one are refused and nothing is written.
 
 ### BL-39 — Deleting a foreign automation rule reports success (Low)
 - **Found:** 2026-11-20, while building V4-30 (the finance and automation slice).
@@ -758,6 +765,10 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 - **Impact:** none today; a trap for a future caller.
 - **Fix:** return not-found on zero rows, as every other delete by ID does since V4-30, and change that test's
   expectation deliberately.
+- **Done:** 2026-11-24 (`fix/access-memory-batch`). `TestDeleteAutomationRule_NoRowIsNotFound`. Two old
+  expectations changed deliberately: `TestAutomationRepo_AutomationRules_CRUDAndIsolation` (another household's
+  delete) and `TestAutomationRules_AWorkflowIsSeenOnlyByItsPerson` (another member's delete of a workflow) now
+  expect not-found instead of success; both still check the rule is left in place.
 
 ### BL-40 — `/doctor` does not say that linking is off when `LINK_CODE_SECRET` is not set (Low)
 - **Found:** 2026-11-20, while building V4-32.
@@ -777,6 +788,11 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   the thief's account until V4-35.
 - **Fix:** with V4-35, an owner action (dashboard, and later chat) that removes a member's account under the
   same last-account rule, announced like every other change.
+- **Done:** 2026-11-24 (`fix/access-memory-batch`), dashboard only; chat comes with V4-38. `memberAccounts` and
+  `removeMemberAccount` (owners of the member's household only), `db.RemoveMemberAccount` (last account
+  refused; an `account_remove` audit session in the same transaction), announced to the person's remaining
+  accounts and the owners. `TestRemoveMemberAccount_OwnerRemovesAMembersSecondAccount` (end to end) and
+  `TestRemoveMemberAccount_OwnerOfTheHouseholdOnly`.
 
 ### BL-42 — Wrong pairing codes do not count toward the install-wide limit on typed codes (Low)
 - **Found:** 2026-11-20, while building V4-32.

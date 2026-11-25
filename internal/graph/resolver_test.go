@@ -22,6 +22,14 @@ type mockBabyRepo struct {
 	lastCreatedLog      *models.BabyCareLog
 }
 
+// GetBabyProfile finds every baby in the caller's household: logBabyCare loads the baby first
+// (BL-38).
+func (m *mockBabyRepo) GetBabyProfile(s identity.Scope, id uint) (*models.BabyProfile, error) {
+	p := &models.BabyProfile{ID: id, Name: "Noa"}
+	stampScope(s, &p.HouseholdID, &p.FamilyGroup)
+	return p, nil
+}
+
 func (m *mockBabyRepo) CreateCareLog(s identity.Scope, log *models.BabyCareLog) error {
 	stampScope(s, &log.HouseholdID, &log.FamilyGroup)
 	m.createCareLogCalled = true

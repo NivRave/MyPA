@@ -282,9 +282,8 @@ func (m *Module) executeSaveTopicMemory(ctx context.Context, callCtx orchestrato
 	if fact == "" {
 		return "", errors.New("parameter 'fact' is required")
 	}
-	if scope == "" {
-		scope = "personal"
-	}
+	// BL-26: every read matches the two literals exactly, so "Family" is stored as family.
+	scope = models.NormalizeMemoryScope(scope)
 
 	mem := models.TopicMemory{
 		UserID:          userID,

@@ -343,3 +343,85 @@ func TestResolveAccountChannels_FillsOnlyUnknownChannels(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, a)
 }
+
+// BL-41, ADR 0002 Decision 4: an owner removes a member's account, under the same last-account
+// rule as /unlink. Only an owner of that household may; an adult, a child, a guest and an owner of
+// another household are refused and change nothing. The removal is written to the audit record,
+// which names the account by its ID and channel, never by its number or handle.
+func TestRemoveMemberAccount_OwnerOfTheHouseholdOnly(t *testing.T) {
+	c, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	old := time.Now().Add(-72 * time.Hour)
+	owner, _ := personWithAccount(t, c, "Levi", "8000", "Olivia", "owner", "telegram", old)
+	alice, tg := personWithAccount(t, c, "Levi", "8001", "Alice", "family", "telegram", old)
+	wa := models.ChannelAccount{PersonID: alice.ID, Channel: "whatsapp", ExternalID: "+15550008008", LinkedAt: time.Now()}
+	require.NoError(t, c.DB.Create(&wa).Error)
+	adult, _ := personWithAccount(t, c, "Levi", "8002", "Adam", "family", "telegram", old)
+	child, _ := personWithAccount(t, c, "Levi", "8003", "Kid", "child", "telegram", old)
+	guest, _ := personWithAccount(t, c, "Levi", "8004", "Gail", "guest", "telegram", old)
+	stranger, _ := personWithAccount(t, c, "Cohen", "8005", "Other owner", "owner", "telegram", old)
+
+	for _, who := range []*models.User{adult, child, guest, stranger} {
+		_, _, err := c.RemoveMemberAccount(ctx, scopeOfUser(t, c, who), alice.ID, wa.ID)
+		assert.Error(t, err, "%s may not remove a member's account", who.Name)
+	}
+	_, _, err := c.RemoveMemberAccount(ctx, scopeOfUser(t, c, stranger), alice.ID, wa.ID)
+	assert.ErrorIs(t, err, identity.ErrNoSuchAccount, "another household's member is not found")
+	_, _, err = c.RemoveMemberAccount(ctx, scopeOfUser(t, c, adult), alice.ID, wa.ID)
+	assert.ErrorIs(t, err, identity.ErrNotPermitted)
+	_, _, err = c.RemoveMemberAccount(ctx, scopeOfUser(t, c, owner), adult.ID, wa.ID)
+	assert.ErrorIs(t, err, identity.ErrNoSuchAccount, "the account must be the named person's")
+	accounts, err := c.AccountsOfPerson(ctx, alice.ID)
+	require.NoError(t, err)
+	require.Len(t, accounts, 2, "a refusal removes nothing")
+
+	ownerScope := scopeOfUser(t, c, owner)
+	removed, remaining, err := c.RemoveMemberAccount(ctx, ownerScope, alice.ID, wa.ID)
+	require.NoError(t, err, "an owner removes a member's second account")
+	assert.Equal(t, wa.ID, removed.ID)
+	require.Len(t, remaining, 1)
+	assert.Equal(t, tg.ID, remaining[0].ID)
+	gone, err := c.AccountOf(ctx, "whatsapp", wa.ExternalID)
+	require.NoError(t, err)
+	assert.Nil(t, gone, "the account belongs to nobody now")
+	_, err = c.UserForAccount(ctx, "whatsapp", wa.ExternalID)
+	assert.Error(t, err, "the removed account no longer acts as the person")
+
+	var audit []models.AuditSession
+	require.NoError(t, c.DB.Where("tool_summary LIKE ?", "%account_remove%").Find(&audit).Error)
+	require.Len(t, audit, 1, "the removal is in the audit record")
+	assert.Equal(t, "dashboard", audit[0].Source)
+	assert.Equal(t, owner.PlatformID, audit[0].UserID, "the record names the owner who acted")
+	assert.Contains(t, audit[0].ToolSummary, wa.ID)
+	assert.Contains(t, audit[0].ToolSummary, alice.ID)
+	assert.NotContains(t, audit[0].ToolSummary+audit[0].UserPrompt, wa.ExternalID, "never the number")
+
+	_, _, err = c.RemoveMemberAccount(ctx, ownerScope, alice.ID, tg.ID)
+	assert.ErrorIs(t, err, identity.ErrLastAccount, "the last account cannot be removed")
+	accounts, err = c.AccountsOfPerson(ctx, alice.ID)
+	require.NoError(t, err)
+	assert.Len(t, accounts, 1)
+}
+
+// BL-41: an owner lists a member's accounts in their own household only.
+func TestMemberAccounts_OwnerOfTheHouseholdOnly(t *testing.T) {
+	c, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	old := time.Now().Add(-72 * time.Hour)
+	owner, _ := personWithAccount(t, c, "Levi", "8100", "Olivia", "owner", "telegram", old)
+	alice, tg := personWithAccount(t, c, "Levi", "8101", "Alice", "family", "telegram", old)
+	adult, _ := personWithAccount(t, c, "Levi", "8102", "Adam", "family", "telegram", old)
+	stranger, _ := personWithAccount(t, c, "Cohen", "8105", "Other owner", "owner", "telegram", old)
+
+	got, err := c.MemberAccounts(ctx, scopeOfUser(t, c, owner), alice.ID)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, tg.ID, got[0].ID)
+	_, err = c.MemberAccounts(ctx, scopeOfUser(t, c, adult), alice.ID)
+	assert.ErrorIs(t, err, identity.ErrNotPermitted)
+	got, err = c.MemberAccounts(ctx, scopeOfUser(t, c, stranger), alice.ID)
+	assert.ErrorIs(t, err, identity.ErrNoSuchAccount)
+	assert.Empty(t, got)
+}

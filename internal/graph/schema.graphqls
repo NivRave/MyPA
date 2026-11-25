@@ -42,6 +42,16 @@ type JoinStep {
   step: String!
 }
 
+"One of a member's channel accounts, as an owner sees it (BL-41): the channel and the end of the number or handle, never all of it."
+type MemberAccount {
+  id: ID!
+  personId: ID!
+  channel: String!
+  "The channel and the last four characters of the number or handle, e.g. '<channel> ending 0123'."
+  label: String!
+  linkedAt: Time!
+}
+
 type PairingCode {
   id: ID!
   code: String!
@@ -417,6 +427,8 @@ type Query {
   "The household's members with their roles (owners); an adult sees only themselves."
   users: [User!]!
   activePairingCodes: [PairingCode!]!
+  "A member's channel accounts, oldest first (owners only, the caller's own household, BL-41)."
+  memberAccounts(personId: ID!): [MemberAccount!]!
   "Steps on each configured channel before a new person's first message, for an owner handing out a pairing code (V4-41). Empty when none needs one."
   joinSteps: [JoinStep!]!
   topicMemories(topic: String, includeSuperseded: Boolean): [TopicMemory!]!
@@ -450,6 +462,8 @@ type Mutation {
   signOut: Boolean!
   "A pairing code for a new member (owners only): role is adult or child, never owner (a guest waits for sharing by name, BL-46)."
   generatePairingCode(role: String!): PairingCode!
+  "Remove one of a member's channel accounts (owners only, the caller's own household; BL-41, ADR 0002 Decision 4). The last account cannot be removed. The person's other accounts and the owners are told, and the removal is written to the audit record."
+  removeMemberAccount(personId: ID!, accountId: ID!): Boolean!
   "Change the caller's own household's settings (owners only). Omitted fields are unchanged; an empty string resets a setting to the install default."
   updateHousehold(name: String, language: String, timeZone: String, currency: String): Household!
   "Switch one of the caller's own household's feature packs on or off (owners only, V4-27). The pack's data is kept either way."
