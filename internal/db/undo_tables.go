@@ -73,6 +73,10 @@ var UndoTables = map[string]string{
 	"personalcrmcontact":      "personal_crm_contacts",
 	"personal_crm_contact":    "personal_crm_contacts",
 	"personal_crm_contacts":   "personal_crm_contacts",
+	// BL-69: a reminder to oneself, a person-keyed table (no household_id).
+	"scheduledreminder":   "scheduled_reminders",
+	"scheduled_reminder":  "scheduled_reminders",
+	"scheduled_reminders": "scheduled_reminders",
 }
 
 // ResolveUndoTable validates an entity type against the undo allowlist and returns its table.
@@ -114,6 +118,7 @@ var undoModels = map[string]interface{}{
 	"automation_rules":        models.AutomationRule{},
 	"user_preferences":        models.UserPreference{},
 	"personal_crm_contacts":   models.PersonalCRMContact{},
+	"scheduled_reminders":     models.ScheduledReminder{},
 }
 
 // undoKeyColumn is the column an undoable table's rows are found by: id, except for a table keyed
@@ -179,6 +184,10 @@ func UndoPlan(log models.MutationLog) (op, restore string, err error) {
 		if strings.TrimSpace(log.EntityID) == "" {
 			return "", "", fmt.Errorf("%w: the entry names no row", ErrCannotUndo)
 		}
+		// A reminder set before BL-69 was logged as "<person>:<due time>", not by its row.
+		if tbl, err := ResolveUndoTable(log.EntityType); err == nil && tbl == "scheduled_reminders" && !isDigits(log.EntityID) {
+			return "", "", fmt.Errorf("%w: the entry names no row", ErrCannotUndo)
+		}
 		return op, "", nil
 	case "update":
 		if strings.TrimSpace(log.EntityID) == "" || !usableSnapshot(log.BeforeJSON) {
@@ -195,6 +204,32 @@ func UndoPlan(log models.MutationLog) (op, restore string, err error) {
 		return "", "", fmt.Errorf("%w: the entry kept no copy of the deleted row", ErrCannotUndo)
 	}
 	return "", "", fmt.Errorf("%w: undo does not know how to reverse %q", ErrCannotUndo, log.Action)
+}
+
+func isDigits(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// ErrReminderSent is the answer for undoing a reminder that has already gone out: there is
+// nothing to cancel, and nothing is changed (BL-69).
+var ErrReminderSent = errors.New("the reminder has already gone out")
+
+// ReminderSentMessage is what /undo answers for a reminder that has already gone out (BL-69).
+func ReminderSentMessage(log models.MutationLog) string {
+	what := strings.TrimSpace(log.Summary)
+	if what == "" {
+		what = "your reminder"
+	}
+	return fmt.Sprintf("%q has already gone out, so there is nothing to cancel. Nothing was changed.", what)
 }
 
 // CannotUndoMessage is what /undo answers for a change it cannot reverse: which change, and that

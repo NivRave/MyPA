@@ -179,6 +179,28 @@ func TestUndo_AnOwnerIsNotShownAnotherMembersSummary(t *testing.T) {
 	assert.NotContains(t, err.Error(), "therapist")
 }
 
+// BL-69: a reminder set before the fix was logged as "<person>:<due time>", not by its row; now
+// that reminders are undoable, such an entry is named plainly and nothing changes.
+func TestUndo_AnOldReminderEntryIsNamedAndNothingChanges(t *testing.T) {
+	client := newTestDBClient(t)
+	module := durability.NewModule(client, events.NewEventBus())
+	ctx := context.Background()
+	s := householdtest.Scope(t, client, "undo_old_reminder", "member_q", "family")
+	due := time.Now().Add(time.Hour)
+	require.NoError(t, client.SaveReminder(models.ScheduledReminder{UserID: "member_q", Message: "Old reminder", DueTime: due}))
+	id := oldEntry(t, client, s, "member_q", "create", "ScheduledReminder", fmt.Sprintf("member_q:%d", due.Unix()), "", "",
+		"Scheduled reminder: Old reminder", time.Now())
+
+	res, err := module.RollbackLast(ctx, s)
+	require.NoError(t, err)
+	assert.Equal(t, id, res.MutationID)
+	assert.True(t, res.NotUndoable)
+	assert.Contains(t, res.Detail, "Nothing was changed")
+	var n int64
+	require.NoError(t, client.DB.Model(&models.ScheduledReminder{}).Where("user_id = ?", "member_q").Count(&n).Error)
+	assert.Equal(t, int64(1), n, "the reminder stays")
+}
+
 func TestUndo_AnOldEntryWithoutASnapshotIsNamedAndNothingChanges(t *testing.T) {
 	client := newTestDBClient(t)
 	module := durability.NewModule(client, events.NewEventBus())

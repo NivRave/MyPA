@@ -309,6 +309,11 @@ func (m *Module) executeConfigureSharedTopic(ctx context.Context, callCtx orches
 		topic, familyGroup, canView, canEdit, notifyMode), nil
 }
 
+// reminderCreator saves a reminder and fills in its ID (db.Client, BL-69).
+type reminderCreator interface {
+	CreateReminder(reminder *models.ScheduledReminder) error
+}
+
 // dueTimeDescription is the due time of both reminder tools (BL-50).
 const dueTimeDescription = "When the reminder is due, in ISO 8601 (e.g. '2026-11-03T19:00:00'). A time without an offset is read in the person's own time zone; one with an offset ('Z', '+02:00') is that exact instant."
 
@@ -345,7 +350,15 @@ func (m *Module) executeScheduleReminder(ctx context.Context, callCtx orchestrat
 		CreatedAt: time.Now(),
 	}
 
-	if err := callCtx.DB.SaveReminder(reminder); err != nil {
+	// BL-69: the reminder's own ID names the change, so /undo right after it cancels it. A database
+	// client that cannot return the ID (a test double) saves it as before; that change is not undone.
+	entityID := fmt.Sprintf("%s:%d", actorID, dueTime.Unix())
+	if creator, ok := callCtx.DB.(reminderCreator); ok {
+		if err := creator.CreateReminder(&reminder); err != nil {
+			return fmt.Sprintf("Error scheduling reminder: %v", err), nil
+		}
+		entityID = fmt.Sprintf("%d", reminder.ID)
+	} else if err := callCtx.DB.SaveReminder(reminder); err != nil {
 		return fmt.Sprintf("Error scheduling reminder: %v", err), nil
 	}
 
@@ -353,7 +366,7 @@ func (m *Module) executeScheduleReminder(ctx context.Context, callCtx orchestrat
 		Topic:       "shared",
 		Action:      "create",
 		EntityType:  "ScheduledReminder",
-		EntityID:    fmt.Sprintf("%s:%d", actorID, dueTime.Unix()),
+		EntityID:    entityID,
 		ActorUserID: actorID,
 		HouseholdID: callCtx.Scope.HouseholdID(),
 		FamilyGroup: callCtx.Scope.LegacyLabel(),
