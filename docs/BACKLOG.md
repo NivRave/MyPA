@@ -84,6 +84,7 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
 | BL-71 | Low | `TestReembed_ToAnotherSizeAfterTheDocumentedMigration` fails on a Windows checkout: its regex expects LF after the doc's code fence | duplicate of BL-59, done with it 2026-11-25 |
 | BL-72 | Low | Making a private transaction shared (`log_financial_transaction` `update`) is not gated in an untrusted turn, so injected text could reveal it | done 2026-11-25 (`fix/pre-test-batch`): every widening call is gated |
 | BL-73 | Low | The dashboard's rollback of another member's change that is already undone answers with that change's summary | open |
+| BL-74 | Medium | A dashboard sign-in link sometimes reaches the person broken: the channel's markdown conversion reads `_abc_` or `__abc__` in the random token as emphasis | done 2026-11-25 (`fix/ci-flake-93`): a bare URL is read as one piece |
 
 ### BL-1 — Schedule module silently drops Google Calendar errors (High)
 - **Found:** 2026-11-16, first deploy smoke test. "What's on my calendar today?" was answered via
@@ -738,6 +739,19 @@ Severity: **High** = wrong behaviour users can hit · **Medium** = security/priv
   audit page and chat history (BL-70) show them only as action and entity type.
 - **Fix:** name another member's change by its label and entity type there too, as `notUndoable` does. Test: an owner's
   rollback of a member's undone private entry does not show its summary.
+
+### BL-74 — A dashboard sign-in link sometimes reaches the person broken (Medium)
+- **Found:** 2026-11-25, CI run 45569046251 on `3fc388c`: `TestDashboard_OnlyOwnersAdultsAndTheOperator/adult`
+  (`internal/conformance`) failed its assertion (no token in the reply), not a data race. The runs before and after
+  passed.
+- **Evidence:** the reply held `signin#<i>WkILRIM5Uov</i>-bef6...`: the token was `_WkILRIM5Uov_-bef6...`, and
+  `telegram.ToTelegramHTML` read `#_..._-` as emphasis. `twilio.ToWhatsApp` turned `__abc__` into `*abc*` the same way.
+  On 20,000 tokens from a fixed seed, 7 Telegram links changed (about 1 in 3,000). The conformance test was right: a
+  real person would have had a link that signs no one in.
+- **Fix:** `internal/channel/bareurl`, an inline parser both converters add: a bare http(s) URL, any host (localhost, a
+  LAN name, an IP), is read as one piece before emphasis and written back as it was. Tests:
+  `TestToTelegramHTML_BareURLIsLiteral`, `TestToWhatsApp_BareURLIsLiteral` (the CI token and its `__` form), the
+  `..._SignInTokensSurvive` runs over 20,000 seeded tokens, and `..._URLsLeaveTheRestAlone`.
 
 ### BL-30 — Other tests change the process environment and do not restore it exactly (Low)
 - **Found:** 2026-11-19, in the search of every `_test.go` file done for BL-27.

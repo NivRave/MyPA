@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/nivik/mypa/internal/channel/bareurl"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 )
 
-// ToWhatsApp converts markdown text to WhatsApp specific formatting.
+// ToWhatsApp converts markdown text to WhatsApp specific formatting. A bare URL is written exactly
+// as it appears in the text (bareurl).
 func ToWhatsApp(source string) string {
 	src := []byte(source)
-	md := goldmark.New()
+	md := goldmark.New(goldmark.WithParserOptions(parser.WithInlineParsers(bareurl.Parser)))
 	doc := md.Parser().Parse(text.NewReader(src))
 
 	var buf bytes.Buffer
@@ -114,7 +117,9 @@ func ToWhatsApp(source string) string {
 				}
 			}
 		case *ast.AutoLink:
-			if entering {
+			if entering && bareurl.Is(node) {
+				buf.Write(node.Label(src))
+			} else if entering {
 				buf.Write(node.URL(src))
 			}
 		}
