@@ -8,8 +8,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/nivik/mypa/internal/channel/bareurl"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 )
 
@@ -32,10 +34,11 @@ func IsTelegramHTML(text string) bool {
 	return false
 }
 
-// ToTelegramHTML converts markdown text to Telegram HTML.
+// ToTelegramHTML converts markdown text to Telegram HTML. A bare URL is written exactly as it
+// appears in the text.
 func ToTelegramHTML(source string) string {
 	src := []byte(source)
-	md := goldmark.New()
+	md := goldmark.New(goldmark.WithParserOptions(parser.WithInlineParsers(bareurl.Parser)))
 	doc := md.Parser().Parse(text.NewReader(src))
 
 	var buf bytes.Buffer
@@ -126,6 +129,12 @@ func ToTelegramHTML(source string) string {
 				buf.WriteString("</a>")
 			}
 		case *ast.AutoLink:
+			if bareurl.Is(node) {
+				if entering {
+					buf.WriteString(html.EscapeString(string(node.Label(src))))
+				}
+				return ast.WalkSkipChildren, nil
+			}
 			if entering {
 				url := html.EscapeString(string(node.URL(src)))
 				buf.WriteString(fmt.Sprintf("<a href=\"%s\">%s</a>", url, url))
