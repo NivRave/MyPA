@@ -67,7 +67,7 @@ func (m *Module) executeSaveContract(ctx context.Context, callCtx orchestrator.C
 	contractID := parseInt(args["contract_id"])
 	var contract *models.HouseContractRecord
 	var beforeJSON string
-	action := "contract_saved"
+	action, kind := "create", "contract_saved"
 
 	if contractID > 0 {
 		existing, err := repo.GetContract(scope, uint(contractID))
@@ -78,10 +78,10 @@ func (m *Module) executeSaveContract(ctx context.Context, callCtx orchestrator.C
 		if !isAuthorized {
 			return "", fmt.Errorf("contract %d not found in family %q", contractID, scope.LegacyLabel())
 		}
-		b, _ := json.Marshal(existing)
+		b, _ := json.Marshal(models.SnapshotMap(existing))
 		beforeJSON = string(b)
 		contract = existing
-		action = "contract_updated"
+		action, kind = "update", "contract_updated"
 	} else {
 		contract = &models.HouseContractRecord{
 			CreatedByUserID: userID,
@@ -123,6 +123,7 @@ func (m *Module) executeSaveContract(ctx context.Context, callCtx orchestrator.C
 	m.publishEvent(ctx, callCtx, events.MutationEvent{
 		Topic:       "house",
 		Action:      action,
+		Kind:        kind,
 		EntityType:  "HouseContractRecord",
 		EntityID:    fmt.Sprintf("%d", contract.ID),
 		ActorUserID: userID,
@@ -295,7 +296,8 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 		afterBytes, _ := json.Marshal(item)
 		m.publishEvent(ctx, callCtx, events.MutationEvent{
 			Topic:       "house",
-			Action:      "maintenance_created",
+			Action:      "create",
+			Kind:        "maintenance_created",
 			EntityType:  "HomeMaintenanceItem",
 			EntityID:    fmt.Sprintf("%d", item.ID),
 			ActorUserID: userID,
@@ -322,6 +324,7 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 		if !isAuthorized {
 			return "", fmt.Errorf("maintenance item %d not found in family %q", itemID, scope.LegacyLabel())
 		}
+		beforeBytes, _ := json.Marshal(models.SnapshotMap(existing)) // the snapshot /undo restores (BL-68)
 
 		item, err := repo.CompleteMaintenanceItem(scope, uint(itemID), time.Now(), userID)
 		if err != nil {
@@ -331,11 +334,13 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 		afterBytes, _ := json.Marshal(item)
 		m.publishEvent(ctx, callCtx, events.MutationEvent{
 			Topic:       "house",
-			Action:      "maintenance_completed",
+			Action:      "update",
+			Kind:        "maintenance_completed",
 			EntityType:  "HomeMaintenanceItem",
 			EntityID:    fmt.Sprintf("%d", item.ID),
 			ActorUserID: userID,
 			FamilyGroup: scope.LegacyLabel(),
+			BeforeJSON:  string(beforeBytes),
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Completed home maintenance task: %s (Next due rolled forward to %s)", item.TaskName, item.NextDueAt.Format("2006-01-02")),
 			Timestamp:   time.Now(),
@@ -359,7 +364,7 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 			return "", fmt.Errorf("maintenance item %d not found in family %q", itemID, scope.LegacyLabel())
 		}
 
-		b, _ := json.Marshal(existing)
+		b, _ := json.Marshal(models.SnapshotMap(existing))
 		beforeJSON := string(b)
 
 		if taskName, ok := args["task_name"].(string); ok && strings.TrimSpace(taskName) != "" {
@@ -386,10 +391,11 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 			return "", fmt.Errorf("failed to update maintenance item: %w", err)
 		}
 
-		afterBytes, _ := json.Marshal(existing)
+		afterBytes, _ := json.Marshal(models.SnapshotMap(existing))
 		m.publishEvent(ctx, callCtx, events.MutationEvent{
 			Topic:       "house",
-			Action:      "maintenance_updated",
+			Action:      "update",
+			Kind:        "maintenance_updated",
 			EntityType:  "HomeMaintenanceItem",
 			EntityID:    fmt.Sprintf("%d", existing.ID),
 			ActorUserID: userID,
@@ -418,14 +424,15 @@ func (m *Module) executeManageMaintenance(ctx context.Context, callCtx orchestra
 			return "", fmt.Errorf("maintenance item %d not found in family %q", itemID, scope.LegacyLabel())
 		}
 
-		b, _ := json.Marshal(existing)
+		b, _ := json.Marshal(models.SnapshotMap(existing))
 		if err := repo.DeleteMaintenanceItem(scope, uint(itemID)); err != nil {
 			return "", fmt.Errorf("failed to delete maintenance item: %w", err)
 		}
 
 		m.publishEvent(ctx, callCtx, events.MutationEvent{
 			Topic:       "house",
-			Action:      "maintenance_deleted",
+			Action:      "delete",
+			Kind:        "maintenance_deleted",
 			EntityType:  "HomeMaintenanceItem",
 			EntityID:    fmt.Sprintf("%d", itemID),
 			ActorUserID: userID,
@@ -529,7 +536,8 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 		afterBytes, _ := json.Marshal(vehicle)
 		m.publishEvent(ctx, callCtx, events.MutationEvent{
 			Topic:       "house",
-			Action:      "vehicle_created",
+			Action:      "create",
+			Kind:        "vehicle_created",
 			EntityType:  "VehicleAsset",
 			EntityID:    fmt.Sprintf("%d", vehicle.ID),
 			ActorUserID: userID,
@@ -575,7 +583,7 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, scope.LegacyLabel())
 		}
 
-		b, _ := json.Marshal(existing)
+		b, _ := json.Marshal(models.SnapshotMap(existing))
 		beforeJSON := string(b)
 
 		if name, ok := args["name"].(string); ok && strings.TrimSpace(name) != "" {
@@ -607,10 +615,11 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			return "", fmt.Errorf("failed to update vehicle asset: %w", err)
 		}
 
-		afterBytes, _ := json.Marshal(existing)
+		afterBytes, _ := json.Marshal(models.SnapshotMap(existing))
 		m.publishEvent(ctx, callCtx, events.MutationEvent{
 			Topic:       "house",
-			Action:      "vehicle_updated",
+			Action:      "update",
+			Kind:        "vehicle_updated",
 			EntityType:  "VehicleAsset",
 			EntityID:    fmt.Sprintf("%d", existing.ID),
 			ActorUserID: userID,
@@ -641,6 +650,7 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 		if !isAuthorized {
 			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, scope.LegacyLabel())
 		}
+		beforeBytes, _ := json.Marshal(models.SnapshotMap(existing)) // the snapshot /undo restores (BL-68)
 
 		vehicle, err := repo.UpdateVehicleMileage(scope, uint(assetID), mileage)
 		if err != nil {
@@ -655,11 +665,13 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 		afterBytes, _ := json.Marshal(vehicle)
 		m.publishEvent(ctx, callCtx, events.MutationEvent{
 			Topic:       "house",
-			Action:      "vehicle_mileage_updated",
+			Action:      "update",
+			Kind:        "vehicle_mileage_updated",
 			EntityType:  "VehicleAsset",
 			EntityID:    fmt.Sprintf("%d", vehicle.ID),
 			ActorUserID: userID,
 			FamilyGroup: scope.LegacyLabel(),
+			BeforeJSON:  string(beforeBytes),
 			AfterJSON:   string(afterBytes),
 			Summary:     fmt.Sprintf("Updated mileage for %s to %d km", vehicle.Name, vehicle.CurrentMileageKm),
 			Timestamp:   time.Now(),
@@ -682,7 +694,7 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, scope.LegacyLabel())
 		}
 
-		b, _ := json.Marshal(existing)
+		b, _ := json.Marshal(models.SnapshotMap(existing))
 		beforeJSON := string(b)
 
 		now := time.Now()
@@ -714,10 +726,11 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			return "", fmt.Errorf("failed to log vehicle service: %w", err)
 		}
 
-		afterBytes, _ := json.Marshal(existing)
+		afterBytes, _ := json.Marshal(models.SnapshotMap(existing))
 		m.publishEvent(ctx, callCtx, events.MutationEvent{
 			Topic:       "house",
-			Action:      "vehicle_service_logged",
+			Action:      "update",
+			Kind:        "vehicle_service_logged",
 			EntityType:  "VehicleAsset",
 			EntityID:    fmt.Sprintf("%d", existing.ID),
 			ActorUserID: userID,
@@ -746,14 +759,15 @@ func (m *Module) executeManageVehicle(ctx context.Context, callCtx orchestrator.
 			return "", fmt.Errorf("vehicle asset %d not found in family %q", assetID, scope.LegacyLabel())
 		}
 
-		b, _ := json.Marshal(existing)
+		b, _ := json.Marshal(models.SnapshotMap(existing))
 		if err := repo.DeleteVehicleAsset(scope, uint(assetID)); err != nil {
 			return "", fmt.Errorf("failed to delete vehicle asset: %w", err)
 		}
 
 		m.publishEvent(ctx, callCtx, events.MutationEvent{
 			Topic:       "house",
-			Action:      "vehicle_deleted",
+			Action:      "delete",
+			Kind:        "vehicle_deleted",
 			EntityType:  "VehicleAsset",
 			EntityID:    fmt.Sprintf("%d", assetID),
 			ActorUserID: userID,

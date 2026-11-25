@@ -147,6 +147,20 @@ func (r *inMemorySharedRepo) CompleteSharedReminder(s identity.Scope, id uint, c
 	return &cp, nil
 }
 
+func (r *inMemorySharedRepo) GetSharedReminder(s identity.Scope, id uint) (*models.SharedTaskReminder, error) {
+	if !s.Valid() {
+		return nil, identity.ErrNoScope
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	rem, exists := r.reminders[id]
+	if !exists || rem.HouseholdID != s.HouseholdID() {
+		return nil, nil
+	}
+	cp := *rem
+	return &cp, nil
+}
+
 func (r *inMemorySharedRepo) ListSharedReminders(s identity.Scope, topic string, includeCompleted bool) ([]models.SharedTaskReminder, error) {
 	if !s.Valid() {
 		return nil, identity.ErrNoScope

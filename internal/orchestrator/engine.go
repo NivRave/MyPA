@@ -588,7 +588,7 @@ func (e *Engine) handleUndo(ctx context.Context, user *models.User, msg channel.
 					}
 					return e.sendMessage(ctx, msg, fmt.Sprintf("❌ Undo failed: %v", err))
 				}
-				if res.AlreadyUndone {
+				if res.AlreadyUndone || res.NotUndoable {
 					return e.sendMessage(ctx, msg, fmt.Sprintf("ℹ️ %s", res.Detail))
 				}
 				return e.sendMessage(ctx, msg, fmt.Sprintf("↩️ **Successfully Undone!**\n\n%s", res.Detail))

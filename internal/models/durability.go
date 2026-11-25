@@ -23,14 +23,33 @@ type MutationLog struct {
 	HouseholdID string    `json:"household_id" gorm:"type:uuid;not null;index"` // V4-30: the tenant key; FamilyGroup is still written until V4-44
 	FamilyGroup string    `json:"family_group" gorm:"index;index:idx_mutation_logs_family_created,priority:1;index:idx_mutation_logs_family_topic_created,priority:1"`
 	Topic       string    `json:"topic" gorm:"index;index:idx_mutation_logs_family_topic_created,priority:2"` // e.g. "baby", "house", "finance", "schedule", "memory"
-	Action      string    `json:"action"`                                                                     // e.g. "create", "update", "delete", "complete", "undo"
+	Action      string    `json:"action"`                                                                     // "create", "update" or "delete" (what undo reads), "undo", or an older name (BL-68)
+	Kind        string    `json:"kind,omitempty"`                                                             // BL-68: the domain's own name for the change ("transaction_logged"), when it differs from Action
 	EntityType  string    `json:"entity_type" gorm:"index"`                                                   // e.g. "BabyCareLog", "ScheduleEvent"
 	EntityID    string    `json:"entity_id" gorm:"index"`
 	BeforeJSON  string    `json:"before_json" gorm:"type:jsonb"`
 	AfterJSON   string    `json:"after_json" gorm:"type:jsonb"`
+	AlsoJSON    *string   `json:"also_json,omitempty" gorm:"type:jsonb"` // BL-68: the other rows the change touched, as []UndoAlso, put back by the same undo
 	Summary     string    `json:"summary"`
 	IsUndone    bool      `json:"is_undone" gorm:"default:false;index"`
 	CreatedAt   time.Time `json:"created_at" gorm:"index;index:idx_mutation_logs_family_created,priority:2,sort:desc;index:idx_mutation_logs_user_created,priority:2,sort:desc;index:idx_mutation_logs_family_topic_created,priority:3,sort:desc"`
+}
+
+// Label is the change as people see it: its Kind, else its Action (BL-68).
+func (l MutationLog) Label() string {
+	if l.Kind != "" {
+		return l.Kind
+	}
+	return l.Action
+}
+
+// UndoAlso is another row a change touched, as it was before the change, which the change's undo
+// puts back in the same step (BL-68): the older memory a new one was saved in place of, or the baby
+// profile a measurement updated. Before holds only the columns the change wrote.
+type UndoAlso struct {
+	EntityType string                 `json:"entity_type"`
+	EntityID   string                 `json:"entity_id"`
+	Before     map[string]interface{} `json:"before"`
 }
 
 // IdempotencyRecord stores execution tokens to guard against duplicate tool execution
@@ -54,6 +73,9 @@ type RollbackResult struct {
 	Summary       string `json:"summary"`
 	Detail        string `json:"detail"`
 	AlreadyUndone bool   `json:"already_undone"`
+	// NotUndoable is set when the change cannot be undone (an entry written before BL-68 without the
+	// snapshot undo needs): Detail says which change, and nothing was changed.
+	NotUndoable bool `json:"not_undoable,omitempty"`
 }
 
 // UndoVia is where an undo is asked from, which decides whose changes it may roll back (BL-65):

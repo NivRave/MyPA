@@ -29,6 +29,7 @@ var packFields = map[string]packs.ID{
 	// Finance
 	"financialTransactions": packs.Finance, "categoryBudgets": packs.Finance, "recurringBills": packs.Finance,
 	"logFinancialTransaction": packs.Finance, "setCategoryBudget": packs.Finance, "saveRecurringBill": packs.Finance,
+	"updateFinancialTransaction": packs.Finance, "deleteFinancialTransaction": packs.Finance, // BL-66
 	// Automations
 	"externalApiConnectors": packs.Automations, "automationRules": packs.Automations,
 	"registerExternalApi": packs.Automations, "saveAutomationRule": packs.Automations,

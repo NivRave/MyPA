@@ -24,6 +24,12 @@ func (m *Module) executeUpdateUserPreferences(ctx context.Context, callCtx orche
 	if err != nil {
 		return "", fmt.Errorf("failed to load user preferences: %w", err)
 	}
+	// BL-68: whether the person had preferences, and which, decides how undo reverses this.
+	action, beforeJSON := "create", ""
+	if pref != nil {
+		b, _ := json.Marshal(models.SnapshotMap(pref))
+		action, beforeJSON = "update", string(b)
+	}
 	if pref == nil {
 		pref = &models.UserPreference{
 			UserID:             userID,
@@ -73,12 +79,14 @@ func (m *Module) executeUpdateUserPreferences(ctx context.Context, callCtx orche
 	if bus := m.resolveEventBus(callCtx); bus != nil {
 		_ = bus.Publish(ctx, events.MutationEvent{
 			Topic:       "automation",
-			Action:      "preferences_updated",
+			Action:      action,
+			Kind:        "preferences_updated",
 			EntityType:  "UserPreference",
-			EntityID:    userID,
+			EntityID:    pref.UserID,
 			ActorUserID: userID,
 			HouseholdID: s.HouseholdID(),
 			FamilyGroup: s.LegacyLabel(),
+			BeforeJSON:  beforeJSON,
 			Summary:     "Updated user customization preferences and standing instructions",
 			Timestamp:   time.Now(),
 		})
@@ -126,7 +134,7 @@ func (m *Module) executeUpsertPersonalCRM(ctx context.Context, callCtx orchestra
 		if !isAuthorized {
 			return "", fmt.Errorf("CRM contact %d not found or permission denied", contactID)
 		}
-		b, _ := json.Marshal(existing)
+		b, _ := json.Marshal(models.SnapshotMap(existing))
 		beforeJSON = string(b)
 		action = "update"
 	}

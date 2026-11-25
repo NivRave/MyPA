@@ -551,7 +551,8 @@ func TestModule_EventBus_Mutations(t *testing.T) {
 	assert.Equal(t, "ScheduleEvent", published[0].EntityType)
 	assert.Equal(t, "schedule", published[0].Topic)
 
-	assert.Equal(t, "configure", published[1].Action)
+	assert.Equal(t, "create", published[1].Action, "BL-68: a new configuration is a create")
+	assert.Equal(t, "configure", published[1].Label())
 	assert.Equal(t, "TopicCalendarConfig", published[1].EntityType)
 
 	assert.Equal(t, "update", published[2].Action)

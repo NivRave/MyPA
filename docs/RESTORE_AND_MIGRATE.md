@@ -176,7 +176,10 @@ the family first.
    automation rule (the workflow tools still list and delete it). Migration 13 (BL-26) corrects
    memories saved with a scope other than `personal` or `family`: one spelled `Family` (in any
    case, with spaces) becomes `family`, and so visible to the household again; anything else
-   becomes `personal`. It logs only how many rows of each kind it changed.
+   becomes `personal`. It logs only how many rows of each kind it changed. Migration 14 (BL-68)
+   adds two columns to the change history and changes no row. A change recorded before it is
+   still undone where its saved copy allows; for one that cannot be, `/undo` says which change it
+   is and changes nothing.
 5. Send `/doctor` as the operator (every former admin is the operator since V4-35).
 6. Rewrite the secrets still in the old encryption format (V4-07). The dry run only counts; the
    second command rewrites them, and is safe while the app runs:
@@ -211,7 +214,7 @@ and nothing in the database tells the two apart. Review these once after upgradi
 
 | Table | Column | A wrong `true` means | Correct it with |
 | :--- | :--- | :--- | :--- |
-| `financial_transactions` | `is_shared` | a transaction its person logged as private is visible to every member, in chat and on the dashboard | nothing in the app yet (BL-66): ask its person, then an `UPDATE` of that row |
+| `financial_transactions` | `is_shared` | a transaction its person logged as private is visible to every member, in chat and on the dashboard | its person makes it private (BL-66): in chat ("make transaction 12 private") or with Edit on the dashboard's Finance page. No one else can, an owner included |
 | `shared_spaces` | `can_view` | the members of a topic set to "no view" are still notified of each change in it | the dashboard's Shared Spaces page, or `configure_shared_topic` in chat |
 | `shared_spaces` | `can_edit` | a topic set to "no edit" is shown, and described to the assistant, as editable; nothing enforces the setting | the same |
 | `automation_rules` | `is_active` | a rule created switched off runs on its schedule or its events | the toggle on the dashboard's Automations page |

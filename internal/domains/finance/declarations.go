@@ -8,14 +8,24 @@ import (
 func (m *Module) Declarations() []*genai.FunctionDeclaration {
 	return []*genai.FunctionDeclaration{
 		{
-			Name:        "log_financial_transaction",
-			Description: "Record an expense or income transaction with automatic category budget threshold checking and >30% historical average anomaly detection.",
+			Name: "log_financial_transaction",
+			Description: "Record an expense or income transaction with automatic category budget threshold checking and >30% historical average anomaly detection. " +
+				"Also changes or deletes one of the user's own transactions (action 'update' or 'delete' with transaction_id): make it private or shared, " +
+				"or correct its amount, category, merchant or date. Only the person who logged a transaction can change or delete it; /undo reverses either.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
+					"action": {
+						Type:        genai.TypeString,
+						Description: "Action to perform: 'log' (default, a new transaction), 'update', or 'delete' (the user's own transaction named by transaction_id).",
+					},
+					"transaction_id": {
+						Type:        genai.TypeInteger,
+						Description: "ID of the user's own transaction (required for 'update' and 'delete').",
+					},
 					"amount": {
 						Type:        genai.TypeNumber,
-						Description: "Transaction amount (e.g. 150.00).",
+						Description: "Transaction amount (e.g. 150.00). Required for 'log'.",
 					},
 					"category": {
 						Type:        genai.TypeString,
@@ -47,10 +57,9 @@ func (m *Module) Declarations() []*genai.FunctionDeclaration {
 					},
 					"is_shared": {
 						Type:        genai.TypeBoolean,
-						Description: "Whether this is a shared family expense. Defaults to true.",
+						Description: "Whether this is a shared family expense. Defaults to true. With 'update', false makes it private (only the user sees it) and true shares it.",
 					},
 				},
-				Required: []string{"amount", "category"},
 			},
 		},
 		{

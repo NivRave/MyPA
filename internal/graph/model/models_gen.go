@@ -115,6 +115,8 @@ type FinancialTransaction struct {
 	Source          string    `json:"source"`
 	Notes           string    `json:"notes"`
 	CreatedAt       time.Time `json:"createdAt"`
+	// Whether the caller logged it: only its own person can change or delete a transaction (BL-66).
+	IsMine bool `json:"isMine"`
 }
 
 type HomeMaintenanceItem struct {

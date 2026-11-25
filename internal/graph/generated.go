@@ -140,6 +140,7 @@ type ComplexityRoot struct {
 		Currency        func(childComplexity int) int
 		FamilyGroup     func(childComplexity int) int
 		ID              func(childComplexity int) int
+		IsMine          func(childComplexity int) int
 		IsShared        func(childComplexity int) int
 		Merchant        func(childComplexity int) int
 		Notes           func(childComplexity int) int
@@ -211,38 +212,40 @@ type ComplexityRoot struct {
 	}
 
 	Mutation struct {
-		CompleteHomeMaintenance func(childComplexity int, id string) int
-		CompleteSharedTask      func(childComplexity int, id string, completedByUserID string) int
-		CreateScheduleEvent     func(childComplexity int, topic string, title string, description *string, startTime time.Time, endTime time.Time, tagsJSON *string, syncToGoogle *bool, isShared *bool) int
-		CreateSharedTask        func(childComplexity int, topic string, title string, dueTime *time.Time, assignedToUserID *string) int
-		DeleteAutomationRule    func(childComplexity int, id string) int
-		DeleteScheduleEvent     func(childComplexity int, id string) int
-		DeleteTopicMemory       func(childComplexity int, id string) int
-		GeneratePairingCode     func(childComplexity int, role string) int
-		LogBabyCare             func(childComplexity int, babyID string, logType string, valueNumeric *float64, unit *string, details *string, timestamp *time.Time) int
-		LogFinancialTransaction func(childComplexity int, typeArg string, category string, merchant string, amount float64, currency string, notes *string, isShared *bool) int
-		PinTopicMemory          func(childComplexity int, id string, isPinned bool) int
-		RegisterExternalAPI     func(childComplexity int, name string, baseURL string, defaultMethod *string, description *string) int
-		RemoveMemberAccount     func(childComplexity int, personID string, accountID string) int
-		RollbackMutation        func(childComplexity int, mutationID string) int
-		SaveAutomationRule      func(childComplexity int, name string, triggerType string, triggerTopic string, conditionJSON string, actionInstruction string, isActive *bool) int
-		SaveHomeMaintenanceItem func(childComplexity int, taskName string, category string, intervalDays int, nextDueAt time.Time, contractorInfo *string, notes *string) int
-		SaveHouseContract       func(childComplexity int, recordType string, title string, vendorOrLandlord *string, amount *float64, currency *string, expirationOrRenewalDate *time.Time, noticePeriodDays *int, keyTermsJSON *string) int
-		SavePersonalCrmContact  func(childComplexity int, personName string, relationship *string, importantDatesJSON *string, giftIdeasAndSizes *string, medicalNotes *string) int
-		SaveRecurringBill       func(childComplexity int, name string, category string, expectedAmount float64, currency string, billingCycle string, nextDueDay int, autoRenew bool) int
-		SaveTopicCalendarConfig func(childComplexity int, topic string, colorID *string, prefixTag *string, includeInMorningBriefing *bool, syncToGoogleDefault *bool) int
-		SaveTopicMemory         func(childComplexity int, topic string, subtopic string, fact string, tagsJSON *string, scope *string) int
-		SaveUserPreference      func(childComplexity int, userID string, preferredLanguage *string, tonePersona *string, defaultCurrency *string, quietHoursStart *string, quietHoursEnd *string, standingInstructions *string) int
-		SaveVehicleAsset        func(childComplexity int, name string, licensePlate string, insuranceExpiry *time.Time, annualTestExpiry *time.Time, currentMileageKm *int, nextServiceMileageKm *int, notes *string) int
-		SetCategoryBudget       func(childComplexity int, category string, monthlyLimit float64, currency string, alertThresholdPct *float64) int
-		SetPackEnabled          func(childComplexity int, pack string, enabled bool) int
-		SignOut                 func(childComplexity int) int
-		ToggleAutomationRule    func(childComplexity int, id string, isActive bool) int
-		UpdateBabyInventory     func(childComplexity int, itemName string, quantityRemaining float64, unit string, lowThreshold float64) int
-		UpdateHousehold         func(childComplexity int, name *string, language *string, timeZone *string, currency *string) int
-		UpdateSharedSpace       func(childComplexity int, topic string, sharedWithUserID string, canView bool, canEdit bool, notifyMode string) int
-		UpsertBabyProfile       func(childComplexity int, name string, dateOfBirth time.Time, gender string, currentWeightGrams *int, heightCm *float64, pediatricianInfo *string, allergiesNotes *string) int
-		UpsertEntityProfile     func(childComplexity int, topic string, entityType string, entityName string, attributesJSON string) int
+		CompleteHomeMaintenance    func(childComplexity int, id string) int
+		CompleteSharedTask         func(childComplexity int, id string, completedByUserID string) int
+		CreateScheduleEvent        func(childComplexity int, topic string, title string, description *string, startTime time.Time, endTime time.Time, tagsJSON *string, syncToGoogle *bool, isShared *bool) int
+		CreateSharedTask           func(childComplexity int, topic string, title string, dueTime *time.Time, assignedToUserID *string) int
+		DeleteAutomationRule       func(childComplexity int, id string) int
+		DeleteFinancialTransaction func(childComplexity int, id string) int
+		DeleteScheduleEvent        func(childComplexity int, id string) int
+		DeleteTopicMemory          func(childComplexity int, id string) int
+		GeneratePairingCode        func(childComplexity int, role string) int
+		LogBabyCare                func(childComplexity int, babyID string, logType string, valueNumeric *float64, unit *string, details *string, timestamp *time.Time) int
+		LogFinancialTransaction    func(childComplexity int, typeArg string, category string, merchant string, amount float64, currency string, notes *string, isShared *bool) int
+		PinTopicMemory             func(childComplexity int, id string, isPinned bool) int
+		RegisterExternalAPI        func(childComplexity int, name string, baseURL string, defaultMethod *string, description *string) int
+		RemoveMemberAccount        func(childComplexity int, personID string, accountID string) int
+		RollbackMutation           func(childComplexity int, mutationID string) int
+		SaveAutomationRule         func(childComplexity int, name string, triggerType string, triggerTopic string, conditionJSON string, actionInstruction string, isActive *bool) int
+		SaveHomeMaintenanceItem    func(childComplexity int, taskName string, category string, intervalDays int, nextDueAt time.Time, contractorInfo *string, notes *string) int
+		SaveHouseContract          func(childComplexity int, recordType string, title string, vendorOrLandlord *string, amount *float64, currency *string, expirationOrRenewalDate *time.Time, noticePeriodDays *int, keyTermsJSON *string) int
+		SavePersonalCrmContact     func(childComplexity int, personName string, relationship *string, importantDatesJSON *string, giftIdeasAndSizes *string, medicalNotes *string) int
+		SaveRecurringBill          func(childComplexity int, name string, category string, expectedAmount float64, currency string, billingCycle string, nextDueDay int, autoRenew bool) int
+		SaveTopicCalendarConfig    func(childComplexity int, topic string, colorID *string, prefixTag *string, includeInMorningBriefing *bool, syncToGoogleDefault *bool) int
+		SaveTopicMemory            func(childComplexity int, topic string, subtopic string, fact string, tagsJSON *string, scope *string) int
+		SaveUserPreference         func(childComplexity int, userID string, preferredLanguage *string, tonePersona *string, defaultCurrency *string, quietHoursStart *string, quietHoursEnd *string, standingInstructions *string) int
+		SaveVehicleAsset           func(childComplexity int, name string, licensePlate string, insuranceExpiry *time.Time, annualTestExpiry *time.Time, currentMileageKm *int, nextServiceMileageKm *int, notes *string) int
+		SetCategoryBudget          func(childComplexity int, category string, monthlyLimit float64, currency string, alertThresholdPct *float64) int
+		SetPackEnabled             func(childComplexity int, pack string, enabled bool) int
+		SignOut                    func(childComplexity int) int
+		ToggleAutomationRule       func(childComplexity int, id string, isActive bool) int
+		UpdateBabyInventory        func(childComplexity int, itemName string, quantityRemaining float64, unit string, lowThreshold float64) int
+		UpdateFinancialTransaction func(childComplexity int, id string, typeArg *string, category *string, merchant *string, amount *float64, currency *string, transactionDate *time.Time, notes *string, isShared *bool) int
+		UpdateHousehold            func(childComplexity int, name *string, language *string, timeZone *string, currency *string) int
+		UpdateSharedSpace          func(childComplexity int, topic string, sharedWithUserID string, canView bool, canEdit bool, notifyMode string) int
+		UpsertBabyProfile          func(childComplexity int, name string, dateOfBirth time.Time, gender string, currentWeightGrams *int, heightCm *float64, pediatricianInfo *string, allergiesNotes *string) int
+		UpsertEntityProfile        func(childComplexity int, topic string, entityType string, entityName string, attributesJSON string) int
 	}
 
 	MutationLog struct {
@@ -511,6 +514,8 @@ type MutationResolver interface {
 	CompleteHomeMaintenance(ctx context.Context, id string) (*model.HomeMaintenanceItem, error)
 	SaveVehicleAsset(ctx context.Context, name string, licensePlate string, insuranceExpiry *time.Time, annualTestExpiry *time.Time, currentMileageKm *int, nextServiceMileageKm *int, notes *string) (*model.VehicleAsset, error)
 	LogFinancialTransaction(ctx context.Context, typeArg string, category string, merchant string, amount float64, currency string, notes *string, isShared *bool) (*model.FinancialTransaction, error)
+	UpdateFinancialTransaction(ctx context.Context, id string, typeArg *string, category *string, merchant *string, amount *float64, currency *string, transactionDate *time.Time, notes *string, isShared *bool) (*model.FinancialTransaction, error)
+	DeleteFinancialTransaction(ctx context.Context, id string) (bool, error)
 	SetCategoryBudget(ctx context.Context, category string, monthlyLimit float64, currency string, alertThresholdPct *float64) (*model.CategoryBudget, error)
 	SaveRecurringBill(ctx context.Context, name string, category string, expectedAmount float64, currency string, billingCycle string, nextDueDay int, autoRenew bool) (*model.RecurringBill, error)
 	RegisterExternalAPI(ctx context.Context, name string, baseURL string, defaultMethod *string, description *string) (*model.ExternalAPIConnector, error)
@@ -1041,6 +1046,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.FinancialTransaction.ID(childComplexity), true
+	case "FinancialTransaction.isMine":
+		if e.ComplexityRoot.FinancialTransaction.IsMine == nil {
+			break
+		}
+
+		return e.ComplexityRoot.FinancialTransaction.IsMine(childComplexity), true
 	case "FinancialTransaction.isShared":
 		if e.ComplexityRoot.FinancialTransaction.IsShared == nil {
 			break
@@ -1403,6 +1414,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.DeleteAutomationRule(childComplexity, args["id"].(string)), true
+	case "Mutation.deleteFinancialTransaction":
+		if e.ComplexityRoot.Mutation.DeleteFinancialTransaction == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_deleteFinancialTransaction_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.DeleteFinancialTransaction(childComplexity, args["id"].(string)), true
 	case "Mutation.deleteScheduleEvent":
 		if e.ComplexityRoot.Mutation.DeleteScheduleEvent == nil {
 			break
@@ -1651,6 +1673,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.UpdateBabyInventory(childComplexity, args["itemName"].(string), args["quantityRemaining"].(float64), args["unit"].(string), args["lowThreshold"].(float64)), true
+	case "Mutation.updateFinancialTransaction":
+		if e.ComplexityRoot.Mutation.UpdateFinancialTransaction == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateFinancialTransaction_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateFinancialTransaction(childComplexity, args["id"].(string), args["type"].(*string), args["category"].(*string), args["merchant"].(*string), args["amount"].(*float64), args["currency"].(*string), args["transactionDate"].(*time.Time), args["notes"].(*string), args["isShared"].(*bool)), true
 	case "Mutation.updateHousehold":
 		if e.ComplexityRoot.Mutation.UpdateHousehold == nil {
 			break
@@ -3204,6 +3237,8 @@ func (ec *executionContext) childFields_FinancialTransaction(ctx context.Context
 		return ec.fieldContext_FinancialTransaction_notes(ctx, field)
 	case "createdAt":
 		return ec.fieldContext_FinancialTransaction_createdAt(ctx, field)
+	case "isMine":
+		return ec.fieldContext_FinancialTransaction_isMine(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type FinancialTransaction", field.Name)
 }
@@ -4001,6 +4036,20 @@ func (ec *executionContext) field_Mutation_createSharedTask_args(ctx context.Con
 }
 
 func (ec *executionContext) field_Mutation_deleteAutomationRule_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_deleteFinancialTransaction_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
@@ -4887,6 +4936,84 @@ func (ec *executionContext) field_Mutation_updateBabyInventory_args(ctx context.
 		return nil, err
 	}
 	args["lowThreshold"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateFinancialTransaction_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "type",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["type"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "category",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["category"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "merchant",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["merchant"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "amount",
+		func(ctx context.Context, v any) (*float64, error) {
+			return ec.unmarshalOFloat2ᚖfloat64(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["amount"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "currency",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["currency"] = arg5
+	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "transactionDate",
+		func(ctx context.Context, v any) (*time.Time, error) {
+			return ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["transactionDate"] = arg6
+	arg7, err := graphql.ProcessArgField(ctx, rawArgs, "notes",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["notes"] = arg7
+	arg8, err := graphql.ProcessArgField(ctx, rawArgs, "isShared",
+		func(ctx context.Context, v any) (*bool, error) {
+			return ec.unmarshalOBoolean2ᚖbool(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["isShared"] = arg8
 	return args, nil
 }
 
@@ -7362,6 +7489,29 @@ func (ec *executionContext) fieldContext_FinancialTransaction_createdAt(_ contex
 	return graphql.NewScalarFieldContext("FinancialTransaction", field, false, false, "Time")
 }
 
+func (ec *executionContext) _FinancialTransaction_isMine(ctx context.Context, field graphql.CollectedField, obj *model.FinancialTransaction) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_FinancialTransaction_isMine(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.IsMine, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_FinancialTransaction_isMine(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("FinancialTransaction", field, false, false, "Boolean")
+}
+
 func (ec *executionContext) _HomeMaintenanceItem_id(ctx context.Context, field graphql.CollectedField, obj *model.HomeMaintenanceItem) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -9354,6 +9504,94 @@ func (ec *executionContext) fieldContext_Mutation_logFinancialTransaction(ctx co
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_logFinancialTransaction_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateFinancialTransaction(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateFinancialTransaction(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateFinancialTransaction(ctx, fc.Args["id"].(string), fc.Args["type"].(*string), fc.Args["category"].(*string), fc.Args["merchant"].(*string), fc.Args["amount"].(*float64), fc.Args["currency"].(*string), fc.Args["transactionDate"].(*time.Time), fc.Args["notes"].(*string), fc.Args["isShared"].(*bool))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *model.FinancialTransaction) graphql.Marshaler {
+			return ec.marshalNFinancialTransaction2ᚖgithubᚗcomᚋnivikᚋmypaᚋinternalᚋgraphᚋmodelᚐFinancialTransaction(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateFinancialTransaction(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_FinancialTransaction(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateFinancialTransaction_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_deleteFinancialTransaction(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_deleteFinancialTransaction(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().DeleteFinancialTransaction(ctx, fc.Args["id"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_deleteFinancialTransaction(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_deleteFinancialTransaction_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -16224,6 +16462,11 @@ func (ec *executionContext) _FinancialTransaction(ctx context.Context, sel ast.S
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "isMine":
+			out.Values[i] = ec._FinancialTransaction_isMine(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -16800,6 +17043,20 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "logFinancialTransaction":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_logFinancialTransaction(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateFinancialTransaction":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateFinancialTransaction(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "deleteFinancialTransaction":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_deleteFinancialTransaction(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++

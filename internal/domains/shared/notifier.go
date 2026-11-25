@@ -186,8 +186,11 @@ func FormatNotification(event events.MutationEvent, actorName string) string {
 		actorName = "Partner"
 	}
 
+	// BL-68: the change as people have always seen it (its kind, such as "transaction_logged"), not
+	// the create/update/delete undo reads.
+	label := event.Label()
 	verb := "logged"
-	switch strings.ToLower(strings.TrimSpace(event.Action)) {
+	switch strings.ToLower(strings.TrimSpace(label)) {
 	case "complete", "completed":
 		verb = "completed"
 	case "update", "updated":
@@ -201,8 +204,8 @@ func FormatNotification(event events.MutationEvent, actorName string) string {
 			verb = "logged"
 		}
 	default:
-		if event.Action != "" {
-			verb = event.Action
+		if label != "" {
+			verb = label
 		}
 	}
 

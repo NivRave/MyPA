@@ -427,7 +427,8 @@ func TestModule_SaveAndListContracts(t *testing.T) {
 	// Verify events
 	require.Len(t, capturedEvents, 2)
 	assert.Equal(t, "house", capturedEvents[0].Topic)
-	assert.Equal(t, "contract_saved", capturedEvents[0].Action)
+	assert.Equal(t, "create", capturedEvents[0].Action, "BL-68: logged as the change undo reverses")
+	assert.Equal(t, "contract_saved", capturedEvents[0].Label())
 
 	// 3. Update lease contract
 	updateArgs := map[string]interface{}{

@@ -249,6 +249,8 @@ type FinancialTransaction {
   source: String!
   notes: String!
   createdAt: Time!
+  "Whether the caller logged it: only its own person can change or delete a transaction (BL-66)."
+  isMine: Boolean!
 }
 
 type CategoryBudget {
@@ -486,6 +488,10 @@ type Mutation {
   completeHomeMaintenance(id: ID!): HomeMaintenanceItem!
   saveVehicleAsset(name: String!, licensePlate: String!, insuranceExpiry: Time, annualTestExpiry: Time, currentMileageKm: Int, nextServiceMileageKm: Int, notes: String): VehicleAsset!
   logFinancialTransaction(type: String!, category: String!, merchant: String!, amount: Float!, currency: String!, notes: String, isShared: Boolean): FinancialTransaction!
+  "Change one of the caller's own transactions (BL-66): sharing, amount, category, merchant, date, type, currency or notes. Omitted fields are unchanged. Only the person who logged it can, an owner included; undoable from the audit page."
+  updateFinancialTransaction(id: ID!, type: String, category: String, merchant: String, amount: Float, currency: String, transactionDate: Time, notes: String, isShared: Boolean): FinancialTransaction!
+  "Delete one of the caller's own transactions (BL-66). Only the person who logged it can, an owner included; undoable from the audit page."
+  deleteFinancialTransaction(id: ID!): Boolean!
   setCategoryBudget(category: String!, monthlyLimit: Float!, currency: String!, alertThresholdPct: Float): CategoryBudget!
   saveRecurringBill(name: String!, category: String!, expectedAmount: Float!, currency: String!, billingCycle: String!, nextDueDay: Int!, autoRenew: Boolean!): RecurringBill!
   registerExternalApi(name: String!, baseUrl: String!, defaultMethod: String, description: String): ExternalAPIConnector!

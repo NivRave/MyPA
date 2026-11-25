@@ -62,7 +62,10 @@ func (m *Module) resolveBabyProfile(repo db.BabyRepository, scope identity.Scope
 }
 
 // publishMutation emits a standardized MutationEvent for audit, undo, and partner notifications.
-func (m *Module) publishMutation(ctx context.Context, callCtx orchestrator.CallContext, action, entityType, entityID string, scope identity.Scope, userID, summary string) {
+// before is the row as it was, for an update (BL-68: what /undo restores); also are the other rows
+// the change touched. No after-image is sent, as before: household rules match on it.
+// kind is the name the change was logged under before BL-68, when it differs from action.
+func (m *Module) publishMutation(ctx context.Context, callCtx orchestrator.CallContext, action, kind, entityType, entityID string, scope identity.Scope, userID, summary string, before interface{}, also ...models.UndoAlso) {
 	bus := m.bus
 	if bus == nil && callCtx.EventBus != nil {
 		bus = callCtx.EventBus
@@ -74,6 +77,7 @@ func (m *Module) publishMutation(ctx context.Context, callCtx orchestrator.CallC
 	ev := events.MutationEvent{
 		Topic:       "baby",
 		Action:      action,
+		Kind:        kind,
 		EntityType:  entityType,
 		EntityID:    entityID,
 		ActorUserID: userID,
@@ -81,8 +85,18 @@ func (m *Module) publishMutation(ctx context.Context, callCtx orchestrator.CallC
 		FamilyGroup: scope.LegacyLabel(),
 		Summary:     summary,
 		Timestamp:   time.Now(),
+		Also:        also,
+	}
+	if before != nil {
+		b, _ := json.Marshal(models.SnapshotMap(before))
+		ev.BeforeJSON = string(b)
 	}
 	_ = bus.Publish(ctx, ev)
+}
+
+// rowState is a stored row as an undo snapshot, every column included (BL-68).
+func rowState(row interface{}) map[string]interface{} {
+	return models.SnapshotMap(row)
 }
 
 func formatLogSummary(babyName string, log models.BabyCareLog) string {

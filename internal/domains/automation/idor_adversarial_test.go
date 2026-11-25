@@ -406,7 +406,7 @@ func TestDeleteAutomationRule_ForeignRuleIsRefusedWithoutAnEvent(t *testing.T) {
 	var mu sync.Mutex
 	var deleted []events.MutationEvent
 	bus.SubscribeSync(func(_ context.Context, ev events.MutationEvent) error {
-		if ev.Action == "rule_deleted" {
+		if ev.Label() == "rule_deleted" { // BL-68: logged as a delete of kind rule_deleted
 			mu.Lock()
 			deleted = append(deleted, ev)
 			mu.Unlock()

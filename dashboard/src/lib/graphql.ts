@@ -315,6 +315,8 @@ export interface FinancialTransaction {
   source: string;
   notes: string;
   createdAt: string;
+  /** BL-66: whether the viewer logged it; only they can change or delete it. */
+  isMine: boolean;
 }
 
 export interface CategoryBudget {

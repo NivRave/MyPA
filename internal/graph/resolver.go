@@ -7,6 +7,7 @@ import (
 	"github.com/nivik/mypa/internal/identity"
 	"github.com/nivik/mypa/internal/models"
 	"log/slog"
+	"reflect"
 	"strings"
 	"time"
 
@@ -316,6 +317,19 @@ func (r *Resolver) publishEvent(ctx context.Context, ev events.MutationEvent) {
 	if err := r.EventBus.Publish(ctx, ev); err != nil {
 		slog.Warn("graph: failed to publish mutation event", "error", err, "entity", ev.EntityType, "id", ev.EntityID)
 	}
+}
+
+// snapshotJSON is a row as it was before a change: what an undo restores. It keeps every field,
+// the empty ones its JSON tags leave out included, so the row comes back exactly (BL-68,
+// models.Snapshot); no row is "".
+func snapshotJSON(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Pointer && rv.IsNil() {
+		return ""
+	}
+	return models.Snapshot(v)
 }
 
 func toJSON(v interface{}) string {

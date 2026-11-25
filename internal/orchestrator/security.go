@@ -85,9 +85,29 @@ var untrustedOutputTools = map[string]string{
 	"call_external_api": "external_api",
 }
 
-// RequiresConfirmationWhenUntrusted reports whether toolName is gated in untrusted turns.
-func RequiresConfirmationWhenUntrusted(toolName string) bool {
-	return confirmationRequiredWhenUntrusted[toolName]
+// destructiveActionsWhenUntrusted are the actions of a multi-action tool that destroy data, gated
+// in untrusted turns like the destructive tools above, while the tool's other actions are not
+// (BL-66: deleting a transaction, not logging one).
+var destructiveActionsWhenUntrusted = map[string]map[string]bool{
+	"log_financial_transaction": {"delete": true},
+}
+
+// RequiresConfirmationWhenUntrusted reports whether toolName is gated in untrusted turns: the
+// whole tool, or, given the call's arguments, the destructive action it was asked for.
+func RequiresConfirmationWhenUntrusted(toolName string, args ...map[string]interface{}) bool {
+	if confirmationRequiredWhenUntrusted[toolName] {
+		return true
+	}
+	actions := destructiveActionsWhenUntrusted[toolName]
+	if actions == nil {
+		return false
+	}
+	for _, a := range args {
+		if action, _ := a["action"].(string); actions[strings.ToLower(strings.TrimSpace(action))] {
+			return true
+		}
+	}
+	return false
 }
 
 type securityContextKey struct{}
