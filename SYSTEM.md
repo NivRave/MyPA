@@ -104,7 +104,7 @@ mypa/
 ├── docker-compose.yml              # Full stack container orchestration
 ├── gqlgen.yml                      # gqlgen GraphQL code generation config (must be UTF-8 without BOM)
 ├── config/config.yaml              # Default Viper YAML configuration
-├── deploy/                         # Bundled ingress configuration (V4-40): Caddyfile, tailscale-serve.json
+├── deploy/                         # Bundled ingress configuration (V4-40): Caddyfile, tailscale-serve.json; test-install/ (compose override and .env check of docs/TEST_INSTALL.md)
 ├── cmd/
 │   ├── mypa/                       # The app, one binary with --role=all|ingress|worker (:8000, V4-01):
 │   │   ├── main.go                 #   flags, roles, the HTTP server and the shutdown order

@@ -105,13 +105,14 @@ as a new version.
 
 ## Checking the path on a copy of real data (owner)
 
-V4-03 is done when the re-embed has been run once on a copy of real data. Use the throwaway copy
-of OP-12 (compose project `mypa-dryrun`, restored from the newest backup, the app never started):
+V4-03 is done when the re-embed has been run once on a copy of real data. Use the test install of
+OP-12 ([TEST_INSTALL.md](./TEST_INSTALL.md), step 9: compose project `mypa-test`, restored from the
+newest backup, the app not started yet). In its folder:
 
 ```
-docker compose -p mypa-dryrun run --rm --no-deps app embeddings status
-docker compose -p mypa-dryrun run --rm --no-deps app embeddings reembed
-docker compose -p mypa-dryrun run --rm --no-deps app embeddings status
+docker compose run --rm --no-deps app embeddings status
+docker compose run --rm --no-deps app embeddings reembed
+docker compose run --rm --no-deps app embeddings status
 ```
 
 The first `status` shows `gemini-embedding-001`, 3,072 dimensions, and how many memories have no
