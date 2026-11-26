@@ -34,6 +34,7 @@ An event-driven, multi-tenant personal and family AI operating system accessible
 | Adding a feature | [SYSTEM.md §9](./SYSTEM.md#9-step-by-step-feature-development-playbook-8-architectural-sections) and [AGENTS.md](./AGENTS.md) |
 | Upgrading, moving and restoring an install, and rewriting old-format secrets after the upgrade (`mypa reencrypt`) | [docs/RESTORE_AND_MIGRATE.md](./docs/RESTORE_AND_MIGRATE.md) |
 | Embedding model and re-embedding memories | [docs/EMBEDDINGS.md](./docs/EMBEDDINGS.md) |
+| A test install of `dev` beside the live system, on a copy of the live data | [docs/TEST_INSTALL.md](./docs/TEST_INSTALL.md) |
 | Roadmap | [docs/ROADMAP.md](./docs/ROADMAP.md) |
 | Design decisions | [docs/DECISIONS_LOG.md](./docs/DECISIONS_LOG.md), [docs/adr/](./docs/adr/) |
 | Known issues & follow-ups | [docs/BACKLOG.md](./docs/BACKLOG.md) |

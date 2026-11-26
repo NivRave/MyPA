@@ -1,0 +1,66 @@
+# Test install of dev beside the live system on the same machine (docs/TEST_INSTALL.md).
+#
+# In the test clone ONLY, copy this file to docker-compose.override.yml. Compose reads that file
+# after docker-compose.yml on every command run in that folder, so nothing else changes:
+#   Copy-Item deploy\test-install\docker-compose.test.yml docker-compose.override.yml
+# Never copy it into the live install's folder.
+#
+# What it changes:
+#   - Its own project name, so containers, images, volumes and the network are mypa-test_* and
+#     never touch the live project's (mypa).
+#   - No host port shared with the live system. Only the test app (8001) and the test dashboard
+#     (3031) are published, on this machine's loopback address. Postgres, RabbitMQ, Redis, ngrok
+#     and pgAdmin publish nothing; the tools reach them inside the project's own network.
+#   - The test app listens on 8001 inside the network too (HTTP_PORT), so the Google sign-in
+#     return address, derived from that port, is http://localhost:8001/auth/google/callback and
+#     never the live system's 8000.
+#   - The dashboard calls the app from its own server process (GRAPHQL_ENDPOINT), never from the
+#     browser, and "app" here is the test project's app. NEXT_PUBLIC_APP_URL is only a fallback
+#     that GRAPHQL_ENDPOINT overrides; it is set to the test app anyway. Nothing needs a build
+#     argument.
+#   - Defence in depth for the test app, whatever .env says (environment: wins over env_file:):
+#     no public address, so Telegram polls and no webhook is registered anywhere, and no WhatsApp.
+#     deploy/test-install/check-test-env.ps1 still requires .env itself to be clean.
+#
+# The !override and !reset tags replace the lists of docker-compose.yml instead of adding to them
+# (Docker Compose 2.24 or later).
+
+name: mypa-test
+
+services:
+  app:
+    ports: !override
+      - "127.0.0.1:8001:8001"
+    environment:
+      HTTP_PORT: "8001"
+      # Sign-in links from /dashboard open the test dashboard. 127.0.0.1 and not localhost: a
+      # browser keeps cookies per host, not per port, so the test dashboard's session cookie
+      # would otherwise sit beside the live dashboard's on localhost.
+      DASHBOARD_URL: "http://127.0.0.1:3031"
+      INGRESS: "none"
+      PUBLIC_URL: ""
+      TWILIO_ACCOUNT_SID: ""
+      TWILIO_AUTH_TOKEN: ""
+      TWILIO_FROM_NUMBER: ""
+
+  dashboard:
+    ports: !override
+      - "127.0.0.1:3031:3000"
+    environment:
+      GRAPHQL_ENDPOINT: "http://app:8001/graphql"
+      NEXT_PUBLIC_APP_URL: "http://localhost:8001"
+
+  postgres:
+    ports: !reset []
+
+  rabbitmq:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  ngrok:
+    ports: !reset []
+
+  pgadmin:
+    ports: !reset []
